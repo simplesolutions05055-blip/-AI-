@@ -95,9 +95,16 @@ export function buildBrandContext(brand: BrandKit | null): string | null {
     .map((c) => `${c.role}: ${c.hex}`)
     .join(', ');
 
-  const lines = [`מיתוג עבור: ${brand.name}.`];
-  if (colors) lines.push(`צבעי מותג — ${colors}.`);
-  if (brand.style_notes) lines.push(`הנחיות סגנון: ${brand.style_notes}`);
-  lines.push('שמור על עקביות מלאה עם זהות המותג, הצבעים והסגנון. אל תמציא צבעים או סגנון אחר.');
+  const lines = [`## מיתוג מחייב — ${brand.name}`];
+  if (colors) {
+    lines.push(`פלטת הצבעים הרשמית של המותג (כולל ערכי HEX מדויקים): ${colors}.`);
+    lines.push(
+      'חשוב מאוד: זוהי פלטת הצבעים המחייבת והבלעדית לבריף. בשדה "פלטת צבעים" השתמש אך ורק בצבעים ובערכי ה-HEX האלה. ' +
+        'אל תמציא צבעים נוספים, אל תשתמש בצבעי הדוגמה שמופיעים ב-System Message (כגון #064A7A, #D72638, #FDBB2D), ' +
+        'והתעלם מכל דרישה למספר מינימלי של צבעים אם היא סותרת את פלטת המותג. מספר הצבעים בבריף יהיה בדיוק כמספר צבעי המותג.'
+    );
+  }
+  if (brand.style_notes) lines.push(`הנחיות סגנון מחייבות של המותג: ${brand.style_notes}`);
+  lines.push('שמור על עקביות מלאה עם זהות המותג, הצבעים, הטון והסגנון. הנחיות המותג גוברות על כל דוגמה גנרית ב-System Message.');
   return lines.join('\n');
 }
