@@ -64,8 +64,68 @@ export function estimateTextCost(input: number, output: number): number {
 export function estimateImageCost(count = 1): number {
   return 0.04 * count;
 }
+// Rough flat estimate for one audio transcription (no duration available here).
+export function estimateTranscriptionCost(): number {
+  return 0.01;
+}
 export function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
+}
+
+// ── simulator request tracking ───────────────────────────────────────────────
+// Map the agent brief's output_type to the DB enum ('presentation_kit' → 'presentation').
+export function mapOutputType(type: string | null | undefined): string | null {
+  if (!type) return null;
+  if (type === 'presentation_kit') return 'presentation';
+  if (type === 'text' || type === 'image' || type === 'pdf' || type === 'presentation') return type;
+  return null;
+}
+
+// Ensure a conversation+request row exists for a simulator session. Returns the
+// request id; reuses the one passed in if already created.
+export async function ensureSimulatorRequest(
+  database: DB,
+  requestId: string | null | undefined
+): Promise<string | null> {
+  if (requestId) return requestId;
+  const { data: conv } = await database
+    .from('conversations')
+    .insert({ whatsapp_from: 'simulator' })
+    .select('id')
+    .single();
+  if (!conv) return null;
+  const { data: req } = await database
+    .from('requests')
+    .insert({ conversation_id: conv.id, status: 'received' })
+    .select('id')
+    .single();
+  return req?.id ?? null;
+}
+
+// Record one API call's usage against a request and accumulate its cost.
+export async function recordUsageAndCost(
+  database: DB,
+  requestId: string | null,
+  p: { provider: string; model: string; input?: number; output?: number; cost: number }
+): Promise<void> {
+  if (!requestId) return;
+  await database.from('usage_events').insert({
+    request_id: requestId,
+    provider: p.provider,
+    model: p.model,
+    input_units: p.input ?? 0,
+    output_units: p.output ?? 0,
+    estimated_cost: round4(p.cost),
+  });
+  const { data: req } = await database
+    .from('requests')
+    .select('estimated_cost')
+    .eq('id', requestId)
+    .single();
+  await database
+    .from('requests')
+    .update({ estimated_cost: round4((req?.estimated_cost ?? 0) + p.cost) })
+    .eq('id', requestId);
 }
 
 // ── media ──────────────────────────────────────────────────────────────────

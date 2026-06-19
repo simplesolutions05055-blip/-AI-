@@ -113,6 +113,43 @@ export async function analyzeBrief(
   return { brief: parsed, nextQuestion, usage };
 }
 
+// Generate rich, marketing-grade slide content (exactly 10 slides) as
+// structured JSON, expanding the brief/user input into a full deck.
+export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
+  const { content, usage } = await chat(
+    [
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: `אתה כותב תוכן שיווקי מקצועי בעברית. הפק מצגת אינפורמטיבית ומשכנעת של בדיוק 10 שקפים על בסיס הבריף. הרחב את מה שנמסר לתוכן מלא, עשיר ומעשי — אל תכתוב משפטים ריקים או כלליים. כל שקף חייב להיות אינפורמטיבי ובעל ערך.
+החזר JSON תקין בלבד במבנה:
+{
+  "slides": [
+    {
+      "title": "כותרת קצרה וחדה",
+      "subtitle": "שורת משנה אופציונלית או null",
+      "bullets": ["נקודה אינפורמטיבית 1", "נקודה 2", "נקודה 3"],
+      "body": "פסקה קצרה משלימה או null",
+      "image_suggestion": "תיאור קצר של תמונה מתאימה לשקף או null"
+    }
+  ]
+}
+דרישות: בדיוק 10 שקפים. שקף 1 = פתיחה/כותרת. שקף אחרון = סיכום + קריאה לפעולה. 3-5 נקודות מהותיות בכל שקף תוכן. עברית RTL, טון מותאם לקהל היעד שבבריף. אל תמציא עובדות, נתונים, שמות או תאריכים שלא נמסרו.
+בריף:\n${JSON.stringify(brief, null, 2)}`,
+      },
+    ],
+    { json: true, temperature: 0.7 }
+  );
+  let parsed: { slides?: unknown[] } = {};
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    parsed = { slides: [] };
+  }
+  const slides = Array.isArray(parsed.slides) ? parsed.slides : [];
+  return { slides, usage };
+}
+
 export async function generateText(systemPrompt: string, brief: unknown, note?: string) {
   const { content, usage } = await chat(
     [
@@ -129,7 +166,14 @@ export async function generateText(systemPrompt: string, brief: unknown, note?: 
   return { text: content, usage };
 }
 
-export async function generatePresentationOutline(systemPrompt: string, brief: unknown) {
+export async function generatePresentationOutline(
+  systemPrompt: string,
+  brief: unknown,
+  assetsNote?: string
+) {
+  const assetInstruction = assetsNote
+    ? `\n\nתמונות מהמיתוג של העיר (קישורים זמינים להורדה ישירה):\n${assetsNote}\nשבץ את התמונות הרלוונטיות בשקפים המתאימים: לכל שקף שבו משובצת תמונה, ציין במפורש את כותרת/תיאור התמונה ואת הקישור המלא שלה, כדי שניתן יהיה להוריד ולהכניס אותה למצגת ב-NotebookLM. אל תמציא קישורים — השתמש אך ורק בקישורים שסופקו.`
+    : '';
   const { content, usage } = await chat(
     [
       { role: 'system', content: systemPrompt },
@@ -139,7 +183,7 @@ export async function generatePresentationOutline(systemPrompt: string, brief: u
           brief,
           null,
           2
-        )}`,
+        )}${assetInstruction}`,
       },
     ],
     { temperature: 0.6 }
@@ -169,6 +213,64 @@ export async function generateImage(
   const b64 = data.data?.[0]?.b64_json;
   if (!b64) throw new Error('OpenAI image returned no data');
   return { base64: b64, mime: 'image/png', model };
+}
+
+// Transcribe an uploaded audio file with an OpenAI transcription model
+// (gpt-4o-transcribe / gpt-4o-mini-transcribe / whisper-1). The model is
+// chosen in the admin settings; falls back to gpt-4o-transcribe.
+export async function transcribeAudio(
+  base64: string,
+  mime: string,
+  filename: string,
+  opts: { model?: string } = {}
+): Promise<{ text: string }> {
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type: mime || 'audio/mpeg' }), filename || 'audio');
+  form.append('model', opts.model || 'gpt-4o-transcribe');
+  const res = await fetch(`${API}/audio/transcriptions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key()}` },
+    body: form,
+  });
+  if (!res.ok) throw new Error(`OpenAI transcription ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return { text: (data.text as string) ?? '' };
+}
+
+// Describe an uploaded image with a vision model so the agent can "understand"
+// it. Returns a detailed Hebrew description used as context in the chat.
+export async function describeImage(
+  base64: string,
+  mime: string,
+  opts: { model?: string } = {}
+): Promise<{ text: string; usage: ChatUsage }> {
+  const res = await fetch(`${API}/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: opts.model || 'gpt-4o',
+      temperature: 0.2,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'תאר בעברית ובפירוט מה רואים בתמונה: טקסט שמופיע בה, אובייקטים, אנשים, צבעים, סגנון עיצובי וכל פרט שעשוי לעזור להבין את כוונת המשתמש. אם יש טקסט בתמונה — שכתב אותו במדויק.',
+            },
+            { type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } },
+          ],
+        },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`OpenAI vision ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return {
+    text: (data.choices?.[0]?.message?.content as string) ?? '',
+    usage: data.usage ?? { prompt_tokens: 0, completion_tokens: 0 },
+  };
 }
 
 export async function runQa(systemPrompt: string, brief: unknown, outputDescription: string) {

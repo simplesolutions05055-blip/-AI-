@@ -1,6 +1,13 @@
 import { db } from '../_shared/db.ts';
 import { runAgentChat } from '../_shared/openai.ts';
-import { getSetting, logEvent } from '../_shared/util.ts';
+import {
+  getSetting,
+  logEvent,
+  ensureSimulatorRequest,
+  recordUsageAndCost,
+  mapOutputType,
+  estimateTextCost,
+} from '../_shared/util.ts';
 import { buildBrandContext, matchBrandInText, type BrandRow } from '../_shared/brand.ts';
 
 const corsHeaders = {
@@ -19,7 +26,7 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { messages, questionRound } = await req.json();
+    const { messages, questionRound, requestId: incomingRequestId } = await req.json();
     if (!Array.isArray(messages)) {
       return new Response(JSON.stringify({ error: 'messages array required' }), {
         status: 400,
@@ -44,12 +51,17 @@ Deno.serve(async (req) => {
     // (palette + style notes) so the brief respects the DB branding —
     // mirrors the WhatsApp worker pipeline.
     let systemMessage = aiModels?.system_message || fallbackSystemMessage;
+    // Presentation flow: batch all guiding questions into one message, never
+    // show a brief while asking, and once enough info exists return a rich
+    // 10-slide presentation_spec.
+    systemMessage += `\n\nהנחיה למצגות (presentation_kit): כאשר המשתמש מבקש מצגת ואין מספיק מידע, שאל בהודעה אחת בלבד את כל השאלות החיוניות יחד (מטרה, קהל יעד, נקודות/מסרים מרכזיים, קריאה לפעולה) — שאלות קצרות בהודעה אחת, בלי בריף. ברגע שיש מספיק מידע (גם אם המשתמש לא ענה על הכול), החזר action=ready_to_generate עם presentation_spec הכולל slide_count=10 ו-slide_structure של בדיוק 10 שקפים, כאשר לכל שקף יש title ו-content אינפורמטיבי ועשיר בעברית. הסתמך על מה שהמשתמש כתב והרחב אותו לתוכן מלא.`;
     let matchedBrand: { id: string; name: string } | null = null;
     let brandPayload: {
       id: string;
       name: string;
       palette: Array<{ hex: string; role: string }>;
       style_notes: string | null;
+      logo_path: string | null;
     } | null = null;
     try {
       const userText = messages
@@ -66,7 +78,7 @@ Deno.serve(async (req) => {
       if (matchedBrand) {
         const { data: brand } = await database
           .from('brands')
-          .select('name, color_palette, style_notes, is_active')
+          .select('name, color_palette, style_notes, is_active, logo_path')
           .eq('id', matchedBrand.id)
           .single();
         const brandContext = buildBrandContext(brand);
@@ -79,6 +91,7 @@ Deno.serve(async (req) => {
             name: matchedBrand.name,
             palette: (brand.color_palette as Array<{ hex: string; role: string }>) ?? [],
             style_notes: (brand.style_notes as string | null) ?? null,
+            logo_path: (brand.logo_path as string | null) ?? null,
           };
         }
       }
@@ -90,10 +103,42 @@ Deno.serve(async (req) => {
       });
     }
 
+    const model = aiModels?.text_model || 'gpt-4o';
     const result = await runAgentChat(systemMessage, transcript, {
-      model: aiModels?.text_model || 'gpt-4o',
+      model,
       questionRound: Number(questionRound ?? 0),
     });
+
+    // Track this simulator conversation as a request and accumulate its cost.
+    let requestId: string | null = null;
+    try {
+      requestId = await ensureSimulatorRequest(database, incomingRequestId);
+      if (requestId) {
+        const usage = result.usage ?? { prompt_tokens: 0, completion_tokens: 0 };
+        await recordUsageAndCost(database, requestId, {
+          provider: 'openai',
+          model,
+          input: usage.prompt_tokens,
+          output: usage.completion_tokens,
+          cost: estimateTextCost(usage.prompt_tokens, usage.completion_tokens),
+        });
+        const outputType = mapOutputType(result.response?.brief?.output_type);
+        const email = result.response?.brief?.email || null;
+        await database
+          .from('requests')
+          .update({
+            ...(outputType ? { output_type: outputType } : {}),
+            ...(email ? { customer_email: email } : {}),
+          })
+          .eq('id', requestId);
+      }
+    } catch (trackError) {
+      await logEvent(database, {
+        severity: 'warning',
+        action: 'simulator_request_tracking_failed',
+        message: String(trackError),
+      });
+    }
 
     await logEvent(database, {
       action: 'simulator_chat_response',
@@ -106,7 +151,7 @@ Deno.serve(async (req) => {
       },
     });
 
-    return new Response(JSON.stringify({ ok: true, ...result.response, brand: brandPayload }), {
+    return new Response(JSON.stringify({ ok: true, ...result.response, brand: brandPayload, requestId }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {

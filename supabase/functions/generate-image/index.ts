@@ -1,6 +1,6 @@
 import { db } from '../_shared/db.ts';
 import { generateImage } from '../_shared/openai.ts';
-import { getSetting, logEvent } from '../_shared/util.ts';
+import { getSetting, logEvent, recordUsageAndCost, estimateImageCost } from '../_shared/util.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { prompt, size, quality } = await req.json();
+    const { prompt, size, quality, requestId } = await req.json();
     if (!prompt || typeof prompt !== 'string') {
       return new Response(JSON.stringify({ error: 'prompt required' }), {
         status: 400,
@@ -39,9 +39,16 @@ Deno.serve(async (req) => {
       systemMessage: aiModels?.system_message,
     });
 
+    await recordUsageAndCost(database, requestId ?? null, {
+      provider: 'openai',
+      model: image.model,
+      output: 1,
+      cost: estimateImageCost(1),
+    });
+
     await logEvent(database, {
       action: 'simulator_image_generated',
-      metadata: { model: image.model, size: size || '1024x1024', quality: quality || 'auto' },
+      metadata: { model: image.model, size: size || '1024x1024', quality: quality || 'auto', request_id: requestId ?? null },
     });
 
     return new Response(

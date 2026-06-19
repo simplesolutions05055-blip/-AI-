@@ -227,6 +227,12 @@ export default function BrandingPage() {
     setAssets((cur) => cur.filter((x) => x.id !== a.id));
   }
 
+  async function updateAssetCaption(a: BrandAsset, caption: string) {
+    if (caption === (a.caption ?? '')) return;
+    await db.from('brand_assets').update({ caption } as never).eq('id', a.id);
+    setAssets((cur) => cur.map((x) => (x.id === a.id ? { ...x, caption } : x)));
+  }
+
   async function removeBrand(b: Brand) {
     if (!confirm(`למחוק את "${b.name}"? פעולה בלתי הפיכה.`)) return;
     await db.from('brands').delete().eq('id', b.id);
@@ -500,24 +506,35 @@ export default function BrandingPage() {
             {/* assets */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium">דוגמאות גרפיקה</span>
+                <span className="text-sm font-medium">תמונות לשימוש בתוצרים</span>
                 <input ref={assetRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadAsset(e.target.files[0])} />
                 <button onClick={() => assetRef.current?.click()} className="text-xs text-brand">+ העלה תמונה</button>
               </div>
+              <p className="mb-2 text-xs text-[var(--muted)] leading-5">
+                התמונות שתעלה כאן (יחד עם הלוגו) יהיו זמינות לשילוב בתוצרים שהמערכת מפיקה — למשל מצגות ופוסטים.
+                בעת הפקת מצגת, יצורפו קישורים מאובטחים וזמניים לתמונות אלה, כך שניתן להוריד ולהכניס אותן ישירות.
+                מומלץ להוסיף תיאור קצר לכל תמונה (למשל "תמונת רחוב מרכזי", "אירוע עירוני") כדי שהמערכת תדע היכן לשבץ אותה.
+              </p>
               {assets.length === 0 ? (
-                <p className="text-xs text-[var(--muted)]">אין דוגמאות.</p>
+                <p className="text-xs text-[var(--muted)]">לא הועלו תמונות עדיין.</p>
               ) : (
                 <div className="grid grid-cols-3 gap-2">
                   {assets.map((a) => (
                     <div key={a.id} className="relative group">
-                      <img src={previews[a.id]} alt="" className="h-24 w-full object-cover rounded border border-[var(--border)]" />
+                      <img src={previews[a.id]} alt={a.caption ?? ''} className="h-24 w-full object-cover rounded border border-[var(--border)]" />
                       <button
                         onClick={() => removeAsset(a)}
                         className="absolute top-1 left-1 bg-white/90 text-red-600 text-xs rounded px-1"
                       >
                         מחק
                       </button>
-                      <div className="text-[10px] text-[var(--muted)] ltr">{formatHebrewDateTime(a.created_at)}</div>
+                      <input
+                        className={`${input} mt-1 text-xs`}
+                        dir="auto"
+                        placeholder="תיאור התמונה"
+                        defaultValue={a.caption ?? ''}
+                        onBlur={(e) => updateAssetCaption(a, e.target.value.trim())}
+                      />
                     </div>
                   ))}
                 </div>
