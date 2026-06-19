@@ -1,0 +1,2676 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>סוכן AI ארגוני דרך WhatsApp — מסמך המשך</title>
+<style>
+:root {
+ --bg:#f4f7fb;--card:#fff;--text:#172033;--muted:#64748b;--line:#d9e2ef;
+ --primary:#2756c8;--danger:#b91c1c;--warn:#b45309;--ok:#166534;
+ --shadow:0 10px 30px rgba(24,48,85,.08);
+}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,"Segoe UI",sans-serif;line-height:1.6}
+.container{max-width:1180px;margin:auto;padding:22px}
+.hero{background:linear-gradient(135deg,#152d60,#2f62dc);color:white;padding:30px;border-radius:22px;box-shadow:var(--shadow)}
+.hero h1{margin:0 0 8px} .hero p{margin:0;opacity:.9}
+.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}
+.meta input{width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.12);color:white}
+.toolbar{position:sticky;top:0;z-index:30;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 0;background:rgba(244,247,251,.96);backdrop-filter:blur(10px)}
+button{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;background:#e3e9f2;color:var(--text)}
+button.primary{background:var(--primary);color:white} button.danger{background:#fee2e2;color:#991b1b}
+.progress{margin-inline-start:auto;min-width:230px} .track{height:9px;background:#dce4ef;border-radius:50px;overflow:hidden}
+.bar{height:100%;width:0;background:var(--primary)} .small{font-size:12px;color:var(--muted)}
+.card,.section{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;margin-top:16px;box-shadow:var(--shadow)}
+.card h2,.section h2{margin-top:0} ul{padding-right:22px}
+.table-wrap{overflow:auto} table{width:100%;border-collapse:collapse;min-width:850px} th,td{border:1px solid var(--line);padding:9px;vertical-align:top} th{background:#edf3ff}
+.question-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.question-card{background:white;border:1px solid var(--line);border-radius:15px;padding:16px;box-shadow:0 7px 20px rgba(30,50,80,.06)}
+.priority-a{border-right:5px solid var(--danger)} .priority-b{border-right:5px solid var(--warn)} .priority-c{border-right:5px solid var(--ok)}
+.q-head{display:flex;align-items:center;gap:10px} .q-head h3{margin:0}
+.badge{display:inline-flex;min-width:38px;height:28px;align-items:center;justify-content:center;border-radius:999px;background:#e9efff;color:#1e40af;font-weight:900}
+.why,.rec{border-radius:10px;padding:10px;margin:10px 0} .why{background:#fff7ed} .rec{background:#effcf3}
+label{display:block;font-weight:800;margin:9px 0 5px} textarea,select,input{width:100%;border:1px solid #cbd5e1;border-radius:10px;padding:10px;font:inherit;background:white}
+textarea{min-height:100px;resize:vertical} textarea:focus,select:focus,input:focus{outline:3px solid #dbeafe;border-color:var(--primary)}
+.footer{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:28px 0}
+.nav{display:flex;gap:7px;overflow:auto;padding-top:10px} .nav a{white-space:nowrap;text-decoration:none;color:#1e40af;background:#eaf0ff;padding:6px 10px;border-radius:99px;font-size:12px;font-weight:700}
+.status{display:inline-flex;padding:7px 10px;border-radius:999px;background:#e7edf7;font-size:12px;font-weight:700}
+@media(max-width:850px){.container{padding:12px}.meta,.question-grid{grid-template-columns:1fr}.toolbar{position:static}.progress{width:100%;margin:0}}
+@media print{body{background:white}.container{max-width:none;padding:0}.toolbar,.nav,.footer{display:none!important}.hero{background:white;color:black;border:2px solid black;box-shadow:none}.hero input{color:black;background:white;border:0}.card,.section,.question-card{box-shadow:none;break-inside:avoid}textarea,select,input{border:0}}
+</style>
+</head>
+<body>
+<div class="container">
+<header class="hero">
+<h1>מסמך המשך ושאלות הבהרה</h1>
+<p>סוכן AI ארגוני דרך WhatsApp — ניתוח הטופס שמולא</p>
+<div class="meta">
+<input data-meta="projectName" value="סוכן AI ארגוני דרך WhatsApp">
+<input data-meta="clientName" value="מאור עטייה">
+<input data-meta="date" type="date" value="2026-06-18">
+<input data-meta="version" value="1.0">
+</div>
+</header>
+
+<div class="toolbar">
+<button class="primary" onclick="saveHtml()">שמור HTML</button>
+<button onclick="exportJson()">ייצוא JSON</button>
+<button onclick="window.print()">ייצוא ל-PDF</button>
+<button class="danger" onclick="resetForm()">אפס תשובות</button>
+<span id="saveStatus" class="status">נשמר אוטומטית</span>
+<div class="progress"><div class="small">השלמת תשובות: <strong id="progressText">73%</strong></div><div class="track"><div id="progressBar" class="bar" style="width: 73%;"></div></div></div>
+</div>
+
+<nav class="nav">
+<a href="#summary">סיכום</a><a href="#contradictions">סתירות</a><a href="#blockers">חוסם</a><a href="#scope">היקף</a><a href="#later">בהמשך</a><a href="#recommendations">המלצות</a><a href="#next">הצעדים הבאים</a>
+</nav>
+
+<section class="card" id="summary">
+<h2>1. מה הובן מהתשובות</h2>
+<ul><li>השירות יהיה סוכן AI ארגוני הפועל דרך WhatsApp.</li><li>Twilio Sandbox ישמש לפיתוח, ובהמשך יוגדר מספר WhatsApp אמיתי.</li><li>כל מי שמכיר את המספר רשאי להשתמש בשירות, ללא מגבלה שהוגדרה כרגע.</li><li>המערכת תקבל טקסט, תמונות ומסמכים/PDF; הודעות קוליות ווידאו אינן כלולות.</li><li>המערכת תנהל עד 3 סבבי שאלות ותבצע עד 3 ניסיונות יצירה.</li><li>שפת ה-MVP היא עברית.</li><li>OpenAI ישמש ליצירת טקסט ותמונה, ללא מודל חלופי בשלב זה.</li><li>התוצרים הכלולים: טקסט, תמונה ו-PDF בסיסי RTL.</li><li>מצגות אינן נוצרות ישירות; תוחזר למשתמש חבילת תוכן והנחיות ליצירה ב-NotebookLM.</li><li>התוצרים יישלחו כקובץ מצורף במייל.</li><li>ממשק הניהול יכלול בקשות, שיחות, גרסאות, סטטוסים, עריכה, יצירה מחדש, עלויות, לוגים וייצוא XLSX.</li><li>מסך הגדרות נכלל ב-MVP.</li><li>הקבצים יישמרו ב-Supabase Storage ללא מחיקה אוטומטית, עם אפשרות מחיקה ידנית.</li><li>המערכת תיפרס ב-Vercel ותשתמש ב-Supabase.</li><li>המחיר שסוכם הוא 5,000 ₪, לפי אבני התשלום שנקבעו.</li></ul>
+</section>
+
+<section class="card" id="contradictions">
+<h2>2. סתירות ופערים מרכזיים</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>נושא</th><th>מה הוגדר קודם</th><th>מה נכתב בטופס</th><th>חומרה</th></tr></thead>
+<tbody><tr><td>אישור לפני שליחה</td><td>במסמך המקורי ובשיחות: נדרש אישור מנהל.</td><td>בטופס: התוצר צריך להישלח אוטומטית למשתמש.</td><td>חוסם</td></tr><tr><td>דומיין המערכת</td><td>השדה מיועד לדומיין/סאב-דומיין ציבורי.</td><td>הוזן קישור פנימי ל-Supabase Dashboard.</td><td>חוסם חלקית</td></tr><tr><td>מידע רגיש</td><td>סומן שאין מידע רגיש.</td><td>קהל היעד כולל עיריות ואירועי חירום, שעלולים לכלול מידע רגיש.</td><td>סיכון</td></tr><tr><td>מגבלת קבצים</td><td>נדרשת הגבלה טכנית.</td><td>נכתב שאין מגבלה, מלבד איסור וידאו.</td><td>חוסם טכני</td></tr><tr><td>חשבון מנהל</td><td>נדרש מייל כדי ליצור משתמש ראשון.</td><td>נכתב שהמייל יוגדר מתוך המסך לאחר ההתחברות.</td><td>חוסם</td></tr></tbody>
+</table></div>
+</section>
+
+<section class="section" id="blockers">
+<h2>3. שאלות חוסמות התקדמות</h2>
+<p>יש להשיב עליהן לפני נעילת הארכיטקטורה וה-Flow.</p>
+<div class="question-grid">
+    <article class="question-card priority-a">
+      <div class="q-head"><span class="badge">A.1</span><h3>אישור מנהל מול שליחה אוטומטית</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> בשיחות ובמסמך המקורי הוגדר שהתוצר ממתין לאישור מנהל. בטופס נכתב שהתוצר צריך להישלח למבקש מיד ולא להמתין לאישור. שתי האפשרויות דורשות Flow, סטטוסים וממשק שונים.</div>
+      <p><strong>שאלה:</strong> איזה מצב נדרש ב-MVP?</p>
+      
+        <label>בחירה מוצעת</label>
+        <select data-field="approval_flow_choice">
+          <option value="">בחר/י</option><option value="אישור ידני תמיד — כל תוצר ממתין לאישור מנהל">אישור ידני תמיד — כל תוצר ממתין לאישור מנהל</option><option value="שליחה אוטומטית תמיד — לאחר QA התוצר נשלח ללא מנהל">שליחה אוטומטית תמיד — לאחר QA התוצר נשלח ללא מנהל</option><option value="מצב משולב — ניתן לבחור במסך הניהול ידני/אוטומטי, או לפי סוג תוצר" selected="">מצב משולב — ניתן לבחור במסך הניהול ידני/אוטומטי, או לפי סוג תוצר</option>
+        </select>
+      <label>תשובה / החלטה</label>
+      <textarea data-field="approval_flow_answer" placeholder="כתוב כאן את התשובה..."></textarea>
+      <div class="rec"><strong>המלצה:</strong> מצב משולב, כאשר ברירת המחדל היא אישור ידני. כך ניתן לבדוק את המערכת בתחילת הדרך ולעבור לשליחה אוטומטית לאחר צבירת ביטחון.</div>
+    </article>
+    
+    <article class="question-card priority-a">
+      <div class="q-head"><span class="badge">A.2</span><h3>אין דוגמאות לתוצרים רצויים</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> טבלת הדוגמאות והשדות של תוצרים רצויים נשארו ריקים. ללא דוגמאות לא ניתן לכתוב System Message מדויק או לבדוק אם תמונה/PDF נחשבים טובים.</div>
+      <p><strong>שאלה:</strong> יש לצרף לפחות 3 בקשות אמיתיות ולכל אחת דוגמה או תיאור מפורט של התוצאה הרצויה.</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="output_examples_answer" placeholder="כתוב כאן את התשובה...">אוקיי אצרף תמונה שהוא הביא לי. אין לי כרגע מעבר לזה (התמונה של בקרוב פסטיבל יאסו)</textarea>
+      <div class="rec"><strong>המלצה:</strong> להכין דוגמה אחת לטקסט, אחת לגרפיקה ואחת ל-PDF.</div>
+    </article>
+    
+    <article class="question-card priority-a">
+      <div class="q-head"><span class="badge">A.3</span><h3>חשבון המנהל הראשון</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> בשדה מייל מנהל נכתב שהמייל יוגדר במסך הניהול, אך כדי להיכנס למסך הניהול בפעם הראשונה חייב להיות משתמש מנהל קיים.</div>
+      <p><strong>שאלה:</strong> מה תהיה כתובת המייל של המנהל הראשון, ומי רשאי לשנות אותה לאחר מכן?</p>
+      
+        <label>בחירה מוצעת</label>
+        <select data-field="admin_bootstrap_choice">
+          <option value="">בחר/י</option><option value="מייל מנהל מוגדר מראש ב-Supabase Auth" selected="">מייל מנהל מוגדר מראש ב-Supabase Auth</option><option value="הזמנה ראשונית חד-פעמית">הזמנה ראשונית חד-פעמית</option><option value="משתמש ראשון שנרשם הופך למנהל">משתמש ראשון שנרשם הופך למנהל</option>
+        </select>
+      <label>תשובה / החלטה</label>
+      <textarea data-field="admin_bootstrap_answer" placeholder="כתוב כאן את התשובה...">אני לא רוצה שיהיה מנגנון הרשמה
+אז כרגע תגדיר את המשתמש 
+itayk93@gmail.com
+סיסמא 123456 
+כמנהל
+
+אחרכך אני ארשום משתמש נוסף ואגדיר אותו כמנהל
+אבל כמצב ראשון שזה יהיה</textarea>
+      <div class="rec"><strong>המלצה:</strong> ליצור משתמש מנהל ראשון ידנית ב-Supabase Auth, ולאפשר שינוי הגדרות רק לאחר התחברות.</div>
+    </article>
+    
+    <article class="question-card priority-a">
+      <div class="q-head"><span class="badge">A.4</span><h3>זהות המייל השולח</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> אין עדיין דומיין, כתובת From, שם שולח, נושא או חתימה. Resend דורש זהות שולח מוגדרת כדי לשלוח ללקוחות.</div>
+      <p><strong>שאלה:</strong> יש לספק דומיין לשליחה, כתובת From, שם שולח, כלל לנושא וחתימת מייל.</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="email_setup_answer" placeholder="כתוב כאן את התשובה...">נכון, כרגע אין לי</textarea>
+      <div class="rec"><strong>המלצה:</strong> להגדיר כתובת ייעודית כגון ai@domain.co.il ולבנות נושא אוטומטי לפי סוג התוצר.</div>
+    </article>
+    
+    <article class="question-card priority-a">
+      <div class="q-head"><span class="badge">A.5</span><h3>מגבלות קבצים</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> נכתב שאין מגבלת גודל, אך בפועל Twilio, Vercel, Supabase ו-API של ה-AI מוגבלים. ללא מגבלה ניתן ליצור עלויות ותקלות.</div>
+      <p><strong>שאלה:</strong> מהו גודל הקובץ המרבי ואילו סוגי קבצים מותרים?</p>
+      
+        <label>בחירה מוצעת</label>
+        <select data-field="file_limits_choice">
+          <option value="">בחר/י</option><option value="עד 10MB: PNG, JPG, PDF, DOCX" selected="">עד 10MB: PNG, JPG, PDF, DOCX</option><option value="עד 20MB: PNG, JPG, PDF, DOCX">עד 20MB: PNG, JPG, PDF, DOCX</option><option value="מגבלה אחרת">מגבלה אחרת</option>
+        </select>
+      <label>תשובה / החלטה</label>
+      <textarea data-field="file_limits_answer" placeholder="כתוב כאן את התשובה..."></textarea>
+      <div class="rec"><strong>המלצה:</strong> ל-MVP: עד 10MB לקובץ, ללא וידאו וללא קבצים הרצתיים.</div>
+    </article>
+    
+    <article class="question-card priority-a">
+      <div class="q-head"><span class="badge">A.6</span><h3>מנגנון עיבוד אסינכרוני</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> ה-Webhook של Twilio חייב להחזיר תשובה במהירות, בעוד שיצירת תמונה או PDF עלולה לקחת זמן. נכתב שהמנגנון יוחלט בפיתוח, אך זו החלטת תשתית מרכזית.</div>
+      <p><strong>שאלה:</strong> היכן יתבצע עיבוד ה-AI לאחר שמירת ההודעה?</p>
+      
+        <label>בחירה מוצעת</label>
+        <select data-field="async_processing_choice">
+          <option value="">בחר/י</option><option value="Vercel Workflow/Queue">Vercel Workflow/Queue</option><option value="Supabase Edge Function כ-Worker" selected="">Supabase Edge Function כ-Worker</option><option value="Worker חיצוני">Worker חיצוני</option>
+        </select>
+      <label>תשובה / החלטה</label>
+      <textarea data-field="async_processing_answer" placeholder="כתוב כאן את התשובה..."></textarea>
+      <div class="rec"><strong>המלצה:</strong> Webhook ב-Vercel ישמור Job ב-Supabase ויחזיר 200; Worker אסינכרוני יעבד את ה-Job. הבחירה הסופית תיעשה לפי זמינות הכלים בחשבונות.</div>
+    </article>
+    
+    <article class="question-card priority-a">
+      <div class="q-head"><span class="badge">A.7</span><h3>היקף שימוש אמיתי</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> הוגדרו 50 משתמשים ו-50 הודעות למשתמש, אך לא הוגדר מספר בקשות מלאות ביום. הודעה אינה בהכרח בקשה, וההבדל משפיע על עלויות ותשתית.</div>
+      <p><strong>שאלה:</strong> כמה בקשות מלאות צפויות ביום, כמה הודעות בממוצע לכל בקשה וכמה מהבקשות יוצרות תמונה/PDF?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="usage_definition_answer" placeholder="כתוב כאן את התשובה...">לא יודע כרגע</textarea>
+      <div class="rec"><strong>המלצה:</strong> להעריך בנפרד: בקשות ביום, הודעות לבקשה, תמונות ביום ו-PDF ביום.</div>
+    </article>
+    
+    <article class="question-card priority-a">
+      <div class="q-head"><span class="badge">A.8</span><h3>זמן המתנה מקובל</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> לא הוגדר זמן תגובה מרבי. בלי יעד אי אפשר להגדיר Timeout, הודעות מצב או קריטריון קבלה.</div>
+      <p><strong>שאלה:</strong> מהו זמן ההמתנה המקובל לתוצר טקסט, תמונה ו-PDF?</p>
+      
+        <label>בחירה מוצעת</label>
+        <select data-field="wait_time_choice">
+          <option value="">בחר/י</option><option value="טקסט עד 2 דקות, תמונה/PDF עד 5 דקות" selected="">טקסט עד 2 דקות, תמונה/PDF עד 5 דקות</option><option value="כל תוצר עד 10 דקות">כל תוצר עד 10 דקות</option><option value="ללא התחייבות — הודעת סטטוס בלבד">ללא התחייבות — הודעת סטטוס בלבד</option>
+        </select>
+      <label>תשובה / החלטה</label>
+      <textarea data-field="wait_time_answer" placeholder="כתוב כאן את התשובה..."></textarea>
+      <div class="rec"><strong>המלצה:</strong> יעד תפעולי: טקסט עד 2 דקות; תמונה/PDF עד 5 דקות, בכפוף לזמינות ספקים.</div>
+    </article>
+    </div>
+</section>
+
+<section class="section" id="scope">
+<h2>4. שאלות שמשפיעות על ההיקף</h2>
+<p>התשובות עשויות לשנות את זמן הפיתוח, העלויות או מבנה ממשק הניהול.</p>
+<div class="question-grid">
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.1</span><h3>מידות ויחס תמונה</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> נכתב שמידות אינן רלוונטיות, אך מודל תמונה חייב לקבל יחס/גודל. הדבר משפיע על התאמה ל-WhatsApp, מסמך או פוסט.</div>
+      <p><strong>שאלה:</strong> האם ברירת המחדל תהיה תמונה ריבועית, או שהמערכת תשאל בכל בקשה?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="image_dimensions_answer" placeholder="כתוב כאן את התשובה...">תמונה ריבועית</textarea>
+      <div class="rec"><strong>המלצה:</strong> ברירת מחדל ריבועית, עם אפשרות למשתמש לציין רוחב/גובה.</div>
+    </article>
+    
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.2</span><h3>מבנה תבנית ה-PDF</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> אושרה תבנית אחת בסיסית, אך לא הוגדרו כותרת, שוליים, Footer, לוגו וסגנון.</div>
+      <p><strong>שאלה:</strong> מה חייב להופיע בתבנית ה-PDF הבסיסית?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="pdf_template_answer" placeholder="כתוב כאן את התשובה...">לא יודע כרגע. נטפל בהמשך
+אבל בכללי כל האתר וכל התוצרים חייבים לעמוד בכללי יישור מימין לשמאל עם rtl לפי הסקיל הזה
+# Skill: RTL UX/UI &amp; Mobile Ergonomics for the Israeli Market — Production Playbook
+
+This knowledge item defines a production-level UX/UI playbook for designing and building websites, web apps, SaaS dashboards, and mobile applications for the Israeli market, with a strong focus on Hebrew RTL interfaces, mobile ergonomics, accessibility, localization, bidirectional text, AI-assisted development, and QA readiness.
+
+The guiding principle: **Hebrew RTL is not a visual afterthought. It is a full cognitive, spatial, linguistic, cultural, accessibility, and engineering system.**
+
+A product is not truly localized for Hebrew just because the text was translated or aligned to the right. A Hebrew product must feel native in its information architecture, navigation logic, interaction patterns, typography, microcopy, data formats, validation, motion, and production QA.
+
+---
+
+## 0. How to Use This Skill
+
+Use this skill whenever designing, reviewing, prompting, building, QA-testing, or improving:
+
+- Hebrew websites.
+- Hebrew mobile apps.
+- Israeli SaaS dashboards.
+- Israeli marketplaces.
+- Israeli fintech/payment flows.
+- Hebrew admin systems.
+- Hebrew forms and onboarding flows.
+- Bilingual Hebrew/English products.
+- RTL-ready React, Angular, Vue, Flutter, native mobile, or no-code/low-code products.
+- AI-generated interfaces produced by tools such as Lovable, Base44, Claude Code, Codex, Cursor, v0, Bolt, or similar.
+
+When reviewing a product, evaluate it across five layers:
+
+1. **Cognitive layer** — does the flow match Hebrew RTL mental models?
+2. **Visual layer** — does hierarchy, spacing, typography, and iconography feel native?
+3. **Interaction layer** — are actions reachable, predictable, accessible, and safe?
+4. **Technical layer** — is the RTL implementation robust, logical, and maintainable?
+5. **Production layer** — are QA, accessibility, analytics, and edge cases covered?
+
+Do not treat RTL as a final polishing pass. RTL decisions must be made at the architecture, design-system, component, and QA levels.
+
+---
+
+## 1. Core Philosophy: UX vs. UI
+
+### UX — User Experience
+
+UX is the strategic and psychological layer of the product.
+
+It defines:
+
+- What problem the product solves.
+- Who the user is.
+- What the user wants to achieve.
+- What friction blocks the user.
+- How the user moves through the system.
+- What information the user needs at each step.
+- How much confidence, control, and clarity the product provides.
+- How the product supports business goals without hurting trust.
+
+UX is concerned with:
+
+- User journeys.
+- Flows.
+- Mental models.
+- Cognitive load.
+- Conversion.
+- Accessibility.
+- Error prevention.
+- Trust.
+- Emotional response.
+- Behavioral psychology.
+- Completion rates.
+- Long-term retention.
+
+Good UX makes the product feel obvious.
+
+### UI — User Interface
+
+UI is the visual and interactive layer of the product.
+
+It translates UX into:
+
+- Layout.
+- Typography.
+- Color.
+- Buttons.
+- Inputs.
+- Icons.
+- Motion.
+- Spacing.
+- Component states.
+- Visual hierarchy.
+- Feedback and affordances.
+
+Good UI makes the product feel clear, credible, polished, and pleasant.
+
+### UX/UI Synergy
+
+A product succeeds only when UX and UI reinforce each other.
+
+Bad combinations:
+
+- Beautiful UI + poor UX = attractive but confusing.
+- Strong UX + weak UI = functional but untrustworthy.
+- Good flows + poor Hebrew/RTL = foreign, broken, or amateur.
+- Good desktop design + poor mobile ergonomics = frustrating on real devices.
+- Strong copy + weak accessibility = unusable for many users.
+- Correct translation + wrong spatial logic = visually Hebrew, cognitively English.
+
+For Israeli products, UX/UI success means:
+
+- The product feels native in Hebrew.
+- The interface follows RTL mental models.
+- Mobile use is effortless.
+- Text is direct, human, and clear.
+- Critical actions are reachable by thumb.
+- Accessibility is built in from the start.
+- BiDi bugs are prevented before QA.
+- Forms understand Israeli data conventions.
+- Analytics prove that Hebrew users succeed at the same rate as LTR users.
+
+---
+
+## 2. Israeli Market UX Principles
+
+Israeli users often value speed, directness, transparency, control, and practical clarity. They tend to be sensitive to hidden costs, vague promises, bureaucratic language, and flows that feel like traps.
+
+Design implications:
+
+- Do not over-explain simple things.
+- Do not hide key information behind vague labels.
+- Avoid overly formal, bureaucratic Hebrew unless the domain requires it.
+- Explain value before asking for permissions, payments, or personal details.
+- Let users understand exactly what happens next.
+- Give immediate feedback after actions.
+- Make cancellation, editing, back navigation, and status checks easy to find.
+- Avoid dark patterns; Israeli users are highly sensitive to feeling manipulated.
+- Prefer visible control over mystery automation.
+- Use direct Hebrew, but avoid aggressive or command-heavy tone.
+- Put critical business details up front: price, commitment, cancellation, renewal, delivery, eligibility, and next step.
+
+### Israeli UX Trust Signals
+
+For the Israeli market, trust increases when the interface clearly shows:
+
+- Final price, including VAT when relevant.
+- Whether there is a subscription or one-time payment.
+- Cancellation terms.
+- Contact/support route, often WhatsApp or phone.
+- Confirmation after payment or form submission.
+- Receipt/invoice expectation.
+- Clear organization/company identity.
+- Security and privacy reassurance near sensitive fields.
+- Hebrew microcopy that does not sound machine-translated.
+
+### Tone of Voice
+
+Use Hebrew that is:
+
+- Clear.
+- Direct.
+- Human.
+- Eye-level.
+- Slightly warm, but not childish.
+- Professional when the domain requires trust: finance, health, legal, government, insurance, education.
+
+Prefer:
+
+- “נשמר בהצלחה”
+- “מעולה, אפשר להמשיך”
+- “חסר מספר טלפון”
+- “כדי להציג תוצאות לידך, נצטרך גישה למיקום”
+- “החיוב יתבצע רק אחרי אישור”
+- “אפשר לבטל בכל שלב דרך החשבון”
+
+Avoid:
+
+- “אירעה שגיאה בלתי צפויה”
+- “הנתון שהוזן אינו תקין”
+- “לחץ כאן”
+- “המשך הלאה”
+- “הגש” when “שליחה” or “להמשיך” is more natural.
+- Overly cute copy in serious contexts.
+- Legalese where plain Hebrew would be safer.
+
+---
+
+## 3. RTL Is Not Alignment — It Is Spatial Logic
+
+Designing for Hebrew is not just `text-align: right`.
+
+RTL affects:
+
+- Reading direction.
+- Visual scanning.
+- Navigation order.
+- Perception of time.
+- Progress direction.
+- Icon meaning.
+- Input behavior.
+- Keyboard navigation.
+- Screen reader order.
+- Animation direction.
+- Component placement.
+- Data table behavior.
+- Gesture expectations.
+- Mobile system navigation conflicts.
+
+In Hebrew interfaces, users usually start scanning from the top-right of the screen and move right-to-left. Important information should respect this scanning pattern.
+
+### Reading Gravity
+
+In Hebrew UI, the visual “gravity” shifts to the right.
+
+The primary entry point is usually:
+
+- Top-right on desktop.
+- Top-right or upper-right content area on mobile.
+- Right side of navigation, headings, cards, tables, and form groups.
+
+This affects:
+
+- Where titles should start.
+- Where icons attached to text should sit.
+- Where labels should be placed.
+- Where the user expects navigation to begin.
+- Where the user expects progress to start.
+
+### Mirrored F-Pattern and Mirrored Z-Pattern
+
+For content-heavy Hebrew pages, users often scan in a mirrored F-pattern:
+
+1. Start at the top-right.
+2. Move horizontally left.
+3. Return to the right and scan a lower line.
+4. Continue scanning vertically down the right side.
+
+For landing pages and onboarding screens, a mirrored Z-pattern may appear:
+
+1. Top-right.
+2. Top-left.
+3. Diagonal movement toward lower-right.
+4. Final action area toward lower-left.
+
+Design implications:
+
+- Put strong headings and key labels on the right.
+- Put supporting content after the primary anchor, not before it.
+- In many RTL dialogs and wizards, the visual terminal point is the lower-left.
+- Primary forward actions often belong on the left side of the action row.
+- Avoid forcing users to hunt for the next step against the natural RTL scan path.
+
+### Mental Model of Time and Progress
+
+In RTL, time and progress are often perceived spatially from right to left.
+
+Therefore:
+
+- Progress bars should fill from right to left.
+- Step indicators should begin on the right and advance leftward.
+- Onboarding flows should move right-to-left.
+- Timeline layouts should be tested carefully in RTL.
+- “Next” can visually point left.
+- “Back” can visually point right.
+- Breadcrumbs should follow the product’s RTL navigation model.
+
+---
+
+## 4. What to Mirror in RTL
+
+Mirror anything whose meaning depends on direction, movement, sequence, hierarchy, or reading flow.
+
+### Mirror:
+
+- Page layout.
+- Navigation order.
+- Breadcrumb direction.
+- Back and forward arrows.
+- Sidebar/drawer placement.
+- Progress bars.
+- Steppers.
+- Sliders, unless representing universal media/time.
+- Directional icons.
+- Icons showing motion.
+- Icons showing alignment.
+- Swipe affordances.
+- Chat bubbles alignment.
+- Form label/input relationships.
+- Table column priority when relevant.
+- Empty-state illustrations if they imply direction.
+- Onboarding illustrations if they show people moving forward.
+- Carousels when they represent reading flow or cards.
+- Tooltip/popover placement when it follows logical start/end.
+- Skeleton loaders when their direction implies content flow.
+
+### Examples:
+
+- Back button: points right in Hebrew.
+- Continue/next arrow: points left.
+- Drawer menu: opens from the right.
+- Stepper: first step on the right, last step on the left.
+- Progress bar: fills right-to-left.
+- List item with chevron: chevron appears on the left if it means “go deeper/next”.
+- A checklist icon appears on the right of the Hebrew label.
+- In a card list, the text block begins on the right and secondary metadata moves logically after it.
+
+---
+
+## 5. What NOT to Mirror
+
+Do not blindly mirror everything. Over-mirroring creates broken, strange, or untrustworthy interfaces.
+
+### Do NOT mirror:
+
+- Numbers.
+- Phone numbers.
+- Prices.
+- Dates written numerically.
+- OTP codes.
+- Credit card numbers.
+- IBANs.
+- URLs.
+- Email addresses.
+- English brand names.
+- Code snippets.
+- File paths.
+- API keys.
+- Media controls.
+- Video/audio progress bars, unless product-specific testing proves otherwise.
+- Play/pause icons.
+- Fast-forward/rewind if tied to global media conventions.
+- Universal object icons: camera, search, trash, clock, calendar.
+- Brand logos.
+- Maps, unless the map UI itself has RTL-specific controls.
+- Charts whose axis meaning is data-dependent, not language-dependent.
+- Clock faces and clockwise motion.
+
+### Important Rule
+
+Numbers inside Hebrew text remain LTR.
+
+Correct:
+
+- המחיר הוא ₪129
+- הקוד שלך הוא 458921
+- שלחנו הודעה ל־`itay@example.com`
+- מספר ההזמנה הוא `A-10492`
+
+Wrong:
+
+- Reversing digit order.
+- Moving punctuation incorrectly around mixed Hebrew/English text.
+- Mirroring a brand logo.
+- Mirroring a play button.
+- Rendering code blocks in RTL.
+
+---
+
+## 6. BiDi: Hebrew + English + Numbers
+
+Hebrew products almost always contain mixed-direction content:
+
+- Hebrew text.
+- English product names.
+- Emails.
+- URLs.
+- Numbers.
+- Prices.
+- Phone numbers.
+- Codes.
+- Technical terms.
+- File names.
+- User-generated content.
+- Database IDs.
+- Payment references.
+
+This creates BiDi problems.
+
+### Common BiDi Bugs
+
+Watch for:
+
+- Periods or question marks jumping to the wrong side.
+- Phone numbers appearing in the wrong order.
+- Currency symbols placed incorrectly.
+- English names breaking sentence flow.
+- Input cursor jumping in mixed text.
+- Placeholder alignment changing incorrectly.
+- Tables with numbers visually detached from labels.
+- Toasts or error messages ending with English words and broken punctuation.
+- URLs wrapping incorrectly.
+- `@` in email fields appearing visually confusing.
+- Slash-separated values breaking near Hebrew text.
+- Parentheses appearing in the wrong place.
+- Hyphenated ranges appearing reversed.
+
+### BiDi Rules
+
+Use correct base direction:
+
+```html
+&lt;html lang="he" dir="rtl"&gt;
+```
+
+Use logical direction on containers:
+
+```html
+&lt;section dir="rtl" lang="he"&gt;
+```
+
+Use `dir="ltr"` for inherently LTR content:
+
+```html
+&lt;span dir="ltr"&gt;itay@example.com&lt;/span&gt;
+&lt;span dir="ltr"&gt;050-123-4567&lt;/span&gt;
+&lt;span dir="ltr"&gt;https://example.com&lt;/span&gt;
+&lt;span dir="ltr"&gt;ABC-12345&lt;/span&gt;
+```
+
+Use `dir="auto"` for user-generated content when language is unknown:
+
+```html
+&lt;p dir="auto"&gt;{userGeneratedText}&lt;/p&gt;
+```
+
+For stubborn punctuation bugs, use Unicode direction marks:
+
+- RLM — Right-to-Left Mark.
+- LRM — Left-to-Right Mark.
+
+Use them sparingly and intentionally.
+
+### Handling Technical Text
+
+Code, URLs, emails, file names, and IDs must stay LTR.
+
+```html
+&lt;pre dir="ltr" style="text-align: left"&gt;
+const userEmail = "itay@example.com";
+&lt;/pre&gt;
+```
+
+For markdown/code-rendering systems:
+
+- Always force code blocks to LTR.
+- Keep syntax highlighting LTR.
+- Do not mirror indentation.
+- Do not translate API names.
+- Do not reverse slashes or punctuation.
+
+### BiDi Input Strategy
+
+Input behavior should depend on the content type:
+
+| Input Type | Direction | Alignment | Notes |
+|---|---:|---:|---|
+| Hebrew name | RTL / auto | right/start | Can use `dir="auto"` if mixed names are common. |
+| Email | LTR | left/end or logical LTR | Use `type="email"`, `dir="ltr"`. |
+| Phone | LTR | left or centered | Use `type="tel"`, `inputmode="tel"` or numeric. |
+| OTP | LTR | center | Preserve digit order. |
+| Password | LTR-neutral | left or standard browser behavior | Do not mirror. |
+| URL | LTR | left | Use `dir="ltr"`. |
+| Search | auto | start | Depends on product and expected query language. |
+| User comments | auto | start | Use `dir="auto"`. |
+
+---
+
+## 7. Mobile Ergonomics: The Thumb Zone
+
+Mobile design must assume one-handed use.
+
+Many users interact with smartphones primarily through the thumb. Therefore, layout must follow physical reachability, not just visual symmetry.
+
+### Thumb Zone Areas
+
+#### Natural Zone — Green
+
+Best area:
+
+- Bottom.
+- Center.
+- Slightly toward the thumb side.
+
+Place here:
+
+- Primary CTAs.
+- Main navigation.
+- Continue buttons.
+- Save buttons.
+- Payment buttons.
+- Submit buttons.
+- Frequently used actions.
+- Sticky form completion actions.
+
+#### Stretch Zone — Yellow
+
+Acceptable but less comfortable.
+
+Place here:
+
+- Secondary actions.
+- Filters.
+- Sort controls.
+- Search.
+- Less frequent actions.
+- Contextual controls.
+- Expand/collapse controls.
+
+#### Ache Zone — Red
+
+Hard to reach.
+
+Usually top corners.
+
+Place here:
+
+- Static info.
+- Page titles.
+- Status indicators.
+- Destructive actions that should not be triggered accidentally.
+- Rare actions.
+- Overflow menus.
+
+Avoid placing primary CTAs in the top corners.
+
+### Mobile Rule
+
+On mobile, the user should not need to stretch to complete the main task.
+
+If a flow’s primary action appears only at the top of the screen, it is probably wrong.
+
+---
+
+## 8. Bottom Navigation for Hebrew Mobile Apps
+
+Prefer bottom navigation over top-heavy menus for core product areas.
+
+### Bottom Tab Bar Rules
+
+Use bottom tabs when the app has 3–5 primary areas.
+
+For Hebrew RTL:
+
+- Order tabs from right to left.
+- The most primary/home tab is usually on the right.
+- Labels should be short.
+- Icons should be recognizable.
+- Active state must be visually strong.
+- Avoid more than 5 items.
+- Do not hide primary flows in a hamburger menu.
+
+Example RTL order:
+
+1. בית
+2. חיפוש
+3. פעולות
+4. התראות
+5. פרופיל
+
+In the UI this should appear right-to-left, with “בית” on the right.
+
+### Hamburger Menus
+
+Use hamburger menus carefully.
+
+Problems:
+
+- Low discoverability.
+- Harder reach if placed top-right.
+- Hides important actions.
+- Often overused in Israeli products.
+- Can conflict with system gestures or drawers.
+
+Use hamburger only for:
+
+- Secondary navigation.
+- Settings.
+- Legal pages.
+- Account management.
+- Rarely used areas.
+
+### Right-Side Drawers
+
+In Hebrew RTL:
+
+- Navigation drawers usually open from the right.
+- Drawer content starts on the right.
+- Close affordance may sit at the logical end, often left, depending on header pattern.
+- Ensure system back gesture does not conflict with drawer gestures.
+
+---
+
+## 9. Touch Targets and Tap Safety
+
+Every tappable element must be large enough for real fingers.
+
+Minimums:
+
+- iOS: 44×44 pt.
+- Android: 48×48 dp.
+- Web/mobile: aim for at least 44×44 CSS px where practical.
+- Spacing between targets: at least 8px.
+
+Apply this to:
+
+- Buttons.
+- Icons.
+- Checkboxes.
+- Radio buttons.
+- Toggle switches.
+- Menu items.
+- Table row actions.
+- Chips.
+- Close buttons.
+- Floating action buttons.
+- Pagination controls.
+- Calendar date cells.
+
+### Avoid Fat-Finger Errors
+
+Never place dangerous actions too close to common actions.
+
+Bad:
+
+- “Delete” beside “Save”.
+- Tiny X close button near a primary CTA.
+- Small checkbox with no tappable label.
+- Icon-only actions without enough padding.
+- Close and submit actions both in the same thumb path.
+
+Good:
+
+- Destructive actions separated.
+- Confirmation for irreversible actions.
+- Large row-level tap targets.
+- Full-label tap area for checkboxes and radios.
+- Undo for reversible actions.
+
+---
+
+## 10. Gestures in RTL Mobile Apps
+
+Gestures must match RTL expectations but should not be the only way to complete important actions.
+
+### Rules
+
+- Swipe directions should be tested in Hebrew.
+- Back gestures may feel natural from the right edge in RTL contexts.
+- Carousel direction should match reading flow.
+- Cards can move right-to-left for next content.
+- Destructive swipe actions should have visual confirmation.
+- Complex gestures need visible affordances.
+- Always provide a button alternative for accessibility.
+
+### Gesture Affordances
+
+Because gestures are hidden, provide hints:
+
+- Partial card peeking.
+- Drag handles.
+- Subtle animation.
+- Helper text.
+- First-use coach mark.
+- Visible alternative buttons.
+
+### System Gesture Conflicts
+
+On mobile, especially Android and iOS edge-gesture systems:
+
+- Avoid placing important sliders or swipe actions directly at the screen edge.
+- Do not rely only on edge swipes to navigate.
+- Provide a visible back button.
+- Test drawers, carousels, maps, sliders, and horizontal lists on real devices.
+- Be careful with right-edge gestures in RTL because they may conflict with app drawers or system navigation.
+
+---
+
+## 11. Hebrew Typography
+
+Hebrew typography requires special handling.
+
+Hebrew letters are denser, more square, and do not use capital letters. This makes hierarchy and readability different from English.
+
+### Font Choice
+
+Prefer modern Hebrew-friendly sans-serif fonts:
+
+- Heebo.
+- Assistant.
+- Noto Sans Hebrew.
+- Rubik.
+- Alef.
+- System Hebrew fonts when native feel is preferred.
+
+Choose fonts with:
+
+- Good Hebrew support.
+- Multiple weights.
+- Clear numerals.
+- Good rendering on mobile.
+- Strong readability at small sizes.
+- Strong BiDi behavior when mixed with Latin text.
+
+### Line Height
+
+Increase line-height compared to English.
+
+Rules:
+
+- Body text: usually 1.45–1.65.
+- Dense UI text: avoid going below 1.35.
+- Long reading text: prefer 1.55+.
+- Hebrew often needs 10%–20% more breathing room than English.
+
+### Letter Spacing
+
+Do not use expanded letter spacing in Hebrew.
+
+Avoid:
+
+```css
+letter-spacing: 0.08em;
+```
+
+For Hebrew, letter spacing should almost always be:
+
+```css
+letter-spacing: 0;
+```
+
+Expanded tracking breaks Hebrew readability.
+
+### Font Weight
+
+Avoid ultra-thin Hebrew text on mobile.
+
+Recommended:
+
+- Body: 400 or 500.
+- Secondary text: 400, but with sufficient contrast.
+- Headings: 600–700.
+- Avoid 100/200/300 for small Hebrew text.
+
+### No Capitalization Tool
+
+Because Hebrew has no uppercase/lowercase distinction, hierarchy must come from:
+
+- Size.
+- Weight.
+- Color.
+- Spacing.
+- Position.
+- Background.
+- Component structure.
+
+Do not rely on capitalization patterns from English UI systems.
+
+### Text Expansion and Truncation
+
+Hebrew labels can be wider or visually denser than English equivalents.
+
+Rules:
+
+- Design buttons to support longer Hebrew labels.
+- Avoid fixed-width text containers for labels.
+- Test common long words and phrases.
+- Use responsive wrapping before aggressive truncation.
+- If ellipsis is necessary, ensure it appears at the logical end.
+- Avoid icon-only fallbacks unless the icon is universally understood.
+
+---
+
+## 12. Hebrew Microcopy and Gender
+
+Hebrew is gendered. UX writing must be inclusive without becoming visually noisy.
+
+### Prefer Gender-Neutral Patterns
+
+Use:
+
+- Infinitives: להמשיך, לשמור, למחוק, להוסיף.
+- Action nouns: הרשמה, כניסה, חיפוש, שמירה.
+- Neutral phrasing: אפשר להמשיך, הפרטים נשמרו.
+- Second-person forms that work in writing when possible: קיבלת, שלחת, נרשמת.
+- Plural carefully: הצטרפו, המשיכו, מלאו את הפרטים.
+
+### Avoid
+
+- Default masculine everywhere.
+- Slashes: בחר/י, לחץ/י.
+- Dots: משתמש.ת, בחר.י — unless brand tone explicitly supports this.
+- Long inclusive constructions in small buttons.
+- Overly formal government-style text unless required.
+
+### Button Copy
+
+Buttons should be action-oriented and short.
+
+Prefer:
+
+- להמשיך
+- לשמור
+- להתחיל
+- להירשם
+- לתשלום
+- לשליחה
+- למחוק
+- לפתיחה
+- להוספה
+
+Avoid:
+
+- שלח, when gendered tone matters.
+- לחץ כאן.
+- אישור פעולה זו.
+- Texts that are too long for a button.
+- Literal translations of English CTA patterns.
+
+### Error Messages
+
+Good Hebrew errors:
+
+- State what happened.
+- Explain how to fix it.
+- Avoid blaming the user.
+- Be specific.
+- Stay near the relevant field.
+
+Examples:
+
+- “חסר מספר טלפון”
+- “מספר הטלפון צריך לכלול 10 ספרות”
+- “הסיסמה קצרה מדי”
+- “לא הצלחנו לשמור. כדאי לנסות שוב בעוד רגע”
+- “כתובת המייל לא נראית תקינה”
+- “הקוד שהוזן לא תואם. אפשר לנסות שוב”
+
+Avoid:
+
+- “שגיאה”
+- “נתונים לא תקינים”
+- “פעולה נכשלה”
+- “נא להזין ערך חוקי”
+
+---
+
+## 13. Visual Hierarchy in Hebrew UI
+
+Because Hebrew lacks capitalization and can be visually dense, hierarchy must be designed deliberately.
+
+Use:
+
+- Clear heading scale.
+- Strong spacing between sections.
+- Consistent card structure.
+- Right-aligned titles.
+- Strong primary CTA styling.
+- Meaningful icon placement.
+- Contrast that supports Hebrew readability.
+- Short paragraphs.
+- Scannable bullets.
+
+Avoid:
+
+- Dense walls of Hebrew text.
+- Center-aligned long Hebrew paragraphs.
+- Low-contrast gray text for important content.
+- Tiny Hebrew labels.
+- Overusing badges and chips.
+- UI that relies only on color to communicate status.
+
+### White Space
+
+Hebrew interfaces often need more breathing room.
+
+Use white space to:
+
+- Separate sections.
+- Reduce cognitive load.
+- Make form groups feel manageable.
+- Increase perceived trust.
+- Make mobile screens less stressful.
+
+---
+
+## 14. Accessibility for Hebrew RTL Products
+
+Accessibility is part of production readiness, not an optional enhancement.
+
+### Core Requirements
+
+- Use semantic HTML.
+- Set correct `lang` and `dir`.
+- Maintain logical focus order.
+- Provide Hebrew `aria-label`s.
+- Do not rely only on icons.
+- Ensure contrast is sufficient.
+- Support keyboard navigation.
+- Support screen readers.
+- Preserve focus visibility.
+- Ensure error messages are announced.
+- Avoid trapping users in modals or drawers.
+
+### RTL Accessibility Issues
+
+Watch for:
+
+- Focus moving in an unexpected visual direction.
+- Screen reader order not matching visual order.
+- Mirrored icons with untranslated labels.
+- `aria-label="back"` on a Hebrew back button.
+- Error messages visually right-aligned but semantically disconnected.
+- Tables where header associations break.
+- Tooltip content that appears on the wrong side.
+
+### Hebrew ARIA Examples
+
+```html
+&lt;button aria-label="חזרה"&gt;...&lt;/button&gt;
+&lt;button aria-label="סגירה"&gt;...&lt;/button&gt;
+&lt;button aria-label="פתיחת תפריט"&gt;...&lt;/button&gt;
+```
+
+### Contrast
+
+Hebrew characters can feel visually heavier or denser. Low contrast hurts readability quickly.
+
+Rules:
+
+- Do not use pale gray for essential labels.
+- Do not place white Hebrew text on light blue, yellow, or busy gradients.
+- Test small Hebrew text on real mobile screens.
+- Use stronger contrast for disabled states while still clearly disabled.
+
+---
+
+## 15. Forms for the Israeli Market
+
+Forms are where many Hebrew products fail.
+
+A production-ready Hebrew form must handle:
+
+- RTL layout.
+- LTR fields.
+- BiDi cursor behavior.
+- Mobile keyboard types.
+- Israeli phone numbers.
+- Israeli ID numbers.
+- Addresses.
+- Payment fields.
+- Clear validation.
+- Error recovery.
+- Accessibility.
+
+### Form Layout
+
+Rules:
+
+- Labels align to the logical start: right in Hebrew.
+- Required indicators appear near the label in a predictable way.
+- Validation messages appear directly below the relevant field.
+- Error state includes color, icon/text, and screen reader support.
+- Primary action is sticky or reachable on mobile.
+- Avoid long multi-column forms on mobile.
+- Use progressive disclosure for complex forms.
+
+### Input Direction Rules
+
+- Hebrew free text: `dir="auto"` or RTL depending on expected content.
+- Email: `dir="ltr"`, `type="email"`.
+- Phone: `dir="ltr"`, `type="tel"`.
+- OTP: `dir="ltr"`, centered or segmented.
+- ID number: `dir="ltr"`, `inputmode="numeric"`.
+- Credit card: `dir="ltr"`, numeric grouping.
+- URL: `dir="ltr"`.
+- Search: often `dir="auto"`.
+
+### Mobile Keyboard Optimization
+
+Use correct input modes:
+
+```html
+&lt;input type="email" dir="ltr" autocomplete="email" /&gt;
+&lt;input type="tel" dir="ltr" inputmode="tel" autocomplete="tel" /&gt;
+&lt;input type="text" dir="ltr" inputmode="numeric" autocomplete="one-time-code" /&gt;
+&lt;input type="text" dir="ltr" inputmode="numeric" /&gt;
+```
+
+### Validation Tone
+
+Validation should be immediate enough to help, but not aggressive.
+
+Good:
+
+- Validate required fields after blur or submit.
+- Validate format once the user has typed enough characters.
+- Show specific fix instructions.
+- Preserve user input after failure.
+- Auto-strip harmless separators in phone numbers.
+
+Bad:
+
+- Red error before the user starts typing.
+- Generic “invalid input”.
+- Clearing fields after failed submit.
+- Blocking paste unnecessarily.
+- Rejecting common formats that can be normalized.
+
+---
+
+## 16. Israeli Data Localization
+
+Localization is more than translation. Israeli products must understand local data formats.
+
+### Israeli Phone Numbers
+
+Common patterns:
+
+- Mobile: `05X-XXXXXXX` — usually 10 digits.
+- Landline: `0X-XXXXXXX` — usually 9 digits.
+- Toll-free/service numbers: may vary.
+
+UX rules:
+
+- Accept numbers with or without hyphens.
+- Strip spaces, hyphens, and parentheses before validation.
+- Preserve visual readability in display.
+- Use `type="tel"`.
+- Do not reverse digits in RTL text.
+- Consider international format `+972`.
+
+Examples:
+
+- `050-123-4567`
+- `0501234567`
+- `+972501234567`
+
+### Israeli ID — Teudat Zehut
+
+An Israeli ID number is usually nine digits and includes a check digit.
+
+UX rules:
+
+- Use numeric keyboard.
+- Allow leading zeros.
+- Do not convert to number type if leading zeros matter.
+- Validate with checksum.
+- Explain errors clearly.
+- Do not expose technical algorithm wording to users.
+
+User-facing error:
+
+- “מספר תעודת הזהות צריך לכלול 9 ספרות”
+- “מספר תעודת הזהות לא תקין”
+
+Developer note:
+
+- Store as string, not integer.
+- Normalize input before validation.
+- Keep display LTR.
+
+### Currency — New Israeli Shekel
+
+Use consistent formatting for ₪.
+
+Rules:
+
+- Use locale-aware formatting when possible.
+- Be explicit about recurring charges and VAT.
+- Avoid cute copy around money.
+- Show final amount before payment.
+- Use tabular numbers in financial tables.
+
+Examples:
+
+- `₪129`
+- `₪1,234.56`
+- `129 ש״ח` when copy tone prefers words.
+
+### Dates and Time
+
+For Israel:
+
+- Common numeric date format: `dd/mm/yyyy`.
+- Use `Asia/Jerusalem` for time zone logic.
+- Do not hardcode UTC offsets.
+- Be careful with daylight saving time.
+- Use absolute dates in legal, payment, and scheduling contexts.
+
+Good:
+
+- “10/05/2026”
+- “10 במאי 2026”
+- “הפגישה תתקיים ביום ראשון, 10 במאי 2026, בשעה 14:00”
+
+### CSV and Exported Hebrew Data
+
+For Hebrew CSV exports:
+
+- Export as UTF-8.
+- Add UTF-8 BOM when targeting Excel users.
+- Keep column order RTL-friendly when opened by Israeli users.
+- Test export in Excel, Google Sheets, and Numbers.
+- Use clear Hebrew headers.
+- Preserve IDs and phone numbers as text where needed.
+
+Common failure:
+
+- Hebrew appears as gibberish in Excel.
+
+Production fix:
+
+- Prepend UTF-8 BOM: `0xEF, 0xBB, 0xBF`.
+
+---
+
+## 17. Navigation Architecture for Hebrew Apps
+
+### Mobile
+
+Prefer:
+
+- Bottom tabs for primary sections.
+- Right-side drawer for secondary navigation.
+- Sticky bottom CTA for key flows.
+- Clear back behavior.
+- Avoid putting primary navigation only at the top.
+
+### Desktop
+
+For Hebrew desktop layouts:
+
+- Main sidebar often on the right.
+- Content flows from right to left.
+- Primary filters may appear on the right.
+- Secondary panels may appear on the left.
+- Breadcrumbs and page titles should respect RTL hierarchy.
+
+### Breadcrumbs
+
+Breadcrumbs need careful RTL treatment.
+
+Example:
+
+```text
+ראשי ← פרויקטים ← פרויקט חדש
+```
+
+The visual direction should match the product’s RTL navigation model and be consistent across the app.
+
+### Back and Forward
+
+In Hebrew products:
+
+- Back often points right.
+- Next/forward often points left.
+- The browser/system back behavior must remain predictable.
+- Do not create custom navigation that fights platform expectations.
+
+---
+
+## 18. Modals, Dialogs, and Bottom Sheets in Hebrew RTL
+
+Modals are high-risk components because they interrupt the flow and concentrate user decisions.
+
+### Hebrew Modal Anatomy
+
+A Hebrew modal should typically follow this logic:
+
+- Container: `dir="rtl"`.
+- Title: top-right, `text-align: start`.
+- Subtitle/body: right-aligned, readable, not too dense.
+- Close X: top-left, the logical end of the header.
+- Primary action: far-left in the footer for forward progression.
+- Secondary/cancel action: to the right of the primary action.
+- Focus starts at the logical beginning and remains trapped inside the dialog.
+
+### Modal Header
+
+Rules:
+
+- Title on the right.
+- Subtitle below title, also aligned start.
+- Close button on the left.
+- Close button has Hebrew label: `aria-label="סגירה"` or `aria-label="סגור"`.
+- Avoid placing X next to the title on the right.
+
+### Modal Body
+
+Rules:
+
+- Use short paragraphs.
+- Use bullets for dense information.
+- Use `dir="auto"` for user-generated or mixed content.
+- Keep code, emails, URLs, and IDs LTR.
+- Do not center long Hebrew text.
+
+### Modal Footer
+
+For RTL:
+
+- Primary action is usually far-left.
+- Secondary action appears to its right.
+- Destructive actions may need separation.
+- If action order conflicts with platform conventions, test with users and stay consistent.
+
+Example visual order in RTL footer:
+
+```text
+[ביטול]        [שמירה]
+(right)        (left / forward)
+```
+
+### Bottom Sheets
+
+On mobile, bottom sheets are often better than dropdowns or desktop-style modals.
+
+Use bottom sheets for:
+
+- Selection lists.
+- Filters.
+- Sort options.
+- Confirmation steps.
+- Contextual actions.
+
+Rules:
+
+- Handle/drag affordance visible.
+- Content right-aligned.
+- Primary action reachable at bottom.
+- Scroll behavior clear.
+- Close/dismiss available.
+
+---
+
+## 19. Dropdowns, Selects, Filters, and Search
+
+### Avoid Overusing Dropdowns on Mobile
+
+Dropdowns are often clumsy on mobile. Prefer:
+
+- Bottom sheets.
+- Radio lists.
+- Segmented controls.
+- Chips.
+- Searchable lists.
+
+### Filters in Hebrew Apps
+
+Filters should be:
+
+- Discoverable.
+- Resettable.
+- Summarized after selection.
+- Reachable on mobile.
+- Aligned to the right.
+- Clear about active filter count.
+
+Good labels:
+
+- “סינון”
+- “מיון”
+- “ניקוי סינון”
+- “3 מסננים פעילים”
+
+### Search
+
+Search is critical in Israeli consumer and admin products.
+
+Rules:
+
+- Search field can use `dir="auto"`.
+- Support Hebrew and English queries.
+- Handle typos and partial matches where possible.
+- Show empty states with useful next actions.
+- Keep placeholder short.
+
+Examples:
+
+- “חיפוש לפי שם, טלפון או אימייל”
+- “מה לחפש?”
+
+---
+
+## 20. Data Tables and Admin Systems in RTL
+
+Tables are one of the most fragile RTL components.
+
+### Core Rules
+
+- Table direction should match the interface: RTL.
+- Numeric data remains LTR or uses tabular numbers.
+- Sticky first column should stick to the right.
+- Horizontal scroll direction must be tested.
+- Row actions should appear at a predictable logical end.
+- Column resizing handles should appear on the logical end.
+- Sort icons should not crowd Hebrew labels.
+- Empty states should be clear.
+
+### CSS Logical Sticky Column
+
+Use logical properties:
+
+```css
+.sticky-column {
+  position: sticky;
+  inset-inline-start: 0;
+  background: white;
+  z-index: 10;
+}
+```
+
+Avoid hardcoded `left: 0` or `right: 0` when a logical property can solve it.
+
+### Numbers in Tables
+
+Use tabular numbers for financial and analytics tables:
+
+```css
+.numeric {
+  direction: ltr;
+  font-variant-numeric: tabular-nums;
+}
+```
+
+### Admin UX Priorities
+
+For Hebrew SaaS/admin systems, prioritize:
+
+- Tables that work in RTL.
+- Bulk actions.
+- Filters.
+- Search.
+- Status clarity.
+- Audit logs.
+- Role permissions.
+- Error recovery.
+- Export/import that supports Hebrew.
+
+---
+
+## 21. Cards, Lists, and Empty States
+
+### Cards
+
+Hebrew cards should:
+
+- Start from the right.
+- Put title and key status on the right.
+- Put chevron/next affordance on the left when it means “open”.
+- Keep secondary metadata visually secondary.
+- Support long Hebrew titles.
+- Avoid overloading cards with too many badges.
+
+### Lists
+
+Rules:
+
+- Leading icon/avatar on the right.
+- Text block to its left or after it in logical flow.
+- Next chevron on the left.
+- Row actions consistent across the product.
+- Swipe actions tested in RTL.
+
+### Empty States
+
+A good empty state explains:
+
+- What is missing.
+- Why it matters.
+- What the user can do next.
+
+Example:
+
+- “עוד אין פניות”
+- “כאן יופיעו פניות חדשות מלקוחות”
+- CTA: “להוספת פנייה”
+
+Avoid:
+
+- “No data”
+- “Nothing here”
+- Empty screens without guidance.
+
+---
+
+## 22. Onboarding and First-Run Experience
+
+Hebrew onboarding should reduce uncertainty quickly.
+
+Rules:
+
+- Explain value before asking for permissions.
+- Keep steps short.
+- Show progress right-to-left.
+- Use plain Hebrew.
+- Avoid too many screens before first value.
+- Make skip/back logic clear.
+- Use illustrations only if they respect RTL movement.
+
+### Permissions
+
+Before asking for permissions, explain why.
+
+Good:
+
+- “כדי להציג תוצאות לידך, נצטרך גישה למיקום.”
+- “אפשר לשנות את ההרשאה בכל רגע בהגדרות.”
+
+Bad:
+
+- Asking for location immediately on app open.
+- Generic system prompt without context.
+
+---
+
+## 23. Payments, Subscriptions, and Israeli Trust
+
+Payment flows in Israel require especially high clarity.
+
+### Payment UX Rules
+
+- Show the exact amount before payment.
+- Clarify whether payment is one-time or recurring.
+- Clarify trial terms.
+- Clarify cancellation.
+- Show VAT/invoice expectations.
+- Use serious, calm copy.
+- Show confirmation after payment.
+- Send receipt or clear next step.
+- Do not hide subscription language.
+
+### Subscription Copy
+
+Good:
+
+- “החיוב הבא יתבצע ב־10/06/2026”
+- “אפשר לבטל את המנוי בכל שלב דרך החשבון”
+- “לא יתבצע חיוב לפני סיום תקופת הניסיון”
+
+Bad:
+
+- “המשך” as the only payment CTA.
+- Hiding recurring billing in small gray text.
+- Cute copy around money.
+
+### Payment Error Messages
+
+Good:
+
+- “התשלום לא אושר. אפשר לנסות כרטיס אחר או לפנות לתמיכה.”
+- “לא הצלחנו להשלים את החיוב. לא נגבה תשלום.”
+
+Avoid:
+
+- “Transaction failed”
+- “שגיאה 402”
+
+---
+
+## 24. UX Psychology for Mobile and RTL Products
+
+### Cognitive Load
+
+Reduce cognitive load by:
+
+- Limiting choices per screen.
+- Grouping related fields.
+- Using clear section headings.
+- Showing one primary action at a time.
+- Avoiding unnecessary explanations.
+- Revealing advanced options gradually.
+
+### Recognition Over Recall
+
+Users should not need to remember:
+
+- What step they are on.
+- What they selected.
+- What will happen after submit.
+- How to undo.
+- Where they came from.
+
+Show:
+
+- Progress.
+- Selection summary.
+- Confirmation.
+- Back/exit options.
+- Persistent key context.
+
+### Error Prevention
+
+Prevent errors before they happen:
+
+- Use input masks carefully.
+- Use smart defaults.
+- Disable impossible actions only with explanation.
+- Confirm destructive actions.
+- Provide undo when possible.
+- Preserve user input after failure.
+
+### Perceived Performance
+
+Make the product feel faster:
+
+- Immediate button feedback.
+- Skeleton loading.
+- Optimistic updates when safe.
+- Clear loading states.
+- Avoid layout shifts.
+- Keep Hebrew labels stable during loading.
+
+---
+
+## 25. Design Systems for Hebrew RTL
+
+A production design system must define RTL behavior at the component level.
+
+### Design Tokens
+
+Use tokens for:
+
+- Spacing.
+- Typography.
+- Radius.
+- Color.
+- Elevation.
+- Motion.
+- Focus states.
+- Border widths.
+
+### Logical Naming
+
+Prefer logical token names:
+
+- `space-inline-start`
+- `space-inline-end`
+- `border-inline-start`
+- `inset-inline-end`
+- `text-start`
+- `text-end`
+
+Avoid names that depend on physical direction:
+
+- `leftPanel`
+- `rightMargin`
+- `paddingLeftLarge`
+
+### Component Documentation
+
+For every component, document:
+
+- RTL layout.
+- LTR exceptions.
+- Keyboard behavior.
+- Screen reader labels.
+- Mobile behavior.
+- Loading state.
+- Empty state.
+- Error state.
+- Disabled state.
+- Long Hebrew text behavior.
+
+---
+
+## 26. CSS and Frontend Implementation
+
+### Golden Rule
+
+Use logical properties instead of physical left/right properties.
+
+Prefer:
+
+```css
+margin-inline-start: 1rem;
+padding-inline-end: 1rem;
+inset-inline-start: 0;
+border-inline-end: 1px solid var(--border);
+text-align: start;
+```
+
+Avoid:
+
+```css
+margin-left: 1rem;
+padding-right: 1rem;
+left: 0;
+border-right: 1px solid var(--border);
+text-align: right;
+```
+
+### Logical Property Mapping
+
+| Physical Property | Logical Property | Hebrew RTL Meaning |
+|---|---|---|
+| `margin-left` | `margin-inline-start` | Right margin |
+| `margin-right` | `margin-inline-end` | Left margin |
+| `padding-left` | `padding-inline-start` | Right padding |
+| `padding-right` | `padding-inline-end` | Left padding |
+| `border-left` | `border-inline-start` | Right border |
+| `left: 0` | `inset-inline-start: 0` | Right edge |
+| `right: 0` | `inset-inline-end: 0` | Left edge |
+| `text-align: left` | `text-align: start` | Right alignment |
+
+### Tailwind Guidance
+
+Use logical utilities where available:
+
+- `ms-*` instead of `ml-*`.
+- `me-*` instead of `mr-*`.
+- `ps-*` instead of `pl-*`.
+- `pe-*` instead of `pr-*`.
+- `start-*` instead of `left-*`.
+- `end-*` instead of `right-*`.
+- `text-start` instead of `text-right` where possible.
+
+### React Direction Strategy
+
+At app root:
+
+```tsx
+&lt;html lang="he" dir="rtl"&gt;
+```
+
+Or at React root:
+
+```tsx
+&lt;div dir="rtl" lang="he"&gt;
+  &lt;App /&gt;
+&lt;/div&gt;
+```
+
+For mixed-language apps:
+
+- Store locale and direction together.
+- Update `document.documentElement.dir`.
+- Update `document.documentElement.lang`.
+- Avoid full page reload unless unavoidable.
+- Test layout shift during direction changes.
+
+---
+
+## 27. AI Coding Agents: Prompting for Production RTL
+
+When using AI coding agents, do not simply say: “make it RTL.” That usually produces shallow right alignment and hidden layout bugs.
+
+### Golden Prompt Constraint
+
+Always include:
+
+&gt; Build this as a production-grade Hebrew RTL interface. Do not use physical CSS properties such as left/right/ml/pr unless there is a justified exception. Use logical properties: inline-start, inline-end, block-start, block-end, text-start, text-end, ms/me/ps/pe/start/end. Preserve LTR direction for numbers, email, URL, code, phone, OTP, and payment fields.
+
+### AI Prompt Checklist
+
+When prompting Claude Code, Codex, Lovable, Base44, or similar tools, specify:
+
+- Role: “You are a senior frontend architect specializing in Hebrew RTL UX.”
+- Direction: root container must have `dir="rtl"` and `lang="he"`.
+- Logical CSS: no physical left/right unless necessary.
+- Component anatomy: exact RTL placement of title, close, actions, icons.
+- BiDi: handle mixed Hebrew/English/numbers.
+- Accessibility: Hebrew ARIA labels and logical focus order.
+- Mobile: thumb-zone placement and touch targets.
+- States: loading, error, empty, disabled, success.
+- QA: list tests or acceptance criteria.
+
+### Example AI Prompt for a Modal
+
+```text
+You are a senior frontend architect specializing in Hebrew RTL UX and accessibility.
+Build a production-ready responsive React modal for a Hebrew product.
+
+Requirements:
+- Main modal container must use dir="rtl" and lang="he".
+- Use text-align: start, not hardcoded right alignment where logical alignment is better.
+- Title and subtitle start on the right.
+- Close X is on the top-left and has aria-label="סגירה".
+- Body supports mixed Hebrew/English text and user-generated content with dir="auto".
+- Emails, URLs, phone numbers, OTPs, and code snippets must remain dir="ltr".
+- Footer actions follow RTL progression: primary action visually far-left, secondary action to its right.
+- Preserve accessible DOM/focus order.
+- Use CSS logical properties only: inline-start/end, block-start/end, ms/me/ps/pe/start/end.
+- No ml/mr/pl/pr/left/right unless there is a documented exception.
+- Minimum touch target: 44x44.
+- Include loading, disabled, error, and success states.
+- Add notes for Playwright RTL visual regression and axe accessibility tests.
+```
+
+### AI Output Review
+
+Reject AI-generated code if it:
+
+- Uses `left`/`right` everywhere.
+- Aligns text right but leaves layout LTR.
+- Mirrors numbers or code.
+- Places close X on the wrong side.
+- Uses English ARIA labels.
+- Puts primary mobile CTA in the top corner.
+- Has no error/empty/loading states.
+- Does not mention accessibility.
+- Does not support long Hebrew labels.
+
+---
+
+## 28. Component Definition of Done — RTL Production DoD
+
+Every component must pass localized criteria before it is “done.”
+
+### Button DoD
+
+A button is done when:
+
+- Hebrew label fits without clipping.
+- Touch target is at least 44×44.
+- Icon placement uses logical spacing.
+- Loading spinner does not break text flow.
+- Disabled state is clear and accessible.
+- Focus state is visible.
+- Button order works in RTL.
+- Long labels wrap or adapt gracefully.
+- ARIA label exists for icon-only buttons.
+
+### Input DoD
+
+An input is done when:
+
+- Label aligns to logical start.
+- Placeholder direction is correct.
+- Field direction matches content type.
+- Cursor behaves correctly with Hebrew/English/numbers.
+- Error message is specific and near the field.
+- Mobile keyboard type is correct.
+- Required state is clear.
+- Autocomplete is configured.
+- Pasted values normalize correctly when appropriate.
+
+### Modal DoD
+
+A modal is done when:
+
+- `dir="rtl"` is applied.
+- Title is top-right.
+- Close button is top-left.
+- Primary action is visually far-left when following RTL progression.
+- Focus is trapped.
+- Escape closes the modal.
+- Focus returns to trigger.
+- Screen reader announces title and description.
+- Mobile view uses reachable actions.
+- Long Hebrew content scrolls correctly.
+
+### Table DoD
+
+A table is done when:
+
+- Columns align correctly in RTL.
+- Sticky columns stick to the right using logical properties.
+- Numeric columns remain readable LTR/tabular.
+- Sort controls align logically.
+- Horizontal scroll works.
+- Row actions are reachable.
+- Empty state exists.
+- Export supports Hebrew encoding.
+- Keyboard navigation works.
+
+### Navigation DoD
+
+Navigation is done when:
+
+- Mobile bottom tabs are ordered right-to-left.
+- Desktop sidebar is positioned logically.
+- Active state is clear.
+- Back/next icons point correctly.
+- Drawer opens from the correct side.
+- Keyboard and screen reader order match visual intent.
+- Hidden navigation does not contain primary user tasks.
+
+### Form Flow DoD
+
+A form flow is done when:
+
+- The user can complete it one-handed on mobile.
+- All fields validate correctly.
+- Error recovery is clear.
+- Partial progress is preserved where needed.
+- BiDi fields are tested.
+- Submit action is reachable.
+- Success confirmation is clear.
+- No field loses data after server error.
+
+---
+
+## 29. Automated QA for RTL Products
+
+Manual testing is not enough. RTL interfaces are fragile, and small CSS changes can break layout.
+
+### Visual Regression Testing
+
+Use screenshot regression testing for:
+
+- Core screens.
+- Forms.
+- Modals.
+- Tables.
+- Navigation.
+- Empty states.
+- Error states.
+- Long Hebrew labels.
+- Mixed Hebrew/English text.
+
+Playwright example direction:
+
+```ts
+await expect(page).toHaveScreenshot('checkout-rtl.png');
+```
+
+Best practices:
+
+- Generate baselines in the same CI environment.
+- Mask dynamic data such as timestamps and usernames.
+- Test Chromium and WebKit where possible.
+- Include mobile viewport screenshots.
+- Include both normal and long Hebrew text scenarios.
+
+### Accessibility Testing
+
+Use automated tools such as axe as a first line of defense, but do not rely on them alone.
+
+Test:
+
+- Missing labels.
+- Contrast violations.
+- Focus traps.
+- Keyboard navigation.
+- ARIA names.
+- Heading hierarchy.
+- Form field associations.
+- Dialog announcements.
+
+### E2E Tests for BiDi Fields
+
+Test real inputs:
+
+- Hebrew full name.
+- Hebrew + English mixed sentence.
+- Email.
+- URL.
+- Phone number with hyphen.
+- Phone number with spaces.
+- Israeli ID with leading zero.
+- OTP.
+- Price.
+- File name in Hebrew and English.
+
+Example assertions:
+
+- Submitted value equals intended value.
+- Visual value does not reverse digits.
+- Cursor behavior is acceptable.
+- Error message appears near the field.
+- Mobile keyboard type is appropriate.
+
+---
+
+## 30. Manual QA Checklist for RTL Hebrew Products
+
+Before release, test:
+
+### Layout
+
+- Entire app works with `dir="rtl"`.
+- No text is cut off.
+- No buttons overlap.
+- No icons point the wrong way.
+- No hardcoded `left/right` breaks layout.
+- Drawers open from correct side.
+- Tabs are ordered correctly.
+- Tables scroll correctly.
+- Sticky elements respect RTL.
+- Tooltips/popovers appear in reasonable positions.
+
+### Text
+
+- Hebrew text aligned correctly.
+- English text displayed correctly.
+- Numbers remain LTR.
+- Phone numbers remain readable.
+- Prices display correctly.
+- Punctuation does not jump.
+- Long Hebrew labels do not break buttons.
+- Error messages are clear.
+- Empty states are helpful.
+
+### Forms
+
+- Inputs have correct direction.
+- Cursor behaves correctly.
+- Email/URL/code fields are LTR.
+- Validation messages appear near fields.
+- Required fields are clear.
+- Keyboard type matches input type on mobile.
+- Pasting values works.
+- Leading zeros are preserved.
+
+### Mobile
+
+- Primary CTA is reachable by thumb.
+- Touch targets are large enough.
+- Bottom nav works.
+- Sticky CTAs do not cover content.
+- Keyboard does not hide submit actions.
+- Gestures do not conflict with system gestures.
+- Modal/bottom sheet actions remain reachable.
+
+### Accessibility
+
+- Keyboard navigation works.
+- Focus state is visible.
+- Screen reader labels are Hebrew.
+- Modal focus is trapped and restored.
+- Errors are announced.
+- Contrast is sufficient.
+- Text can scale without breaking layout.
+
+### Production
+
+- Analytics events fire correctly.
+- Error tracking captures failures.
+- Hebrew CSV exports open correctly.
+- Payment flows show exact amounts.
+- Time zone logic uses `Asia/Jerusalem`.
+- Emails/SMS/WhatsApp messages are localized.
+
+---
+
+## 31. Success Metrics for Hebrew RTL UX
+
+Do not rely only on subjective “looks good.” Measure whether the Hebrew product works.
+
+Track Hebrew locale metrics separately from LTR baselines.
+
+### Behavioral Metrics
+
+- Task Success Rate.
+- Time to completion.
+- Form abandonment rate.
+- Field-level error rate.
+- Rage clicks / repeated taps.
+- Backtracking rate.
+- Search vs. navigation usage.
+- Checkout/payment completion.
+- Support contact rate.
+- Retry rate after validation errors.
+
+### Qualitative Metrics
+
+- NPS by locale.
+- CSAT by locale.
+- “Ease of use” survey score.
+- Session recordings.
+- Usability testing.
+- Support-ticket themes.
+- User feedback on Hebrew clarity.
+
+### RTL-Specific Diagnostic Signals
+
+Investigate when:
+
+- Hebrew users abandon forms more than English users.
+- Hebrew users use search because navigation is confusing.
+- Users repeatedly tap icons that are not mirrored correctly.
+- Users fail phone/ID fields often.
+- Users complain that exported files show gibberish.
+- Users ask support about pricing or subscription terms.
+
+---
+
+## 32. Domain-Specific Israeli UX Notes
+
+### Finance / Payments
+
+Prioritize:
+
+- Trust.
+- Clarity.
+- Exact amounts.
+- Transparent fees.
+- Clear cancellation.
+- Receipts.
+- Confirmation screens.
+- Strong error handling.
+- Auditability.
+
+Avoid cute copy around money.
+
+### Health / Legal / Government
+
+Prioritize:
+
+- Formal clarity.
+- Accessibility.
+- Plain Hebrew.
+- Legal precision.
+- Clear next steps.
+- Save/resume flows.
+- Printable/downloadable confirmations.
+
+### Marketplaces / Consumer Apps
+
+Prioritize:
+
+- Speed.
+- Search.
+- Filters.
+- Location.
+- Reviews.
+- WhatsApp/contact flows.
+- Fast checkout.
+- Trust badges.
+- Clear delivery/availability.
+
+### SaaS / Admin Systems
+
+Prioritize:
+
+- Tables that work in RTL.
+- Bulk actions.
+- Filters.
+- Search.
+- Status clarity.
+- Audit logs.
+- Role permissions.
+- Error recovery.
+- Export/import.
+- Keyboard productivity.
+
+### Education / Learning Apps
+
+Prioritize:
+
+- Clear progress.
+- Encouraging but not childish feedback.
+- Readable Hebrew long-form text.
+- Accessible video/audio controls.
+- Direction-aware quizzes and steppers.
+- Save progress.
+
+---
+
+## 33. Priority Matrix for RTL Readiness
+
+Use P0/P1/P2 priorities to avoid polishing secondary details while core RTL is broken.
+
+### P0 — Critical for MVP
+
+Must be done before launch:
+
+- `&lt;html lang="he" dir="rtl"&gt;` or equivalent root setup.
+- App-wide logical layout.
+- Primary navigation RTL order.
+- Core forms support BiDi, email, phone, OTP, and numeric fields.
+- Primary CTA reachable on mobile.
+- Basic accessibility: labels, focus states, keyboard navigation.
+- No broken numbers, prices, phone numbers, or emails.
+- Main flows tested on real mobile.
+- Payment/submit flows show clear next step and success/failure.
+
+### P1 — High Impact
+
+Should be done for a strong production release:
+
+- Israeli phone and ID validation.
+- Automated RTL visual regression tests.
+- axe accessibility scan integration.
+- Component DoD coverage.
+- Hebrew microcopy pass.
+- Long-label and text-expansion testing.
+- Tables and exports tested.
+- Analytics segmented by Hebrew locale.
+- Clear empty/error/loading states.
+
+### P2 — Optimization
+
+Improve after launch or during maturity phase:
+
+- Runtime LTR/RTL language switching.
+- Advanced inclusive language strategy.
+- Detailed RTL motion system.
+- Advanced personalization.
+- Session replay analysis.
+- Full design-system documentation.
+- RTL-specific usability tests.
+- Localization QA for emails, PDFs, CSVs, invoices, notifications.
+
+---
+
+## 34. Production Implementation Checklist
+
+### Foundation
+
+- [ ] Root `lang="he"` and `dir="rtl"`.
+- [ ] Logical CSS properties used.
+- [ ] No global physical left/right assumptions.
+- [ ] Theme supports Hebrew fonts.
+- [ ] Components support long Hebrew labels.
+- [ ] BiDi strategy documented.
+
+### Components
+
+- [ ] Buttons.
+- [ ] Inputs.
+- [ ] Selects.
+- [ ] Modals.
+- [ ] Drawers.
+- [ ] Bottom sheets.
+- [ ] Tables.
+- [ ] Cards.
+- [ ] Tabs.
+- [ ] Toasts.
+- [ ] Tooltips.
+- [ ] Pagination.
+- [ ] Empty states.
+
+### Data
+
+- [ ] Phone normalization.
+- [ ] Israeli ID validation if needed.
+- [ ] Currency formatting.
+- [ ] Date formatting.
+- [ ] `Asia/Jerusalem` timezone.
+- [ ] UTF-8 CSV export.
+- [ ] LTR display for codes/emails/URLs.
+
+### QA
+
+- [ ] Manual RTL checklist.
+- [ ] Visual regression screenshots.
+- [ ] Accessibility scan.
+- [ ] E2E form tests.
+- [ ] Real mobile tests.
+- [ ] Cross-browser tests.
+- [ ] Long Hebrew text tests.
+- [ ] Mixed BiDi content tests.
+
+### Analytics
+
+- [ ] Hebrew users segmented.
+- [ ] Form errors tracked per field.
+- [ ] Drop-off tracked per step.
+- [ ] Rage clicks tracked.
+- [ ] Payment failures tracked.
+- [ ] Support topics categorized.
+
+---
+
+## 35. Common RTL Anti-Patterns
+
+Avoid these mistakes:
+
+- Translating strings without restructuring layout.
+- Using `text-align: right` as the only RTL fix.
+- Hardcoding `left` and `right` in CSS.
+- Mirroring numbers, media controls, or logos.
+- Leaving primary CTA at top-right on mobile.
+- Using desktop dropdowns on mobile.
+- Creating tiny icon-only controls.
+- Ignoring BiDi input cursor behavior.
+- Exporting Hebrew CSV without Excel compatibility.
+- Using machine-translated Hebrew.
+- Writing default masculine microcopy everywhere.
+- Hiding pricing or subscription details.
+- Not testing with long Hebrew labels.
+- Not testing on real mobile devices.
+- Not testing screen reader/focus order.
+
+---
+
+## 36. Review Heuristics for Fast Audits
+
+When quickly reviewing a Hebrew app, ask:
+
+1. Does the first glance start at the right place?
+2. Is the main action reachable by thumb?
+3. Does the next step feel visually obvious?
+4. Are numbers, emails, prices, and phone numbers stable?
+5. Are icons mirrored only when meaning requires it?
+6. Does the Hebrew sound native and human?
+7. Can a user recover from errors?
+8. Can a keyboard/screen-reader user complete the flow?
+9. Do forms support Israeli data patterns?
+10. Would this screen survive long Hebrew labels?
+11. Would this flow still work on a small phone?
+12. Is the implementation logical and maintainable, or patched visually?
+
+---
+
+## 37. Final Principle
+
+A strong Hebrew RTL product is not simply translated.
+
+It is:
+
+- Cognitively RTL.
+- Visually RTL.
+- Technically RTL.
+- Linguistically Hebrew.
+- Ergonomically mobile-first.
+- Accessible by default.
+- Locally aware.
+- Tested in production-like conditions.
+
+The goal is not just to make the interface “look right.”
+
+The goal is to make the product feel as if it was originally designed for Hebrew-speaking Israeli users from day one.
+</textarea>
+      <div class="rec"><strong>המלצה:</strong> RTL מלא, פונט Assistant/Heebo, כותרת, תאריך, תוכן, Footer ומספור עמודים.</div>
+    </article>
+    
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.3</span><h3>שליחת תוצר טקסט כקובץ</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> נבחרה שליחה כקובץ מצורף. לא ברור באיזה פורמט יש לצרף תוצר טקסט.</div>
+      <p><strong>שאלה:</strong> תוצר טקסט יישלח כ-PDF, TXT, HTML או גם בגוף המייל?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="text_attachment_answer" placeholder="כתוב כאן את התשובה...">pdf</textarea>
+      <div class="rec"><strong>המלצה:</strong> טקסט בגוף המייל וגם כ-PDF כאשר מדובר במסמך.</div>
+    </article>
+    
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.4</span><h3>בקשות למצגת</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> מצגת אינה כלולה, אך נדרש להחזיר הוראות ותוכן ל-NotebookLM. יש להגדיר מה בדיוק נשלח.</div>
+      <p><strong>שאלה:</strong> כאשר משתמש מבקש מצגת, האם המערכת תחזיר מבנה שקפים, תוכן מלא לכל שקף ו-Prompt ל-NotebookLM?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="presentation_fallback_answer" placeholder="כתוב כאן את התשובה...">להחזיר מסמך RTL עם מבנה שקפים, תוכן, הנחיות עיצוב ו-Prompt מוכן להדבקה
+
+אבל גם תסביר לו בהודעה מה הוא עושה בnotebook lm</textarea>
+      <div class="rec"><strong>המלצה:</strong> להחזיר מסמך RTL עם מבנה שקפים, תוכן, הנחיות עיצוב ו-Prompt מוכן להדבקה.</div>
+    </article>
+    
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.5</span><h3>היקף מסך ההגדרות</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> מסך הגדרות נכלל ב-MVP, אך לא הוגדר אילו פריטים ניתנים לשינוי.</div>
+      <p><strong>שאלה:</strong> אילו הגדרות המנהל יוכל לערוך?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="settings_scope_answer" placeholder="כתוב כאן את התשובה...">המלצה: נוסחי WhatsApp, פרטי מייל, מצב אישור, מספר ניסיונות, System Message ומגבלות שימוש.
+</textarea>
+      <div class="rec"><strong>המלצה:</strong> נוסחי WhatsApp, פרטי מייל, מצב אישור, מספר ניסיונות, System Message ומגבלות שימוש.</div>
+    </article>
+    
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.6</span><h3>ייצוא XLSX</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> נדרש ייצוא XLSX עם תאריך. יש להגדיר אילו נתונים נכללים ובאיזה טווח.</div>
+      <p><strong>שאלה:</strong> האם הייצוא כולל בקשות בלבד או גם הודעות, עלויות ולוגים?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="export_xlsx_answer" placeholder="כתוב כאן את התשובה...">לא יודע כרגע</textarea>
+      <div class="rec"><strong>המלצה:</strong> קובץ XLSX לפי טווח תאריכים עם גיליונות: בקשות, עלויות ושגיאות.</div>
+    </article>
+    
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.7</span><h3>ניהול קבצים ב-Bucket</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> נדרשת שמירה ללא הגבלת זמן ומחיקה ידנית. ללא מדדי שימוש, האחסון עלול לגדול ללא בקרה.</div>
+      <p><strong>שאלה:</strong> האם להציג נפח אחסון, תאריך יצירה ומחיקה מרובה במסך הניהול?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="retention_bucket_answer" placeholder="כתוב כאן את התשובה...">כן</textarea>
+      <div class="rec"><strong>המלצה:</strong> כן — רשימת קבצים, גודל, תאריך, שיוך לבקשה ומחיקה מרובה.</div>
+    </article>
+    
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.8</span><h3>הגנה משימוש לרעה</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> כל מי שמכיר את המספר רשאי להשתמש ואין מגבלת שימוש. הדבר עלול ליצור עלויות AI גבוהות וספאם.</div>
+      <p><strong>שאלה:</strong> האם להוסיף מגבלה לפי מספר טלפון, תקציב יומי או חסימה ידנית?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="abuse_protection_answer" placeholder="כתוב כאן את התשובה...">כן תשים</textarea>
+      <div class="rec"><strong>המלצה:</strong> להוסיף מגבלת שימוש ניתנת להגדרה ורשימת חסומים.</div>
+    </article>
+    
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.9</span><h3>מידע רגיש</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> סומן שלא צפוי מידע רגיש, אך השימוש מול עיריות ואירועי חירום עלול לכלול מידע אישי או רגיש.</div>
+      <p><strong>שאלה:</strong> האם יש לאסור במפורש שליחת מידע אישי/ביטחוני, או להוסיף הודעת אזהרה והסכמה?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="sensitive_data_answer" placeholder="כתוב כאן את התשובה...">כן</textarea>
+      <div class="rec"><strong>המלצה:</strong> להציג הודעה קצרה שאין לשלוח מידע רגיש ולתעד אותה ב-System Message.</div>
+    </article>
+    
+    <article class="question-card priority-b">
+      <div class="q-head"><span class="badge">B.10</span><h3>פתיחת בקשה חדשה</h3></div>
+      <div class="why"><strong>למה זה חשוב:</strong> הכלל שנכתב מסביר מתי לבקש בריף, אך לא מגדיר מתי הודעה שייכת לבקשה קיימת ומתי היא פותחת בקשה חדשה.</div>
+      <p><strong>שאלה:</strong> לאחר שליחת תוצר, האם כל הודעה חדשה פותחת בקשה חדשה? האם מילת מפתח כמו 'בקשה חדשה' נדרשת?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="request_lifecycle_answer" placeholder="כתוב כאן את התשובה...">המלצה: לאחר סטטוס sent/closed, הודעה חדשה פותחת בקשה חדשה; בזמן בקשה פעילה ההודעות מצטרפות אליה.
+</textarea>
+      <div class="rec"><strong>המלצה:</strong> לאחר סטטוס sent/closed, הודעה חדשה פותחת בקשה חדשה; בזמן בקשה פעילה ההודעות מצטרפות אליה.</div>
+    </article>
+    </div>
+</section>
+
+<section class="section" id="later">
+<h2>5. החלטות שניתן לסגור בהמשך</h2>
+<div class="question-grid">
+    <article class="question-card priority-c">
+      <div class="q-head"><span class="badge">C.1</span><h3>הערך העסקי</h3></div>
+      
+      <p><strong>שאלה:</strong> השלם משפט: השירות חוסך/מאפשר ללקוח ________.</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="business_value_answer" placeholder="כתוב כאן את התשובה..."></textarea>
+      <div class="rec"><strong>המלצה:</strong> למשל: להפיק חומרים מקצועיים גם מחוץ לשעות העבודה ובזמן קצר.</div>
+    </article>
+    
+    <article class="question-card priority-c">
+      <div class="q-head"><span class="badge">C.2</span><h3>קהלי יעד</h3></div>
+      
+      <p><strong>שאלה:</strong> פרט קהלים טיפוסיים: תורמים, משקיעים, תושבים, הנהלה, עובדים, תקשורת וכדומה.</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="target_audiences_answer" placeholder="כתוב כאן את התשובה..."></textarea>
+      
+    </article>
+    
+    <article class="question-card priority-c">
+      <div class="q-head"><span class="badge">C.3</span><h3>טון וסגנון</h3></div>
+      
+      <p><strong>שאלה:</strong> האם ברירת המחדל רשמית, שיווקית, עניינית או משתנה לפי הבקשה?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="tone_answer" placeholder="כתוב כאן את התשובה...">תעשה שזה יהיה חלק מהsystem message ואנחנו ננהל את זה כי אני רוצה במסך אדמין modal מיושר מימין לשמאל עם rtl בו אפשר לנהל את הsystem mesaage בלי להסתיר כלום. אגב - כשאתה יוצר modal תעשה שאם אני לוחץ escape זה סוגר אותו או אם אני לוחץ על מקום במסך שהוא מחוץ לmodal זה סוגר אותו</textarea>
+      <div class="rec"><strong>המלצה:</strong> להגדיר סגנון ברירת מחדל מקצועי-רשמי ולתת למשתמש לבקש סגנון אחר.</div>
+    </article>
+    
+    <article class="question-card priority-c">
+      <div class="q-head"><span class="badge">C.4</span><h3>תוכן אסור</h3></div>
+      
+      <p><strong>שאלה:</strong> יש לפרט אילו תכנים אסורים ולא להסתפק במילה 'אסור'.</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="prohibited_content_answer" placeholder="כתוב כאן את התשובה..."></textarea>
+      <div class="rec"><strong>המלצה:</strong> לכלול מידע שקרי, התחזות, תוכן פוגעני, הפרת זכויות, מידע אישי וייעוץ מקצועי מסוכן.</div>
+    </article>
+    
+    <article class="question-card priority-c">
+      <div class="q-head"><span class="badge">C.5</span><h3>שדה הזיהוי 'solution'</h3></div>
+      
+      <p><strong>שאלה:</strong> למה מתייחס הערך 'solution' בשדה פרטי הזיהוי?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="identity_solution_answer" placeholder="כתוב כאן את התשובה...">תעיף כרגע אני לא זוכר מאיהפ זה בא</textarea>
+      <div class="rec"><strong>המלצה:</strong> אם אינו נדרש, להסיר מה-MVP.</div>
+    </article>
+    
+    <article class="question-card priority-c">
+      <div class="q-head"><span class="badge">C.6</span><h3>גישות לחשבונות</h3></div>
+      
+      <p><strong>שאלה:</strong> יש לאשר שה-Repository, פרויקט Supabase, Vercel, OpenAI, Twilio ו-Resend נפתחו ושניתנה גישת פיתוח.</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="repo_access_answer" placeholder="כתוב כאן את התשובה...">כן נפתח</textarea>
+      
+    </article>
+    
+    <article class="question-card priority-c">
+      <div class="q-head"><span class="badge">C.7</span><h3>פרטי Supabase</h3></div>
+      
+      <p><strong>שאלה:</strong> הקישור שהוזן כדומיין הוא קישור Dashboard. האם Project Ref הוא tgropjisnheppsxejfdn ומה יהיה הדומיין הציבורי של המערכת?</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="supabase_ref_answer" placeholder="כתוב כאן את התשובה...">המלצה: לא לשמור מפתחות API במסמך; להכניס אותם ישירות ל-Vercel/Supabase Secrets.
+</textarea>
+      <div class="rec"><strong>המלצה:</strong> לא לשמור מפתחות API במסמך; להכניס אותם ישירות ל-Vercel/Supabase Secrets.</div>
+    </article>
+    
+    <article class="question-card priority-c">
+      <div class="q-head"><span class="badge">C.8</span><h3>אישור האפיון</h3></div>
+      
+      <p><strong>שאלה:</strong> מי מאשר את הדרישות מטעם הלקוח? כרגע הוזן איתי קרקסון ללא תפקיד ותאריך.</p>
+      
+      <label>תשובה / החלטה</label>
+      <textarea data-field="requirements_approval_answer" placeholder="כתוב כאן את התשובה...">אני המפתח ואני מאשר</textarea>
+      <div class="rec"><strong>המלצה:</strong> האישור העסקי צריך להיות של מאור או גורם מוסמך מטעמו.</div>
+    </article>
+    </div>
+</section>
+
+<section class="card" id="recommendations">
+<h2>6. המלצות ראשוניות</h2>
+<ul><li>להוסיף במסך ההגדרות מצב שליחה: ידני / אוטומטי / לפי סוג תוצר.</li><li>להפעיל הגבלת שימוש ניתנת להגדרה כדי למנוע שימוש לרעה ועלויות בלתי צפויות.</li><li>להגביל קבצים ל-10MB ב-MVP ולהתיר PNG, JPG, PDF ו-DOCX בלבד.</li><li>להגדיר ברירת מחדל לתמונה ריבועית ולאפשר למשתמש לציין יחס אחר.</li><li>להחזיר תשובה מהירה ל-Twilio ולבצע את יצירת ה-AI בתהליך אסינכרוני.</li><li>ליצור תבנית PDF אחת, נקייה ו-RTL, ללא מיתוג בשלב הראשון.</li><li>להציג בממשק נפח אחסון, גודל קובץ ומחיקה מרובה.</li><li>להכין לפחות שלושה תרחישי בדיקה מקצה לקצה לפני סגירת ה-System Message.</li></ul>
+</section>
+
+<section class="card" id="next">
+<h2>7. הצעדים הבאים</h2>
+<ol><li>להשיב על שאלות החוסמות במסמך ההמשך.</li><li>להעביר שלוש דוגמאות אמיתיות של בקשה ותוצר רצוי.</li><li>לפתוח/לאשר חשבונות Twilio, OpenAI, Supabase, Vercel ו-Resend.</li><li>להגדיר משתמש מנהל ראשון ודומיין לשליחת מייל.</li><li>להחליט על מנגנון העיבוד האסינכרוני.</li><li>לסגור את ה-System Message וכללי ה-QA.</li><li>לבנות תרחיש ראשון מקצה לקצה: WhatsApp → AI → קובץ → מייל.</li><li>לאחר הצלחת התרחיש הראשון, להשלים את ממשק הניהול, עלויות, לוגים וייצוא.</li></ol>
+</section>
+
+<section class="card">
+<h2>8. הערה מסחרית חשובה</h2>
+<p>קבלת תמונות ומסמכים, ניהול Bucket, מסך הגדרות, גרסאות, עלויות, לוגים וייצוא XLSX מרחיבים את המערכת מעבר ל-Flow מינימלי של WhatsApp → GPT → Email. מומלץ להחליט אילו יכולות הן חובה למסירה הראשונה ואילו ייכנסו לשלב שני.</p>
+<label>החלטה מסחרית / חלוקת שלבים</label>
+<textarea data-field="commercial_decision" placeholder="כתוב כאן מה כלול במסירה הראשונה ומה יידחה..."></textarea>
+</section>
+
+<div class="footer">
+<button class="primary" onclick="saveHtml()">שמור HTML</button>
+<button onclick="exportJson()">ייצוא JSON</button>
+<button onclick="window.print()">ייצוא ל-PDF</button>
+<button class="danger" onclick="resetForm()">אפס תשובות</button>
+</div>
+</div>
+
+<script>
+const STORAGE_KEY="whatsapp-ai-agent-followup-v1";
+function collectData(){
+ const meta={};document.querySelectorAll("[data-meta]").forEach(el=>meta[el.dataset.meta]=el.value||"");
+ const fields={};document.querySelectorAll("[data-field]").forEach(el=>fields[el.dataset.field]=el.value||"");
+ return {meta,fields};
+}
+function applyData(data){
+ if(!data)return;
+ Object.entries(data.meta||{}).forEach(([k,v])=>{const el=document.querySelector(`[data-meta="${k}"]`);if(el)el.value=v??""});
+ Object.entries(data.fields||{}).forEach(([k,v])=>{const el=document.querySelector(`[data-field="${k}"]`);if(el)el.value=v??""});
+ updateProgress();
+}
+function autosave(){
+ localStorage.setItem(STORAGE_KEY,JSON.stringify(collectData()));
+ document.getElementById("saveStatus").textContent="נשמר אוטומטית";
+ updateProgress();
+}
+function loadSaved(){const raw=localStorage.getItem(STORAGE_KEY);if(raw)try{applyData(JSON.parse(raw))}catch(e){}}
+function updateProgress(){
+ const fields=[...document.querySelectorAll('textarea[data-field$="_answer"]')];
+ const done=fields.filter(x=>x.value.trim()).length;
+ const pct=fields.length?Math.round(done/fields.length*100):100;
+ document.getElementById("progressText").textContent=pct+"%";
+ document.getElementById("progressBar").style.width=pct+"%";
+}
+function download(content,name,type){
+ const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement("a");
+ a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function exportJson(){autosave();download(JSON.stringify(collectData(),null,2),"whatsapp-ai-agent-followup-answers.json","application/json;charset=utf-8")}
+function saveHtml(){
+ autosave();
+ const clone=document.documentElement.cloneNode(true);
+ clone.querySelectorAll("[data-meta],[data-field]").forEach(el=>{
+  const attr=el.dataset.meta?"data-meta":"data-field";const key=el.dataset.meta||el.dataset.field;
+  const src=document.querySelector(`[${attr}="${key}"]`);if(!src)return;
+  if(el.tagName==="TEXTAREA")el.textContent=src.value;
+  else if(el.tagName==="SELECT")Array.from(el.options).forEach(o=>o.value===src.value?o.setAttribute("selected",""):o.removeAttribute("selected"));
+  else el.setAttribute("value",src.value);
+ });
+ download("<!DOCTYPE html>\n"+clone.outerHTML,"whatsapp-ai-agent-followup-filled.html","text/html;charset=utf-8");
+}
+function resetForm(){if(confirm("למחוק את כל התשובות שנשמרו?")){localStorage.removeItem(STORAGE_KEY);location.reload()}}
+document.addEventListener("input",()=>{document.getElementById("saveStatus").textContent="שומר...";clearTimeout(window.t);window.t=setTimeout(autosave,250)});
+document.addEventListener("change",autosave);
+document.addEventListener("DOMContentLoaded",()=>{loadSaved();updateProgress()});
+</script>
+
+
+</body></html>

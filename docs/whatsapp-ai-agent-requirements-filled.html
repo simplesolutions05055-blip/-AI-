@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>סוכן AI ארגוני דרך WhatsApp — מסמך דרישות</title>
+<style>
+:root {
+  --bg:#f3f6fb; --card:#ffffff; --text:#172033; --muted:#64748b;
+  --line:#dce4ef; --primary:#2458d6; --primary-dark:#173f9f;
+  --soft:#eef4ff; --ok:#16803c; --warning:#b45309; --danger:#c62828;
+  --shadow:0 12px 35px rgba(16,35,70,.08);
+}
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body {
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:Arial,"Segoe UI",sans-serif; line-height:1.65;
+}
+.container { max-width:1180px; margin:0 auto; padding:24px; }
+.hero {
+  background:linear-gradient(135deg,#122958,#2458d6);
+  color:#fff; border-radius:22px; padding:30px; box-shadow:var(--shadow);
+}
+.hero h1 { margin:0 0 8px; font-size:32px; }
+.hero p { margin:0; opacity:.9; }
+.meta-grid {
+  margin-top:18px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px;
+}
+.meta-grid input {
+  width:100%; border:1px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12);
+  color:#fff; border-radius:10px; padding:10px;
+}
+.meta-grid input::placeholder { color:#dbeafe; }
+.toolbar {
+  position:sticky; top:0; z-index:50; display:flex; flex-wrap:wrap; gap:8px;
+  align-items:center; padding:12px 0; background:rgba(243,246,251,.96);
+  backdrop-filter:blur(10px);
+}
+button {
+  border:0; border-radius:10px; padding:10px 14px; cursor:pointer;
+  font-weight:700; background:#e5eaf2; color:#172033;
+}
+button.primary { background:var(--primary); color:#fff; }
+button.primary:hover { background:var(--primary-dark); }
+button.danger { background:#fee2e2; color:#991b1b; }
+button.success { background:#dcfce7; color:#166534; }
+button.mini { padding:5px 9px; font-size:12px; }
+.status-pill {
+  display:inline-flex; align-items:center; gap:6px; border-radius:999px;
+  padding:7px 10px; font-size:12px; font-weight:700; background:#e7edf7;
+}
+.progress-area { margin-inline-start:auto; min-width:235px; }
+.progress-label { font-size:12px; color:var(--muted); margin-bottom:4px; }
+.progress-track { height:9px; background:#dbe3ef; border-radius:99px; overflow:hidden; }
+.progress-bar { height:100%; width:0; background:var(--primary); transition:.2s; }
+.summary-card,.section-card,.table-card {
+  background:var(--card); border:1px solid var(--line); border-radius:18px;
+  padding:22px; margin-top:16px; box-shadow:var(--shadow);
+}
+.summary-card h2,.section-card h2,.table-card h2 { margin:0 0 8px; }
+.section-heading p { margin:0 0 16px; color:var(--muted); }
+.known-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.known-card {
+  display:flex; gap:10px; border:1px solid #bbf7d0; background:#f0fdf4;
+  border-radius:13px; padding:12px;
+}
+.known-card p { margin:3px 0 0; color:#3f5a49; }
+.known-icon {
+  width:25px; height:25px; border-radius:50%; background:#dcfce7; color:var(--ok);
+  display:flex; align-items:center; justify-content:center; font-weight:900; flex:none;
+}
+.notice {
+  border-right:4px solid var(--warning); background:#fff7ed; border-radius:12px;
+  padding:13px 15px; margin-top:14px;
+}
+.form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.field { display:flex; flex-direction:column; gap:6px; }
+.field label { font-size:14px; font-weight:800; }
+.required-mark { color:var(--danger); }
+input,select,textarea {
+  width:100%; border:1px solid #cbd5e1; border-radius:10px;
+  background:#fff; color:var(--text); padding:10px 12px; font:inherit;
+}
+textarea { min-height:105px; resize:vertical; }
+input:focus,select:focus,textarea:focus {
+  outline:3px solid #dbeafe; border-color:var(--primary);
+}
+.invalid { border-color:var(--danger)!important; background:#fff7f7!important; }
+.check-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:14px; }
+.check-card { border:1px solid var(--line); border-radius:12px; padding:11px; background:#fbfdff; }
+.check-line { display:flex; align-items:flex-start; gap:9px; font-weight:800; cursor:pointer; }
+.check-line input { width:auto; margin-top:6px; }
+.check-card > input { margin-top:8px; }
+.table-wrap { overflow-x:auto; }
+table { width:100%; border-collapse:collapse; min-width:850px; }
+th,td { border:1px solid var(--line); padding:9px; vertical-align:top; }
+th { background:var(--soft); }
+td[contenteditable="true"] { background:#fff; }
+.table-actions { margin-top:10px; }
+.footer-actions {
+  display:flex; justify-content:center; flex-wrap:wrap; gap:10px; margin:28px 0;
+}
+.signature-note {
+  color:var(--muted); border-top:1px solid var(--line); padding-top:15px; margin-top:18px;
+}
+.nav {
+  display:flex; gap:7px; overflow:auto; padding:10px 0 0;
+}
+.nav a {
+  white-space:nowrap; text-decoration:none; color:var(--primary-dark);
+  background:#eaf1ff; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:700;
+}
+@media(max-width:850px) {
+  .container { padding:12px; }
+  .hero h1 { font-size:25px; }
+  .meta-grid,.form-grid,.known-grid,.check-grid { grid-template-columns:1fr; }
+  .progress-area { width:100%; margin:0; }
+  .toolbar { position:static; }
+}
+@media print {
+  body { background:#fff; }
+  .container { max-width:none; padding:0; }
+  .toolbar,.nav,.footer-actions,.table-actions,td:last-child,th:last-child { display:none!important; }
+  .hero { background:#fff; color:#000; border:2px solid #111; box-shadow:none; }
+  .hero input { color:#000; border:0; background:#fff; }
+  .summary-card,.section-card,.table-card { box-shadow:none; break-inside:avoid; }
+  input,select,textarea { border:0!important; padding:0!important; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+<header class="hero">
+  <h1>מסמך דרישות — סוכן AI ארגוני דרך WhatsApp</h1>
+  <p>טופס אינטראקטיבי, עצמאי וללא תלות בשירות חיצוני. הנתונים נשמרים אוטומטית בדפדפן.</p>
+  <div class="meta-grid">
+    <input data-meta="projectName" value="סוכן AI ארגוני דרך WhatsApp" aria-label="שם הפרויקט">
+    <input data-meta="clientName" value="מאור עטייה" aria-label="שם הלקוח">
+    <input data-meta="date" type="date" value="2026-06-18" aria-label="תאריך">
+    <input data-meta="version" value="1.0" aria-label="גרסה">
+  </div>
+</header>
+
+<div class="toolbar">
+  <button type="button" class="primary" onclick="saveHtml()">שמור HTML</button>
+  <button type="button" onclick="exportJson()">ייצוא JSON</button>
+  <button type="button" onclick="window.print()">ייצוא ל-PDF / הדפסה</button>
+  <button type="button" class="danger" onclick="resetForm()">אפס טופס</button>
+  <span id="saveStatus" class="status-pill">נשמר אוטומטית</span>
+  <div class="progress-area">
+    <div class="progress-label">השלמת שדות חובה: <strong id="progressText">89%</strong></div>
+    <div class="progress-track"><div id="progressBar" class="progress-bar" style="width: 89%;"></div></div>
+  </div>
+</div>
+
+<nav class="nav">
+  <a href="#section-business">1. מטרות והקשר עסקי</a><a href="#section-access">2. משתמשים והרשאות</a><a href="#section-whatsapp">3. WhatsApp ו-Twilio</a><a href="#section-conversation">4. מבנה השיחה</a><a href="#section-ai">5. AI, System Message ו-QA</a><a href="#section-outputs">6. סוגי תוצרים ומיתוג</a><a href="#section-dashboard">7. ממשק הניהול</a><a href="#section-email">8. Resend ומיילים</a><a href="#section-privacy">9. פרטיות, אבטחה ושמירת מידע</a><a href="#section-capacity">10. שימוש, ביצועים וזמינות</a><a href="#section-accounts">11. חשבונות, גישות ותשתית</a><a href="#section-commercial">12. אבני דרך ואישור מסחרי</a><a href="#section-approval">13. אישור והערות</a>
+</nav>
+
+<section class="summary-card">
+  <h2>מה כבר סוכם בשיחות</h2>
+  <div class="known-grid"><div class="known-card"><span class="known-icon">✓</span><div><strong>ארכיטקטורה</strong><p>React/TypeScript + Vercel ל-Frontend/API; Supabase לדאטה/Auth/Storage; Twilio; OpenAI; Resend.</p></div></div><div class="known-card"><span class="known-icon">✓</span><div><strong>מנהל יחיד</strong><p>בגרסת ה-MVP קיים משתמש מנהל אחד.</p></div></div><div class="known-card"><span class="known-icon">✓</span><div><strong>אישור לפני שליחה</strong><p>שום תוצר לא יישלח למייל בלי אישור מנהל.</p></div></div><div class="known-card"><span class="known-icon">✓</span><div><strong>ללא תזמון רשתות</strong><p>Facebook/Instagram scheduling אינו כלול ב-MVP.</p></div></div><div class="known-card"><span class="known-icon">✓</span><div><strong>מסגרת מסחרית</strong><p>5,000 ₪: 2,000 בתחילה, 1,000 בתוצר ראשון מקצה לקצה, 2,000 במסירה.</p></div></div></div>
+  <div class="notice"><strong>חשוב:</strong> ההחלטה האחרונה הייתה להשתמש ב-Vercel ל-Frontend ול-API. אם עוברים ל-Render או ל-Supabase Edge Functions, יש לעדכן את סעיף התשתית ואת מיקום הסודות.</div>
+</section>
+
+<section class="table-card">
+  <h2>תהליך העבודה המוצע</h2>
+  <div class="table-wrap">
+    <table data-table="workflow">
+      <thead><tr><th>שלב</th><th>גורם</th><th>פעולה</th><th>תוצאה</th><th>הערות לקוח</th><th>פעולה</th></tr></thead>
+      <tbody><tr><td contenteditable="true">1</td><td contenteditable="true">משתמש</td><td contenteditable="true">שולח הודעת WhatsApp</td><td contenteditable="true">הודעה נכנסת ל-Twilio</td><td contenteditable="true"></td><td><button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button></td></tr><tr><td contenteditable="true">2</td><td contenteditable="true">מערכת</td><td contenteditable="true">מאמתת חתימה ושומרת ב-Supabase</td><td contenteditable="true">נפתחת/מתעדכנת בקשה</td><td contenteditable="true"></td><td><button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button></td></tr><tr><td contenteditable="true">3</td><td contenteditable="true">מערכת</td><td contenteditable="true">שואלת שאלות השלמה ואוספת מייל</td><td contenteditable="true">נוצר בריף מלא</td><td contenteditable="true"></td><td><button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button></td></tr><tr><td contenteditable="true">4</td><td contenteditable="true">AI</td><td contenteditable="true">מייצר תוצר ומבצע QA</td><td contenteditable="true">תוצר ממתין לאישור</td><td contenteditable="true"></td><td><button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button></td></tr><tr><td contenteditable="true">5</td><td contenteditable="true">מנהל</td><td contenteditable="true">מאשר/דוחה/עורך/מייצר מחדש</td><td contenteditable="true">התוצר מוכן לשליחה</td><td contenteditable="true"></td><td><button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button></td></tr><tr><td contenteditable="true">6</td><td contenteditable="true">מערכת</td><td contenteditable="true">שולחת במייל ומעדכנת ב-WhatsApp</td><td contenteditable="true">הבקשה הושלמה</td><td contenteditable="true"></td><td><button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button></td></tr></tbody>
+    </table>
+  </div>
+  <div class="table-actions"><button type="button" onclick="addRow('workflow',5)">הוסף שורה</button></div>
+</section>
+
+
+<section class="section-card" id="section-business">
+  <div class="section-heading">
+    <h2>1. מטרות והקשר עסקי</h2>
+    <p>השלם את מטרת השירות, המשתמשים והערך העסקי.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="project_summary">תיאור הפרויקט במילים שלך <span class="required-mark">*</span></label>
+<textarea id="project_summary" data-field="project_summary" required="">הקמת סוכן AI ארגוני דרך WhatsApp. המשתמש שולח בקשה, המערכת אוספת פרטים חסרים, מייצרת תוצר, מציגה אותו למנהל לאישור ושולחת אותו למייל.</textarea>
+</div><div class="field required-field">
+<label for="business_value">מהו הערך העסקי המרכזי? <span class="required-mark">*</span></label>
+<textarea id="business_value" data-field="business_value" required="" class="invalid"></textarea>
+</div><div class="field required-field">
+<label for="target_users">מי ישתמש בשירות? <span class="required-mark">*</span></label>
+<textarea id="target_users" data-field="target_users" required="">נציגי עיריות, ארגונים ולקוחות עסקיים.</textarea>
+</div><div class="field required-field">
+<label for="real_scenarios">תן 3–5 דוגמאות לבקשות אמיתיות <span class="required-mark">*</span></label>
+<textarea id="real_scenarios" data-field="real_scenarios" required="">דוגמה: חומר דחוף לגיוס תרומות בשעות הלילה, המותאם לתורמים בחו"ל.</textarea>
+</div><div class="field required-field">
+<label for="success_definition">איך נדע שהפרויקט הצליח? <span class="required-mark">*</span></label>
+<textarea id="success_definition" data-field="success_definition" required="" class="">כל ה-flow מצליח מא עד ת</textarea>
+</div></div>
+  
+</section>
+
+<section class="section-card" id="section-access">
+  <div class="section-heading">
+    <h2>2. משתמשים והרשאות</h2>
+    <p>הגדר מי רשאי לשלוח בקשות ומי מנהל את המערכת.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="allowed_senders">מי רשאי לשלוח הודעות? <span class="required-mark">*</span></label>
+<select id="allowed_senders" data-field="allowed_senders" required="" class=""><option value="">בחר/י</option><option value="כל מי שמכיר את המספר" selected="">כל מי שמכיר את המספר</option><option value="רק מספרים מרשימה מאושרת">רק מספרים מרשימה מאושרת</option><option value="לפי קוד לקוח/ארגון">לפי קוד לקוח/ארגון</option><option value="טרם הוחלט">טרם הוחלט</option></select>
+</div><div class="field required-field">
+<label for="admin_count">מספר מנהלים ב-MVP <span class="required-mark">*</span></label>
+<input id="admin_count" data-field="admin_count" type="number" value="1" required="">
+</div><div class="field required-field">
+<label for="admin_email">כתובת מייל מנהל <span class="required-mark">*</span></label>
+<input id="admin_email" data-field="admin_email" type="email" value="אני ארצה שאוכל להגדיר את זה במסך ניהול" required="" class="">
+</div><div class="field required-field">
+<label for="admin_login">שיטת התחברות למנהל <span class="required-mark">*</span></label>
+<select id="admin_login" data-field="admin_login" required="" class=""><option value="">בחר/י</option><option value="מייל וסיסמה" selected="">מייל וסיסמה</option><option value="Magic Link">Magic Link</option><option value="Google Login">Google Login</option></select>
+</div><div class="field">
+<label for="daily_limit">מגבלת שימוש למשתמש/ליום </label>
+<input id="daily_limit" data-field="daily_limit" type="text" value="אין">
+</div><div class="field">
+<label for="identity_fields">פרטי זיהוי נוספים </label>
+<input id="identity_fields" data-field="identity_fields" type="text" value="solution">
+</div></div>
+  
+</section>
+
+<section class="section-card" id="section-whatsapp">
+  <div class="section-heading">
+    <h2>3. WhatsApp ו-Twilio</h2>
+    <p>הגדר את המספר, סוגי ההודעות וההתנהגות בשיחה.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="twilio_mode">כיצד מתחילים? <span class="required-mark">*</span></label>
+<select id="twilio_mode" data-field="twilio_mode" required="" class=""><option value="">בחר/י</option><option value="Twilio Sandbox לפיתוח" selected="">Twilio Sandbox לפיתוח</option><option value="מספר Twilio חדש לייצור">מספר Twilio חדש לייצור</option><option value="מספר קיים">מספר קיים</option></select>
+</div><div class="field">
+<label for="whatsapp_number">מספר WhatsApp מתוכנן </label>
+<input id="whatsapp_number" data-field="whatsapp_number" type="text" value="עדיין אין">
+</div><div class="field required-field">
+<label for="business_profile_name">שם העסק שיופיע ב-WhatsApp <span class="required-mark">*</span></label>
+<input id="business_profile_name" data-field="business_profile_name" type="text" value="עדיין אין" required="" class="">
+</div><div class="field required-field">
+<label for="incoming_text">הודעות טקסט נכנסות <span class="required-mark">*</span></label>
+<select id="incoming_text" data-field="incoming_text" required=""><option value="כן" selected="">כן</option></select>
+</div><div class="field required-field">
+<label for="incoming_images">תמונות נכנסות <span class="required-mark">*</span></label>
+<select id="incoming_images" data-field="incoming_images" required="" class=""><option value="">בחר/י</option><option value="כן ב-MVP" selected="">כן ב-MVP</option><option value="לא ב-MVP">לא ב-MVP</option><option value="בשלב הבא">בשלב הבא</option></select>
+</div><div class="field required-field">
+<label for="incoming_documents">מסמכים/PDF נכנסים <span class="required-mark">*</span></label>
+<select id="incoming_documents" data-field="incoming_documents" required="" class=""><option value="">בחר/י</option><option value="כן ב-MVP" selected="">כן ב-MVP</option><option value="לא ב-MVP">לא ב-MVP</option><option value="בשלב הבא">בשלב הבא</option></select>
+</div><div class="field required-field">
+<label for="incoming_audio">הודעות קוליות <span class="required-mark">*</span></label>
+<select id="incoming_audio" data-field="incoming_audio" required="" class=""><option value="">בחר/י</option><option value="כן ב-MVP">כן ב-MVP</option><option value="לא ב-MVP" selected="">לא ב-MVP</option><option value="בשלב הבא">בשלב הבא</option></select>
+</div><div class="field required-field">
+<label for="outside_24h">הודעות יזומות מחוץ לחלון 24 שעות <span class="required-mark">*</span></label>
+<select id="outside_24h" data-field="outside_24h" required="" class=""><option value="">בחר/י</option><option value="לא נדרש" selected="">לא נדרש</option><option value="נדרש — יש להכין Templates">נדרש — יש להכין Templates</option><option value="טרם הוחלט">טרם הוחלט</option></select>
+</div><div class="field required-field">
+<label for="received_message">נוסח אישור קבלת בקשה <span class="required-mark">*</span></label>
+<textarea id="received_message" data-field="received_message" required="">שים לי אפשרות להגדיר את זה במסך אדמין</textarea>
+</div><div class="field required-field">
+<label for="sent_message">נוסח לאחר שליחת המייל <span class="required-mark">*</span></label>
+<textarea id="sent_message" data-field="sent_message" required="">שים לי אפשרות להגדיר את זה במסך אדמין</textarea>
+</div></div>
+  
+</section>
+
+<section class="section-card" id="section-conversation">
+  <div class="section-heading">
+    <h2>4. מבנה השיחה</h2>
+    <p>הגדר כמה שאלות שואלים, מה חובה לאסוף ומתי מעבירים לטיפול אנושי.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="required_brief_fields">אילו פרטים חובה לאסוף? <span class="required-mark">*</span></label>
+<textarea id="required_brief_fields" data-field="required_brief_fields" required="">סוג תוצר, מטרה, קהל יעד, שפה, פרטים שחייבים להופיע, סגנון וכתובת מייל.</textarea>
+</div><div class="field required-field">
+<label for="max_question_rounds">מספר סבבי שאלות מרבי <span class="required-mark">*</span></label>
+<input id="max_question_rounds" data-field="max_question_rounds" type="number" value="3" required="">
+</div><div class="field required-field">
+<label for="max_generation_attempts">מספר ניסיונות יצירה אוטומטיים <span class="required-mark">*</span></label>
+<input id="max_generation_attempts" data-field="max_generation_attempts" type="number" value="3" required="">
+</div><div class="field required-field">
+<label for="conversation_timeout">מתי שיחה ללא מענה נסגרת? <span class="required-mark">*</span></label>
+<input id="conversation_timeout" data-field="conversation_timeout" type="text" value="24 שעות" required="">
+</div><div class="field required-field">
+<label for="new_request_rule">מתי הודעה חדשה פותחת בקשה חדשה? <span class="required-mark">*</span></label>
+<textarea id="new_request_rule" data-field="new_request_rule" required="" class="">כשמתקבלת הודעה חדשה, אם אין בריף או משהו בהודעה הראשונה שאפשר ליצור איתו או בקשת יצירה כלשהי - אתה מבקש את זה במפורש</textarea>
+</div><div class="field required-field">
+<label for="human_handoff">מתי עוצרים ומעבירים לטיפול אנושי? <span class="required-mark">*</span></label>
+<textarea id="human_handoff" data-field="human_handoff" required="" class="">אם יש באגים שמגיעים מהapi כלשהו</textarea>
+</div><div class="field required-field">
+<label for="supported_languages">שפות נדרשות ב-MVP <span class="required-mark">*</span></label>
+<input id="supported_languages" data-field="supported_languages" type="text" value="עברית" required="">
+</div></div>
+  
+</section>
+
+<section class="section-card" id="section-ai">
+  <div class="section-heading">
+    <h2>5. AI, System Message ו-QA</h2>
+    <p>המידע בסעיף זה ישמש לכתיבת ה-System Message וכללי האיכות.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="tone_style">טון וסגנון <span class="required-mark">*</span></label>
+<textarea id="tone_style" data-field="tone_style" required="" class="">כרגע לא יודע להגיד לך</textarea>
+</div><div class="field required-field">
+<label for="target_audiences">קהלי יעד אפשריים <span class="required-mark">*</span></label>
+<textarea id="target_audiences" data-field="target_audiences" required="" class="invalid"></textarea>
+</div><div class="field">
+<label for="must_include">פרטים שחייבים להופיע בתוצרים </label>
+<textarea id="must_include" data-field="must_include"></textarea>
+</div><div class="field required-field">
+<label for="never_invent">מה אסור ל-AI להמציא? <span class="required-mark">*</span></label>
+<textarea id="never_invent" data-field="never_invent" required="">שמות, תאריכים, סכומים, נתונים, ציטוטים או פרטי קשר שלא הופיעו בבקשה.</textarea>
+</div><div class="field required-field">
+<label for="prohibited_content">תוכן אסור או רגיש <span class="required-mark">*</span></label>
+<textarea id="prohibited_content" data-field="prohibited_content" required="" class="">אסור</textarea>
+</div><div class="field required-field">
+<label for="qa_rules">בדיקות QA חובה <span class="required-mark">*</span></label>
+<textarea id="qa_rules" data-field="qa_rules" required="">התאמה לבריף, שפה נכונה, RTL, ללא פרטים מומצאים, התאמה למותג, בהירות ותקינות הקובץ.</textarea>
+</div><div class="field required-field">
+<label for="language_model">מודל שפה ראשי <span class="required-mark">*</span></label>
+<input id="language_model" data-field="language_model" type="text" value="OpenAI API — מודל עדכני שייבחר לפי איכות ועלות" required="">
+</div><div class="field required-field">
+<label for="image_model">מודל תמונה ראשי <span class="required-mark">*</span></label>
+<select id="image_model" data-field="image_model" required="" class=""><option value="">בחר/י</option><option value="OpenAI Image API" selected="">OpenAI Image API</option><option value="Gemini / Nano Banana">Gemini / Nano Banana</option><option value="שילוב לפי סוג הבקשה">שילוב לפי סוג הבקשה</option></select>
+</div><div class="field required-field">
+<label for="fallback_policy">מתי עוברים למודל חלופי? <span class="required-mark">*</span></label>
+<textarea id="fallback_policy" data-field="fallback_policy" required="" class="">אין מעבר למודל חלופי</textarea>
+</div></div>
+  
+</section>
+
+<section class="section-card" id="section-outputs">
+  <div class="section-heading">
+    <h2>6. סוגי תוצרים ומיתוג</h2>
+    <p>בחר מה כלול ב-MVP והגדר את דרישות הפורמט.</p>
+  </div>
+  <div class="form-grid"><div class="field">
+<label for="brand_logo">לוגו — קישור או אופן מסירה </label>
+<input id="brand_logo" data-field="brand_logo" type="text" value="אין">
+</div><div class="field">
+<label for="brand_colors">צבעי מותג </label>
+<input id="brand_colors" data-field="brand_colors" type="text" value="לא רלוונטי">
+</div><div class="field">
+<label for="brand_fonts">פונטים </label>
+<input id="brand_fonts" data-field="brand_fonts" type="text" value="Assistant / Heebo">
+</div><div class="field">
+<label for="image_sizes">מידות תמונה נדרשות </label>
+<input id="image_sizes" data-field="image_sizes" type="text" value="לא רלוונטי">
+</div><div class="field required-field">
+<label for="desired_examples">דוגמאות לתוצרים רצויים <span class="required-mark">*</span></label>
+<textarea id="desired_examples" data-field="desired_examples" required="" class="invalid"></textarea>
+</div><div class="field">
+<label for="bad_examples">דוגמאות שאינן רצויות </label>
+<textarea id="bad_examples" data-field="bad_examples"></textarea>
+</div><div class="field required-field">
+<label for="pdf_templates">מספר תבניות PDF <span class="required-mark">*</span></label>
+<select id="pdf_templates" data-field="pdf_templates" required="" class=""><option value="">בחר/י</option><option value="תבנית אחת בסיסית" selected="">תבנית אחת בסיסית</option><option value="מספר תבניות">מספר תבניות</option><option value="PDF אינו כלול">PDF אינו כלול</option></select>
+</div><div class="field required-field">
+<label for="email_body_or_attachment">כיצד שולחים את התוצר? <span class="required-mark">*</span></label>
+<select id="email_body_or_attachment" data-field="email_body_or_attachment" required="" class=""><option value="">בחר/י</option><option value="בגוף המייל">בגוף המייל</option><option value="כקובץ מצורף" selected="">כקובץ מצורף</option><option value="גם וגם">גם וגם</option><option value="לפי סוג תוצר">לפי סוג תוצר</option></select>
+</div></div>
+  <div class="check-grid"><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="out_text" checked="">
+    <span>טקסט מוכן למייל</span>
+  </label>
+  <input type="text" data-checkbox-details="out_text" value="HTML/Text" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="out_image" checked="">
+    <span>תמונה/גרפיקה</span>
+  </label>
+  <input type="text" data-checkbox-details="out_image" value="PNG/JPG, בכפוף לבדיקת API" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="out_pdf" checked="">
+    <span>PDF בסיסי RTL</span>
+  </label>
+  <input type="text" data-checkbox-details="out_pdf" value="נדרש אישור סופי" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="out_translation">
+    <span>תרגום</span>
+  </label>
+  <input type="text" data-checkbox-details="out_translation" value="יש לפרט שפות" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="out_social_content">
+    <span>תוכן לפוסט</span>
+  </label>
+  <input type="text" data-checkbox-details="out_social_content" value="ללא פרסום/תזמון" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="out_presentation">
+    <span>מצגת</span>
+  </label>
+  <input type="text" data-checkbox-details="out_presentation" value="לא כלול - אם מישהו מבקש מצגת אתה מסביר לו איך הוא יוצר את המצגת הזאת בnotebooklm ומביא לו את התוכן לשים שם כדי שתצא מצגת מדויקת כמו שאתה רוצה (עם יישור מימין לשמאל עם rtl)" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="out_docx">
+    <span>Word</span>
+  </label>
+  <input type="text" data-checkbox-details="out_docx" value="לא כלול כרגע" placeholder="פירוט/הערות">
+</div></div>
+</section>
+
+<section class="section-card" id="section-dashboard">
+  <div class="section-heading">
+    <h2>7. ממשק הניהול</h2>
+    <p>בחר אילו יכולות המנהל צריך לקבל בגרסה הראשונה.</p>
+  </div>
+  <div class="form-grid"><div class="field">
+<label for="dashboard_filters">חיפוש ופילטרים נדרשים </label>
+<textarea id="dashboard_filters" data-field="dashboard_filters">סטטוס, תאריך, מספר טלפון, מייל וסוג תוצר.</textarea>
+</div><div class="field required-field">
+<label for="admin_notifications">כיצד המנהל מקבל התראה על תוצר שממתין לאישור? <span class="required-mark">*</span></label>
+<textarea id="admin_notifications" data-field="admin_notifications" required="" class="">למה צריך תוצר ממתין לאישור? אם מישהו מבקש תוצר בwhatsapp הוא צריך לקבל אותו. לא רלוונטי</textarea>
+</div><div class="field required-field">
+<label for="cost_view">איזה פירוט עלויות נדרש? <span class="required-mark">*</span></label>
+<textarea id="cost_view" data-field="cost_view" required="">עלות לכל בקשה, מספר קריאות, tokens ומספר תמונות.</textarea>
+</div><div class="field required-field">
+<label for="settings_screen">מסך הגדרות לעריכת Prompts ונוסחים <span class="required-mark">*</span></label>
+<select id="settings_screen" data-field="settings_screen" required="" class=""><option value="">בחר/י</option><option value="כלול ב-MVP" selected="">כלול ב-MVP</option><option value="לא כלול ב-MVP">לא כלול ב-MVP</option><option value="שלב הבא">שלב הבא</option></select>
+</div></div>
+  <div class="check-grid"><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_requests" checked="">
+    <span>רשימת בקשות</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_requests" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_conversation" checked="">
+    <span>היסטוריית שיחה</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_conversation" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_outputs" checked="">
+    <span>תוצרים וגרסאות</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_outputs" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_status" checked="">
+    <span>סטטוסים</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_status" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_approve" checked="">
+    <span>אישור ודחייה</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_approve" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_regenerate" checked="">
+    <span>יצירה מחדש עם הערה</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_regenerate" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_edit" checked="">
+    <span>עריכת טקסט לפני שליחה</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_edit" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_email_edit" checked="">
+    <span>שינוי כתובת מייל</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_email_edit" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_cost" checked="">
+    <span>עלות משוערת</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_cost" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_logs" checked="">
+    <span>לוגים ושגיאות</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_logs" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="dash_export" checked="">
+    <span>ייצוא CSV</span>
+  </label>
+  <input type="text" data-checkbox-details="dash_export" value="תעשה ייצוא xlsx ועם תאריך " placeholder="פירוט/הערות">
+</div></div>
+</section>
+
+<section class="section-card" id="section-email">
+  <div class="section-heading">
+    <h2>8. Resend ומיילים</h2>
+    <p>הגדר את זהות השולח ואת מבנה המייל.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="resend_domain">דומיין שולח <span class="required-mark">*</span></label>
+<input id="resend_domain" data-field="resend_domain" type="text" value="עדיין אין לי" required="" class="">
+</div><div class="field required-field">
+<label for="resend_from">כתובת From <span class="required-mark">*</span></label>
+<input id="resend_from" data-field="resend_from" type="email" value="עדיין אין לי" required="" class="">
+</div><div class="field required-field">
+<label for="resend_name">שם השולח <span class="required-mark">*</span></label>
+<input id="resend_name" data-field="resend_name" type="text" value="עדיין אין לי" required="" class="">
+</div><div class="field">
+<label for="resend_reply_to">Reply-To </label>
+<input id="resend_reply_to" data-field="resend_reply_to" type="email" value="">
+</div><div class="field required-field">
+<label for="email_cc_admin">עותק למנהל <span class="required-mark">*</span></label>
+<select id="email_cc_admin" data-field="email_cc_admin" required="" class=""><option value="">בחר/י</option><option value="לא" selected="">לא</option><option value="כן">כן</option></select>
+</div><div class="field required-field">
+<label for="email_subject_rule">כלל ליצירת נושא המייל <span class="required-mark">*</span></label>
+<textarea id="email_subject_rule" data-field="email_subject_rule" required="" class="">עדיין אין לי</textarea>
+</div><div class="field">
+<label for="email_signature">חתימת המייל </label>
+<textarea id="email_signature" data-field="email_signature">עדיין אין לי</textarea>
+</div><div class="field required-field">
+<label for="ai_disclosure">האם לציין שהתוצר נוצר ב-AI? <span class="required-mark">*</span></label>
+<select id="ai_disclosure" data-field="ai_disclosure" required="" class=""><option value="">בחר/י</option><option value="כן">כן</option><option value="לא" selected="">לא</option><option value="לפי סוג התוצר">לפי סוג התוצר</option></select>
+</div></div>
+  
+</section>
+
+<section class="section-card" id="section-privacy">
+  <div class="section-heading">
+    <h2>9. פרטיות, אבטחה ושמירת מידע</h2>
+    <p>הגדר את רמת הרגישות, תקופת השמירה ומדיניות המחיקה.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="sensitive_data">האם צפוי מידע רגיש? <span class="required-mark">*</span></label>
+<select id="sensitive_data" data-field="sensitive_data" required="" class=""><option value="">בחר/י</option><option value="לא" selected="">לא</option><option value="כן — מידע אישי">כן — מידע אישי</option><option value="כן — מידע ביטחוני">כן — מידע ביטחוני</option><option value="כן — מידע פיננסי">כן — מידע פיננסי</option><option value="כן — אחר">כן — אחר</option></select>
+</div><div class="field">
+<label for="sensitive_details">פירוט מידע רגיש </label>
+<textarea id="sensitive_details" data-field="sensitive_details"></textarea>
+</div><div class="field required-field">
+<label for="retention_period">כמה זמן שומרים שיחות ותוצרים? <span class="required-mark">*</span></label>
+<input id="retention_period" data-field="retention_period" type="text" value="אין הגבלה - שיישמר בbucket ותהיה לי אפשרות כאדמין למחוק תוצרים ישנים ולנהל את התוצרים בbucket כדי שלא יהיה overload" required="" class="">
+</div><div class="field required-field">
+<label for="auto_delete">מחיקה אוטומטית <span class="required-mark">*</span></label>
+<select id="auto_delete" data-field="auto_delete" required="" class=""><option value="">בחר/י</option><option value="לא" selected="">לא</option><option value="כן — לפי תקופה">כן — לפי תקופה</option><option value="טרם הוחלט">טרם הוחלט</option></select>
+</div><div class="field">
+<label for="max_file_size">גודל קובץ מרבי </label>
+<input id="max_file_size" data-field="max_file_size" type="text" value="אין הגבלה - אסור וידאו">
+</div><div class="field">
+<label for="allowed_file_types">סוגי קבצים מותרים </label>
+<input id="allowed_file_types" data-field="allowed_file_types" type="text" value="אסור וידאו">
+</div><div class="field">
+<label for="privacy_requirements">דרישות פרטיות/משפטיות נוספות </label>
+<textarea id="privacy_requirements" data-field="privacy_requirements"></textarea>
+</div></div>
+  
+</section>
+
+<section class="section-card" id="section-capacity">
+  <div class="section-heading">
+    <h2>10. שימוש, ביצועים וזמינות</h2>
+    <p>הנתונים ישמשו לבחירת תשתית עיבוד ולחישוב עלויות.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="daily_users">מספר משתמשים ביום <span class="required-mark">*</span></label>
+<input id="daily_users" data-field="daily_users" type="number" value="50" required="">
+</div><div class="field required-field">
+<label for="messages_per_user">מספר הודעות ממוצע למשתמש <span class="required-mark">*</span></label>
+<input id="messages_per_user" data-field="messages_per_user" type="number" value="50" required="">
+</div><div class="field required-field">
+<label for="daily_requests">מספר בקשות מלאות ביום <span class="required-mark">*</span></label>
+<input id="daily_requests" data-field="daily_requests" type="number" value="" required="" class="invalid">
+</div><div class="field">
+<label for="daily_images">מספר תמונות ביום </label>
+<input id="daily_images" data-field="daily_images" type="number" value="">
+</div><div class="field">
+<label for="peak_hours">שעות עומס </label>
+<input id="peak_hours" data-field="peak_hours" type="text" value="">
+</div><div class="field required-field">
+<label for="max_wait_time">זמן המתנה מרבי מקובל <span class="required-mark">*</span></label>
+<input id="max_wait_time" data-field="max_wait_time" type="text" value="" required="" class="invalid">
+</div><div class="field required-field">
+<label for="human_support_247">האם נדרשת תמיכה אנושית 24/7? <span class="required-mark">*</span></label>
+<select id="human_support_247" data-field="human_support_247" required="" class=""><option value="">בחר/י</option><option value="לא" selected="">לא</option><option value="כן">כן</option><option value="טרם הוחלט">טרם הוחלט</option></select>
+</div></div>
+  
+</section>
+
+<section class="section-card" id="section-accounts">
+  <div class="section-heading">
+    <h2>11. חשבונות, גישות ותשתית</h2>
+    <p>סמן מה כבר נפתח ומי בעל החשבון.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="deployment_target">יעד פריסה סופי <span class="required-mark">*</span></label>
+<select id="deployment_target" data-field="deployment_target" required=""><option value="Vercel ל-Frontend/API + Supabase" selected="">Vercel ל-Frontend/API + Supabase</option><option value="Render + Supabase">Render + Supabase</option><option value="טרם הוחלט">טרם הוחלט</option></select>
+</div><div class="field required-field">
+<label for="github_owner">בעלות על GitHub Repository <span class="required-mark">*</span></label>
+<input id="github_owner" data-field="github_owner" type="text" value="מאור עטיה https://github.com/simplesolutions05055-blip/-AI-" required="" class="">
+</div><div class="field">
+<label for="domain_name">דומיין/סאב-דומיין למערכת </label>
+<input id="domain_name" data-field="domain_name" type="text" value="https://supabase.com/dashboard/project/tgropjisnheppsxejfdn">
+</div><div class="field">
+<label for="supabase_project_ref">Supabase Project Ref </label>
+<input id="supabase_project_ref" data-field="supabase_project_ref" type="text" value="">
+</div><div class="field required-field">
+<label for="async_processing">מנגנון עיבוד אסינכרוני <span class="required-mark">*</span></label>
+<select id="async_processing" data-field="async_processing" required="" class=""><option value="">בחר/י</option><option value="Vercel Workflow/Queue">Vercel Workflow/Queue</option><option value="Supabase Edge Function">Supabase Edge Function</option><option value="Worker חיצוני">Worker חיצוני</option><option value="יוחלט בפיתוח" selected="">יוחלט בפיתוח</option></select>
+</div></div>
+  <div class="check-grid"><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="acc_twilio">
+    <span>Twilio נפתח</span>
+  </label>
+  <input type="text" data-checkbox-details="acc_twilio" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="acc_meta">
+    <span>Meta Business/WABA מוכן</span>
+  </label>
+  <input type="text" data-checkbox-details="acc_meta" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="acc_openai">
+    <span>OpenAI API נפתח וחיוב פעיל</span>
+  </label>
+  <input type="text" data-checkbox-details="acc_openai" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="acc_supabase">
+    <span>Supabase Project נפתח</span>
+  </label>
+  <input type="text" data-checkbox-details="acc_supabase" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="acc_vercel">
+    <span>Vercel Workspace/Project נפתח</span>
+  </label>
+  <input type="text" data-checkbox-details="acc_vercel" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="acc_resend">
+    <span>Resend נפתח ודומיין אומת</span>
+  </label>
+  <input type="text" data-checkbox-details="acc_resend" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="acc_github">
+    <span>GitHub Repository נפתח</span>
+  </label>
+  <input type="text" data-checkbox-details="acc_github" value="" placeholder="פירוט/הערות">
+</div><div class="check-card">
+  <label class="check-line">
+    <input type="checkbox" data-checkbox="acc_domain">
+    <span>דומיין זמין</span>
+  </label>
+  <input type="text" data-checkbox-details="acc_domain" value="" placeholder="פירוט/הערות">
+</div></div>
+</section>
+
+<section class="section-card" id="section-commercial">
+  <div class="section-heading">
+    <h2>12. אבני דרך ואישור מסחרי</h2>
+    <p>הסיכום מבוסס על השיחה. יש לאשר שלא חל שינוי.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="agreed_price">מחיר שסוכם <span class="required-mark">*</span></label>
+<input id="agreed_price" data-field="agreed_price" type="text" value="5,000 ₪" required="">
+</div><div class="field required-field">
+<label for="payment_1">תשלום ראשון <span class="required-mark">*</span></label>
+<input id="payment_1" data-field="payment_1" type="text" value="2,000 ₪ בתחילת העבודה" required="">
+</div><div class="field required-field">
+<label for="payment_2">תשלום שני <span class="required-mark">*</span></label>
+<input id="payment_2" data-field="payment_2" type="text" value="1,000 ₪ לאחר תוצר ראשון שמגיע מ-WhatsApp למייל" required="">
+</div><div class="field required-field">
+<label for="payment_3">תשלום שלישי <span class="required-mark">*</span></label>
+<input id="payment_3" data-field="payment_3" type="text" value="2,000 ₪ במסירת הפרויקט" required="">
+</div><div class="field required-field">
+<label for="third_party_costs">עלויות ספקים <span class="required-mark">*</span></label>
+<select id="third_party_costs" data-field="third_party_costs" required=""><option value="משולמות בנפרד על ידי הלקוח" selected="">משולמות בנפרד על ידי הלקוח</option></select>
+</div><div class="field required-field">
+<label for="scope_change">כלל לשינוי היקף <span class="required-mark">*</span></label>
+<textarea id="scope_change" data-field="scope_change" required="">שינוי מהותי או תוספת שלא אושרו במסמך זה יתומחרו בנפרד.</textarea>
+</div></div>
+  
+</section>
+
+<section class="section-card" id="section-approval">
+  <div class="section-heading">
+    <h2>13. אישור והערות</h2>
+    <p>השלם את פרטי המאשר והערות אחרונות.</p>
+  </div>
+  <div class="form-grid"><div class="field required-field">
+<label for="approver_name">שם מלא <span class="required-mark">*</span></label>
+<input id="approver_name" data-field="approver_name" type="text" value="איתי קרקסון" required="" class="">
+</div><div class="field required-field">
+<label for="approver_role">תפקיד <span class="required-mark">*</span></label>
+<input id="approver_role" data-field="approver_role" type="text" value="" required="" class="invalid">
+</div><div class="field required-field">
+<label for="approval_date">תאריך אישור <span class="required-mark">*</span></label>
+<input id="approval_date" data-field="approval_date" type="date" value="" required="" class="invalid">
+</div><div class="field">
+<label for="final_comments">הערות נוספות </label>
+<textarea id="final_comments" data-field="final_comments"></textarea>
+</div></div>
+  
+</section>
+
+
+<section class="table-card">
+  <h2>14. דוגמאות לבקשות ולתוצרים</h2>
+  <p>הוסף לפחות שלוש דוגמאות אמיתיות. זהו חומר קריטי לבניית ה-System Message ולבדיקות הקבלה.</p>
+  <div class="table-wrap">
+    <table data-table="examples">
+      <thead><tr><th>בקשת WhatsApp לדוגמה</th><th>שאלות המשך רצויות</th><th>סוג תוצר</th><th>תיאור התוצאה הטובה</th><th>מה אסור שיקרה</th><th>פעולה</th></tr></thead>
+      <tbody>
+        <tr><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td><button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button></td></tr>
+        <tr><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td><button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button></td></tr>
+        <tr><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td contenteditable="true"></td><td><button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-actions"><button type="button" onclick="addRow('examples',5)">הוסף דוגמה</button></div>
+</section>
+
+<section class="summary-card">
+  <h2>אישור</h2>
+  <p>מילוי הטופס ואישורו משמשים בסיס להשלמת האפיון. שינוי מהותי בהיקף לאחר תחילת הפיתוח עשוי להשפיע על המחיר ועל לוח הזמנים.</p>
+  <div class="signature-note">לאחר מילוי: לחץ על <strong>שמור HTML</strong> כדי לקבל קובץ שניתן לפתוח מחדש, או על <strong>ייצוא JSON</strong> כדי להעביר את התשובות לניתוח והפקת מסמך המשך.</div>
+</section>
+
+<div class="footer-actions">
+  <button type="button" class="primary" onclick="saveHtml()">שמור HTML</button>
+  <button type="button" onclick="exportJson()">ייצוא JSON</button>
+  <button type="button" onclick="window.print()">ייצוא ל-PDF</button>
+  <button type="button" class="danger" onclick="resetForm()">אפס טופס</button>
+</div>
+</div>
+
+<script>
+const STORAGE_KEY = "whatsapp-ai-agent-requirements-v1";
+
+function collectData() {
+  const meta = {};
+  document.querySelectorAll("[data-meta]").forEach(el => meta[el.dataset.meta] = el.value || "");
+
+  const fields = {};
+  document.querySelectorAll("[data-field]").forEach(el => fields[el.dataset.field] = el.value || "");
+
+  const checkboxes = {};
+  document.querySelectorAll("[data-checkbox]").forEach(el => {
+    const key = el.dataset.checkbox;
+    const details = document.querySelector(`[data-checkbox-details="${key}"]`);
+    checkboxes[key] = { checked: el.checked, details: details ? details.value : "" };
+  });
+
+  const tables = {};
+  document.querySelectorAll("table[data-table]").forEach(table => {
+    const id = table.dataset.table;
+    tables[id] = Array.from(table.querySelectorAll("tbody tr")).map(row =>
+      Array.from(row.querySelectorAll("td")).slice(0,-1).map(cell => cell.innerText.trim())
+    );
+  });
+
+  return { meta, fields, tables, checkboxes };
+}
+
+function applyData(data) {
+  if (!data) return;
+  Object.entries(data.meta || {}).forEach(([k,v]) => {
+    const el = document.querySelector(`[data-meta="${k}"]`);
+    if (el) el.value = v ?? "";
+  });
+  Object.entries(data.fields || {}).forEach(([k,v]) => {
+    const el = document.querySelector(`[data-field="${k}"]`);
+    if (el) el.value = v ?? "";
+  });
+  Object.entries(data.checkboxes || {}).forEach(([k,v]) => {
+    const cb = document.querySelector(`[data-checkbox="${k}"]`);
+    const details = document.querySelector(`[data-checkbox-details="${k}"]`);
+    if (cb) cb.checked = !!v.checked;
+    if (details) details.value = v.details ?? "";
+  });
+  Object.entries(data.tables || {}).forEach(([id,rows]) => {
+    const table = document.querySelector(`table[data-table="${id}"]`);
+    if (!table) return;
+    const colCount = table.querySelectorAll("thead th").length - 1;
+    table.querySelector("tbody").innerHTML = "";
+    rows.forEach(row => appendTableRow(table, row, colCount));
+  });
+  updateProgress();
+}
+
+function autoSave() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(collectData()));
+  const status = document.getElementById("saveStatus");
+  status.textContent = "נשמר אוטומטית";
+  status.className = "status-pill";
+  updateProgress();
+}
+
+function loadSaved() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return;
+  try { applyData(JSON.parse(raw)); } catch (e) { console.warn("Could not restore saved form", e); }
+}
+
+function updateProgress() {
+  const required = Array.from(document.querySelectorAll("[required]"));
+  let completed = 0;
+  required.forEach(el => {
+    const ok = (el.type === "checkbox") ? el.checked : String(el.value || "").trim().length > 0;
+    el.classList.toggle("invalid", !ok);
+    if (ok) completed++;
+  });
+  const percent = required.length ? Math.round(completed / required.length * 100) : 100;
+  document.getElementById("progressText").textContent = percent + "%";
+  document.getElementById("progressBar").style.width = percent + "%";
+}
+
+function downloadBlob(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportJson() {
+  autoSave();
+  const data = collectData();
+  downloadBlob(JSON.stringify(data, null, 2), "whatsapp-ai-agent-requirements.json", "application/json;charset=utf-8");
+}
+
+function prepareCloneForSave() {
+  const clone = document.documentElement.cloneNode(true);
+  clone.querySelectorAll("[data-meta],[data-field],[data-checkbox-details]").forEach(el => {
+    const sourceSelector = el.dataset.meta ? `[data-meta="${el.dataset.meta}"]`
+      : el.dataset.field ? `[data-field="${el.dataset.field}"]`
+      : `[data-checkbox-details="${el.dataset.checkboxDetails}"]`;
+    const source = document.querySelector(sourceSelector);
+    if (!source) return;
+    if (el.tagName === "TEXTAREA") {
+      el.textContent = source.value;
+    } else if (el.tagName === "SELECT") {
+      Array.from(el.options).forEach(opt => {
+        if (opt.value === source.value) opt.setAttribute("selected","");
+        else opt.removeAttribute("selected");
+      });
+    } else {
+      el.setAttribute("value", source.value);
+    }
+  });
+  clone.querySelectorAll("[data-checkbox]").forEach(el => {
+    const source = document.querySelector(`[data-checkbox="${el.dataset.checkbox}"]`);
+    if (source && source.checked) el.setAttribute("checked","");
+    else el.removeAttribute("checked");
+  });
+  return "<!DOCTYPE html>\n" + clone.outerHTML;
+}
+
+function saveHtml() {
+  autoSave();
+  downloadBlob(prepareCloneForSave(), "whatsapp-ai-agent-requirements-filled.html", "text/html;charset=utf-8");
+}
+
+function resetForm() {
+  if (!confirm("למחוק את כל המידע שנשמר ולהחזיר את הטופס לגרסה המקורית?")) return;
+  localStorage.removeItem(STORAGE_KEY);
+  location.reload();
+}
+
+function appendTableRow(table, values, colCount) {
+  const tr = document.createElement("tr");
+  for (let i=0; i<colCount; i++) {
+    const td = document.createElement("td");
+    td.contentEditable = "true";
+    td.innerText = values && values[i] ? values[i] : "";
+    tr.appendChild(td);
+  }
+  const action = document.createElement("td");
+  action.innerHTML = '<button type="button" class="mini danger" onclick="deleteRow(this)">מחק</button>';
+  tr.appendChild(action);
+  table.querySelector("tbody").appendChild(tr);
+}
+
+function addRow(tableId, colCount) {
+  const table = document.querySelector(`table[data-table="${tableId}"]`);
+  if (!table) return;
+  appendTableRow(table, [], colCount);
+  autoSave();
+}
+
+function deleteRow(button) {
+  const row = button.closest("tr");
+  if (row) row.remove();
+  autoSave();
+}
+
+document.addEventListener("input", () => {
+  const status = document.getElementById("saveStatus");
+  status.textContent = "שומר...";
+  clearTimeout(window.__saveTimer);
+  window.__saveTimer = setTimeout(autoSave, 300);
+});
+document.addEventListener("change", autoSave);
+document.addEventListener("DOMContentLoaded", () => {
+  loadSaved();
+  updateProgress();
+});
+</script>
+
+
+</body></html>

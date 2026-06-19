@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>אפיון סופי — סוכן AI ארגוני דרך WhatsApp</title>
+<style>
+:root{--bg:#f4f7fb;--card:#fff;--text:#172033;--muted:#64748b;--line:#d8e2ef;--primary:#2458d6;--danger:#b91c1c;--ok:#166534;--shadow:0 12px 34px rgba(20,45,80,.08)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,"Segoe UI",sans-serif;line-height:1.65}
+.container{max-width:1180px;margin:auto;padding:22px}.hero{background:linear-gradient(135deg,#142d60,#2c63dd);color:white;border-radius:22px;padding:30px;box-shadow:var(--shadow)}
+.hero h1{margin:0 0 8px}.hero p{margin:0;opacity:.92}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}
+.meta input{width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.4);background:rgba(255,255,255,.12);color:white}
+.toolbar{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(244,247,251,.96);backdrop-filter:blur(10px);padding:12px 0}
+button{border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;background:#e4eaf3;color:var(--text)}button.primary{background:var(--primary);color:white}button.danger{background:#fee2e2;color:#991b1b}
+.status{padding:7px 10px;border-radius:999px;background:#e8eef8;font-size:12px;font-weight:700}.nav{display:flex;gap:7px;overflow:auto;padding-top:10px}
+.nav a{white-space:nowrap;text-decoration:none;color:#1e40af;background:#eaf0ff;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;margin-top:16px;box-shadow:var(--shadow)}
+.card h1{font-size:30px}.card h2{margin-top:32px;border-bottom:1px solid var(--line);padding-bottom:8px}.card h3{margin-top:22px}p{margin:8px 0}ul,ol{padding-right:24px}
+blockquote{margin:14px 0;padding:12px 16px;border-right:4px solid #f59e0b;background:#fff7ed;border-radius:10px}
+code{direction:ltr;unicode-bidi:isolate;background:#eef2f7;padding:2px 5px;border-radius:5px}pre{direction:ltr;text-align:left;background:#111827;color:#f8fafc;padding:14px;border-radius:12px;overflow:auto}
+.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:800px}th,td{border:1px solid var(--line);padding:9px;vertical-align:top}th{background:#edf3ff}
+.open-items td[contenteditable="true"]{background:#fffdf2;min-width:220px}select,input,textarea{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:8px;font:inherit}
+.footer{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:28px 0}
+.notice{background:#fff7ed;border-right:4px solid #f59e0b;border-radius:12px;padding:14px;margin-top:16px}
+@media(max-width:850px){.container{padding:12px}.meta{grid-template-columns:1fr}.toolbar{position:static}}
+@media print{body{background:white}.container{max-width:none;padding:0}.toolbar,.nav,.footer{display:none!important}.hero{background:white;color:black;border:2px solid black;box-shadow:none}.hero input{color:black;background:white;border:0}.card{box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="container">
+<header class="hero">
+<h1>אפיון סופי — סוכן AI ארגוני דרך WhatsApp</h1>
+<p>מסמך מאוחד לאחר מסמך הדרישות ומסמך ההבהרות</p>
+<div class="meta">
+<input data-meta="projectName" value="סוכן AI ארגוני דרך WhatsApp">
+<input data-meta="clientName" value="מאור עטייה">
+<input data-meta="date" type="date" value="2026-06-18">
+<input data-meta="version" value="1.0">
+</div>
+</header>
+
+<div class="toolbar">
+<button class="primary" onclick="saveHtml()">שמור HTML</button>
+<button onclick="exportJson()">ייצוא JSON</button>
+<button onclick="window.print()">ייצוא ל-PDF</button>
+<button class="danger" onclick="resetNotes()">אפס הערות פתוחות</button>
+<span id="saveStatus" class="status">נשמר אוטומטית</span>
+</div>
+
+<nav class="nav">
+<a href="#spec">האפיון</a><a href="#open-items">תלויות פתוחות</a><a href="#approval">אישור</a>
+</nav>
+
+<section class="card" id="spec">
+<h1>אפיון סופי — סוכן AI ארגוני דרך WhatsApp</h1>
+<p><strong>שם הפרויקט:</strong> סוכן AI ארגוני דרך WhatsApp  </p>
+<p><strong>לקוח:</strong> מאור עטייה  </p>
+<p><strong>מפתח ומאשר:</strong> איתי קרקסון  </p>
+<p><strong>תאריך:</strong> 18.06.2026  </p>
+<p><strong>גרסה:</strong> 1.0  </p>
+<p><strong>סטטוס:</strong> מאושר לפיתוח, בכפוף לתלויות הפתוחות בסעיף 24</p>
+<hr>
+<h2>1. תקציר מנהלים</h2>
+<p>המערכת תספק שירות AI ארגוני דרך WhatsApp. משתמש שולח הודעה למספר ייעודי, מצרף לפי הצורך תמונה או מסמך, והמערכת מנהלת שיחה קצרה כדי להבין את הבקשה ולאסוף את הפרטים החסרים. לאחר יצירת בריף מובנה, המערכת מפיקה תוצר באמצעות OpenAI, מבצעת בדיקות QA, שומרת את התוצר ב־Supabase וממשיכה לפי מצב השליחה שנבחר בממשק הניהול:</p>
+<ul>
+<li>אישור ידני לפני שליחה.</li>
+<li>שליחה אוטומטית לאחר QA.</li>
+<li>הגדרה נפרדת לפי סוג תוצר.</li>
+</ul>
+<p>התוצר נשלח לכתובת המייל שהמשתמש מסר, והמשתמש מקבל עדכון ב־WhatsApp.</p>
+<hr>
+<h2>2. מטרות עסקיות</h2>
+<ul>
+<li>לספק יכולת הפקת תוצרים גם מחוץ לשעות העבודה.</li>
+<li>לאפשר לארגונים, עיריות ולקוחות עסקיים להגיש בקשות בשפה חופשית דרך WhatsApp.</li>
+<li>לקצר את הזמן בין קבלת הבריף לקבלת תוצר ראשוני.</li>
+<li>לשמור על בקרה באמצעות QA, היסטוריה, סטטוסים, עלויות ומצב אישור.</li>
+<li>לאפשר ניהול מלא של נוסחים, System Message והגדרות תפעוליות מתוך ממשק אדמין.</li>
+</ul>
+<hr>
+<h2>3. משתמשים והרשאות</h2>
+<h3>3.1 משתמש WhatsApp</h3>
+<p>כל מי שמכיר את מספר ה־WhatsApp יכול לשלוח הודעה.</p>
+<p>יכולות:</p>
+<ul>
+<li>שליחת טקסט.</li>
+<li>צירוף תמונה.</li>
+<li>צירוף PDF או DOCX.</li>
+<li>מענה לשאלות השלמה.</li>
+<li>מסירת כתובת מייל.</li>
+<li>קבלת עדכון שהתוצר נשלח.</li>
+</ul>
+<p>לא כלול:</p>
+<ul>
+<li>הודעות קוליות.</li>
+<li>וידאו.</li>
+<li>מנגנון הרשמה למשתמשי WhatsApp.</li>
+</ul>
+<h3>3.2 מנהל מערכת</h3>
+<p>בגרסה הראשונה יהיה מנהל אחד.</p>
+<ul>
+<li>מייל מנהל ראשוני: `itayk93@gmail.com`</li>
+<li>אין מסך הרשמה ציבורי.</li>
+<li>חשבון המנהל ייווצר ישירות ב־Supabase Auth.</li>
+<li>סיסמה זמנית תוגדר ישירות ב־Supabase ולא תישמר בקוד, ב־GitHub או במסמך.</li>
+<li>יש לדרוש החלפת סיסמה בכניסה הראשונה.</li>
+<li>בהמשך ניתן ליצור משתמש מנהל נוסף ידנית.</li>
+</ul>
+<blockquote>הערת אבטחה: הסיסמה שנמסרה בטופס אינה מתאימה לסביבת Production ולכן אינה מוטמעת באפיון.</blockquote>
+<hr>
+<h2>4. היקף ה־MVP</h2>
+<h3>4.1 כלול</h3>
+<ul>
+<li>חיבור Twilio WhatsApp Sandbox לפיתוח.</li>
+<li>מעבר ל־WhatsApp Sender אמיתי לאחר השלמת ההרשמה.</li>
+<li>Webhook מאובטח לקבלת הודעות.</li>
+<li>קבלת טקסט, PNG, JPG, PDF ו־DOCX.</li>
+<li>מגבלת קובץ של 10MB.</li>
+<li>חסימת וידאו, אודיו וקבצים הרצתיים.</li>
+<li>שיחה רב־שלבית.</li>
+<li>עד 3 סבבי שאלות.</li>
+<li>עד 3 ניסיונות יצירה.</li>
+<li>חילוץ ואימות כתובת מייל.</li>
+<li>יצירת בריף מובנה.</li>
+<li>יצירת טקסט, תמונה ו־PDF.</li>
+<li>תמונה ריבועית כברירת מחדל.</li>
+<li>PDF בעברית וב־RTL.</li>
+<li>מצב אישור ידני/אוטומטי/לפי סוג תוצר.</li>
+<li>ממשק ניהול.</li>
+<li>ניהול System Message מלא.</li>
+<li>ניהול נוסחי WhatsApp ומייל.</li>
+<li>ניהול מגבלות שימוש.</li>
+<li>שמירת קבצים ב־Supabase Storage.</li>
+<li>מחיקה ידנית ומרובה של קבצים.</li>
+<li>מעקב עלויות.</li>
+<li>לוגים ושגיאות.</li>
+<li>ייצוא XLSX עם תאריך וטווח תאריכים.</li>
+<li>שליחת תוצר במייל כקובץ מצורף.</li>
+<li>עדכון המשתמש ב־WhatsApp.</li>
+</ul>
+<h3>4.2 לא כלול</h3>
+<ul>
+<li>תזמון או פרסום ברשתות חברתיות.</li>
+<li>יצירת PowerPoint/PPTX.</li>
+<li>הודעות קוליות.</li>
+<li>וידאו.</li>
+<li>ריבוי ארגונים.</li>
+<li>הרשאות מורכבות.</li>
+<li>CRM.</li>
+<li>סליקה.</li>
+<li>תמיכה אנושית 24/7.</li>
+<li>מודל תמונה חלופי אוטומטי.</li>
+<li>עיצוב גרפי ידני.</li>
+<li>התחייבות לתוצאה מושלמת ללא QA אנושי.</li>
+</ul>
+<hr>
+<h2>5. תוצרים</h2>
+<h3>5.1 טקסט</h3>
+<ul>
+<li>המערכת מייצרת תוכן בעברית.</li>
+<li>התוצר הטקסטואלי יומר ל־PDF.</li>
+<li>הקובץ יישלח כקובץ מצורף.</li>
+<li>ניתן לערוך את הטקסט בממשק לפני שליחה.</li>
+</ul>
+<h3>5.2 תמונה</h3>
+<ul>
+<li>יצירה באמצעות OpenAI Image API.</li>
+<li>יחס ברירת מחדל: 1:1.</li>
+<li>פורמט: PNG או JPG.</li>
+<li>הטקסט וההנחיות נשמרים יחד עם גרסת התוצר.</li>
+<li>אין מעבר אוטומטי למודל חלופי ב־MVP.</li>
+</ul>
+<h3>5.3 PDF</h3>
+<ul>
+<li>תבנית בסיסית אחת.</li>
+<li>עברית מלאה ו־RTL.</li>
+<li>פונט Assistant או Heebo.</li>
+<li>כותרת, תוכן, תאריך ו־Footer בסיסי.</li>
+<li>אין מיתוג מחייב בשלב הראשון.</li>
+<li>מבנה התבנית הסופי ייסגר לאחר תוצר ראשון.</li>
+</ul>
+<h3>5.4 בקשה למצגת</h3>
+<p>המערכת אינה מייצרת PPTX.</p>
+<p>במקום זאת היא מחזירה:</p>
+<ul>
+<li>מבנה שקפים.</li>
+<li>כותרת לכל שקף.</li>
+<li>תוכן מלא לכל שקף.</li>
+<li>הנחיות עיצוב.</li>
+<li>הנחיות RTL.</li>
+<li>Prompt מוכן להדבקה ב־NotebookLM.</li>
+<li>הודעת WhatsApp המסבירה למשתמש כיצד להשתמש בתוכן ב־NotebookLM.</li>
+</ul>
+<hr>
+<h2>6. שפת המערכת</h2>
+<ul>
+<li>שפת ברירת המחדל: עברית.</li>
+<li>ממשק האדמין: עברית.</li>
+<li>כל רכיבי המערכת והתוצרים חייבים לתמוך ב־RTL.</li>
+<li>מידע טכני, מספרים, כתובות מייל, URLs ומזהים נשארים LTR.</li>
+<li>תמיכה בשפות נוספות אינה כלולה בגרסה הראשונה.</li>
+</ul>
+<hr>
+<h2>7. Flow מלא</h2>
+<ol>
+<li>1. המשתמש שולח הודעת WhatsApp.</li>
+<li>2. Twilio שולח Webhook ל־Vercel.</li>
+<li>3. ה־Webhook מאמת `X-Twilio-Signature`.</li>
+<li>4. המערכת בודקת `MessageSid` למניעת כפילויות.</li>
+<li>5. ההודעה והקבצים נשמרים ב־Supabase.</li>
+<li>6. אם אין שיחה פעילה, נוצרת בקשה חדשה.</li>
+<li>7. אם קיימת בקשה פעילה, ההודעה מצטרפת אליה.</li>
+<li>8. ה־Webhook יוצר Job ומחזיר תשובת 200 במהירות.</li>
+<li>9. Supabase Database Webhook או מנגנון Invocation מקביל מפעיל Edge Function כ־Worker.</li>
+<li>10. ה־Worker אוסף את כל ההודעות.</li>
+<li>11. ה־AI בודק אם קיים בריף מספק.</li>
+<li>12. אם חסרים פרטים, נשלחת שאלת המשך.</li>
+<li>13. לאחר עד 3 סבבים, נוצר בריף מובנה.</li>
+<li>14. נאספת כתובת מייל תקינה.</li>
+<li>15. OpenAI מייצר את התוצר.</li>
+<li>16. התוצר עובר QA.</li>
+<li>17. במקרה הצורך מתבצעים עד 3 ניסיונות.</li>
+<li>18. התוצר נשמר ב־Supabase Storage.</li>
+<li>19. לפי הגדרת מצב האישור:</li>
+<p>    - ידני: התוצר ממתין למנהל.</p>
+<p>    - אוטומטי: התוצר נשלח לאחר QA.</p>
+<p>    - לפי סוג: ההחלטה מתקבלת לפי הגדרת סוג התוצר.</p>
+<li>20. Resend שולח את הקובץ.</li>
+<li>21. המערכת שומרת מזהה משלוח.</li>
+<li>22. המשתמש מקבל הודעת WhatsApp שהתוצר נשלח.</li>
+<li>23. הבקשה עוברת ל־`sent`.</li>
+<li>24. לאחר `sent` או `closed`, הודעה חדשה פותחת בקשה חדשה.</li>
+</ol>
+<hr>
+<h2>8. מצבי אישור</h2>
+<p>מסך ההגדרות יכלול:</p>
+<ul>
+<li>`manual` — אישור ידני לכל התוצרים.</li>
+<li>`automatic` — שליחה אוטומטית לאחר QA.</li>
+<li>`by_output_type` — הגדרה נפרדת לטקסט, תמונה ו־PDF.</li>
+</ul>
+<p>ברירת מחדל מומלצת:</p>
+<ul>
+<li>טקסט: אוטומטי.</li>
+<li>תמונה: ידני.</li>
+<li>PDF: ידני.</li>
+</ul>
+<p>ניתן לשנות את ההגדרה מתוך ממשק האדמין.</p>
+<hr>
+<h2>9. שאלות השלמה</h2>
+<p>המערכת תבדוק אם קיימים:</p>
+<ul>
+<li>סוג תוצר.</li>
+<li>מטרת התוצר.</li>
+<li>קהל יעד.</li>
+<li>שפה.</li>
+<li>פרטים שחייבים להופיע.</li>
+<li>סגנון.</li>
+<li>כתובת מייל.</li>
+<li>חומרי מקור.</li>
+<li>מידות, אם המשתמש מבקש יחס שאינו ריבועי.</li>
+</ul>
+<p>אם אין בריף מספק בהודעה הראשונה, המערכת תבקש אותו במפורש.</p>
+<p>אם לאחר 3 סבבים עדיין חסר מידע:</p>
+<ul>
+<li>הבקשה תסומן `needs_attention`.</li>
+<li>המשתמש יקבל הודעה שחסר מידע.</li>
+<li>המנהל יוכל להשלים או לסגור את הבקשה.</li>
+</ul>
+<hr>
+<h2>10. AI ו־System Message</h2>
+<h3>10.1 מודלים</h3>
+<ul>
+<li>מודל שפה: מודל OpenAI עדכני שייבחר לפי איכות ועלות.</li>
+<li>מודל תמונה: OpenAI Image API.</li>
+<li>אין Fallback אוטומטי ב־MVP.</li>
+</ul>
+<h3>10.2 System Message</h3>
+<p>המנהל יכול לערוך את כל ה־System Message מתוך Modal.</p>
+<p>דרישות Modal:</p>
+<ul>
+<li>RTL מלא.</li>
+<li>הצגת כל הטקסט ללא הסתרה.</li>
+<li>Textarea גדול.</li>
+<li>שמירה מפורשת.</li>
+<li>ביטול.</li>
+<li>סגירה בלחיצה על `Escape`.</li>
+<li>סגירה בלחיצה מחוץ ל־Modal.</li>
+<li>אזהרה לפני סגירה אם קיימים שינויים שלא נשמרו.</li>
+<li>שמירת גרסה קודמת של ה־System Message.</li>
+<li>תיעוד מי שינה ומתי.</li>
+</ul>
+<h3>10.3 נושאים הניתנים לניהול</h3>
+<ul>
+<li>טון וסגנון.</li>
+<li>קהלי יעד.</li>
+<li>כללי ניסוח.</li>
+<li>כללי QA.</li>
+<li>תוכן אסור.</li>
+<li>מידע שאסור להמציא.</li>
+<li>מספר סבבי שאלות.</li>
+<li>מספר ניסיונות.</li>
+<li>הודעות WhatsApp.</li>
+<li>פרטי מייל.</li>
+<li>מצב אישור.</li>
+<li>מגבלות שימוש.</li>
+</ul>
+<hr>
+<h2>11. כללי QA</h2>
+<p>לפני שליחה המערכת תבדוק:</p>
+<ul>
+<li>התאמה לבריף.</li>
+<li>עברית תקינה.</li>
+<li>RTL תקין.</li>
+<li>קבצים נפתחים.</li>
+<li>אין שמות, תאריכים, סכומים, ציטוטים או פרטי קשר שלא הופיעו בבקשה.</li>
+<li>אין מידע מומצא.</li>
+<li>התוצר ברור.</li>
+<li>התוצר מתאים לסוג שנבחר.</li>
+<li>תמונה ביחס תקין.</li>
+<li>PDF מכיל טקסט קריא.</li>
+<li>אין תוכן אסור.</li>
+<li>כתובת המייל תקינה.</li>
+</ul>
+<p>אם QA נכשל:</p>
+<ul>
+<li>מתבצע ניסיון נוסף.</li>
+<li>לאחר 3 ניסיונות הבקשה עוברת ל־`failed` או `needs_attention`.</li>
+<li>נשמר הסבר בלוג.</li>
+</ul>
+<hr>
+<h2>12. תוכן אסור והגנה</h2>
+<p>מכיוון שהשירות עשוי לשמש עיריות וארגונים:</p>
+<ul>
+<li>יש להציג הודעה שלא לשלוח מידע ביטחוני, רפואי, פיננסי או אישי רגיש.</li>
+<li>יש להוסיף כלל System Message שאוסר עיבוד מידע רגיש.</li>
+<li>המערכת לא תייצר תוכן מטעה, פוגעני, בלתי חוקי או מפר זכויות.</li>
+<li>המערכת לא תמציא נתונים.</li>
+<li>המנהל יכול לחסום מספרי טלפון.</li>
+<li>יש Rate Limit נפרד להודעות וליצירות.</li>
+<li>הערכים ניתנים לשינוי במסך ההגדרות.</li>
+</ul>
+<p>ברירת מחדל מומלצת עד לקבלת נתוני שימוש:</p>
+<ul>
+<li>עד 50 הודעות נכנסות למספר ב־24 שעות.</li>
+<li>עד 10 בקשות יצירה למספר ב־24 שעות.</li>
+<li>אפשרות לחסימה ידנית.</li>
+<li>אפשרות להגבלת תקציב יומי.</li>
+</ul>
+<hr>
+<h2>13. זמני יעד</h2>
+<ul>
+<li>אישור קבלת הודעה: בתוך מספר שניות.</li>
+<li>שאלת המשך: עד 30 שניות.</li>
+<li>תוצר טקסט: יעד של עד 2 דקות.</li>
+<li>תמונה או PDF: יעד של עד 5 דקות.</li>
+<li>שליחת מייל לאחר אישור: עד דקה.</li>
+</ul>
+<p>הזמנים הם יעדי שירות ולא SLA, ותלויים בזמינות Twilio, OpenAI, Supabase ו־Resend.</p>
+<hr>
+<h2>14. ארכיטקטורה</h2>
+<pre dir="ltr"><code>
+WhatsApp User
+    ↓
+Twilio WhatsApp API
+    ↓
+Vercel API Route
+    ↓
+Supabase PostgreSQL + Storage
+    ↓
+Jobs Table
+    ↓
+Supabase Edge Function Worker
+    ↓
+OpenAI
+    ↓
+Supabase Output Storage
+    ↓
+React Admin Dashboard on Vercel
+    ↓
+Approval mode
+    ↓
+Resend
+    ↓
+Email + WhatsApp confirmation
+</code></pre>
+<h3>14.1 חלוקת אחריות</h3>
+<p><strong>Vercel</strong></p>
+<ul>
+<li>React/TypeScript Frontend.</li>
+<li>API Routes.</li>
+<li>Twilio Webhook.</li>
+<li>Admin API.</li>
+<li>Signed URL generation.</li>
+<li>XLSX export endpoint.</li>
+</ul>
+<p><strong>Supabase</strong></p>
+<ul>
+<li>PostgreSQL.</li>
+<li>Auth.</li>
+<li>Storage.</li>
+<li>RLS.</li>
+<li>Jobs.</li>
+<li>Edge Function Worker.</li>
+<li>Logs.</li>
+<li>Settings.</li>
+</ul>
+<p><strong>Twilio</strong></p>
+<ul>
+<li>הודעות WhatsApp נכנסות ויוצאות.</li>
+<li>Media metadata.</li>
+<li>Message SIDs.</li>
+</ul>
+<p><strong>OpenAI</strong></p>
+<ul>
+<li>הבנת בקשה.</li>
+<li>שאלות השלמה.</li>
+<li>כתיבה.</li>
+<li>יצירת תמונה.</li>
+<li>QA.</li>
+</ul>
+<p><strong>Resend</strong></p>
+<ul>
+<li>שליחת מייל וקבצים.</li>
+</ul>
+<hr>
+<h2>15. מסד נתונים</h2>
+<h3>`profiles`</h3>
+<ul>
+<li>`id`</li>
+<li>`email`</li>
+<li>`role`</li>
+<li>`created_at`</li>
+<li>`updated_at`</li>
+</ul>
+<h3>`conversations`</h3>
+<ul>
+<li>`id`</li>
+<li>`whatsapp_from`</li>
+<li>`status`</li>
+<li>`current_request_id`</li>
+<li>`started_at`</li>
+<li>`last_message_at`</li>
+<li>`closed_at`</li>
+</ul>
+<h3>`requests`</h3>
+<ul>
+<li>`id`</li>
+<li>`conversation_id`</li>
+<li>`customer_email`</li>
+<li>`output_type`</li>
+<li>`structured_brief`</li>
+<li>`approval_mode`</li>
+<li>`status`</li>
+<li>`attempt_count`</li>
+<li>`estimated_cost`</li>
+<li>`created_at`</li>
+<li>`updated_at`</li>
+<li>`sent_at`</li>
+<li>`closed_at`</li>
+</ul>
+<h3>`messages`</h3>
+<ul>
+<li>`id`</li>
+<li>`conversation_id`</li>
+<li>`request_id`</li>
+<li>`direction`</li>
+<li>`body`</li>
+<li>`media_type`</li>
+<li>`storage_path`</li>
+<li>`twilio_message_sid`</li>
+<li>`created_at`</li>
+</ul>
+<h3>`jobs`</h3>
+<ul>
+<li>`id`</li>
+<li>`request_id`</li>
+<li>`job_type`</li>
+<li>`status`</li>
+<li>`attempts`</li>
+<li>`locked_at`</li>
+<li>`last_error`</li>
+<li>`created_at`</li>
+<li>`updated_at`</li>
+</ul>
+<h3>`outputs`</h3>
+<ul>
+<li>`id`</li>
+<li>`request_id`</li>
+<li>`version`</li>
+<li>`output_type`</li>
+<li>`text_content`</li>
+<li>`storage_path`</li>
+<li>`mime_type`</li>
+<li>`model_name`</li>
+<li>`prompt_snapshot`</li>
+<li>`qa_result`</li>
+<li>`estimated_cost`</li>
+<li>`created_at`</li>
+</ul>
+<h3>`settings`</h3>
+<ul>
+<li>`id`</li>
+<li>`key`</li>
+<li>`value_json`</li>
+<li>`updated_by`</li>
+<li>`updated_at`</li>
+</ul>
+<h3>`system_prompt_versions`</h3>
+<ul>
+<li>`id`</li>
+<li>`content`</li>
+<li>`created_by`</li>
+<li>`created_at`</li>
+<li>`is_active`</li>
+</ul>
+<h3>`usage_events`</h3>
+<ul>
+<li>`id`</li>
+<li>`request_id`</li>
+<li>`provider`</li>
+<li>`model`</li>
+<li>`input_units`</li>
+<li>`output_units`</li>
+<li>`estimated_cost`</li>
+<li>`created_at`</li>
+</ul>
+<h3>`logs`</h3>
+<ul>
+<li>`id`</li>
+<li>`request_id`</li>
+<li>`severity`</li>
+<li>`action`</li>
+<li>`message`</li>
+<li>`metadata`</li>
+<li>`created_at`</li>
+</ul>
+<h3>`blocked_numbers`</h3>
+<ul>
+<li>`id`</li>
+<li>`phone_number`</li>
+<li>`reason`</li>
+<li>`created_by`</li>
+<li>`created_at`</li>
+</ul>
+<hr>
+<h2>16. סטטוסים</h2>
+<h3>שיחה</h3>
+<ul>
+<li>`active`</li>
+<li>`waiting_for_user`</li>
+<li>`closed`</li>
+</ul>
+<h3>בקשה</h3>
+<ul>
+<li>`received`</li>
+<li>`collecting_details`</li>
+<li>`queued`</li>
+<li>`processing`</li>
+<li>`quality_check`</li>
+<li>`waiting_for_approval`</li>
+<li>`approved`</li>
+<li>`rejected`</li>
+<li>`regenerating`</li>
+<li>`sending`</li>
+<li>`sent`</li>
+<li>`needs_attention`</li>
+<li>`failed`</li>
+<li>`closed`</li>
+</ul>
+<h3>Job</h3>
+<ul>
+<li>`pending`</li>
+<li>`processing`</li>
+<li>`completed`</li>
+<li>`failed`</li>
+<li>`retrying`</li>
+</ul>
+<hr>
+<h2>17. API</h2>
+<h3>Twilio</h3>
+<ul>
+<li>`POST /api/webhooks/twilio`</li>
+</ul>
+<h3>Admin</h3>
+<ul>
+<li>`GET /api/admin/requests`</li>
+<li>`GET /api/admin/requests/:id`</li>
+<li>`POST /api/admin/requests/:id/approve`</li>
+<li>`POST /api/admin/requests/:id/reject`</li>
+<li>`POST /api/admin/requests/:id/regenerate`</li>
+<li>`PATCH /api/admin/requests/:id/output`</li>
+<li>`PATCH /api/admin/requests/:id/email`</li>
+<li>`POST /api/admin/requests/:id/send`</li>
+<li>`POST /api/admin/requests/:id/retry`</li>
+<li>`POST /api/admin/requests/:id/close`</li>
+<li>`DELETE /api/admin/outputs/:id`</li>
+</ul>
+<h3>Settings</h3>
+<ul>
+<li>`GET /api/admin/settings`</li>
+<li>`PUT /api/admin/settings`</li>
+<li>`GET /api/admin/system-prompt`</li>
+<li>`PUT /api/admin/system-prompt`</li>
+<li>`GET /api/admin/system-prompt/versions`</li>
+<li>`POST /api/admin/system-prompt/:id/restore`</li>
+</ul>
+<h3>Export</h3>
+<ul>
+<li>`GET /api/admin/export.xlsx?from=&amp;to=`</li>
+</ul>
+<h3>Worker</h3>
+<ul>
+<li>Supabase Edge Function: `process-request`</li>
+<li>Supabase Edge Function: `send-output`</li>
+<li>Supabase Edge Function: `cleanup-files`, רק אם תתווסף מחיקה אוטומטית בעתיד.</li>
+</ul>
+<hr>
+<h2>18. ממשק הניהול</h2>
+<h3>18.1 התחברות</h3>
+<ul>
+<li>מייל וסיסמה.</li>
+<li>אין הרשמה ציבורית.</li>
+<li>שכחתי סיסמה.</li>
+<li>Logout.</li>
+</ul>
+<h3>18.2 Dashboard</h3>
+<ul>
+<li>מספר בקשות לפי סטטוס.</li>
+<li>בקשות היום.</li>
+<li>עלות היום.</li>
+<li>מספר תוצרים.</li>
+<li>שגיאות אחרונות.</li>
+<li>נפח Storage.</li>
+</ul>
+<h3>18.3 רשימת בקשות</h3>
+<p>עמודות:</p>
+<ul>
+<li>תאריך.</li>
+<li>מספר WhatsApp.</li>
+<li>מייל.</li>
+<li>סוג תוצר.</li>
+<li>סטטוס.</li>
+<li>עלות.</li>
+<li>זמן טיפול.</li>
+<li>פעולה.</li>
+</ul>
+<p>פילטרים:</p>
+<ul>
+<li>תאריך.</li>
+<li>סטטוס.</li>
+<li>מספר.</li>
+<li>מייל.</li>
+<li>סוג תוצר.</li>
+</ul>
+<h3>18.4 פרטי בקשה</h3>
+<ul>
+<li>היסטוריית שיחה.</li>
+<li>קבצים שהתקבלו.</li>
+<li>הבריף המובנה.</li>
+<li>התוצר הנוכחי.</li>
+<li>גרסאות.</li>
+<li>QA.</li>
+<li>עלויות.</li>
+<li>לוגים.</li>
+<li>כתובת מייל.</li>
+</ul>
+<p>פעולות:</p>
+<ul>
+<li>אישור.</li>
+<li>דחייה.</li>
+<li>יצירה מחדש עם הערה.</li>
+<li>עריכת טקסט.</li>
+<li>שינוי מייל.</li>
+<li>שליחה.</li>
+<li>Retry.</li>
+<li>סגירה.</li>
+<li>מחיקה.</li>
+</ul>
+<h3>18.5 מסך קבצים</h3>
+<ul>
+<li>שם קובץ.</li>
+<li>סוג.</li>
+<li>גודל.</li>
+<li>תאריך.</li>
+<li>בקשה קשורה.</li>
+<li>צפייה.</li>
+<li>הורדה.</li>
+<li>מחיקה.</li>
+<li>בחירה מרובה.</li>
+<li>סך נפח אחסון.</li>
+</ul>
+<h3>18.6 הגדרות</h3>
+<ul>
+<li>נוסח קבלת בקשה.</li>
+<li>נוסח שאלת מייל.</li>
+<li>נוסח השלמת שליחה.</li>
+<li>From, Reply-To, שם שולח.</li>
+<li>Subject rule.</li>
+<li>חתימה.</li>
+<li>מצב אישור.</li>
+<li>הגדרה לפי סוג תוצר.</li>
+<li>מספר סבבי שאלות.</li>
+<li>מספר ניסיונות.</li>
+<li>מגבלות שימוש.</li>
+<li>System Message.</li>
+<li>כללי QA.</li>
+</ul>
+<h3>18.7 ייצוא XLSX</h3>
+<p>ייצוא לפי טווח תאריכים.</p>
+<p>גיליונות:</p>
+<ol>
+<li>1. בקשות.</li>
+<li>2. עלויות.</li>
+<li>3. שגיאות.</li>
+</ol>
+<p>שם הקובץ יכיל תאריך וטווח תאריכים.</p>
+<hr>
+<h2>19. RTL, נגישות ומובייל</h2>
+<ul>
+<li>`&lt;html lang=&quot;he&quot; dir=&quot;rtl&quot;&gt;`.</li>
+<li>שימוש ב־CSS logical properties.</li>
+<li>טקסט עברי מיושר ל־start.</li>
+<li>Email, URL, טלפון, מזהים וקוד ב־LTR.</li>
+<li>`dir=&quot;auto&quot;` לתוכן משתמש.</li>
+<li>Progress מימין לשמאל.</li>
+<li>ניווט ראשי מתחיל מימין.</li>
+<li>חץ חזרה פונה ימינה.</li>
+<li>חץ המשך פונה שמאלה.</li>
+<li>Primary action במקום נגיש במובייל.</li>
+<li>Touch target מינימלי 44×44.</li>
+<li>Modal נסגר ב־Escape ובלחיצה על Backdrop.</li>
+<li>Focus trap בתוך Modal.</li>
+<li>Focus חוזר לאלמנט שפתח את Modal.</li>
+<li>תמיכה במקלדת.</li>
+<li>ARIA בעברית.</li>
+<li>ניגודיות תקינה.</li>
+<li>פונט Assistant או Heebo.</li>
+<li>אין letter spacing מורחב בעברית.</li>
+<li>שגיאות מוצגות ליד השדה ובשפה ברורה.</li>
+<li>Mobile-first.</li>
+<li>בדיקות BiDi למיילים, מספרים, URLs ושמות קבצים.</li>
+</ul>
+<hr>
+<h2>20. אבטחה</h2>
+<ul>
+<li>RLS בכל הטבלאות.</li>
+<li>Service Role רק בשרת או ב־Edge Function.</li>
+<li>אימות Twilio Signature.</li>
+<li>Idempotency לפי MessageSid.</li>
+<li>Rate limiting.</li>
+<li>חסימת מספרים.</li>
+<li>ולידציה לקבצים לפי MIME וגודל.</li>
+<li>Storage פרטי.</li>
+<li>Signed URLs.</li>
+<li>אין מפתחות API ב־Frontend.</li>
+<li>אין סודות ב־GitHub.</li>
+<li>Audit log לפעולות מנהל.</li>
+<li>סניטציה ל־HTML ולתוכן משתמש.</li>
+<li>הגנה מפני Prompt Injection בקבצים ובטקסט.</li>
+<li>הפרדה בין System Message לתוכן משתמש.</li>
+<li>אין הצגת שגיאות פנימיות ללקוח.</li>
+</ul>
+<hr>
+<h2>21. משתני סביבה</h2>
+<h3>Vercel</h3>
+<pre dir="ltr"><code>
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_WHATSAPP_FROM=
+
+OPENAI_API_KEY=
+
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
+RESEND_FROM_NAME=
+RESEND_REPLY_TO=
+
+APP_URL=
+</code></pre>
+<h3>Supabase Edge Function Secrets</h3>
+<pre dir="ltr"><code>
+supabase secrets set OPENAI_API_KEY=...
+supabase secrets set RESEND_API_KEY=...
+supabase secrets set TWILIO_ACCOUNT_SID=...
+supabase secrets set TWILIO_AUTH_TOKEN=...
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=...
+</code></pre>
+<p>כל סוד יישמר רק בסביבה המתאימה.</p>
+<hr>
+<h2>22. קריטריוני קבלה</h2>
+<ol>
+<li>1. הודעת טקסט נכנסת ונשמרת.</li>
+<li>2. תמונה, PDF ו־DOCX עד 10MB מתקבלים ונשמרים.</li>
+<li>3. אודיו ווידאו נדחים עם הודעה ברורה.</li>
+<li>4. חתימת Twilio מאומתת.</li>
+<li>5. הודעה כפולה אינה יוצרת רשומה כפולה.</li>
+<li>6. מספר הודעות מתחברות לאותה שיחה.</li>
+<li>7. לאחר `sent/closed`, הודעה חדשה פותחת בקשה חדשה.</li>
+<li>8. המערכת שואלת עד 3 סבבי שאלות.</li>
+<li>9. נאסף מייל תקין.</li>
+<li>10. נוצר בריף מובנה.</li>
+<li>11. נוצר טקסט.</li>
+<li>12. נוצרת תמונה ריבועית.</li>
+<li>13. נוצר PDF RTL.</li>
+<li>14. QA מבוצע.</li>
+<li>15. מתבצעים עד 3 ניסיונות.</li>
+<li>16. מצב ידני ממתין לאישור.</li>
+<li>17. מצב אוטומטי שולח לאחר QA.</li>
+<li>18. מצב לפי סוג פועל בהתאם להגדרה.</li>
+<li>19. המנהל יכול לערוך, לדחות וליצור מחדש.</li>
+<li>20. System Message ניתן לעריכה מלאה ב־Modal.</li>
+<li>21. Modal נסגר ב־Escape וב־Backdrop.</li>
+<li>22. קובץ נשלח דרך Resend.</li>
+<li>23. המשתמש מקבל אישור ב־WhatsApp.</li>
+<li>24. עלויות נשמרות ומוצגות.</li>
+<li>25. לוגים נשמרים.</li>
+<li>26. ניתן לחסום מספר.</li>
+<li>27. Rate limit פועל.</li>
+<li>28. ניתן למחוק קבצים.</li>
+<li>29. ניתן לייצא XLSX עם תאריך.</li>
+<li>30. המערכת תקינה במובייל וב־RTL.</li>
+<li>31. אין סודות בצד לקוח.</li>
+<li>32. אין הרשמה ציבורית.</li>
+</ol>
+<hr>
+<h2>23. מסגרת מסחרית</h2>
+<ul>
+<li>מחיר: 5,000 ₪.</li>
+<li>תשלום ראשון: 2,000 ₪ בתחילת העבודה.</li>
+<li>תשלום שני: 1,000 ₪ לאחר תוצר ראשון שמתחיל ב־WhatsApp ומגיע למייל.</li>
+<li>תשלום שלישי: 2,000 ₪ במסירת הפרויקט.</li>
+<li>עלויות Twilio, OpenAI, Supabase, Vercel, Resend ודומיין משולמות בנפרד.</li>
+<li>תוספות שלא נכללו באפיון יתומחרו בנפרד.</li>
+</ul>
+<blockquote>הערת היקף: האפיון הסופי כולל יותר מ־Flow בסיסי: תמונות, מסמכים, Storage management, System Message editor, מצב אישור משולב, עלויות, לוגים, חסימות וייצוא XLSX. מומלץ לנהל את המסירה בשלבים כדי לעמוד במסגרת המחיר.</blockquote>
+<hr>
+<h2>24. תלויות פתוחות</h2>
+<p>הפיתוח יכול להתחיל, אך הנושאים הבאים עדיין פתוחים:</p>
+<ol>
+<li>1. דומיין ופרטי Resend.</li>
+<li>2. מספר WhatsApp אמיתי ל־Production.</li>
+<li>3. תמונת הדוגמה &quot;בקרוב פסטיבל יאסו&quot;.</li>
+<li>4. דוגמאות נוספות לטקסט ול־PDF.</li>
+<li>5. עיצוב PDF סופי.</li>
+<li>6. נתוני שימוש בפועל.</li>
+<li>7. ערכי Rate Limit סופיים.</li>
+<li>8. הדומיין הציבורי של המערכת.</li>
+<li>9. פרטי מותג, אם יתווספו.</li>
+</ol>
+<hr>
+<h2>25. תוכנית מסירה מומלצת</h2>
+<h3>שלב א — תוצר ראשון מקצה לקצה</h3>
+<ul>
+<li>Supabase schema.</li>
+<li>Auth מנהל.</li>
+<li>Twilio Sandbox.</li>
+<li>Webhook.</li>
+<li>שיחה בסיסית.</li>
+<li>OpenAI טקסט.</li>
+<li>PDF בסיסי.</li>
+<li>Resend.</li>
+<li>תוצר מ־WhatsApp למייל.</li>
+</ul>
+<h3>שלב ב — תוצרים וניהול</h3>
+<ul>
+<li>תמונות.</li>
+<li>קבצים נכנסים.</li>
+<li>Dashboard.</li>
+<li>סטטוסים.</li>
+<li>אישור ידני/אוטומטי.</li>
+<li>עריכה ויצירה מחדש.</li>
+<li>System Message editor.</li>
+</ul>
+<h3>שלב ג — Production hardening</h3>
+<ul>
+<li>עלויות.</li>
+<li>לוגים.</li>
+<li>Rate limiting.</li>
+<li>חסימות.</li>
+<li>Storage management.</li>
+<li>XLSX.</li>
+<li>QA RTL ומובייל.</li>
+<li>מעבר ל־WhatsApp Sender אמיתי.</li>
+</ul>
+<hr>
+<h2>26. אישור</h2>
+<p>מסמך זה משקף את התשובות שניתנו במסמך הדרישות ובמסמך ההבהרות.</p>
+<p><strong>מאשר:</strong> איתי קרקסון  </p>
+<p><strong>תפקיד:</strong> מפתח הפרויקט  </p>
+<p><strong>תאריך:</strong> 18.06.2026</p>
+</section>
+
+<section class="card" id="open-items">
+<h2>מעקב תלויות פתוחות</h2>
+<p>הטבלה ניתנת לעריכה ונשמרת אוטומטית בדפדפן.</p>
+<div class="table-wrap">
+<table class="open-items" data-table="openItems">
+<thead><tr><th>נושא</th><th>מה חסר</th><th>סטטוס</th><th>הערות</th></tr></thead>
+<tbody><tr>
+      <td>דומיין ופרטי Resend</td>
+      <td>יש להשלים דומיין, From, שם שולח, Reply-To וחתימה.</td>
+      <td><select data-field="resend_domain_status"><option>פתוח</option><option>בטיפול</option><option>הושלם</option></select></td>
+      <td contenteditable="true" data-editable="resend_domain_notes"></td>
+    </tr><tr>
+      <td>מספר WhatsApp ל-Production</td>
+      <td>כרגע הפיתוח מתחיל ב-Twilio Sandbox.</td>
+      <td><select data-field="production_number_status"><option>פתוח</option><option>בטיפול</option><option>הושלם</option></select></td>
+      <td contenteditable="true" data-editable="production_number_notes"></td>
+    </tr><tr>
+      <td>תמונת &#x27;בקרוב פסטיבל יאסו&#x27;</td>
+      <td>יש לצרף את קובץ הדוגמה.</td>
+      <td><select data-field="yasou_reference_status"><option>פתוח</option><option>בטיפול</option><option>הושלם</option></select></td>
+      <td contenteditable="true" data-editable="yasou_reference_notes"></td>
+    </tr><tr>
+      <td>דוגמאות נוספות</td>
+      <td>נדרשת דוגמת טקסט ודוגמת PDF.</td>
+      <td><select data-field="more_examples_status"><option>פתוח</option><option>בטיפול</option><option>הושלם</option></select></td>
+      <td contenteditable="true" data-editable="more_examples_notes"></td>
+    </tr><tr>
+      <td>עיצוב PDF סופי</td>
+      <td>ייסגר לאחר יצירת תוצר ראשון.</td>
+      <td><select data-field="pdf_design_status"><option>פתוח</option><option>בטיפול</option><option>הושלם</option></select></td>
+      <td contenteditable="true" data-editable="pdf_design_notes"></td>
+    </tr><tr>
+      <td>נתוני שימוש</td>
+      <td>בקשות ביום, הודעות לבקשה, תמונות ו-PDF ביום.</td>
+      <td><select data-field="usage_numbers_status"><option>פתוח</option><option>בטיפול</option><option>הושלם</option></select></td>
+      <td contenteditable="true" data-editable="usage_numbers_notes"></td>
+    </tr><tr>
+      <td>ערכי Rate Limit</td>
+      <td>ברירת המחדל המומלצת ניתנת לשינוי.</td>
+      <td><select data-field="rate_limits_status"><option>פתוח</option><option>בטיפול</option><option>הושלם</option></select></td>
+      <td contenteditable="true" data-editable="rate_limits_notes"></td>
+    </tr><tr>
+      <td>דומיין ציבורי</td>
+      <td>הקישור ל-Supabase Dashboard אינו דומיין ציבורי.</td>
+      <td><select data-field="public_domain_status"><option>פתוח</option><option>בטיפול</option><option>הושלם</option></select></td>
+      <td contenteditable="true" data-editable="public_domain_notes"></td>
+    </tr></tbody>
+</table>
+</div>
+</section>
+
+<section class="card" id="approval">
+<h2>אישור סופי</h2>
+<label>שם המאשר</label><input data-field="final_approver" value="איתי קרקסון">
+<label>תפקיד</label><input data-field="final_role" value="מפתח הפרויקט">
+<label>תאריך</label><input data-field="final_date" type="date" value="2026-06-18">
+<label>הערות אישור</label><textarea data-field="final_notes"></textarea>
+<div class="notice"><strong>אבטחה:</strong> סיסמאות ומפתחות API אינם נשמרים במסמך. את המשתמש הראשוני יש ליצור ישירות ב-Supabase Auth עם סיסמה זמנית חזקה ולדרוש החלפה בכניסה הראשונה.</div>
+</section>
+
+<div class="footer">
+<button class="primary" onclick="saveHtml()">שמור HTML</button>
+<button onclick="exportJson()">ייצוא JSON</button>
+<button onclick="window.print()">ייצוא ל-PDF</button>
+</div>
+</div>
+<script>
+const STORAGE_KEY="whatsapp-ai-agent-final-spec-v1";
+function collectData(){
+ const meta={};document.querySelectorAll("[data-meta]").forEach(el=>meta[el.dataset.meta]=el.value||"");
+ const fields={};document.querySelectorAll("[data-field]").forEach(el=>fields[el.dataset.field]=el.value||"");
+ const openItems=[];document.querySelectorAll("table[data-table='openItems'] tbody tr").forEach(tr=>{
+   const cells=tr.querySelectorAll("td");
+   openItems.push({title:cells[0].innerText.trim(),description:cells[1].innerText.trim(),status:cells[2].querySelector("select").value,notes:cells[3].innerText.trim()});
+ });
+ return {meta,fields,openItems};
+}
+function applyData(data){
+ if(!data)return;
+ Object.entries(data.meta||{}).forEach(([k,v])=>{const el=document.querySelector(`[data-meta="${k}"]`);if(el)el.value=v??""});
+ Object.entries(data.fields||{}).forEach(([k,v])=>{const el=document.querySelector(`[data-field="${k}"]`);if(el)el.value=v??""});
+ const rows=document.querySelectorAll("table[data-table='openItems'] tbody tr");
+ (data.openItems||[]).forEach((item,i)=>{if(!rows[i])return;rows[i].querySelector("select").value=item.status||"פתוח";rows[i].querySelectorAll("td")[3].innerText=item.notes||""});
+}
+function autosave(){localStorage.setItem(STORAGE_KEY,JSON.stringify(collectData()));document.getElementById("saveStatus").textContent="נשמר אוטומטית"}
+function loadSaved(){const raw=localStorage.getItem(STORAGE_KEY);if(raw)try{applyData(JSON.parse(raw))}catch(e){}}
+function download(content,name,type){const b=new Blob([content],{type}),u=URL.createObjectURL(b),a=document.createElement("a");a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
+function exportJson(){autosave();download(JSON.stringify(collectData(),null,2),"whatsapp-ai-agent-final-spec.json","application/json;charset=utf-8")}
+function saveHtml(){
+ autosave();const clone=document.documentElement.cloneNode(true);
+ clone.querySelectorAll("[data-meta],[data-field]").forEach(el=>{
+  const attr=el.dataset.meta?"data-meta":"data-field",key=el.dataset.meta||el.dataset.field,src=document.querySelector(`[${attr}="${key}"]`);if(!src)return;
+  if(el.tagName==="TEXTAREA")el.textContent=src.value;else el.setAttribute("value",src.value);
+ });
+ const srcRows=document.querySelectorAll("table[data-table='openItems'] tbody tr"),cloneRows=clone.querySelectorAll("table[data-table='openItems'] tbody tr");
+ srcRows.forEach((r,i)=>{const s=r.querySelector("select").value, cs=cloneRows[i].querySelector("select");Array.from(cs.options).forEach(o=>o.value===s?o.setAttribute("selected",""):o.removeAttribute("selected"));cloneRows[i].querySelectorAll("td")[3].innerText=r.querySelectorAll("td")[3].innerText});
+ download("<!DOCTYPE html>\n"+clone.outerHTML,"whatsapp-ai-agent-final-spec-filled.html","text/html;charset=utf-8");
+}
+function resetNotes(){if(confirm("לאפס את סטטוס והערות התלויות הפתוחות?")){localStorage.removeItem(STORAGE_KEY);location.reload()}}
+document.addEventListener("input",()=>{document.getElementById("saveStatus").textContent="שומר...";clearTimeout(window.t);window.t=setTimeout(autosave,250)});
+document.addEventListener("change",autosave);
+document.addEventListener("DOMContentLoaded",loadSaved);
+</script>
+</body>
+</html>

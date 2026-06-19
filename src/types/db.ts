@@ -1,0 +1,69 @@
+export type ConversationStatus = 'active' | 'waiting_for_user' | 'closed';
+
+export type RequestStatus =
+  | 'received'
+  | 'collecting_details'
+  | 'queued'
+  | 'processing'
+  | 'quality_check'
+  | 'waiting_for_approval'
+  | 'approved'
+  | 'rejected'
+  | 'regenerating'
+  | 'sending'
+  | 'sent'
+  | 'needs_attention'
+  | 'failed'
+  | 'closed';
+
+export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'retrying';
+export type MessageDirection = 'inbound' | 'outbound';
+export type OutputType = 'text' | 'image' | 'pdf' | 'presentation';
+export type ApprovalModeValue = 'manual' | 'automatic' | 'by_output_type';
+export type LogSeverity = 'debug' | 'info' | 'warning' | 'error';
+
+export interface StructuredBrief {
+  output_type?: OutputType;
+  goal?: string;
+  audience?: string;
+  language?: string;
+  must_include?: string[];
+  style?: string;
+  source_materials?: string;
+  dimensions?: string;
+  customer_email?: string;
+  ready?: boolean;
+  missing?: string[];
+}
+
+export interface ApprovalSetting {
+  mode: ApprovalModeValue;
+  by_type: Record<'text' | 'image' | 'pdf', 'manual' | 'automatic'>;
+}
+
+export interface RateLimitSetting {
+  messages_per_24h: number;
+  generations_per_24h: number;
+  daily_budget_usd: number | null;
+}
+
+export interface WhatsappTemplates {
+  received: string;
+  ask_email: string;
+  sent: string;
+  needs_attention: string;
+  rejected_media: string;
+  blocked: string;
+}
+
+export interface EmailSettings {
+  from_name: string;
+  subject_rule: string;
+  signature: string;
+}
+
+export interface QaResult {
+  passed: boolean;
+  issues: string[];
+  notes?: string;
+}

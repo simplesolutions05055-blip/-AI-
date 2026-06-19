@@ -1,0 +1,271 @@
+{
+  "meta": {
+    "projectName": "סוכן AI ארגוני דרך WhatsApp",
+    "clientName": "מאור עטייה",
+    "date": "2026-06-18",
+    "version": "1.0"
+  },
+  "fields": {
+    "project_summary": "הקמת סוכן AI ארגוני דרך WhatsApp. המשתמש שולח בקשה, המערכת אוספת פרטים חסרים, מייצרת תוצר, מציגה אותו למנהל לאישור ושולחת אותו למייל.",
+    "business_value": "",
+    "target_users": "נציגי עיריות, ארגונים ולקוחות עסקיים.",
+    "real_scenarios": "דוגמה: חומר דחוף לגיוס תרומות בשעות הלילה, המותאם לתורמים בחו\"ל.",
+    "success_definition": "כל ה-flow מצליח מא עד ת",
+    "allowed_senders": "כל מי שמכיר את המספר",
+    "admin_count": "1",
+    "admin_email": "אני ארצה שאוכל להגדיר את זה במסך ניהול",
+    "admin_login": "מייל וסיסמה",
+    "daily_limit": "אין",
+    "identity_fields": "solution",
+    "twilio_mode": "Twilio Sandbox לפיתוח",
+    "whatsapp_number": "עדיין אין",
+    "business_profile_name": "עדיין אין",
+    "incoming_text": "כן",
+    "incoming_images": "כן ב-MVP",
+    "incoming_documents": "כן ב-MVP",
+    "incoming_audio": "לא ב-MVP",
+    "outside_24h": "לא נדרש",
+    "received_message": "שים לי אפשרות להגדיר את זה במסך אדמין",
+    "sent_message": "שים לי אפשרות להגדיר את זה במסך אדמין",
+    "required_brief_fields": "סוג תוצר, מטרה, קהל יעד, שפה, פרטים שחייבים להופיע, סגנון וכתובת מייל.",
+    "max_question_rounds": "3",
+    "max_generation_attempts": "3",
+    "conversation_timeout": "24 שעות",
+    "new_request_rule": "כשמתקבלת הודעה חדשה, אם אין בריף או משהו בהודעה הראשונה שאפשר ליצור איתו או בקשת יצירה כלשהי - אתה מבקש את זה במפורש",
+    "human_handoff": "אם יש באגים שמגיעים מהapi כלשהו",
+    "supported_languages": "עברית",
+    "tone_style": "כרגע לא יודע להגיד לך",
+    "target_audiences": "",
+    "must_include": "",
+    "never_invent": "שמות, תאריכים, סכומים, נתונים, ציטוטים או פרטי קשר שלא הופיעו בבקשה.",
+    "prohibited_content": "אסור",
+    "qa_rules": "התאמה לבריף, שפה נכונה, RTL, ללא פרטים מומצאים, התאמה למותג, בהירות ותקינות הקובץ.",
+    "language_model": "OpenAI API — מודל עדכני שייבחר לפי איכות ועלות",
+    "image_model": "OpenAI Image API",
+    "fallback_policy": "אין מעבר למודל חלופי",
+    "brand_logo": "אין",
+    "brand_colors": "לא רלוונטי",
+    "brand_fonts": "Assistant / Heebo",
+    "image_sizes": "לא רלוונטי",
+    "desired_examples": "",
+    "bad_examples": "",
+    "pdf_templates": "תבנית אחת בסיסית",
+    "email_body_or_attachment": "כקובץ מצורף",
+    "dashboard_filters": "סטטוס, תאריך, מספר טלפון, מייל וסוג תוצר.",
+    "admin_notifications": "למה צריך תוצר ממתין לאישור? אם מישהו מבקש תוצר בwhatsapp הוא צריך לקבל אותו. לא רלוונטי",
+    "cost_view": "עלות לכל בקשה, מספר קריאות, tokens ומספר תמונות.",
+    "settings_screen": "כלול ב-MVP",
+    "resend_domain": "עדיין אין לי",
+    "resend_from": "עדיין אין לי",
+    "resend_name": "עדיין אין לי",
+    "resend_reply_to": "",
+    "email_cc_admin": "לא",
+    "email_subject_rule": "עדיין אין לי",
+    "email_signature": "עדיין אין לי",
+    "ai_disclosure": "לא",
+    "sensitive_data": "לא",
+    "sensitive_details": "",
+    "retention_period": "אין הגבלה - שיישמר בbucket ותהיה לי אפשרות כאדמין למחוק תוצרים ישנים ולנהל את התוצרים בbucket כדי שלא יהיה overload",
+    "auto_delete": "לא",
+    "max_file_size": "אין הגבלה - אסור וידאו",
+    "allowed_file_types": "אסור וידאו",
+    "privacy_requirements": "",
+    "daily_users": "50",
+    "messages_per_user": "50",
+    "daily_requests": "",
+    "daily_images": "",
+    "peak_hours": "",
+    "max_wait_time": "",
+    "human_support_247": "לא",
+    "deployment_target": "Vercel ל-Frontend/API + Supabase",
+    "github_owner": "מאור עטיה https://github.com/simplesolutions05055-blip/-AI-",
+    "domain_name": "https://supabase.com/dashboard/project/tgropjisnheppsxejfdn",
+    "supabase_project_ref": "",
+    "async_processing": "יוחלט בפיתוח",
+    "agreed_price": "5,000 ₪",
+    "payment_1": "2,000 ₪ בתחילת העבודה",
+    "payment_2": "1,000 ₪ לאחר תוצר ראשון שמגיע מ-WhatsApp למייל",
+    "payment_3": "2,000 ₪ במסירת הפרויקט",
+    "third_party_costs": "משולמות בנפרד על ידי הלקוח",
+    "scope_change": "שינוי מהותי או תוספת שלא אושרו במסמך זה יתומחרו בנפרד.",
+    "approver_name": "איתי קרקסון",
+    "approver_role": "",
+    "approval_date": "",
+    "final_comments": ""
+  },
+  "tables": {
+    "workflow": [
+      [
+        "1",
+        "משתמש",
+        "שולח הודעת WhatsApp",
+        "הודעה נכנסת ל-Twilio",
+        ""
+      ],
+      [
+        "2",
+        "מערכת",
+        "מאמתת חתימה ושומרת ב-Supabase",
+        "נפתחת/מתעדכנת בקשה",
+        ""
+      ],
+      [
+        "3",
+        "מערכת",
+        "שואלת שאלות השלמה ואוספת מייל",
+        "נוצר בריף מלא",
+        ""
+      ],
+      [
+        "4",
+        "AI",
+        "מייצר תוצר ומבצע QA",
+        "תוצר ממתין לאישור",
+        ""
+      ],
+      [
+        "5",
+        "מנהל",
+        "מאשר/דוחה/עורך/מייצר מחדש",
+        "התוצר מוכן לשליחה",
+        ""
+      ],
+      [
+        "6",
+        "מערכת",
+        "שולחת במייל ומעדכנת ב-WhatsApp",
+        "הבקשה הושלמה",
+        ""
+      ]
+    ],
+    "examples": [
+      [
+        "",
+        "",
+        "",
+        "",
+        ""
+      ],
+      [
+        "",
+        "",
+        "",
+        "",
+        ""
+      ],
+      [
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    ]
+  },
+  "checkboxes": {
+    "out_text": {
+      "checked": true,
+      "details": "HTML/Text"
+    },
+    "out_image": {
+      "checked": true,
+      "details": "PNG/JPG, בכפוף לבדיקת API"
+    },
+    "out_pdf": {
+      "checked": true,
+      "details": "נדרש אישור סופי"
+    },
+    "out_translation": {
+      "checked": false,
+      "details": "יש לפרט שפות"
+    },
+    "out_social_content": {
+      "checked": false,
+      "details": "ללא פרסום/תזמון"
+    },
+    "out_presentation": {
+      "checked": false,
+      "details": "לא כלול - אם מישהו מבקש מצגת אתה מסביר לו איך הוא יוצר את המצגת הזאת בnotebooklm ומביא לו את התוכן לשים שם כדי שתצא מצגת מדויקת כמו שאתה רוצה (עם יישור מימין לשמאל עם rtl)"
+    },
+    "out_docx": {
+      "checked": false,
+      "details": "לא כלול כרגע"
+    },
+    "dash_requests": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_conversation": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_outputs": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_status": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_approve": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_regenerate": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_edit": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_email_edit": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_cost": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_logs": {
+      "checked": true,
+      "details": ""
+    },
+    "dash_export": {
+      "checked": true,
+      "details": "תעשה ייצוא xlsx ועם תאריך "
+    },
+    "acc_twilio": {
+      "checked": false,
+      "details": ""
+    },
+    "acc_meta": {
+      "checked": false,
+      "details": ""
+    },
+    "acc_openai": {
+      "checked": false,
+      "details": ""
+    },
+    "acc_supabase": {
+      "checked": false,
+      "details": ""
+    },
+    "acc_vercel": {
+      "checked": false,
+      "details": ""
+    },
+    "acc_resend": {
+      "checked": false,
+      "details": ""
+    },
+    "acc_github": {
+      "checked": false,
+      "details": ""
+    },
+    "acc_domain": {
+      "checked": false,
+      "details": ""
+    }
+  }
+}
