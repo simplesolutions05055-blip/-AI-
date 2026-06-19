@@ -67,3 +67,32 @@ export interface QaResult {
   issues: string[];
   notes?: string;
 }
+
+export type BrandColorRole = 'primary' | 'secondary' | 'accent' | 'background' | 'text';
+
+export interface BrandColor {
+  hex: string;
+  role: BrandColorRole;
+}
+
+export interface Brand {
+  id: string;
+  name: string;
+  aliases: string[];
+  logo_path: string | null;
+  color_palette: BrandColor[];
+  style_notes: string | null;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrandAsset {
+  id: string;
+  brand_id: string;
+  storage_path: string;
+  mime_type: string | null;
+  caption: string | null;
+  created_at: string;
+}

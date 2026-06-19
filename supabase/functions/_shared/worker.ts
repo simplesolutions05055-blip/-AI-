@@ -15,6 +15,7 @@ import { analyzeBrief, generateText, generatePresentationOutline, generateImage,
 import { sendWhatsApp } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
+import { matchBrandInText, buildBrandContext, normalizeHe, type BrandRow } from './brand.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
@@ -40,6 +41,102 @@ async function recordUsage(
     .from('requests')
     .update({ estimated_cost: round4((req?.estimated_cost ?? 0) + cost) })
     .eq('id', requestId);
+}
+
+// ── brand matching helpers ───────────────────────────────────────────────────
+function isYes(text: string): boolean {
+  const t = normalizeHe(text);
+  return /(^|\s)(כן|נכון|אישור|מאשר|בדיוק|yes|נכונה)(\s|$)/.test(t);
+}
+function isNo(text: string): boolean {
+  const t = normalizeHe(text);
+  return /(^|\s)(לא|שגוי|לא נכון|אחר|no)(\s|$)/.test(t);
+}
+
+// Find an active brand whose name/alias appears in any inbound message.
+// Matching logic (exact + fuzzy) lives in the shared brand module.
+async function matchBrand(
+  database: DB,
+  msgs: Array<{ body: string | null; direction: string }>
+): Promise<{ id: string; name: string } | null> {
+  const { data: brands } = await database
+    .from('brands')
+    .select('id, name, aliases')
+    .eq('is_active', true);
+  if (!brands?.length) return null;
+
+  const inboundText = msgs
+    .filter((m) => m.direction === 'inbound' && m.body)
+    .map((m) => m.body!)
+    .join(' ');
+  return matchBrandInText((brands as BrandRow[]) ?? [], inboundText);
+}
+
+type BrandStep = 'awaiting' | 'continue';
+
+// Drives the "is this place X? yes/no" handshake. Returns 'awaiting' when it
+// sent a question and the worker should stop and wait for the next message.
+async function handleBrandConfirmation(
+  database: DB,
+  request: { id: string; structured_brief: Record<string, unknown> | null },
+  conversation: Conv,
+  msgs: Array<{ body: string | null; direction: string }>,
+  templates: Record<string, string>
+): Promise<BrandStep> {
+  const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
+  const pendingId = brief.pending_brand_id as string | undefined;
+
+  async function saveBrief(patch: Record<string, unknown>) {
+    await database.from('requests').update({ structured_brief: { ...brief, ...patch } }).eq('id', request.id);
+  }
+
+  const lastInbound = [...msgs].reverse().find((m) => m.direction === 'inbound' && m.body)?.body ?? '';
+
+  if (pendingId) {
+    if (isYes(lastInbound)) {
+      const { data: brand } = await database.from('brands').select('name').eq('id', pendingId).single();
+      await database.from('requests').update({ brand_id: pendingId }).eq('id', request.id);
+      await saveBrief({ pending_brand_id: null });
+      await logEvent(database, { requestId: request.id, action: 'brand_confirmed', metadata: { brand_id: pendingId } });
+      await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
+        `מעולה, נתאים את התוצר למיתוג של ${brand?.name ?? ''}.`, conversation.simulated);
+      return 'continue';
+    }
+    if (isNo(lastInbound)) {
+      await saveBrief({ pending_brand_id: null, brand_declined: true });
+      await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
+        'הבנתי, נמשיך ללא מיתוג ספציפי.', conversation.simulated);
+      return 'continue';
+    }
+    // unclear → re-ask once
+    await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+    await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
+      'רק לוודא — להשתמש במיתוג של המקום שזיהיתי? השב כן או לא.', conversation.simulated);
+    return 'awaiting';
+  }
+
+  if (brief.brand_declined) return 'continue';
+
+  const match = await matchBrand(database, msgs);
+  if (!match) return 'continue';
+
+  await saveBrief({ pending_brand_id: match.id });
+  await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+  await logEvent(database, { requestId: request.id, action: 'brand_match_suggested', metadata: { brand_id: match.id } });
+  await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
+    `הבנתי שמדובר ב${match.name}, נכון? השב כן או לא.`, conversation.simulated);
+  return 'awaiting';
+}
+
+// Load a brand kit from the DB and build its Hebrew guidelines block for prompts.
+async function loadBrandContext(database: DB, brandId: string | null): Promise<string | null> {
+  if (!brandId) return null;
+  const { data: brand } = await database
+    .from('brands')
+    .select('name, color_palette, style_notes, is_active')
+    .eq('id', brandId)
+    .single();
+  return buildBrandContext(brand);
 }
 
 async function setStatus(database: DB, requestId: string, status: string, extra: Record<string, unknown> = {}) {
@@ -96,6 +193,13 @@ export async function processRequest(requestId: string): Promise<void> {
 
   if (['received', 'collecting_details', 'queued'].includes(request.status)) {
     await setStatus(database, requestId, 'collecting_details');
+
+    // ── brand identification + confirmation (before brief analysis) ──────────
+    if (!request.brand_id) {
+      const step = await handleBrandConfirmation(database, request, conversation, msgs ?? [], templates);
+      if (step === 'awaiting') return; // asked the user to confirm — wait for reply
+    }
+
     const maxRounds = (await getSetting<{ max: number }>(database, 'question_rounds'))?.max ?? 3;
     const roundsRemaining = Math.max(0, maxRounds - request.question_rounds);
 
@@ -152,6 +256,10 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
   const outputType: string = (request.output_type as string) ?? 'text';
 
+  // ── brand kit (optional) ───────────────────────────────────────────────────
+  const brandText = await loadBrandContext(database, request.brand_id as string | null);
+  if (brandText) brief.brand_guidelines = brandText;
+
   await setStatus(database, requestId, 'processing');
   const version = (request.attempt_count ?? 0) + 1;
 
@@ -162,7 +270,9 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     let qaDescription = '';
 
     if (outputType === 'image') {
-      const prompt = `${brief.goal ?? ''} ${brief.style ?? ''} ${((brief.must_include as string[]) ?? []).join(', ')}`.trim();
+      const prompt = `${brief.goal ?? ''} ${brief.style ?? ''} ${((brief.must_include as string[]) ?? []).join(', ')}${
+        brandText ? `\n\n${brandText}` : ''
+      }`.trim();
       const { base64, mime: imgMime } = await generateImage(prompt || 'תמונה ריבועית');
       await recordUsage(database, requestId, 'openai', 'image', 0, 1, estimateImageCost(1));
       storagePath = `${requestId}/v${version}.png`;

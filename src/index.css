@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --border: #e5e7eb;
+  --text: #111827;
+  --muted: #6b7280;
+}
+
+* {
+  letter-spacing: 0;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Assistant', 'Heebo', system-ui, sans-serif;
+  line-height: 1.55;
+}
+
+.ltr {
+  direction: ltr;
+  unicode-bidi: embed;
+  display: inline-block;
+}
+
+button,
+a.btn {
+  min-height: 44px;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+}

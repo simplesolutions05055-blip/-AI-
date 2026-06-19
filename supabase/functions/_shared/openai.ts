@@ -7,7 +7,7 @@ const key = () => {
   return k;
 };
 const textModel = () => Deno.env.get('OPENAI_TEXT_MODEL') || 'gpt-4o';
-const imageModel = () => Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1';
+const imageModel = () => Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-2';
 
 export interface ChatUsage {
   prompt_tokens: number;
@@ -16,13 +16,13 @@ export interface ChatUsage {
 
 async function chat(
   messages: { role: string; content: string }[],
-  opts: { json?: boolean; temperature?: number } = {}
+  opts: { json?: boolean; temperature?: number; model?: string } = {}
 ): Promise<{ content: string; usage: ChatUsage }> {
   const res = await fetch(`${API}/chat/completions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: textModel(),
+      model: opts.model || textModel(),
       messages,
       temperature: opts.temperature ?? 0.5,
       ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
@@ -34,6 +34,46 @@ async function chat(
     content: data.choices?.[0]?.message?.content ?? '',
     usage: data.usage ?? { prompt_tokens: 0, completion_tokens: 0 },
   };
+}
+
+export async function runAgentChat(
+  systemPrompt: string,
+  transcript: string,
+  opts: { model?: string; questionRound?: number } = {}
+) {
+  const instruction = `${systemPrompt}
+
+הקשר מערכת:
+question_round הנוכחי הוא ${opts.questionRound ?? 0}.
+נתח את שיחת WhatsApp הבאה והחזר JSON בלבד לפי הפורמט שהוגדר ב־System Message.
+בקשת בריף/עיצוב/פוסט/תמונה עבור אירוע קהילתי, עירוני, פעילות ילדים או חירום אזרחי היא מותרת כברירת מחדל. אל תחסום בגלל המילה "חירום" בלבד; חסום רק אם יש בקשה להוראות מזיקות, הטעיה, פאניקה, התחזות או פעולה בלתי חוקית.`;
+
+  const { content, usage } = await chat(
+    [
+      { role: 'system', content: instruction },
+      { role: 'user', content: transcript },
+    ],
+    { json: true, temperature: 0.2, model: opts.model }
+  );
+
+  try {
+    return { response: JSON.parse(content), usage };
+  } catch {
+    return {
+      response: {
+        action: 'needs_attention',
+        message_to_user: 'לא הצלחנו להבין את הבקשה כרגע. הבקשה הועברה לבדיקה.',
+        brief: { output_type: null },
+        missing_fields: [],
+        question_round: opts.questionRound ?? 0,
+        ready_for_generation: false,
+        safety: { status: 'needs_review', reason: 'invalid_json_response' },
+        recommended_review: 'manual',
+        internal_notes: 'Model returned invalid JSON',
+      },
+      usage,
+    };
+  }
 }
 
 export async function analyzeBrief(
@@ -107,17 +147,28 @@ export async function generatePresentationOutline(systemPrompt: string, brief: u
   return { text: content, usage };
 }
 
-export async function generateImage(prompt: string): Promise<{ base64: string; mime: string }> {
+export async function generateImage(
+  prompt: string,
+  opts: { model?: string; size?: string; quality?: string; systemMessage?: string } = {}
+): Promise<{ base64: string; mime: string; model: string }> {
+  const model = opts.model || imageModel();
+  const finalPrompt = opts.systemMessage ? `${opts.systemMessage}\n\nבקשת המשתמש:\n${prompt}` : prompt;
   const res = await fetch(`${API}/images/generations`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: imageModel(), prompt, size: '1024x1024', n: 1 }),
+    body: JSON.stringify({
+      model,
+      prompt: finalPrompt,
+      size: opts.size || '1024x1024',
+      quality: opts.quality || 'auto',
+      n: 1,
+    }),
   });
   if (!res.ok) throw new Error(`OpenAI image ${res.status}: ${await res.text()}`);
   const data = await res.json();
   const b64 = data.data?.[0]?.b64_json;
   if (!b64) throw new Error('OpenAI image returned no data');
-  return { base64: b64, mime: 'image/png' };
+  return { base64: b64, mime: 'image/png', model };
 }
 
 export async function runQa(systemPrompt: string, brief: unknown, outputDescription: string) {
