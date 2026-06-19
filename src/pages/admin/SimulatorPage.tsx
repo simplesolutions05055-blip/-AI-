@@ -158,6 +158,15 @@ export default function SimulatorPage() {
     }
 
     const normalized = normalizeAgentResponse(data);
+    // Deterministically apply the matched place brand palette/style to the brief,
+    // overriding the generic client-side defaults.
+    if (normalized.brief && data?.brand) {
+      normalized.brief.brand_palette = data.brand.palette ?? [];
+      normalized.brief.brand_name = data.brand.name ?? null;
+      if (data.brand.style_notes && !normalized.brief.style) {
+        normalized.brief.style = data.brand.style_notes;
+      }
+    }
     const nextRound = normalized.action === 'ask_clarification' ? questionRound + 1 : questionRound;
     setQuestionRound(nextRound);
     setMessages((current) => [
@@ -430,7 +439,24 @@ function getCompositionSections(brief: any, requiredText: string) {
   ];
 }
 
+const BRAND_ROLE_LABELS: Record<string, string> = {
+  primary: 'צבע ראשי',
+  secondary: 'צבע משני',
+  accent: 'צבע הדגשה',
+  background: 'רקע',
+};
+
 function getPaletteForBrief(brief: any) {
+  // If a place brand was matched, its palette is binding — use it verbatim.
+  const brandPalette = brief?.brand_palette;
+  if (Array.isArray(brandPalette) && brandPalette.length) {
+    return brandPalette.map((color: { hex: string; role: string }) => ({
+      label: BRAND_ROLE_LABELS[color.role] ?? color.role ?? 'צבע מותג',
+      hex: color.hex,
+      note: '',
+    }));
+  }
+
   const text = `${brief?.goal ?? ''} ${brief?.topic ?? ''}`.toLowerCase();
   if (text.includes('חירום') || text.includes('טילים') || text.includes('אזעק')) {
     return [
@@ -481,11 +507,18 @@ function getExecutionNotes(brief: any) {
 
 function buildImagePrompt(brief: any, fallback: string) {
   const imageSpec = brief?.image_spec ?? {};
+  const brandPalette = Array.isArray(brief?.brand_palette) ? brief.brand_palette : [];
+  const paletteText = brandPalette.length
+    ? `פלטת צבעים מחייבת (השתמש אך ורק בצבעים אלה): ${brandPalette
+        .map((c: { hex: string; role: string }) => `${BRAND_ROLE_LABELS[c.role] ?? c.role} ${c.hex}`)
+        .join(', ')}`
+    : '';
   const parts = [
     brief?.goal,
     brief?.topic,
     brief?.audience ? `קהל יעד: ${brief.audience}` : '',
     brief?.style || imageSpec.visual_style,
+    paletteText,
     imageSpec.required_text ? `טקסט נדרש: ${imageSpec.required_text}` : '',
     Array.isArray(imageSpec.required_elements) && imageSpec.required_elements.length
       ? `אלמנטים נדרשים: ${imageSpec.required_elements.join(', ')}`

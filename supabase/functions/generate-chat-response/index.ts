@@ -45,6 +45,12 @@ Deno.serve(async (req) => {
     // mirrors the WhatsApp worker pipeline.
     let systemMessage = aiModels?.system_message || fallbackSystemMessage;
     let matchedBrand: { id: string; name: string } | null = null;
+    let brandPayload: {
+      id: string;
+      name: string;
+      palette: Array<{ hex: string; role: string }>;
+      style_notes: string | null;
+    } | null = null;
     try {
       const userText = messages
         .filter((m: { role?: string; body?: string }) => m.role !== 'assistant' && m.body)
@@ -66,6 +72,14 @@ Deno.serve(async (req) => {
         const brandContext = buildBrandContext(brand);
         if (brandContext) {
           systemMessage = `${systemMessage}\n\n${brandContext}`;
+        }
+        if (brand && brand.is_active !== false) {
+          brandPayload = {
+            id: matchedBrand.id,
+            name: matchedBrand.name,
+            palette: (brand.color_palette as Array<{ hex: string; role: string }>) ?? [],
+            style_notes: (brand.style_notes as string | null) ?? null,
+          };
         }
       }
     } catch (brandError) {
@@ -92,7 +106,7 @@ Deno.serve(async (req) => {
       },
     });
 
-    return new Response(JSON.stringify({ ok: true, ...result.response }), {
+    return new Response(JSON.stringify({ ok: true, ...result.response, brand: brandPayload }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
