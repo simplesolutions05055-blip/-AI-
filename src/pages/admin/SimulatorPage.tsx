@@ -310,9 +310,45 @@ function readSimulatorConversations(): SimulatorConversation[] {
   }
 }
 
+// Generated/attached images are base64 data: or blob: URLs — huge and not
+// restorable across reloads. Strip them before persisting so localStorage
+// stores only lightweight conversation text.
+function stripHeavyMessages(conversation: SimulatorConversation): SimulatorConversation {
+  return {
+    ...conversation,
+    messages: conversation.messages.map((message) => {
+      if (message.imageUrl && /^(data:|blob:)/.test(message.imageUrl)) {
+        const { imageUrl: _omit, ...rest } = message;
+        return rest;
+      }
+      return message;
+    }),
+  };
+}
+
 function saveSimulatorConversation(next: SimulatorConversation) {
-  const existing = readSimulatorConversations().filter((conversation) => conversation.id !== next.id);
-  window.localStorage.setItem(SIMULATOR_STORAGE_KEY, JSON.stringify([next, ...existing].slice(0, 50)));
+  const sanitized = stripHeavyMessages(next);
+  const existing = readSimulatorConversations()
+    .filter((conversation) => conversation.id !== sanitized.id)
+    .map(stripHeavyMessages);
+  let list = [sanitized, ...existing].slice(0, 50);
+
+  // Retry with a progressively smaller history if we hit the storage quota.
+  for (;;) {
+    try {
+      window.localStorage.setItem(SIMULATOR_STORAGE_KEY, JSON.stringify(list));
+      return;
+    } catch (error) {
+      const isQuota = error instanceof DOMException &&
+        (error.name === 'QuotaExceededError' || error.code === 22);
+      if (!isQuota || list.length <= 1) {
+        // Can't shrink further (or unrelated error) — give up silently rather
+        // than crashing the page; persistence is best-effort.
+        return;
+      }
+      list = list.slice(0, Math.max(1, Math.floor(list.length / 2)));
+    }
+  }
 }
 
 function normalizeAgentResponse(data: any) {
