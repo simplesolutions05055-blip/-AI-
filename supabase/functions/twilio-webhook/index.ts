@@ -4,11 +4,15 @@
 // creates/links a request and triggers process-request in the background.
 import { db } from '../_shared/db.ts';
 import { validateSignature, sendWhatsApp, downloadMedia } from '../_shared/twilio.ts';
-import { logEvent, getSetting, isAllowedMime, isBlockedMime, extForMime, MAX_MEDIA_BYTES, recordUsageAndCost, estimateTranscriptionCost } from '../_shared/util.ts';
-import { transcribeAudio } from '../_shared/openai.ts';
+import {
+  logEvent, getSetting, getSettingOr, getTemplates, isAllowedMime, isBlockedMime, extForMime,
+  MAX_MEDIA_BYTES, recordUsageAndCost, estimateTranscriptionCost, estimateTextCost,
+} from '../_shared/util.ts';
+import { transcribeAudio, describeImage } from '../_shared/openai.ts';
+import { extractDocumentText } from '../_shared/files.ts';
 import { processRequest } from '../_shared/worker.ts';
 
-// Encode raw bytes to base64 for OpenAI's transcription API.
+// Encode raw bytes to base64 for OpenAI's transcription/vision APIs.
 function encodeBase64(bytes: Uint8Array): string {
   let bin = '';
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
@@ -20,6 +24,73 @@ function twiml() {
     status: 200,
     headers: { 'Content-Type': 'text/xml' },
   });
+}
+
+// Process ONE inbound media item. Returns a text fragment to fold into the
+// message body (transcription / image description / document text) and, for
+// stored files, the storage path + mime. Never throws.
+async function handleMediaItem(
+  database: ReturnType<typeof db>,
+  opts: {
+    mediaUrl: string; contentType: string; conversationId: string;
+    messageSid: string; index: number; requestId: string; from: string;
+    templates: Record<string, string>;
+  }
+): Promise<{ text: string; storagePath: string | null; mediaType: string | null; rejected: boolean }> {
+  const { mediaUrl, contentType, conversationId, messageSid, index, requestId } = opts;
+  const ct = (contentType || '').toLowerCase();
+  try {
+    const { bytes } = await downloadMedia(mediaUrl);
+    if (bytes.byteLength > MAX_MEDIA_BYTES) {
+      return { text: '', storagePath: null, mediaType: null, rejected: true };
+    }
+
+    // Audio → transcribe
+    if (ct.startsWith('audio/')) {
+      const aiModels = await getSetting<{ transcribe_model?: string }>(database, 'ai_models');
+      const model = aiModels?.transcribe_model || 'gpt-4o-transcribe';
+      const { text } = await transcribeAudio(encodeBase64(bytes), contentType, 'audio', { model });
+      await recordUsageAndCost(database, requestId, { provider: 'openai', model, output: 0, cost: estimateTranscriptionCost() });
+      await logEvent(database, { requestId, action: 'audio_transcribed', metadata: { chars: text.length } });
+      return { text, storagePath: null, mediaType: contentType, rejected: false };
+    }
+
+    if (isBlockedMime(contentType) || !isAllowedMime(contentType)) {
+      await logEvent(database, { requestId, action: 'media_rejected', metadata: { contentType } });
+      return { text: '', storagePath: null, mediaType: null, rejected: true };
+    }
+
+    // Store the file regardless of type (admin can view it).
+    const storagePath = `${conversationId}/${messageSid}-${index}.${extForMime(contentType)}`;
+    await database.storage.from('inbound').upload(storagePath, bytes, { contentType, upsert: true });
+
+    // Image → Vision description (so logos / reference images are understood)
+    if (ct.startsWith('image/')) {
+      try {
+        const { text, usage } = await describeImage(encodeBase64(bytes), contentType);
+        await recordUsageAndCost(database, requestId, {
+          provider: 'openai', model: 'gpt-4o', input: usage.prompt_tokens, output: usage.completion_tokens,
+          cost: estimateTextCost(usage.prompt_tokens, usage.completion_tokens),
+        });
+        await logEvent(database, { requestId, action: 'image_described', metadata: { chars: text.length } });
+        return { text: text ? `תיאור התמונה שצורפה: ${text}` : '', storagePath, mediaType: contentType, rejected: false };
+      } catch (e) {
+        await logEvent(database, { requestId, severity: 'warning', action: 'image_describe_failed', message: String(e) });
+        return { text: '[צורפה תמונה שלא הצלחנו לנתח]', storagePath, mediaType: contentType, rejected: false };
+      }
+    }
+
+    // PDF / DOCX → extract text
+    const docText = await extractDocumentText(bytes, contentType);
+    if (docText) {
+      await logEvent(database, { requestId, action: 'document_extracted', metadata: { chars: docText.length } });
+      return { text: `תוכן המסמך שצורף:\n${docText}`, storagePath, mediaType: contentType, rejected: false };
+    }
+    return { text: '[צורף מסמך שלא הצלחנו לקרוא את תוכנו]', storagePath, mediaType: contentType, rejected: false };
+  } catch (e) {
+    await logEvent(database, { requestId, severity: 'error', action: 'media_failed', message: String(e) });
+    return { text: '', storagePath: null, mediaType: null, rejected: false };
+  }
 }
 
 Deno.serve(async (req) => {
@@ -36,6 +107,12 @@ Deno.serve(async (req) => {
     return new Response('Forbidden', { status: 403 });
   }
 
+  // Delivery-status callbacks (sent/delivered/read receipts) hit the same URL but
+  // carry MessageStatus and no Body — they are not user messages. Ignore them.
+  if ((params.MessageStatus || params.SmsStatus) && !params.Body && (params.NumMedia ?? '0') === '0') {
+    return twiml();
+  }
+
   const messageSid = params.MessageSid;
   const from = params.From;
   const body = params.Body ?? '';
@@ -46,7 +123,7 @@ Deno.serve(async (req) => {
   if (dup) return twiml();
 
   const phone = from.replace('whatsapp:', '');
-  const templates = (await getSetting<Record<string, string>>(database, 'whatsapp_templates'))!;
+  const templates = await getTemplates(database);
 
   // blocked numbers
   const { data: blocked } = await database.from('blocked_numbers').select('id').eq('phone_number', phone).maybeSingle();
@@ -56,7 +133,7 @@ Deno.serve(async (req) => {
   }
 
   // rate limit (messages / 24h)
-  const limits = (await getSetting<{ messages_per_24h: number }>(database, 'rate_limits'))!;
+  const limits = await getSettingOr<{ messages_per_24h: number }>(database, 'rate_limits', { messages_per_24h: 50 });
   const since = new Date(Date.now() - 86400000).toISOString();
   const { count } = await database
     .from('rate_limit_events')
@@ -70,7 +147,7 @@ Deno.serve(async (req) => {
   }
   await database.from('rate_limit_events').insert({ phone_number: phone, event_type: 'message' });
 
-  // find or create conversation
+  // find or create conversation (active/waiting only — closed ones start fresh)
   let { data: conversation } = await database
     .from('conversations')
     .select('*')
@@ -86,83 +163,97 @@ Deno.serve(async (req) => {
 
   // active request or new one
   let requestId = conversation.current_request_id as string | null;
+  let isNewRequest = false;
   if (!requestId) {
     const { data: newReq } = await database.from('requests').insert({ conversation_id: conversation.id, status: 'received' }).select().single();
     requestId = newReq!.id;
+    isNewRequest = true;
     await database.from('conversations').update({ current_request_id: requestId, status: 'active' }).eq('id', conversation.id);
+  }
+
+  // Claim the MessageSid immediately by inserting the inbound row up front. The
+  // unique constraint on twilio_message_sid makes this our idempotency guard
+  // against Twilio retries racing the dup-check above. We enrich it after media.
+  const { error: claimErr } = await database.from('messages').insert({
+    conversation_id: conversation.id,
+    request_id: requestId,
+    direction: 'inbound',
+    body,
+    twilio_message_sid: messageSid,
+  });
+  if (claimErr) {
+    // Another concurrent invocation already claimed this SID — it owns the work.
+    await logEvent(database, { requestId, action: 'duplicate_message_ignored', metadata: { messageSid } });
+    return twiml();
+  }
+
+  // Greet on a brand-new request (after claiming, so a duplicate never re-greets).
+  if (isNewRequest) {
     try {
       const sid = await sendWhatsApp(from, templates.received);
       await database.from('messages').insert({ conversation_id: conversation.id, request_id: requestId, direction: 'outbound', body: templates.received, twilio_message_sid: sid });
     } catch { /* non-fatal */ }
   }
 
-  // media
-  let storagePath: string | null = null;
-  let mediaType: string | null = null;
+  // ── media: handle every attached item, fold readable content into the body ──
   let effectiveBody = body;
-  if (numMedia > 0) {
-    const mediaUrl = params.MediaUrl0;
-    const contentType = params.MediaContentType0 ?? '';
-    if (contentType.toLowerCase().startsWith('audio/')) {
-      // Voice notes: transcribe to text so the agent can read them. WhatsApp
-      // sends Ogg/Opus; transcribeAudio normalizes the extension for OpenAI.
-      try {
-        const { bytes } = await downloadMedia(mediaUrl);
-        if (bytes.byteLength <= MAX_MEDIA_BYTES) {
-          const aiModels = await getSetting<{ transcribe_model?: string }>(database, 'ai_models');
-          const model = aiModels?.transcribe_model || 'gpt-4o-transcribe';
-          const { text } = await transcribeAudio(encodeBase64(bytes), contentType, 'audio', { model });
-          effectiveBody = body ? `${body}\n${text}` : text;
-          mediaType = contentType;
-          await recordUsageAndCost(database, requestId, {
-            provider: 'openai',
-            model,
-            output: 0,
-            cost: estimateTranscriptionCost(),
-          });
-          await logEvent(database, { requestId, action: 'audio_transcribed', metadata: { chars: text.length } });
-        } else {
-          await sendWhatsApp(from, templates.rejected_media);
-        }
-      } catch (e) {
-        await logEvent(database, { requestId, severity: 'error', action: 'audio_transcribe_failed', message: String(e) });
-        try { await sendWhatsApp(from, templates.rejected_media); } catch { /* ignore */ }
-      }
-    } else if (isBlockedMime(contentType) || !isAllowedMime(contentType)) {
-      try { await sendWhatsApp(from, templates.rejected_media); } catch { /* ignore */ }
-      await logEvent(database, { requestId, action: 'media_rejected', metadata: { contentType } });
-    } else {
-      try {
-        const { bytes } = await downloadMedia(mediaUrl);
-        if (bytes.byteLength <= MAX_MEDIA_BYTES) {
-          storagePath = `${conversation.id}/${messageSid}.${extForMime(contentType)}`;
-          mediaType = contentType;
-          await database.storage.from('inbound').upload(storagePath, bytes, { contentType, upsert: true });
-        } else {
-          await sendWhatsApp(from, templates.rejected_media);
-        }
-      } catch (e) {
-        await logEvent(database, { requestId, severity: 'error', action: 'media_download_failed', message: String(e) });
-      }
-    }
+  let firstStoragePath: string | null = null;
+  let firstMediaType: string | null = null;
+  let anyRejected = false;
+  const fragments: string[] = [];
+  for (let i = 0; i < numMedia; i++) {
+    const mediaUrl = params[`MediaUrl${i}`];
+    const contentType = params[`MediaContentType${i}`] ?? '';
+    if (!mediaUrl) continue;
+    const r = await handleMediaItem(database, {
+      mediaUrl, contentType, conversationId: conversation.id, messageSid,
+      index: i, requestId: requestId!, from, templates,
+    });
+    if (r.rejected) anyRejected = true;
+    if (r.text) fragments.push(r.text);
+    if (!firstStoragePath && r.storagePath) { firstStoragePath = r.storagePath; firstMediaType = r.mediaType; }
   }
 
-  // persist inbound message
-  await database.from('messages').insert({
-    conversation_id: conversation.id,
-    request_id: requestId,
-    direction: 'inbound',
-    body: effectiveBody,
-    media_type: mediaType,
-    storage_path: storagePath,
-    twilio_message_sid: messageSid,
-  });
-  await database.from('conversations').update({ last_message_at: new Date().toISOString() }).eq('id', conversation.id);
+  if (anyRejected) {
+    try { await sendWhatsApp(from, templates.rejected_media); } catch { /* ignore */ }
+  }
+  if (fragments.length) {
+    effectiveBody = [body, ...fragments].filter(Boolean).join('\n');
+  }
+  // Media-only message we couldn't read anything useful from → ask what to do.
+  if (!effectiveBody.trim() && numMedia > 0 && !anyRejected) {
+    effectiveBody = '';
+    try { await sendWhatsApp(from, 'קיבלתי את הקובץ ששלחת 📎 מה תרצה שאעשה איתו?'); } catch { /* ignore */ }
+  }
+
+  // Persist the enriched body + first stored file onto the claimed message row.
+  await database.from('messages').update({
+    body: effectiveBody, media_type: firstMediaType, storage_path: firstStoragePath,
+  }).eq('twilio_message_sid', messageSid);
+  await database.from('conversations').update({
+    last_message_at: new Date().toISOString(), timeout_warned_at: null,
+  }).eq('id', conversation.id);
   await database.from('jobs').insert({ request_id: requestId, job_type: 'process-request', status: 'pending' });
 
-  // process in the background so Twilio gets a fast 200 (spec §7.8)
+  // Process in the background so Twilio gets a fast 200 (spec §7.8). Debounce:
+  // wait a few seconds, and only the LAST message of a burst actually processes
+  // (older invocations bail when a newer inbound message exists for the request).
+  const merge = await getSettingOr<{ debounce_seconds: number }>(database, 'message_merge', { debounce_seconds: 6 });
+  const debounceMs = Math.max(0, (merge.debounce_seconds ?? 6) * 1000);
   // @ts-ignore EdgeRuntime is provided by the Supabase runtime
-  EdgeRuntime.waitUntil(processRequest(requestId!));
+  EdgeRuntime.waitUntil((async () => {
+    if (debounceMs) await new Promise((r) => setTimeout(r, debounceMs));
+    const { data: latest } = await database
+      .from('messages')
+      .select('twilio_message_sid')
+      .eq('request_id', requestId!)
+      .eq('direction', 'inbound')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latest && latest.twilio_message_sid !== messageSid) return; // superseded by a newer message
+    await processRequest(requestId!, { trigger: 'message' });
+  })());
 
   return twiml();
 });

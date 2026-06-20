@@ -20,6 +20,32 @@ export async function getSetting<T>(database: DB, key: string): Promise<T | null
   return (data?.value_json as T) ?? null;
 }
 
+// Like getSetting, but never returns null — used for operational settings whose
+// absence (e.g. someone deleted the row) must not crash the worker mid-request.
+export async function getSettingOr<T>(database: DB, key: string, fallback: T): Promise<T> {
+  const v = await getSetting<T>(database, key);
+  return v ?? fallback;
+}
+
+// Safe defaults for the WhatsApp copy, so a missing/partial settings row still
+// lets the agent reply. Merged over whatever is in the DB.
+export const DEFAULT_TEMPLATES: Record<string, string> = {
+  received: 'קיבלנו את הבקשה שלך ✅ אנחנו מתחילים לעבוד עליה.',
+  ask_email: 'לאיזו כתובת מייל לשלוח את התוצר?',
+  sent: 'התוצר נשלח למייל שלך 📧 תודה שפנית אלינו!',
+  needs_attention: 'קיבלנו את הבקשה אך חסר לנו מידע. נחזור אליך בהקדם.',
+  rejected_media: 'אפשר לשלוח טקסט, תמונה (PNG/JPG), PDF או DOCX בלבד — עד 10MB.',
+  blocked: 'לא ניתן לטפל בבקשה זו.',
+  in_progress: 'הבקשה שלך כבר בטיפול אצלנו ⏳ נעדכן אותך ברגע שהתוצר מוכן.',
+  timeout_warning: 'עוד 10 דקות נסגור את הבקשה הנוכחית. רוצה להמשיך? פשוט כתוב לי הודעה 🙂',
+  closed_idle: 'סגרנו את הבקשה הקודמת מאחר שלא התקבלה תשובה. אפשר לפתוח בקשה חדשה בכל רגע.',
+};
+
+export async function getTemplates(database: DB): Promise<Record<string, string>> {
+  const fromDb = await getSetting<Record<string, string>>(database, 'whatsapp_templates');
+  return { ...DEFAULT_TEMPLATES, ...(fromDb ?? {}) };
+}
+
 export async function getActiveSystemPrompt(database: DB): Promise<string> {
   const { data } = await database
     .from('system_prompt_versions')

@@ -35,3 +35,6 @@ verify_jwt = false
 
 [functions.send-output]
 verify_jwt = false
+
+[functions.conversation-maintenance]
+verify_jwt = false

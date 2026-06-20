@@ -2,6 +2,8 @@ import { db, type DB } from './db.ts';
 import {
   logEvent,
   getSetting,
+  getSettingOr,
+  getTemplates,
   getActiveSystemPrompt,
   requiresManualApproval,
   formatHebrewDate,
@@ -12,7 +14,7 @@ import {
   round4,
 } from './util.ts';
 import { analyzeBrief, generateText, generatePresentationOutline, generateImage, runQa } from './openai.ts';
-import { sendWhatsApp } from './twilio.ts';
+import { sendWhatsApp, sendWhatsAppTemplate } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
 import { matchBrandInText, buildBrandContext, normalizeHe, type BrandRow } from './brand.ts';
@@ -108,7 +110,15 @@ async function handleBrandConfirmation(
         'הבנתי, נמשיך ללא מיתוג ספציפי.', conversation.simulated);
       return 'continue';
     }
-    // unclear → re-ask once
+    // unclear → re-ask, but cap retries so we never loop forever on "אולי".
+    const unclearCount = ((brief.brand_unclear_count as number) ?? 0) + 1;
+    if (unclearCount >= 2) {
+      await saveBrief({ pending_brand_id: null, brand_declined: true, brand_unclear_count: unclearCount });
+      await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
+        'אין בעיה, נמשיך ללא מיתוג ספציפי בינתיים.', conversation.simulated);
+      return 'continue';
+    }
+    await saveBrief({ brand_unclear_count: unclearCount });
     await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
     await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
       'רק לוודא — להשתמש במיתוג של המקום שזיהיתי? השב כן או לא.', conversation.simulated);
@@ -143,6 +153,33 @@ async function setStatus(database: DB, requestId: string, status: string, extra:
   await database.from('requests').update({ status, ...extra }).eq('id', requestId);
 }
 
+// ── processing lock ──────────────────────────────────────────────────────────
+// Ensures only one worker runs on a request at a time (rapid messages / Twilio
+// retries / admin actions). Backed by try_lock_request (see migration).
+async function acquireLock(database: DB, requestId: string): Promise<boolean> {
+  const { data } = await database.rpc('try_lock_request', { p_request_id: requestId, p_ttl_seconds: 300 });
+  return data === true;
+}
+async function releaseLock(database: DB, requestId: string): Promise<void> {
+  await database.rpc('release_request_lock', { p_request_id: requestId });
+}
+
+// ── 24h WhatsApp window ──────────────────────────────────────────────────────
+// Free-form messages are only allowed within 24h of the user's last inbound
+// message. Returns true when the window is open.
+async function windowOpen(database: DB, conversationId: string): Promise<boolean> {
+  const { data } = await database
+    .from('messages')
+    .select('created_at')
+    .eq('conversation_id', conversationId)
+    .eq('direction', 'inbound')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return true;
+  return Date.now() - new Date(data.created_at as string).getTime() < 24 * 60 * 60 * 1000;
+}
+
 async function sendOut(
   database: DB,
   conversationId: string,
@@ -152,7 +189,32 @@ async function sendOut(
   simulated: boolean
 ) {
   try {
-    const sid = simulated ? `sim-${crypto.randomUUID()}` : await sendWhatsApp(to, body);
+    let sid: string;
+    if (simulated) {
+      sid = `sim-${crypto.randomUUID()}`;
+    } else if (await windowOpen(database, conversationId)) {
+      sid = await sendWhatsApp(to, body);
+    } else {
+      // Outside the 24h window — free-form is blocked by WhatsApp. Use the
+      // approved template if configured, otherwise record the miss for the admin.
+      const tpl = await getSettingOr<{ content_sid: string; enabled: boolean }>(
+        database, 'whatsapp_window_template', { content_sid: '', enabled: false }
+      );
+      if (tpl.enabled && tpl.content_sid) {
+        sid = await sendWhatsAppTemplate(to, tpl.content_sid, { 1: body.slice(0, 600) });
+      } else {
+        await logEvent(database, {
+          requestId, severity: 'warning', action: 'whatsapp_outside_window',
+          message: 'Message not delivered: outside 24h window and no approved template configured.',
+        });
+        await database.from('messages').insert({
+          conversation_id: conversationId, request_id: requestId,
+          direction: 'outbound', body: `[לא נשלח — מחוץ לחלון 24 שעות] ${body}`,
+          twilio_message_sid: `undelivered-${crypto.randomUUID()}`,
+        });
+        return;
+      }
+    }
     await database.from('messages').insert({
       conversation_id: conversationId,
       request_id: requestId,
@@ -165,8 +227,54 @@ async function sendOut(
   }
 }
 
-export async function processRequest(requestId: string): Promise<void> {
+// States where a fresh inbound WhatsApp message must NOT restart generation.
+// (Admin-triggered processing passes trigger:'admin' and bypasses this guard.)
+const IN_FLIGHT = ['processing', 'quality_check', 'sending'];
+const SETTLED = ['waiting_for_approval', 'approved', 'sent', 'rejected', 'closed', 'needs_attention', 'failed'];
+
+export async function processRequest(
+  requestId: string,
+  opts: { trigger?: 'message' | 'admin' } = {}
+): Promise<void> {
   const database = db();
+  const trigger = opts.trigger ?? 'admin';
+
+  // Guard: a new user message arriving mid-flight or after the request settled
+  // should not spawn a duplicate generation. Acknowledge in-flight, then stop.
+  if (trigger === 'message') {
+    const { data: cur } = await database
+      .from('requests')
+      .select('status, conversation_id, conversations!requests_conversation_id_fkey(id, whatsapp_from, simulated)')
+      .eq('id', requestId)
+      .single();
+    const status = cur?.status as string | undefined;
+    if (status && (IN_FLIGHT.includes(status) || SETTLED.includes(status))) {
+      if (IN_FLIGHT.includes(status) || status === 'waiting_for_approval') {
+        const conv = cur!.conversations as unknown as Conv;
+        const tpls = await getTemplates(database);
+        await sendOut(database, conv.id, requestId, conv.whatsapp_from, tpls.in_progress, conv.simulated);
+      }
+      return;
+    }
+  }
+
+  // Acquire the processing lock so two workers can't run this request at once.
+  if (!(await acquireLock(database, requestId))) {
+    await logEvent(database, { requestId, action: 'process_skipped_locked' });
+    return;
+  }
+  try {
+    await runRequestPipeline(database, requestId, trigger);
+  } finally {
+    await releaseLock(database, requestId);
+  }
+}
+
+async function runRequestPipeline(
+  database: DB,
+  requestId: string,
+  _trigger: 'message' | 'admin'
+): Promise<void> {
   const { data: request } = await database
     .from('requests')
     .select('*, conversations!requests_conversation_id_fkey(*)')
@@ -177,7 +285,7 @@ export async function processRequest(requestId: string): Promise<void> {
   const conversation = request.conversations as Conv;
   const waFrom = conversation.whatsapp_from;
   const systemPrompt = await getActiveSystemPrompt(database);
-  const templates = (await getSetting<Record<string, string>>(database, 'whatsapp_templates'))!;
+  const templates = await getTemplates(database);
 
   const { data: msgs } = await database
     .from('messages')
@@ -251,10 +359,23 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   if (!request) return;
   const conversation = request.conversations as Conv;
   const systemPrompt = await getActiveSystemPrompt(database);
-  const templates = (await getSetting<Record<string, string>>(database, 'whatsapp_templates'))!;
+  const templates = await getTemplates(database);
   const maxAttempts = (await getSetting<{ max: number }>(database, 'generation_attempts'))?.max ?? 3;
   const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
   const outputType: string = (request.output_type as string) ?? 'text';
+
+  // Per-request budget cap — stop runaway cost (buggy loop / abusive input)
+  // before spending more on AI. Soft cap: hand off to the admin instead.
+  const budget = await getSettingOr<{ max: number | null }>(database, 'request_budget_usd', { max: null });
+  if (budget.max != null && (request.estimated_cost ?? 0) >= budget.max) {
+    await logEvent(database, {
+      requestId, severity: 'warning', action: 'budget_exceeded',
+      message: `Estimated cost ${request.estimated_cost} reached cap ${budget.max}`,
+    });
+    await setStatus(database, requestId, 'needs_attention');
+    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.needs_attention, conversation.simulated);
+    return;
+  }
 
   // ── brand kit (optional) ───────────────────────────────────────────────────
   const brandText = await loadBrandContext(database, request.brand_id as string | null);
@@ -359,8 +480,8 @@ export async function sendOutput(requestId: string): Promise<void> {
   }
 
   await setStatus(database, requestId, 'sending');
-  const templates = (await getSetting<Record<string, string>>(database, 'whatsapp_templates'))!;
-  const emailSettings = (await getSetting<{ subject_rule: string; signature: string }>(database, 'email_settings'))!;
+  const templates = await getTemplates(database);
+  const emailSettings = (await getSetting<{ subject_rule: string; signature: string }>(database, 'email_settings')) ?? { subject_rule: 'התוצר שלך מוכן', signature: 'בברכה,\nצוות סוכן ה-AI' };
 
   const { data: output } = await database
     .from('outputs')

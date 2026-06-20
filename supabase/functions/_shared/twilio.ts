@@ -31,12 +31,25 @@ export async function validateSignature(
   return expected === signature;
 }
 
-export async function sendWhatsApp(to: string, body: string): Promise<string> {
-  const form = new URLSearchParams({
-    From: from(),
-    To: to.startsWith('whatsapp:') ? to : `whatsapp:${to}`,
-    Body: body,
-  });
+// WhatsApp rejects messages over ~1600 chars. Split long bodies on paragraph/
+// word boundaries so a long agent question or template never silently fails.
+const WA_MAX_CHARS = 1500;
+export function splitForWhatsApp(body: string, max = WA_MAX_CHARS): string[] {
+  if (body.length <= max) return [body];
+  const chunks: string[] = [];
+  let rest = body;
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf('\n', max);
+    if (cut < max * 0.5) cut = rest.lastIndexOf(' ', max);
+    if (cut < max * 0.5) cut = max;
+    chunks.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+async function postMessage(form: URLSearchParams): Promise<string> {
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid()}/Messages.json`, {
     method: 'POST',
     headers: { Authorization: basicAuth(), 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -45,6 +58,29 @@ export async function sendWhatsApp(to: string, body: string): Promise<string> {
   if (!res.ok) throw new Error(`Twilio send ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.sid;
+}
+
+export async function sendWhatsApp(to: string, body: string): Promise<string> {
+  const target = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+  const parts = splitForWhatsApp(body);
+  let lastSid = '';
+  for (const part of parts) {
+    lastSid = await postMessage(new URLSearchParams({ From: from(), To: target, Body: part }));
+  }
+  return lastSid;
+}
+
+// Send an approved Meta/WhatsApp template (Content API) — the only way to reach
+// a user outside the 24h service window. `vars` fills the template's {{1}} slots.
+export async function sendWhatsAppTemplate(
+  to: string,
+  contentSid: string,
+  vars: Record<string, string> = {}
+): Promise<string> {
+  const target = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+  const form = new URLSearchParams({ From: from(), To: target, ContentSid: contentSid });
+  if (Object.keys(vars).length) form.set('ContentVariables', JSON.stringify(vars));
+  return postMessage(form);
 }
 
 export async function downloadMedia(
