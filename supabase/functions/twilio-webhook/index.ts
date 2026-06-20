@@ -5,7 +5,7 @@
 import { db } from '../_shared/db.ts';
 import { validateSignature, sendWhatsApp, downloadMedia } from '../_shared/twilio.ts';
 import {
-  logEvent, getSetting, getSettingOr, getTemplates, isAllowedMime, isBlockedMime, extForMime,
+  logEvent, getSetting, getSettingOr, getTemplates, isResetCommand, isAllowedMime, isBlockedMime, extForMime,
   MAX_MEDIA_BYTES, recordUsageAndCost, estimateTranscriptionCost, estimateTextCost,
 } from '../_shared/util.ts';
 import { transcribeAudio, describeImage } from '../_shared/openai.ts';
@@ -160,6 +160,31 @@ Deno.serve(async (req) => {
     conversation = (await database.from('conversations').insert({ whatsapp_from: from, status: 'active' }).select().single()).data;
   }
   if (!conversation) return twiml();
+
+  // ── "start over" command — close the current request and reset the slot ──────
+  if (isResetCommand(body)) {
+    if (conversation.current_request_id) {
+      await database.from('requests')
+        .update({ status: 'closed', closed_at: new Date().toISOString(), processing_locked_at: null })
+        .eq('id', conversation.current_request_id)
+        .not('status', 'in', '(sent,approved,sending)');
+    }
+    const { error: resetClaim } = await database.from('messages').insert({
+      conversation_id: conversation.id, request_id: null, direction: 'inbound',
+      body, twilio_message_sid: messageSid,
+    });
+    if (resetClaim) return twiml(); // duplicate retry
+    await database.from('conversations').update({
+      current_request_id: null, status: 'active',
+      last_message_at: new Date().toISOString(), timeout_warned_at: null,
+    }).eq('id', conversation.id);
+    await logEvent(database, { action: 'conversation_reset', metadata: { phone } });
+    try {
+      const sid = await sendWhatsApp(from, templates.reset);
+      await database.from('messages').insert({ conversation_id: conversation.id, request_id: null, direction: 'outbound', body: templates.reset, twilio_message_sid: sid });
+    } catch { /* non-fatal */ }
+    return twiml();
+  }
 
   // active request or new one
   let requestId = conversation.current_request_id as string | null;

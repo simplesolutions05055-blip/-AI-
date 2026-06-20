@@ -39,7 +39,21 @@ export const DEFAULT_TEMPLATES: Record<string, string> = {
   in_progress: 'הבקשה שלך כבר בטיפול אצלנו ⏳ נעדכן אותך ברגע שהתוצר מוכן.',
   timeout_warning: 'עוד 10 דקות נסגור את הבקשה הנוכחית. רוצה להמשיך? פשוט כתוב לי הודעה 🙂',
   closed_idle: 'סגרנו את הבקשה הקודמת מאחר שלא התקבלה תשובה. אפשר לפתוח בקשה חדשה בכל רגע.',
+  reset: 'התחלנו מחדש ✅ ספר לי מה תרצה שניצור עבורך.',
 };
+
+// Detect an explicit "start over / new conversation" command so the user can
+// abandon the current request and begin fresh.
+export function isResetCommand(text: string): boolean {
+  const t = (text || '').replace(/[",'׳״.\-?!;:()]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!t || t.length > 40) return false; // a long brief is not a reset command
+  const phrases = [
+    'שיחה חדשה', 'בקשה חדשה', 'התחל מחדש', 'להתחיל מחדש', 'נתחיל מחדש',
+    'מתחילים מחדש', 'התחלה מחדש', 'תתחיל מחדש', 'אתחול', 'איפוס',
+    'reset', 'restart', 'start over', 'new conversation', 'new request',
+  ];
+  return phrases.some((p) => t === p || t.includes(p));
+}
 
 export async function getTemplates(database: DB): Promise<Record<string, string>> {
   const fromDb = await getSetting<Record<string, string>>(database, 'whatsapp_templates');
