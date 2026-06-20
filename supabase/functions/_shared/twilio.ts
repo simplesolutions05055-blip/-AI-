@@ -70,6 +70,15 @@ export async function sendWhatsApp(to: string, body: string): Promise<string> {
   return lastSid;
 }
 
+// Send a media message (image/PDF) — mediaUrl must be publicly fetchable by
+// Twilio (a Supabase signed URL works). Optional caption in `body`.
+export async function sendWhatsAppMedia(to: string, mediaUrl: string, body?: string): Promise<string> {
+  const target = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+  const form = new URLSearchParams({ From: from(), To: target, MediaUrl: mediaUrl });
+  if (body) form.set('Body', body.slice(0, 1500));
+  return postMessage(form);
+}
+
 // Send an approved Meta/WhatsApp template (Content API) — the only way to reach
 // a user outside the 24h service window. `vars` fills the template's {{1}} slots.
 export async function sendWhatsAppTemplate(

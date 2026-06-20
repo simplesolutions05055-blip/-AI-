@@ -5,7 +5,6 @@ import {
   getSettingOr,
   getTemplates,
   getActiveSystemPrompt,
-  requiresManualApproval,
   formatHebrewDate,
   extractEmail,
   isValidEmail,
@@ -14,7 +13,7 @@ import {
   round4,
 } from './util.ts';
 import { analyzeBrief, generateText, generatePresentationOutline, generateImage, runQa } from './openai.ts';
-import { sendWhatsApp, sendWhatsAppTemplate } from './twilio.ts';
+import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
 import { matchBrandInText, buildBrandContext, normalizeHe, type BrandRow } from './brand.ts';
@@ -350,11 +349,8 @@ async function runRequestPipeline(
       await sendOut(database, conversation.id, requestId, waFrom, nextQuestion, conversation.simulated);
       return;
     }
-    if (!email) {
-      await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-      await sendOut(database, conversation.id, requestId, waFrom, templates.ask_email, conversation.simulated);
-      return;
-    }
+    // Simulator parity: email is NOT required to generate. We keep it if given
+    // (for an optional copy by mail) but never block the output on it.
     if (nextQuestion && roundsRemaining <= 0 && b.ready !== true) {
       await setStatus(database, requestId, 'needs_attention');
       await sendOut(database, conversation.id, requestId, waFrom, templates.needs_attention, conversation.simulated);
@@ -465,17 +461,111 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       return generateAndQa(database, requestId);
     }
 
-    const manual = await requiresManualApproval(database, outputType);
-    if (manual) {
-      await setStatus(database, requestId, 'waiting_for_approval');
-      await logEvent(database, { requestId, action: 'awaiting_approval' });
-    } else {
-      await setStatus(database, requestId, 'approved');
-      await sendOutput(requestId);
-    }
+    // Simulator parity: no manual-approval gate. Deliver straight to WhatsApp.
+    await setStatus(database, requestId, 'approved');
+    await deliverOutput(database, requestId);
   } catch (e) {
     await logEvent(database, { requestId, severity: 'error', action: 'generation_failed', message: String(e) });
     await setStatus(database, requestId, 'failed');
+  }
+}
+
+// Deliver the generated output to the user IN WhatsApp (simulator parity):
+// text/presentation as a message, image/PDF as a media attachment. If we also
+// have an email on file, send a copy by mail; otherwise just finish in chat.
+async function deliverOutput(database: DB, requestId: string): Promise<void> {
+  const { data: request } = await database
+    .from('requests')
+    .select('*, conversations!requests_conversation_id_fkey(*)')
+    .eq('id', requestId)
+    .single();
+  if (!request) return;
+  const conversation = request.conversations as Conv;
+  const templates = await getTemplates(database);
+
+  const { data: output } = await database
+    .from('outputs')
+    .select('*')
+    .eq('request_id', requestId)
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!output) {
+    await setStatus(database, requestId, 'needs_attention');
+    return;
+  }
+
+  await deliverContentToWhatsApp(database, request, conversation, output);
+
+  if (request.customer_email) {
+    // We have an address — also send a copy by mail (handles status + reset).
+    await sendOutput(requestId);
+    return;
+  }
+  // No email: finish in WhatsApp only and free the slot for the next request.
+  await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
+  await logEvent(database, { requestId, action: 'delivered_whatsapp_only' });
+  await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
+    'זהו, התוצר מוכן ונשלח כאן 🙌 אם תרצה גם עותק במייל — כתוב לי כתובת. לתוצר נוסף פשוט כתוב לי מה צריך.',
+    conversation.simulated);
+  await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
+}
+
+async function deliverContentToWhatsApp(
+  database: DB,
+  request: { id: string; structured_brief: Record<string, unknown> | null },
+  conversation: Conv,
+  output: { output_type: string; text_content: string | null; storage_path: string | null; mime_type: string | null; version: number }
+): Promise<void> {
+  const to = conversation.whatsapp_from;
+  const simulated = conversation.simulated;
+  const type = output.output_type;
+  const caption = ((request.structured_brief?.goal as string) || 'התוצר שלך').slice(0, 200);
+
+  if (type === 'text' || type === 'presentation') {
+    await sendOut(database, conversation.id, request.id, to, output.text_content ?? '(לא נוצר תוכן)', simulated);
+    return;
+  }
+
+  // image / pdf → media attachment
+  let path = output.storage_path;
+  let contentType = output.mime_type ?? 'application/octet-stream';
+  if (type === 'pdf') {
+    try {
+      const html = buildPdfHtml({ title: caption, body: output.text_content ?? '', dateLabel: formatHebrewDate(new Date()) });
+      const b64 = await renderPdfBase64(html);
+      path = `${request.id}/v${output.version}.pdf`;
+      contentType = 'application/pdf';
+      await database.storage.from('outputs').upload(path, decodeBase64(b64), { contentType, upsert: true });
+    } catch (e) {
+      await logEvent(database, { requestId: request.id, severity: 'error', action: 'pdf_render_failed', message: String(e) });
+    }
+  }
+
+  if (simulated) {
+    await sendOut(database, conversation.id, request.id, to, `${caption}\n[תוצר ${type} נוצר — מצב סימולציה, לא נשלחה מדיה]`, true);
+    return;
+  }
+  if (!path) {
+    await sendOut(database, conversation.id, request.id, to, caption, false);
+    return;
+  }
+
+  const { data: signed } = await database.storage.from('outputs').createSignedUrl(path, 3600);
+  const url = signed?.signedUrl;
+  if (!url) {
+    await sendOut(database, conversation.id, request.id, to, caption, false);
+    return;
+  }
+  try {
+    const sid = await sendWhatsAppMedia(to, url, caption);
+    await database.from('messages').insert({
+      conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
+      body: caption, media_type: contentType, storage_path: path, twilio_message_sid: sid,
+    });
+  } catch (e) {
+    await logEvent(database, { requestId: request.id, severity: 'error', action: 'whatsapp_media_send_failed', message: String(e) });
+    await sendOut(database, conversation.id, request.id, to, `${caption}\n${url}`, false);
   }
 }
 

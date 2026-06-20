@@ -6,11 +6,11 @@ import { db } from '../_shared/db.ts';
 import { validateSignature, sendWhatsApp, downloadMedia } from '../_shared/twilio.ts';
 import {
   logEvent, getSetting, getSettingOr, getTemplates, isResetCommand, isAllowedMime, isBlockedMime, extForMime,
-  MAX_MEDIA_BYTES, recordUsageAndCost, estimateTranscriptionCost, estimateTextCost,
+  MAX_MEDIA_BYTES, recordUsageAndCost, estimateTranscriptionCost, estimateTextCost, extractEmail, isValidEmail,
 } from '../_shared/util.ts';
 import { transcribeAudio, describeImage } from '../_shared/openai.ts';
 import { extractDocumentText } from '../_shared/files.ts';
-import { processRequest } from '../_shared/worker.ts';
+import { processRequest, sendOutput } from '../_shared/worker.ts';
 
 // Encode raw bytes to base64 for OpenAI's transcription/vision APIs.
 function encodeBase64(bytes: Uint8Array): string {
@@ -184,6 +184,36 @@ Deno.serve(async (req) => {
       await database.from('messages').insert({ conversation_id: conversation.id, request_id: null, direction: 'outbound', body: templates.reset, twilio_message_sid: sid });
     } catch { /* non-fatal */ }
     return twiml();
+  }
+
+  // ── optional "email me too" — a short email reply after a WhatsApp delivery ──
+  const replyEmail = extractEmail(body);
+  if (!conversation.current_request_id && replyEmail && isValidEmail(replyEmail) && body.trim().length <= 60 && numMedia === 0) {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+    const { data: lastSent } = await database
+      .from('requests')
+      .select('id')
+      .eq('conversation_id', conversation.id)
+      .eq('status', 'sent')
+      .is('customer_email', null)
+      .gte('sent_at', twoHoursAgo)
+      .order('sent_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastSent) {
+      const { data: out } = await database.from('outputs').select('id').eq('request_id', lastSent.id).limit(1).maybeSingle();
+      if (out) {
+        const { error: mailClaim } = await database.from('messages').insert({
+          conversation_id: conversation.id, request_id: lastSent.id, direction: 'inbound', body, twilio_message_sid: messageSid,
+        });
+        if (mailClaim) return twiml();
+        await database.from('requests').update({ customer_email: replyEmail }).eq('id', lastSent.id);
+        await logEvent(database, { requestId: lastSent.id, action: 'email_followup_requested' });
+        // @ts-ignore EdgeRuntime is provided by the Supabase runtime
+        EdgeRuntime.waitUntil(sendOutput(lastSent.id));
+        return twiml();
+      }
+    }
   }
 
   // active request or new one
