@@ -7,6 +7,7 @@ import SettingsPage from '@/pages/admin/SettingsPage';
 import SimulatorPage from '@/pages/admin/SimulatorPage';
 import FilesPage from '@/pages/admin/FilesPage';
 import ModelsPage from '@/pages/admin/ModelsPage';
+import SkillsPage from '@/pages/admin/SkillsPage';
 import ConversationsPage from '@/pages/admin/ConversationsPage';
 import CostsPage from '@/pages/admin/CostsPage';
 import BrandingPage from '@/pages/admin/BrandingPage';
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="files" element={<FilesPage />} />
           <Route path="branding" element={<BrandingPage />} />
           <Route path="models" element={<ModelsPage />} />
+          <Route path="skills" element={<SkillsPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />

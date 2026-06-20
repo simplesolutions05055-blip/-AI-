@@ -10,6 +10,7 @@ const LINKS = [
   { href: '/admin/files', label: 'קבצים' },
   { href: '/admin/branding', label: 'מיתוג' },
   { href: '/admin/models', label: 'מודלים' },
+  { href: '/admin/skills', label: 'סקילים' },
   { href: '/admin/settings', label: 'הגדרות' },
 ];
 

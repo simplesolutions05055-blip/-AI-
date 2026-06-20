@@ -108,3 +108,28 @@ export interface BusinessTextSource {
   created_at: string;
   updated_at: string;
 }
+
+export type SkillCategory = 'skill' | 'agent' | 'rule';
+
+export interface Skill {
+  key: string;
+  display_name: string;
+  description: string | null;
+  category: SkillCategory;
+  order_index: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillVersion {
+  id: string;
+  skill_key: string;
+  version_number: number;
+  content: string;
+  config_json: Record<string, unknown>;
+  note: string | null;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+}
