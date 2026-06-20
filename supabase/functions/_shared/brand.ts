@@ -3,7 +3,9 @@
 // apply the same place branding (palette + style notes) from the `brands` table.
 
 export function normalizeHe(s: string): string {
-  return s.replace(/["'׳״.\-]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  // Strip quotes, punctuation and separators so "לא, זה..." normalises to "לא זה..."
+  // (otherwise a trailing comma breaks the yes/no word-boundary checks).
+  return s.replace(/[",'׳״.\-?!;:()،]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 // Levenshtein edit distance (iterative, two-row).

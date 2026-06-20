@@ -78,13 +78,19 @@ export default function ConversationsPage() {
     const loadConversations = async () => {
       const { data } = await createSupabaseBrowserClient()
         .from('conversations')
-        .select('id, whatsapp_from, status, current_request_id, started_at, last_message_at, closed_at')
+        .select('id, whatsapp_from, status, current_request_id, started_at, last_message_at, closed_at, simulated')
         .order('last_message_at', { ascending: false })
         .limit(100);
       if (cancelled) return;
-      const databaseRows = (data ?? []) as ConversationRow[];
+      // The simulator's rich chat view comes from localStorage; drop the backend
+      // 'simulator' placeholder rows so they don't duplicate it.
+      const databaseRows = ((data ?? []) as ConversationRow[]).filter((r) => r.whatsapp_from !== 'simulator');
       const localRows = simulatorRows.map(toConversationRow);
-      const rows = [...localRows, ...databaseRows];
+      // Sort the merged list by recency so an active WhatsApp conversation floats
+      // to the top instead of being buried under older simulator chats.
+      const rows = [...localRows, ...databaseRows].sort(
+        (a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()
+      );
       setConversations(rows);
       // Only auto-select on first load; don't yank the user off their selection on refresh.
       setSelectedId((current) => current ?? rows[0]?.id ?? null);

@@ -105,6 +105,22 @@ async function handleBrandConfirmation(
       return 'continue';
     }
     if (isNo(lastInbound)) {
+      // The user rejected the guess — they may have named a different place in
+      // the same message ("לא, זה רמת השרון"). Re-match the correction against
+      // other brands (excluding the one just rejected) and re-confirm it.
+      const { data: brands } = await database.from('brands').select('id, name, aliases').eq('is_active', true);
+      const alt = matchBrandInText(
+        ((brands as BrandRow[]) ?? []).filter((b) => b.id !== pendingId),
+        lastInbound
+      );
+      if (alt && alt.id !== pendingId) {
+        await saveBrief({ pending_brand_id: alt.id, brand_unclear_count: 0 });
+        await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+        await logEvent(database, { requestId: request.id, action: 'brand_match_corrected', metadata: { brand_id: alt.id } });
+        await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
+          `הבנתי שמדובר ב${alt.name}, נכון? השב כן או לא.`, conversation.simulated);
+        return 'awaiting';
+      }
       await saveBrief({ pending_brand_id: null, brand_declined: true });
       await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
         'הבנתי, נמשיך ללא מיתוג ספציפי.', conversation.simulated);
