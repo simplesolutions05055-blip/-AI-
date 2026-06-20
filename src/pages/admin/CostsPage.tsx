@@ -1,0 +1,202 @@
+import { useEffect, useMemo, useState } from 'react';
+import { formatHebrewDateTime, formatUsd } from '@/lib/format';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { formatIls, getUsdToIlsRates, rateForDate } from '@/lib/fx';
+
+interface RequestRow {
+  id: string;
+  conversation_id: string | null;
+  estimated_cost: number | null;
+  created_at: string;
+  conversations: { whatsapp_from: string } | null;
+}
+
+interface ConversationCost {
+  conversationId: string;
+  phone: string;
+  total: number;
+  totalIls: number;
+  requestCount: number;
+  lastAt: string;
+}
+
+const PAGE_SIZE = 25;
+// Supabase returns at most 1000 rows per request, so page through with .range().
+const FETCH_BATCH = 1000;
+
+export default function CostsPage() {
+  const [rows, setRows] = useState<RequestRow[]>([]);
+  const [rates, setRates] = useState<Map<string, number | null>>(new Map());
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
+  const [dates, setDates] = useState({ from: '', to: '' });
+
+  useEffect(() => {
+    const db = createSupabaseBrowserClient();
+    let cancelled = false;
+    setLoading(true);
+    setPage(0);
+
+    const loadAll = async () => {
+      const all: RequestRow[] = [];
+      for (let from = 0; ; from += FETCH_BATCH) {
+        let query = db
+          .from('requests')
+          .select('id, conversation_id, estimated_cost, created_at, conversations!requests_conversation_id_fkey(whatsapp_from)')
+          .order('created_at', { ascending: false })
+          .range(from, from + FETCH_BATCH - 1);
+        if (dates.from) query = query.gte('created_at', `${dates.from}T00:00:00`);
+        if (dates.to) query = query.lte('created_at', `${dates.to}T23:59:59`);
+        const { data } = await query;
+        const batch = (data ?? []) as unknown as RequestRow[];
+        all.push(...batch);
+        if (batch.length < FETCH_BATCH) break;
+      }
+      if (cancelled) return;
+      setRows(all);
+      setLoading(false);
+      // Fetch the USD→ILS rate for each day a cost was incurred, then convert.
+      const fetchedRates = await getUsdToIlsRates(all.map((r) => r.created_at));
+      if (!cancelled) setRates(fetchedRates);
+    };
+
+    loadAll();
+    return () => {
+      cancelled = true;
+    };
+  }, [dates]);
+
+  const { conversations, total, totalIls } = useMemo(() => {
+    const map = new Map<string, ConversationCost>();
+    let sum = 0;
+    let sumIls = 0;
+    for (const row of rows) {
+      const cost = Number(row.estimated_cost ?? 0);
+      const rate = rateForDate(rates, row.created_at);
+      const costIls = rate != null ? cost * rate : 0;
+      sum += cost;
+      sumIls += costIls;
+      const id = row.conversation_id ?? row.id;
+      const existing = map.get(id);
+      if (existing) {
+        existing.total += cost;
+        existing.totalIls += costIls;
+        existing.requestCount += 1;
+        if (row.created_at > existing.lastAt) existing.lastAt = row.created_at;
+      } else {
+        map.set(id, {
+          conversationId: id,
+          phone: row.conversations?.whatsapp_from?.replace('whatsapp:', '') ?? '-',
+          total: cost,
+          totalIls: costIls,
+          requestCount: 1,
+          lastAt: row.created_at,
+        });
+      }
+    }
+    return {
+      conversations: [...map.values()].sort((a, b) => b.total - a.total),
+      total: sum,
+      totalIls: sumIls,
+    };
+  }, [rows, rates]);
+
+  const ratesReady = rates.size > 0;
+
+  const pageCount = Math.max(1, Math.ceil(conversations.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageRows = conversations.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
+
+  return (
+    <div>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">עלויות</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1 text-sm text-[var(--muted)]">
+            מתאריך
+            <input type="date" aria-label="מתאריך" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={dates.from} onChange={(e) => setDates((d) => ({ ...d, from: e.target.value }))} />
+          </label>
+          <label className="flex items-center gap-1 text-sm text-[var(--muted)]">
+            עד תאריך
+            <input type="date" aria-label="עד תאריך" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={dates.to} onChange={(e) => setDates((d) => ({ ...d, to: e.target.value }))} />
+          </label>
+          {(dates.from || dates.to) && (
+            <button
+              onClick={() => setDates({ from: '', to: '' })}
+              className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-gray-50"
+            >
+              נקה תאריכים
+            </button>
+          )}
+          <div className="rounded-xl border border-[var(--border)] bg-white px-4 py-2 text-sm">
+            סה״כ עלות: <span className="font-bold ltr">{formatUsd(total)}</span>
+            {ratesReady && <span className="text-[var(--muted)]"> · <span className="ltr">{formatIls(totalIls)}</span></span>}
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-white">
+        <table className="w-full text-sm" dir="rtl">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-[var(--muted)]">
+              <th className="p-3 text-start">מספר</th>
+              <th className="p-3 text-start">בקשות</th>
+              <th className="p-3 text-start">פעילות אחרונה</th>
+              <th className="p-3 text-start">עלות ($)</th>
+              <th className="p-3 text-start">עלות (₪)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={5} className="p-6 text-center text-[var(--muted)]">טוען...</td></tr>
+            ) : conversations.length === 0 ? (
+              <tr><td colSpan={5} className="p-6 text-center text-[var(--muted)]">אין נתוני עלות להצגה.</td></tr>
+            ) : pageRows.map((row) => (
+              <tr key={row.conversationId} className="border-b border-[var(--border)] hover:bg-gray-50">
+                <td className="p-3">
+                  <a
+                    href={`/admin/conversations?id=${encodeURIComponent(row.conversationId)}`}
+                    className="ltr text-blue-600 hover:underline"
+                  >
+                    {row.phone}
+                  </a>
+                </td>
+                <td className="p-3"><span className="ltr">{row.requestCount}</span></td>
+                <td className="p-3"><span className="ltr">{formatHebrewDateTime(row.lastAt)}</span></td>
+                <td className="p-3 font-semibold"><span className="ltr">{formatUsd(row.total)}</span></td>
+                <td className="p-3 font-semibold"><span className="ltr">{ratesReady ? formatIls(row.totalIls) : '…'}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {!loading && conversations.length > 0 && (
+        <div className="mt-4 flex items-center justify-between gap-3 text-sm" dir="rtl">
+          <span className="text-[var(--muted)]">
+            {conversations.length} שיחות · עמוד {currentPage + 1} מתוך {pageCount}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={currentPage === 0}
+              className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 disabled:opacity-40"
+            >
+              הקודם
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={currentPage >= pageCount - 1}
+              className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 disabled:opacity-40"
+            >
+              הבא
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

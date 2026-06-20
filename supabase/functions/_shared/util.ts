@@ -48,7 +48,8 @@ export const DEFAULT_TEMPLATES: Record<string, string> = {
 // and begin fresh.
 const RESET_PHRASES = [
   'שיחה חדשה', 'בקשה חדשה', 'התחל מחדש', 'להתחיל מחדש', 'נתחיל מחדש',
-  'מתחילים מחדש', 'התחלה מחדש', 'תתחיל מחדש', 'אתחול', 'איפוס',
+  'מתחילים מחדש', 'התחלה מחדש', 'מההתחלה', 'נתחיל מההתחלה',
+  'בוא נתחיל מההתחלה', 'תתחיל מההתחלה', 'תתחיל מחדש', 'אתחול', 'איפוס',
   'reset', 'restart', 'start over', 'new conversation', 'new request',
 ];
 

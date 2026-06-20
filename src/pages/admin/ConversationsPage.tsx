@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import { formatHebrewDateTime } from '@/lib/format';
+import { formatHebrewDateTime, formatUsd } from '@/lib/format';
 import type { ConversationStatus, MessageDirection, RequestStatus } from '@/types/db';
 
 interface ConversationRow {
@@ -30,6 +30,28 @@ interface RequestRow {
   status: RequestStatus;
   output_type: string | null;
   customer_email: string | null;
+  structured_brief: Record<string, unknown> | null;
+  created_at: string;
+}
+
+interface OutputDebugRow {
+  id: string;
+  request_id: string;
+  version: number;
+  output_type: string;
+  model_name: string | null;
+  prompt_snapshot: string | null;
+  qa_result: Record<string, unknown> | null;
+  created_at: string;
+}
+
+interface LogDebugRow {
+  id: string;
+  request_id: string | null;
+  severity: string;
+  action: string;
+  message: string | null;
+  metadata: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -66,6 +88,10 @@ export default function ConversationsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [requests, setRequests] = useState<RequestRow[]>([]);
+  const [outputsByRequest, setOutputsByRequest] = useState<Record<string, OutputDebugRow[]>>({});
+  const [logsByRequest, setLogsByRequest] = useState<Record<string, LogDebugRow[]>>({});
+  const [conversationCost, setConversationCost] = useState(0);
+  const [showPromptJson, setShowPromptJson] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [query, setQuery] = useState('');
@@ -93,7 +119,9 @@ export default function ConversationsPage() {
       );
       setConversations(rows);
       // Only auto-select on first load; don't yank the user off their selection on refresh.
-      setSelectedId((current) => current ?? rows[0]?.id ?? null);
+      // Honor a ?id= deep link (e.g. coming from the costs screen) before falling back.
+      const requestedId = new URLSearchParams(window.location.search).get('id');
+      setSelectedId((current) => current ?? requestedId ?? rows[0]?.id ?? null);
       setLoading(false);
     };
 
@@ -112,6 +140,9 @@ export default function ConversationsPage() {
       const conversation = simulatorConversations.find((row) => row.id === selectedId);
       setRequests([]);
       setMessages(toMessageRows(conversation));
+      setOutputsByRequest({});
+      setLogsByRequest({});
+      setConversationCost(0);
       setLoadingMessages(false);
       return;
     }
@@ -128,13 +159,48 @@ export default function ConversationsPage() {
           .order('created_at', { ascending: true }),
         db
           .from('requests')
-          .select('id, status, output_type, customer_email, created_at')
+          .select('id, status, output_type, customer_email, structured_brief, created_at')
           .eq('conversation_id', selectedId)
           .order('created_at', { ascending: false }),
       ]);
       if (cancelled) return;
-      setMessages((messageRows.data ?? []) as MessageRow[]);
-      setRequests((requestRows.data ?? []) as RequestRow[]);
+      const nextMessages = (messageRows.data ?? []) as MessageRow[];
+      const nextRequests = (requestRows.data ?? []) as RequestRow[];
+      const requestIds = [...new Set(nextRequests.map((request) => request.id))];
+
+      let nextOutputsByRequest: Record<string, OutputDebugRow[]> = {};
+      let nextLogsByRequest: Record<string, LogDebugRow[]> = {};
+      let nextCost = 0;
+      if (requestIds.length) {
+        const [outputRows, logRows, usageRows] = await Promise.all([
+          db
+            .from('outputs')
+            .select('id, request_id, version, output_type, model_name, prompt_snapshot, qa_result, created_at')
+            .in('request_id', requestIds)
+            .order('version', { ascending: false }),
+          db
+            .from('logs')
+            .select('id, request_id, severity, action, message, metadata, created_at')
+            .in('request_id', requestIds)
+            .order('created_at', { ascending: true }),
+          db
+            .from('usage_events')
+            .select('estimated_cost')
+            .in('request_id', requestIds),
+        ]);
+        nextOutputsByRequest = groupByRequest((outputRows.data ?? []) as OutputDebugRow[]);
+        nextLogsByRequest = groupByRequest((logRows.data ?? []) as LogDebugRow[]);
+        nextCost = ((usageRows.data ?? []) as { estimated_cost: number | null }[]).reduce(
+          (sum, row) => sum + Number(row.estimated_cost ?? 0),
+          0
+        );
+      }
+
+      setMessages(nextMessages);
+      setRequests(nextRequests);
+      setOutputsByRequest(nextOutputsByRequest);
+      setLogsByRequest(nextLogsByRequest);
+      setConversationCost(nextCost);
       setLoadingMessages(false);
     };
 
@@ -226,6 +292,11 @@ export default function ConversationsPage() {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    {!selected.simulated && (
+                      <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                        עלות השיחה: <span className="ltr">{formatUsd(conversationCost)}</span>
+                      </span>
+                    )}
                     {selected.simulated && (
                       <a
                         href={`/admin/simulator?conversation=${encodeURIComponent(selected.id)}`}
@@ -239,6 +310,14 @@ export default function ConversationsPage() {
                     <span className="rounded-full bg-gray-100 px-3 py-1 text-xs">
                       {selected.simulated ? 'שיחת סימולטור' : STATUS_LABEL[selected.status]}
                     </span>
+                    <button
+                      onClick={() => setShowPromptJson((value) => !value)}
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        showPromptJson ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700'
+                      }`}
+                    >
+                      {showPromptJson ? 'הסתר JSON' : 'הצג JSON פרומפטים'}
+                    </button>
                   </div>
                 </div>
                 {requests.length > 0 && (
@@ -261,6 +340,7 @@ export default function ConversationsPage() {
                   <div className="space-y-2">
                     {messages.map((message) => {
                       const inbound = message.direction === 'inbound';
+                      const promptJson = buildPromptJson(message, requests, outputsByRequest, logsByRequest, selected.simulated);
                       return (
                         <div
                           key={message.id}
@@ -279,6 +359,19 @@ export default function ConversationsPage() {
                           <div className="mt-1 text-[10px] text-[#667781] ltr">
                             {formatHebrewDateTime(message.created_at)}
                           </div>
+                          {showPromptJson && (
+                            <details className="mt-2 rounded-lg border border-black/10 bg-black/5 px-2 py-1.5 text-xs">
+                              <summary className="cursor-pointer font-semibold text-[#075E54]">
+                                JSON פרומפט / בקשה
+                              </summary>
+                              <pre
+                                dir="ltr"
+                                className="mt-2 max-h-80 overflow-auto rounded bg-[#111B21] p-2 text-left text-[11px] leading-5 text-white"
+                              >
+                                {JSON.stringify(promptJson, null, 2)}
+                              </pre>
+                            </details>
+                          )}
                         </div>
                       );
                     })}
@@ -328,4 +421,74 @@ function toMessageRows(conversation: SimulatorStoredConversation | undefined): M
     storage_path: message.imageName ?? null,
     created_at: new Date(Number(message.id.split('-').at(-1)) || Date.now()).toISOString(),
   }));
+}
+
+function groupByRequest<T extends { request_id: string | null }>(rows: T[]): Record<string, T[]> {
+  return rows.reduce<Record<string, T[]>>((acc, row) => {
+    if (!row.request_id) return acc;
+    acc[row.request_id] = [...(acc[row.request_id] ?? []), row];
+    return acc;
+  }, {});
+}
+
+function buildPromptJson(
+  message: MessageRow,
+  requests: RequestRow[],
+  outputsByRequest: Record<string, OutputDebugRow[]>,
+  logsByRequest: Record<string, LogDebugRow[]>,
+  simulated: boolean | undefined
+) {
+  const request = message.request_id ? requests.find((row) => row.id === message.request_id) ?? null : null;
+  const outputs = message.request_id ? outputsByRequest[message.request_id] ?? [] : [];
+  const logs = message.request_id ? logsByRequest[message.request_id] ?? [] : [];
+
+  return {
+    note:
+      'המערכת לא שמרה היסטוריית prompt raw מלאה לכל קריאת מודל בעבר. זה מציג את JSON הבריף, prompt_snapshot של התוצרים, QA ולוגים זמינים עבור ההודעה/בקשה.',
+    message: {
+      id: message.id,
+      direction: message.direction,
+      body: message.body,
+      media_type: message.media_type,
+      storage_path: message.storage_path,
+      created_at: message.created_at,
+      simulated: Boolean(simulated),
+    },
+    request: request
+      ? {
+          id: request.id,
+          status: request.status,
+          output_type: request.output_type,
+          customer_email: request.customer_email,
+          structured_brief: request.structured_brief,
+          created_at: request.created_at,
+        }
+      : null,
+    prompt_snapshots: outputs.map((output) => ({
+      output_id: output.id,
+      version: output.version,
+      output_type: output.output_type,
+      model_name: output.model_name,
+      prompt_snapshot: parsePromptSnapshot(output.prompt_snapshot),
+      qa_result: output.qa_result,
+      created_at: output.created_at,
+    })),
+    logs: logs.map((log) => ({
+      id: log.id,
+      severity: log.severity,
+      action: log.action,
+      message: log.message,
+      metadata: log.metadata,
+      created_at: log.created_at,
+    })),
+  };
+}
+
+function parsePromptSnapshot(value: string | null): unknown {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }

@@ -1,6 +1,7 @@
 import { db } from '../_shared/db.ts';
 import { generatePresentationOutline, generateDeckSlides } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateTextCost } from '../_shared/util.ts';
+import { buildBusinessBrainContext } from '../_shared/brand.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,10 +51,31 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Load separated Business Brain context. Text sources guide content only;
+    // brand/assets guide visuals only.
+    const brandId = (brief as { brand_id?: string }).brand_id ?? null;
+    if (brandId) {
+      const [{ data: brand }, { data: textSources }] = await Promise.all([
+        database
+          .from('brands')
+          .select('name, color_palette, style_notes, is_active')
+          .eq('id', brandId)
+          .single(),
+        database
+          .from('business_text_sources')
+          .select('title, content, source_kind')
+          .eq('brand_id', brandId)
+          .order('created_at', { ascending: false })
+          .limit(12),
+      ]);
+      const businessBrain = buildBusinessBrainContext(brand, textSources ?? []);
+      if (businessBrain.content) (brief as Record<string, unknown>).business_content_context = businessBrain.content;
+      if (businessBrain.visual) (brief as Record<string, unknown>).brand_guidelines = businessBrain.visual;
+    }
+
     // Collect time-limited (tokenized) signed URLs to the city's brand images
     // (graphic examples + logo) so they can be pulled into the presentation.
     const SIGNED_URL_TTL = 60 * 60 * 24 * 7; // 7 days
-    const brandId = (brief as { brand_id?: string }).brand_id ?? null;
     const assetLines: string[] = [];
     if (brandId) {
       try {

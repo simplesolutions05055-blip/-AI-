@@ -5,6 +5,7 @@ const LINKS = [
   { href: '/admin', label: 'לוח בקרה' },
   { href: '/admin/requests', label: 'בקשות' },
   { href: '/admin/conversations', label: 'שיחות' },
+  { href: '/admin/costs', label: 'עלויות' },
   { href: '/admin/simulator', label: 'סימולטור צ׳אט' },
   { href: '/admin/files', label: 'קבצים' },
   { href: '/admin/branding', label: 'מיתוג' },

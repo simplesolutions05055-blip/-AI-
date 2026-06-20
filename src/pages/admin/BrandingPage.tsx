@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatHebrewDateTime } from '@/lib/format';
-import type { Brand, BrandAsset, BrandColor, BrandColorRole } from '@/types/db';
+import {
+  brandsToCsv,
+  brandToCsv,
+  brandCsvTemplate,
+  parseBrandCsv,
+  downloadCsv,
+  slugForFilename,
+} from '@/lib/brandCsv';
+import type { Brand, BrandAsset, BrandColor, BrandColorRole, BusinessTextSource } from '@/types/db';
 
 const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
@@ -26,6 +34,9 @@ export default function BrandingPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Partial<Brand> | null>(null);
   const [assets, setAssets] = useState<BrandAsset[]>([]);
+  const [textSources, setTextSources] = useState<BusinessTextSource[]>([]);
+  const [newSourceTitle, setNewSourceTitle] = useState('');
+  const [newSourceContent, setNewSourceContent] = useState('');
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [aliasesText, setAliasesText] = useState('');
@@ -37,6 +48,9 @@ export default function BrandingPage() {
   const longPress = useRef<{ timer: number | null; fired: boolean }>({ timer: null, fired: false });
   const logoRef = useRef<HTMLInputElement>(null);
   const assetRef = useRef<HTMLInputElement>(null);
+  const textSourceRef = useRef<HTMLInputElement>(null);
+  const csvRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
 
   const db = createSupabaseBrowserClient();
 
@@ -59,6 +73,9 @@ export default function BrandingPage() {
     setSelected(b ?? emptyBrand());
     setAliasesText((b?.aliases ?? []).join(', '));
     setAssets([]);
+    setTextSources([]);
+    setNewSourceTitle('');
+    setNewSourceContent('');
     setPreviews({});
     setLogoFile(null);
     if (b?.id) {
@@ -69,6 +86,12 @@ export default function BrandingPage() {
         .order('created_at', { ascending: true });
       const list = (data ?? []) as BrandAsset[];
       setAssets(list);
+      const { data: sources } = await db
+        .from('business_text_sources')
+        .select('*')
+        .eq('brand_id', b.id)
+        .order('created_at', { ascending: false });
+      setTextSources((sources ?? []) as BusinessTextSource[]);
       const next: Record<string, string> = {};
       if (b.logo_path) next['__logo'] = await signedUrl(b.logo_path);
       for (const a of list) next[a.id] = await signedUrl(a.storage_path);
@@ -233,6 +256,59 @@ export default function BrandingPage() {
     setAssets((cur) => cur.map((x) => (x.id === a.id ? { ...x, caption } : x)));
   }
 
+  async function addTextSource(title: string, content: string) {
+    const cleanContent = content.trim();
+    if (!cleanContent) return;
+    const id = selected?.id ?? (await save());
+    if (!id) return;
+    const cleanTitle = title.trim() || 'מקור תוכן';
+    const { data, error } = await db
+      .from('business_text_sources')
+      .insert({ brand_id: id, title: cleanTitle, content: cleanContent, source_kind: 'content_only' } as never)
+      .select('*')
+      .single();
+    if (error || !data) {
+      alert('שמירת מקור התוכן נכשלה: ' + (error?.message ?? ''));
+      return;
+    }
+    setTextSources((cur) => [data as BusinessTextSource, ...cur]);
+    setNewSourceTitle('');
+    setNewSourceContent('');
+  }
+
+  async function uploadTextSource(file: File) {
+    try {
+      let text = '';
+      const lower = file.name.toLowerCase();
+      if (lower.endsWith('.txt') || lower.endsWith('.md')) {
+        text = await file.text();
+      } else {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result ?? ''));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+        const base64 = dataUrl.split(',')[1] ?? '';
+        const { data, error } = await db.functions.invoke('process-upload', {
+          body: { kind: 'document', base64, mime: file.type, name: file.name },
+        });
+        if (error || !data?.ok) throw new Error(error?.message ?? data?.error ?? 'עיבוד הקובץ נכשל');
+        text = (data.text as string) ?? '';
+      }
+      await addTextSource(file.name.replace(/\.[^.]+$/, ''), text.slice(0, 40000));
+    } catch (error) {
+      alert('עיבוד מקור התוכן נכשל: ' + String(error));
+    } finally {
+      if (textSourceRef.current) textSourceRef.current.value = '';
+    }
+  }
+
+  async function removeTextSource(source: BusinessTextSource) {
+    await db.from('business_text_sources').delete().eq('id', source.id);
+    setTextSources((cur) => cur.filter((x) => x.id !== source.id));
+  }
+
   async function removeBrand(b: Brand) {
     if (!confirm(`למחוק את "${b.name}"? פעולה בלתי הפיכה.`)) return;
     await db.from('brands').delete().eq('id', b.id);
@@ -310,14 +386,143 @@ export default function BrandingPage() {
     await loadBrands();
   }
 
+  // ── CSV export / import ──────────────────────────────────────────────────────
+  /** Attach each brand's text sources (one query for the whole set). */
+  async function withSources(list: Brand[]) {
+    const ids = list.map((b) => b.id);
+    if (!ids.length) return list.map((b) => ({ ...b, sources: [] }));
+    const { data } = await db
+      .from('business_text_sources')
+      .select('brand_id,title,content')
+      .in('brand_id', ids)
+      .order('created_at', { ascending: true });
+    const byBrand = new Map<string, { title: string; content: string }[]>();
+    for (const s of (data ?? []) as { brand_id: string; title: string; content: string }[]) {
+      const arr = byBrand.get(s.brand_id) ?? [];
+      arr.push({ title: s.title ?? '', content: s.content ?? '' });
+      byBrand.set(s.brand_id, arr);
+    }
+    return list.map((b) => ({ ...b, sources: byBrand.get(b.id) ?? [] }));
+  }
+
+  async function exportAll() {
+    if (!brands.length) return;
+    const selectedBrands = selectedIds.size > 0 ? brands.filter((b) => selectedIds.has(b.id)) : brands;
+    downloadCsv('branding', brandsToCsv(await withSources(selectedBrands)));
+  }
+
+  async function exportOne(b: Brand) {
+    const [withSrc] = await withSources([b]);
+    downloadCsv(`branding-${slugForFilename(b.name)}`, brandToCsv(withSrc));
+  }
+
+  async function importCsv(file: File) {
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const { rows, errors, hasSourceColumns } = parseBrandCsv(text);
+      if (!rows.length) {
+        alert('לא נמצאו שורות תקינות בקובץ.\n' + errors.join('\n'));
+        return;
+      }
+      // Match by name (case-insensitive) against existing brands → update, else insert.
+      const byName = new Map(brands.map((b) => [b.name.trim().toLowerCase(), b]));
+      let inserted = 0;
+      let updated = 0;
+      const failures: string[] = [];
+      for (const row of rows) {
+        const payload = {
+          name: row.name,
+          aliases: row.aliases,
+          color_palette: row.color_palette,
+          style_notes: row.style_notes || null,
+          is_active: row.is_active,
+        };
+        const existing = byName.get(row.name.trim().toLowerCase());
+        let brandId = existing?.id ?? null;
+        if (existing) {
+          const { error } = await db.from('brands').update(payload as never).eq('id', existing.id);
+          if (error) failures.push(`${row.name}: ${error.message}`);
+          else updated++;
+        } else {
+          const { data, error } = await db.from('brands').insert(payload as never).select('id').single();
+          if (error || !data) failures.push(`${row.name}: ${error?.message ?? ''}`);
+          else {
+            brandId = (data as { id: string }).id;
+            inserted++;
+          }
+        }
+        // Sync text sources only when the CSV actually declares source_* columns,
+        // so a CSV without them never wipes a brand's existing content.
+        if (brandId && hasSourceColumns) {
+          await db.from('business_text_sources').delete().eq('brand_id', brandId);
+          if (row.sources.length) {
+            const { error } = await db.from('business_text_sources').insert(
+              row.sources.map((s) => ({
+                brand_id: brandId,
+                title: s.title,
+                content: s.content,
+                source_kind: 'content_only',
+              })) as never
+            );
+            if (error) failures.push(`${row.name} (מקורות תוכן): ${error.message}`);
+          }
+        }
+      }
+      await loadBrands();
+      const summary = `ייבוא הסתיים: ${inserted} נוספו, ${updated} עודכנו.`;
+      const detail = [...errors, ...failures.map((f) => 'שמירה נכשלה — ' + f)];
+      alert(detail.length ? `${summary}\n\n${detail.join('\n')}` : summary);
+    } catch (e) {
+      alert('קריאת הקובץ נכשלה: ' + String(e));
+    } finally {
+      setImporting(false);
+      if (csvRef.current) csvRef.current.value = '';
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold">מיתוג</h1>
-        <button onClick={() => openBrand(null)} className="rounded-lg bg-brand text-white px-4 py-2 text-sm font-semibold">
-          הוסף מקום
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={csvRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && importCsv(e.target.files[0])}
+          />
+          <button
+            onClick={() => downloadCsv('branding-template', brandCsvTemplate())}
+            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium hover:bg-gray-50"
+          >
+            CSV לדוגמה
+          </button>
+          <button
+            onClick={exportAll}
+            disabled={!brands.length}
+            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+          >
+            {selectedIds.size > 0 ? `ייצוא נבחרים (${selectedIds.size})` : 'ייצוא הכל'}
+          </button>
+          <button
+            onClick={() => csvRef.current?.click()}
+            disabled={importing}
+            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+          >
+            {importing ? 'מייבא...' : 'ייבוא CSV'}
+          </button>
+          <button onClick={() => openBrand(null)} className="rounded-lg bg-brand text-white px-4 py-2 text-sm font-semibold">
+            הוסף מקום
+          </button>
+        </div>
       </div>
+      <p className="text-xs text-[var(--muted)] -mt-3 leading-5">
+        ייצוא/ייבוא כולל שם, שמות נרדפים, סטטוס, הנחיות סגנון, צבעי הפלטה ומקורות תוכן
+        (עמודות source_1_title / source_1_content וכן הלאה — אפשר להוסיף כמה שרוצים). לוגו ותמונות אינם נכללים ב-CSV.
+        בייבוא, מקום עם שם קיים יעודכן, ושם חדש יתווסף.
+      </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* list */}
@@ -407,6 +612,14 @@ export default function BrandingPage() {
               <div className="flex gap-2">
                 {selected.id && (
                   <button
+                    onClick={() => exportOne(selected as Brand)}
+                    className="text-xs text-brand px-3 py-2"
+                  >
+                    הורד CSV
+                  </button>
+                )}
+                {selected.id && (
+                  <button
                     onClick={() => removeBrand(selected as Brand)}
                     className="text-xs text-red-600 px-3 py-2"
                   >
@@ -468,24 +681,25 @@ export default function BrandingPage() {
               </div>
               <div className="space-y-2">
                 {(selected.color_palette ?? []).map((c, i) => (
-                  <div key={i} className="flex flex-wrap items-center gap-2">
+                  <div key={i} className="flex flex-nowrap items-center gap-2">
                     <input
                       type="color"
                       value={c.hex}
                       onChange={(e) => updateColor(i, { hex: e.target.value })}
-                      className="h-9 w-12 rounded border border-[var(--border)] shrink-0"
+                      className="h-9 w-11 rounded border border-[var(--border)] shrink-0 cursor-pointer p-0.5"
+                      title="לחץ לבחירת צבע מדויק"
                     />
                     <input
-                      className={`${input} ltr w-28 shrink-0`}
+                      className={`${input} ltr w-24 shrink-0`}
                       value={c.hex}
                       onChange={(e) => updateColor(i, { hex: e.target.value })}
                     />
-                    <select className={`${input} flex-1 min-w-[6rem]`} value={c.role} onChange={(e) => updateColor(i, { role: e.target.value as BrandColorRole })}>
+                    <select className={`${input} flex-1 min-w-0`} value={c.role} onChange={(e) => updateColor(i, { role: e.target.value as BrandColorRole })}>
                       {Object.entries(ROLE_LABEL).map(([k, v]) => (
                         <option key={k} value={k}>{v}</option>
                       ))}
                     </select>
-                    <button onClick={() => removeColor(i)} className="text-xs text-red-600 px-2">הסר</button>
+                    <button onClick={() => removeColor(i)} className="text-xs text-red-600 px-1 shrink-0">הסר</button>
                   </div>
                 ))}
               </div>
@@ -503,15 +717,90 @@ export default function BrandingPage() {
               />
             </label>
 
+            {/* content brain */}
+            <div className="rounded-lg border border-[var(--border)] p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <span className="block text-sm font-medium">אזור תוכן</span>
+                  <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                    חומרים שהמערכת לוקחת מהם מה להגיד בלבד. עיצוב, צבעים ופונטים מתוך המסמכים האלה לא ישפיעו על התוצר.
+                  </p>
+                </div>
+                <div className="shrink-0">
+                  <input
+                    ref={textSourceRef}
+                    type="file"
+                    accept=".txt,.md,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    className="hidden"
+                    onChange={(e) => e.target.files?.[0] && uploadTextSource(e.target.files[0])}
+                  />
+                  <button
+                    onClick={() => textSourceRef.current?.click()}
+                    className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-dark"
+                  >
+                    + העלה מסמך תוכן
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <input
+                  className={input}
+                  dir="rtl"
+                  placeholder="שם המקור"
+                  value={newSourceTitle}
+                  onChange={(e) => setNewSourceTitle(e.target.value)}
+                />
+                <textarea
+                  className={`${input} h-20`}
+                  dir="rtl"
+                  placeholder="הדבק כאן טקסט עסקי, שירותים, מסרים, FAQ או ניסוחים קיימים"
+                  value={newSourceContent}
+                  onChange={(e) => setNewSourceContent(e.target.value)}
+                />
+                <button
+                  onClick={() => addTextSource(newSourceTitle, newSourceContent)}
+                  className="self-end rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white"
+                >
+                  הוסף
+                </button>
+              </div>
+
+              {textSources.length === 0 ? (
+                <p className="mt-3 text-xs text-[var(--muted)]">אין עדיין מקורות תוכן.</p>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {textSources.map((source) => (
+                    <div key={source.id} className="rounded-lg border border-[var(--border)] p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium">{source.title}</span>
+                        <button onClick={() => removeTextSource(source)} className="text-xs text-red-600">
+                          מחק
+                        </button>
+                      </div>
+                      <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-[var(--muted)]">
+                        {source.content}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* assets */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium">תמונות לשימוש בתוצרים</span>
+                <span className="text-sm font-medium">אזור עיצוב — תמונות לשימוש בתוצרים</span>
                 <input ref={assetRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadAsset(e.target.files[0])} />
-                <button onClick={() => assetRef.current?.click()} className="text-xs text-brand">+ העלה תמונה</button>
+                <button
+                  onClick={() => assetRef.current?.click()}
+                  className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-dark"
+                >
+                  + העלה תמונה
+                </button>
               </div>
               <p className="mb-2 text-xs text-[var(--muted)] leading-5">
-                התמונות שתעלה כאן (יחד עם הלוגו) יהיו זמינות לשילוב בתוצרים שהמערכת מפיקה — למשל מצגות ופוסטים.
+                התמונות שתעלה כאן (יחד עם הלוגו) ישמשו לעיצוב, השראה ויזואלית ושילוב בתוצרים — לא כמקור לעובדות או מסרים עסקיים.
                 בעת הפקת מצגת, יצורפו קישורים מאובטחים וזמניים לתמונות אלה, כך שניתן להוריד ולהכניס אותן ישירות.
                 מומלץ להוסיף תיאור קצר לכל תמונה (למשל "תמונת רחוב מרכזי", "אירוע עירוני") כדי שהמערכת תדע היכן לשבץ אותה.
               </p>

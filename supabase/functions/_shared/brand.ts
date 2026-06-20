@@ -49,12 +49,14 @@ export interface BrandRow {
   aliases: string[];
 }
 
+export type BrandMatch = { id: string; name: string; confidence: 'exact' | 'fuzzy' };
+
 // Find an active brand whose name/alias appears in the given text —
 // exact substring first, then fuzzy (per-word edit distance) for typos.
 export function matchBrandInText(
   brands: BrandRow[],
   text: string
-): { id: string; name: string } | null {
+): BrandMatch | null {
   if (!brands?.length) return null;
   const inboundText = normalizeHe(text);
   if (!inboundText) return null;
@@ -68,7 +70,7 @@ export function matchBrandInText(
 
   // pass 1: exact substring (most reliable)
   for (const c of candidates) {
-    if (inboundText.includes(c.needle)) return { id: c.id, name: c.name };
+    if (inboundText.includes(c.needle)) return { id: c.id, name: c.name, confidence: 'exact' };
   }
 
   // pass 2: fuzzy — every word of the needle must fuzzy-hit some inbound word
@@ -76,7 +78,7 @@ export function matchBrandInText(
     const needleWords = c.needle.split(' ').filter((w) => w.length >= 2);
     if (!needleWords.length) continue;
     if (needleWords.every((w) => fuzzyWordHit(w, inboundWords))) {
-      return { id: c.id, name: c.name };
+      return { id: c.id, name: c.name, confidence: 'fuzzy' };
     }
   }
   return null;
@@ -89,24 +91,63 @@ export interface BrandKit {
   is_active?: boolean;
 }
 
-// Build a Hebrew brand-guidelines block from a brand kit, fed into generation prompts.
-export function buildBrandContext(brand: BrandKit | null): string | null {
-  if (!brand || brand.is_active === false) return null;
+export interface BusinessTextSource {
+  title: string;
+  content: string;
+  source_kind?: 'content_only' | 'visual_only' | 'brand_rules';
+}
 
-  const colors = (brand.color_palette ?? [])
-    .map((c) => `${c.role}: ${c.hex}`)
-    .join(', ');
+// Build separated Business Brain context blocks. Text sources are content-only:
+// they may guide facts and wording, but never visual style.
+export function buildBusinessBrainContext(
+  brand: BrandKit | null,
+  textSources: BusinessTextSource[] = []
+): { content: string | null; visual: string | null; combined: string | null } {
+  const contentLines: string[] = [];
+  const visualLines: string[] = [];
 
-  const lines = [`## מיתוג מחייב — ${brand.name}`];
-  if (colors) {
-    lines.push(`פלטת הצבעים הרשמית של המותג (כולל ערכי HEX מדויקים): ${colors}.`);
-    lines.push(
-      'חשוב מאוד: זוהי פלטת הצבעים המחייבת והבלעדית לבריף. בשדה "פלטת צבעים" השתמש אך ורק בצבעים ובערכי ה-HEX האלה. ' +
-        'אל תמציא צבעים נוספים, אל תשתמש בצבעי הדוגמה שמופיעים ב-System Message (כגון #064A7A, #D72638, #FDBB2D), ' +
-        'והתעלם מכל דרישה למספר מינימלי של צבעים אם היא סותרת את פלטת המותג. מספר הצבעים בבריף יהיה בדיוק כמספר צבעי המותג.'
+  const usableSources = textSources
+    .filter((source) => source.source_kind !== 'visual_only' && source.content?.trim())
+    .slice(0, 12);
+  if (usableSources.length) {
+    contentLines.push('## מוח עסקי — אזור תוכן בלבד');
+    contentLines.push(
+      'המידע הבא מיועד לעובדות, מסרים, שירותים, ניסוחים ותוכן בלבד. אסור להסיק ממנו צבעים, פונטים, קומפוזיציה, סגנון עיצובי, מבנה עמוד או איכות ויזואלית.'
+    );
+    for (const source of usableSources) {
+      const text = source.content.trim().slice(0, 4000);
+      contentLines.push(`### ${source.title}\n${text}`);
+    }
+  }
+
+  if (brand && brand.is_active !== false) {
+    const colors = (brand.color_palette ?? [])
+      .map((c) => `${c.role}: ${c.hex}`)
+      .join(', ');
+
+    visualLines.push(`## מוח עסקי — אזור עיצוב ומיתוג בלבד — ${brand.name}`);
+    if (colors) {
+      visualLines.push(`פלטת הצבעים הרשמית של המותג (כולל ערכי HEX מדויקים): ${colors}.`);
+      visualLines.push(
+        'זוהי פלטת הצבעים המחייבת והבלעדית לבריף. בשדה "פלטת צבעים" השתמש אך ורק בצבעים ובערכי ה-HEX האלה. אל תמציא צבעים נוספים.'
+      );
+    }
+    if (brand.style_notes) visualLines.push(`הנחיות סגנון מחייבות של המותג: ${brand.style_notes}`);
+    visualLines.push(
+      'הנחיות העיצוב מגיעות רק מאזור העיצוב והמיתוג. אין להעתיק עיצוב ממסמכים שהוגדרו כאזור תוכן בלבד.'
     );
   }
-  if (brand.style_notes) lines.push(`הנחיות סגנון מחייבות של המותג: ${brand.style_notes}`);
-  lines.push('שמור על עקביות מלאה עם זהות המותג, הצבעים, הטון והסגנון. הנחיות המותג גוברות על כל דוגמה גנרית ב-System Message.');
-  return lines.join('\n');
+
+  const content = contentLines.length ? contentLines.join('\n\n') : null;
+  const visual = visualLines.length ? visualLines.join('\n') : null;
+  return {
+    content,
+    visual,
+    combined: [content, visual].filter(Boolean).join('\n\n') || null,
+  };
+}
+
+// Build a Hebrew brand-guidelines block from a brand kit, fed into generation prompts.
+export function buildBrandContext(brand: BrandKit | null): string | null {
+  return buildBusinessBrainContext(brand).visual;
 }

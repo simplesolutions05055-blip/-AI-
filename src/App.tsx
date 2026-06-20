@@ -8,6 +8,7 @@ import SimulatorPage from '@/pages/admin/SimulatorPage';
 import FilesPage from '@/pages/admin/FilesPage';
 import ModelsPage from '@/pages/admin/ModelsPage';
 import ConversationsPage from '@/pages/admin/ConversationsPage';
+import CostsPage from '@/pages/admin/CostsPage';
 import BrandingPage from '@/pages/admin/BrandingPage';
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="requests" element={<RequestsPage />} />
           <Route path="conversations" element={<ConversationsPage />} />
+          <Route path="costs" element={<CostsPage />} />
           <Route path="simulator" element={<SimulatorPage />} />
           <Route path="files" element={<FilesPage />} />
           <Route path="branding" element={<BrandingPage />} />

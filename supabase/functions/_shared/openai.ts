@@ -76,6 +76,53 @@ question_round הנוכחי הוא ${opts.questionRound ?? 0}.
   }
 }
 
+export async function classifyResetIntent(
+  text: string,
+  context: { lastAssistantMessage?: string | null } = {}
+): Promise<{ reset: boolean; confidence: number; reason: string; usage: ChatUsage; model: string }> {
+  const model = textModel();
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content: `אתה מסווג כוונת שליטה בשיחת WhatsApp עם סוכן.
+החזר JSON בלבד:
+{
+  "reset": true|false,
+  "confidence": 0-1,
+  "reason": "הסבר קצר"
+}
+
+סמן reset=true רק אם המשתמש מבקש למחוק/לנטוש את הבקשה הנוכחית ולהתחיל בקשה חדשה מהתחלה.
+דוגמאות reset=true: "בוא נתחיל מההתחלה", "נתחיל מחדש", "עזוב הכל", "פתח בקשה חדשה", "איפוס".
+דוגמאות reset=false: בקשה לכתוב על התחלה חדשה, תיקון לבריף, מענה לשאלה, שאלה כללית, או הודעה לא ברורה.`,
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          user_message: text,
+          last_assistant_message: context.lastAssistantMessage ?? null,
+        }),
+      },
+    ],
+    { json: true, temperature: 0, model }
+  );
+
+  try {
+    const parsed = JSON.parse(content) as { reset?: unknown; confidence?: unknown; reason?: unknown };
+    const confidence = typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0;
+    return {
+      reset: parsed.reset === true,
+      confidence,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      usage,
+      model,
+    };
+  } catch {
+    return { reset: false, confidence: 0, reason: 'invalid_json_response', usage, model };
+  }
+}
+
 export async function analyzeBrief(
   systemPrompt: string,
   transcript: string,
@@ -93,7 +140,10 @@ export async function analyzeBrief(
   "next_question": "השאלה הבאה בעברית או null אם הבריף מוכן"
 }
 נותרו ${roundsRemaining} סבבי שאלות. אם נגמרו הסבבים, סמן ready=true עם המידע הקיים.
+אם הטרנסקריפט כולל "הקשר קודם מהשיחה", השתמש בו רק כאשר המשתמש מפנה אליו במפורש או במשתמע במילים כמו "כמו קודם", "אותו קהל", "גם", "המשך", "על אותו אירוע". במקרה כזה השלם פרטים חסרים מההקשר הקודם, למשל קהל יעד, עיר, אירוע, תאריך/זמן או מסרים.
 שאל שאלה אחת ממוקדת בלבד אם חסר מידע מהותי ליצירת התוצר.
+בתמונות, מידות/יחס תמונה אינם מידע מהותי: אם המשתמש לא ציין מידות, קבע dimensions="מידות מומלצות" או "ריבוע 1:1 לרשתות חברתיות" והמשך. אם המשתמש אומר "מידות מומלצות", סמן ready=true.
+אם ההודעה האחרונה של המשתמש לא עונה לשאלה האחרונה של המערכת ואין קשר ברור בין הדברים, אל תנחש. החזר next_question קצר בסגנון: "לא בטוח שהבנתי איך זה קשור לשאלה הקודמת. תוכל לחדד מה תרצה שנעשה?"
 חשוב: כתובת מייל אינה חובה ואין לשאול עליה. סמן ready=true ברגע שיש מספיק מידע יצירתי כדי להפיק את התוצר, גם ללא מייל.`;
 
   const { content, usage } = await chat(
@@ -300,7 +350,11 @@ export async function runQa(systemPrompt: string, brief: unknown, outputDescript
       { role: 'system', content: systemPrompt },
       {
         role: 'user',
-        content: `בצע QA על התוצר. בדוק: התאמה לבריף, עברית תקינה, אין מידע מומצא, התוצר ברור ומתאים לסוג שנבחר, אין תוכן אסור.
+        content: `בצע QA עצמאי על התוצר. בדוק: התאמה לבריף, עברית תקינה, אין מידע מומצא, התוצר ברור ומתאים לסוג שנבחר, אין תוכן אסור.
+בדוק במיוחד את הפרדת המוח העסקי:
+- business_content_context הוא מקור לתוכן בלבד: עובדות, מסרים, שירותים וניסוחים.
+- brand_guidelines / אזור העיצוב הם המקור היחיד לצבעים, סגנון, קומפוזיציה, לוגו והשראה ויזואלית.
+- אם נראה שהתוצר העתיק עיצוב, צבעים, מבנה עמוד או סגנון ממסמך תוכן בלבד — סמן ככישלון.
 בריף:\n${JSON.stringify(brief)}
 תיאור התוצר:\n${outputDescription}
 החזר JSON בלבד: {"passed": true|false, "issues": ["..."], "notes": "..."}`,

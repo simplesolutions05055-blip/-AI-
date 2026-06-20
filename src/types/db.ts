@@ -21,6 +21,7 @@ export type MessageDirection = 'inbound' | 'outbound';
 export type OutputType = 'text' | 'image' | 'pdf' | 'presentation';
 export type ApprovalModeValue = 'manual' | 'automatic' | 'by_output_type';
 export type LogSeverity = 'debug' | 'info' | 'warning' | 'error';
+export type BusinessSourceKind = 'content_only' | 'visual_only' | 'brand_rules';
 
 export interface StructuredBrief {
   output_type?: OutputType;
@@ -94,5 +95,16 @@ export interface BrandAsset {
   storage_path: string;
   mime_type: string | null;
   caption: string | null;
+  source_kind: BusinessSourceKind;
   created_at: string;
+}
+
+export interface BusinessTextSource {
+  id: string;
+  brand_id: string;
+  title: string;
+  content: string;
+  source_kind: BusinessSourceKind;
+  created_at: string;
+  updated_at: string;
 }

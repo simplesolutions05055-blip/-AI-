@@ -8,7 +8,7 @@ import {
   mapOutputType,
   estimateTextCost,
 } from '../_shared/util.ts';
-import { buildBrandContext, matchBrandInText, type BrandRow } from '../_shared/brand.ts';
+import { buildBusinessBrainContext, matchBrandInText, type BrandRow } from '../_shared/brand.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -81,10 +81,14 @@ Deno.serve(async (req) => {
           .select('name, color_palette, style_notes, is_active, logo_path')
           .eq('id', matchedBrand.id)
           .single();
-        const brandContext = buildBrandContext(brand);
-        if (brandContext) {
-          systemMessage = `${systemMessage}\n\n${brandContext}`;
-        }
+        const { data: textSources } = await database
+          .from('business_text_sources')
+          .select('title, content, source_kind')
+          .eq('brand_id', matchedBrand.id)
+          .order('created_at', { ascending: false })
+          .limit(12);
+        const businessBrain = buildBusinessBrainContext(brand, textSources ?? []);
+        if (businessBrain.combined) systemMessage = `${systemMessage}\n\n${businessBrain.combined}`;
         if (brand && brand.is_active !== false) {
           brandPayload = {
             id: matchedBrand.id,

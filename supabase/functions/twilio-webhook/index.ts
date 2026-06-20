@@ -8,7 +8,7 @@ import {
   logEvent, getSetting, getSettingOr, getTemplates, isResetCommand, isAllowedMime, isBlockedMime, extForMime,
   MAX_MEDIA_BYTES, recordUsageAndCost, estimateTranscriptionCost, estimateTextCost, extractEmail, isValidEmail,
 } from '../_shared/util.ts';
-import { transcribeAudio, describeImage } from '../_shared/openai.ts';
+import { classifyResetIntent, transcribeAudio, describeImage } from '../_shared/openai.ts';
 import { extractDocumentText } from '../_shared/files.ts';
 import { processRequest, sendOutput } from '../_shared/worker.ts';
 
@@ -24,6 +24,63 @@ function twiml() {
     status: 200,
     headers: { 'Content-Type': 'text/xml' },
   });
+}
+
+function isTwilioDailyLimitError(e: unknown): boolean {
+  const message = String(e);
+  return message.includes('63038') || message.toLowerCase().includes('daily messages limit');
+}
+
+async function recordTwilioDailyLimitMessage(
+  database: ReturnType<typeof db>,
+  conversationId: string,
+  requestId: string | null
+) {
+  await database.from('messages').insert({
+    conversation_id: conversationId,
+    request_id: requestId,
+    direction: 'outbound',
+    body: 'לא ניתן לשלוח כרגע דרך WhatsApp: חשבון Twilio הגיע למגבלת ההודעות היומית. ההודעה התקבלה במערכת, אבל תגובות WhatsApp ימשיכו רק אחרי איפוס/הגדלת המגבלה.',
+    twilio_message_sid: `twilio-limit-${crypto.randomUUID()}`,
+  });
+}
+
+async function resetConversation(
+  database: ReturnType<typeof db>,
+  opts: {
+    conversation: { id: string; current_request_id?: string | null };
+    body: string;
+    messageSid: string;
+    from: string;
+    phone: string;
+    templates: Record<string, string>;
+    reason: 'deterministic' | 'semantic';
+    metadata?: Record<string, unknown>;
+  }
+) {
+  const { conversation, body, messageSid, from, phone, templates, reason, metadata } = opts;
+  if (conversation.current_request_id) {
+    await database.from('requests')
+      .update({ status: 'closed', closed_at: new Date().toISOString(), processing_locked_at: null })
+      .eq('id', conversation.current_request_id)
+      .not('status', 'in', '(sent,approved,sending)');
+  }
+  const { error: resetClaim } = await database.from('messages').insert({
+    conversation_id: conversation.id, request_id: null, direction: 'inbound',
+    body, twilio_message_sid: messageSid,
+  });
+  if (resetClaim) return;
+  await database.from('conversations').update({
+    current_request_id: null, status: 'active',
+    last_message_at: new Date().toISOString(), timeout_warned_at: null,
+  }).eq('id', conversation.id);
+  await logEvent(database, { action: 'conversation_reset', metadata: { phone, reason, ...(metadata ?? {}) } });
+  try {
+    const sid = await sendWhatsApp(from, templates.reset);
+    await database.from('messages').insert({ conversation_id: conversation.id, request_id: null, direction: 'outbound', body: templates.reset, twilio_message_sid: sid });
+  } catch (e) {
+    if (isTwilioDailyLimitError(e)) await recordTwilioDailyLimitMessage(database, conversation.id, null);
+  }
 }
 
 // Process ONE inbound media item. Returns a text fragment to fold into the
@@ -163,27 +220,60 @@ Deno.serve(async (req) => {
 
   // ── "start over" command — close the current request and reset the slot ──────
   if (isResetCommand(body)) {
-    if (conversation.current_request_id) {
-      await database.from('requests')
-        .update({ status: 'closed', closed_at: new Date().toISOString(), processing_locked_at: null })
-        .eq('id', conversation.current_request_id)
-        .not('status', 'in', '(sent,approved,sending)');
-    }
-    const { error: resetClaim } = await database.from('messages').insert({
-      conversation_id: conversation.id, request_id: null, direction: 'inbound',
-      body, twilio_message_sid: messageSid,
+    await resetConversation(database, {
+      conversation, body, messageSid, from, phone, templates, reason: 'deterministic',
     });
-    if (resetClaim) return twiml(); // duplicate retry
-    await database.from('conversations').update({
-      current_request_id: null, status: 'active',
-      last_message_at: new Date().toISOString(), timeout_warned_at: null,
-    }).eq('id', conversation.id);
-    await logEvent(database, { action: 'conversation_reset', metadata: { phone } });
-    try {
-      const sid = await sendWhatsApp(from, templates.reset);
-      await database.from('messages').insert({ conversation_id: conversation.id, request_id: null, direction: 'outbound', body: templates.reset, twilio_message_sid: sid });
-    } catch { /* non-fatal */ }
     return twiml();
+  }
+
+  const semanticResetCandidate =
+    numMedia === 0 &&
+    body.trim().length > 0 &&
+    body.trim().length <= 90 &&
+    Boolean(conversation.current_request_id);
+
+  if (semanticResetCandidate) {
+    try {
+      const { data: lastAssistant } = await database
+        .from('messages')
+        .select('body')
+        .eq('conversation_id', conversation.id)
+        .eq('direction', 'outbound')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const intent = await classifyResetIntent(body, { lastAssistantMessage: lastAssistant?.body ?? null });
+      await recordUsageAndCost(database, conversation.current_request_id as string | null, {
+        provider: 'openai',
+        model: intent.model,
+        input: intent.usage.prompt_tokens,
+        output: intent.usage.completion_tokens,
+        cost: estimateTextCost(intent.usage.prompt_tokens, intent.usage.completion_tokens),
+      });
+      await logEvent(database, {
+        requestId: conversation.current_request_id as string | null,
+        action: 'reset_intent_classified',
+        metadata: {
+          reset: intent.reset,
+          confidence: intent.confidence,
+          reason: intent.reason,
+        },
+      });
+      if (intent.reset && intent.confidence >= 0.8) {
+        await resetConversation(database, {
+          conversation, body, messageSid, from, phone, templates, reason: 'semantic',
+          metadata: { confidence: intent.confidence, classifier_reason: intent.reason },
+        });
+        return twiml();
+      }
+    } catch (e) {
+      await logEvent(database, {
+        requestId: conversation.current_request_id as string | null,
+        severity: 'warning',
+        action: 'reset_intent_classification_failed',
+        message: String(e),
+      });
+    }
   }
 
   // ── optional "email me too" — a short email reply after a WhatsApp delivery ──
@@ -247,7 +337,9 @@ Deno.serve(async (req) => {
     try {
       const sid = await sendWhatsApp(from, templates.received);
       await database.from('messages').insert({ conversation_id: conversation.id, request_id: requestId, direction: 'outbound', body: templates.received, twilio_message_sid: sid });
-    } catch { /* non-fatal */ }
+    } catch (e) {
+      if (isTwilioDailyLimitError(e)) await recordTwilioDailyLimitMessage(database, conversation.id, requestId);
+    }
   }
 
   // ── media: handle every attached item, fold readable content into the body ──
@@ -270,7 +362,9 @@ Deno.serve(async (req) => {
   }
 
   if (anyRejected) {
-    try { await sendWhatsApp(from, templates.rejected_media); } catch { /* ignore */ }
+    try { await sendWhatsApp(from, templates.rejected_media); } catch (e) {
+      if (isTwilioDailyLimitError(e)) await recordTwilioDailyLimitMessage(database, conversation.id, requestId);
+    }
   }
   if (fragments.length) {
     effectiveBody = [body, ...fragments].filter(Boolean).join('\n');
@@ -278,7 +372,9 @@ Deno.serve(async (req) => {
   // Media-only message we couldn't read anything useful from → ask what to do.
   if (!effectiveBody.trim() && numMedia > 0 && !anyRejected) {
     effectiveBody = '';
-    try { await sendWhatsApp(from, 'קיבלתי את הקובץ ששלחת 📎 מה תרצה שאעשה איתו?'); } catch { /* ignore */ }
+    try { await sendWhatsApp(from, 'קיבלתי את הקובץ ששלחת 📎 מה תרצה שאעשה איתו?'); } catch (e) {
+      if (isTwilioDailyLimitError(e)) await recordTwilioDailyLimitMessage(database, conversation.id, requestId);
+    }
   }
 
   // Persist the enriched body + first stored file onto the claimed message row.

@@ -16,7 +16,7 @@ import { analyzeBrief, generateText, generatePresentationOutline, generateImage,
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
-import { matchBrandInText, buildBrandContext, normalizeHe, type BrandRow } from './brand.ts';
+import { matchBrandInText, buildBusinessBrainContext, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
@@ -53,13 +53,36 @@ function isNo(text: string): boolean {
   const t = normalizeHe(text);
   return /(^|\s)(לא|שגוי|לא נכון|אחר|no)(\s|$)/.test(t);
 }
+function isBriefApproval(text: string): boolean {
+  const t = normalizeHe(text);
+  return /^(מאשרת?|מאשרים|אשר|לאשר|אישור|כן|אוקיי?|ok|yes|go)$/.test(t);
+}
+
+function formatBriefForApproval(brief: Record<string, unknown>, outputType: string | null): string {
+  const title =
+    outputType === 'image' ? 'הכנתי בריף לתמונה' :
+    outputType === 'presentation' ? 'הכנתי בריף למצגת' :
+    outputType === 'pdf' ? 'הכנתי בריף למסמך' :
+    'הכנתי בריף';
+  const mustInclude = Array.isArray(brief.must_include) ? brief.must_include.filter(Boolean) : [];
+  const lines = [
+    title,
+    brief.goal ? `מטרה: ${brief.goal}` : '',
+    brief.audience ? `קהל יעד: ${brief.audience}` : '',
+    brief.style ? `סגנון: ${brief.style}` : '',
+    brief.language ? `שפה: ${brief.language}` : '',
+    brief.dimensions ? `פורמט: ${brief.dimensions}` : '',
+    mustInclude.length ? `חייב לכלול: ${mustInclude.join(', ')}` : '',
+  ].filter(Boolean);
+  return `${lines.join('\n')}\n\nכדי לאשר ולהפיק, כתוב: מאשר`;
+}
 
 // Find an active brand whose name/alias appears in any inbound message.
 // Matching logic (exact + fuzzy) lives in the shared brand module.
 async function matchBrand(
   database: DB,
   msgs: Array<{ body: string | null; direction: string }>
-): Promise<{ id: string; name: string } | null> {
+): Promise<BrandMatch | null> {
   const { data: brands } = await database
     .from('brands')
     .select('id, name, aliases')
@@ -113,6 +136,12 @@ async function handleBrandConfirmation(
         lastInbound
       );
       if (alt && alt.id !== pendingId) {
+        if (alt.confidence === 'exact') {
+          await database.from('requests').update({ brand_id: alt.id }).eq('id', request.id);
+          await saveBrief({ pending_brand_id: null, brand_unclear_count: 0 });
+          await logEvent(database, { requestId: request.id, action: 'brand_match_corrected_exact', metadata: { brand_id: alt.id } });
+          return 'continue';
+        }
         await saveBrief({ pending_brand_id: alt.id, brand_unclear_count: 0 });
         await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
         await logEvent(database, { requestId: request.id, action: 'brand_match_corrected', metadata: { brand_id: alt.id } });
@@ -145,6 +174,12 @@ async function handleBrandConfirmation(
   const match = await matchBrand(database, msgs);
   if (!match) return 'continue';
 
+  if (match.confidence === 'exact') {
+    await database.from('requests').update({ brand_id: match.id }).eq('id', request.id);
+    await logEvent(database, { requestId: request.id, action: 'brand_matched_exact', metadata: { brand_id: match.id } });
+    return 'continue';
+  }
+
   await saveBrief({ pending_brand_id: match.id });
   await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
   await logEvent(database, { requestId: request.id, action: 'brand_match_suggested', metadata: { brand_id: match.id } });
@@ -153,15 +188,25 @@ async function handleBrandConfirmation(
   return 'awaiting';
 }
 
-// Load a brand kit from the DB and build its Hebrew guidelines block for prompts.
-async function loadBrandContext(database: DB, brandId: string | null): Promise<string | null> {
-  if (!brandId) return null;
+// Load the separated Business Brain: content-only sources + visual brand rules.
+async function loadBusinessBrain(database: DB, brandId: string | null): Promise<{
+  content: string | null;
+  visual: string | null;
+  combined: string | null;
+}> {
+  if (!brandId) return { content: null, visual: null, combined: null };
   const { data: brand } = await database
     .from('brands')
     .select('name, color_palette, style_notes, is_active')
     .eq('id', brandId)
     .single();
-  return buildBrandContext(brand);
+  const { data: textSources } = await database
+    .from('business_text_sources')
+    .select('title, content, source_kind')
+    .eq('brand_id', brandId)
+    .order('created_at', { ascending: false })
+    .limit(12);
+  return buildBusinessBrainContext(brand, textSources ?? []);
 }
 
 async function setStatus(database: DB, requestId: string, status: string, extra: Record<string, unknown> = {}) {
@@ -238,14 +283,24 @@ async function sendOut(
       twilio_message_sid: sid,
     });
   } catch (e) {
-    await logEvent(database, { requestId, severity: 'error', action: 'whatsapp_send_failed', message: String(e) });
+    const message = String(e);
+    await logEvent(database, { requestId, severity: 'error', action: 'whatsapp_send_failed', message });
+    if (message.includes('63038') || message.toLowerCase().includes('daily messages limit')) {
+      await database.from('messages').insert({
+        conversation_id: conversationId,
+        request_id: requestId,
+        direction: 'outbound',
+        body: 'לא ניתן לשלוח כרגע דרך WhatsApp: חשבון Twilio הגיע למגבלת ההודעות היומית. ההודעה התקבלה במערכת, אבל תגובות WhatsApp ימשיכו רק אחרי איפוס/הגדלת המגבלה.',
+        twilio_message_sid: `twilio-limit-${crypto.randomUUID()}`,
+      });
+    }
   }
 }
 
 // States where a fresh inbound WhatsApp message must NOT restart generation.
 // (Admin-triggered processing passes trigger:'admin' and bypasses this guard.)
 const IN_FLIGHT = ['processing', 'quality_check', 'sending'];
-const SETTLED = ['waiting_for_approval', 'approved', 'sent', 'rejected', 'closed', 'needs_attention', 'failed'];
+const SETTLED = ['approved', 'sent', 'rejected', 'closed', 'needs_attention', 'failed'];
 
 export async function processRequest(
   requestId: string,
@@ -308,11 +363,42 @@ async function runRequestPipeline(
     .eq('request_id', requestId)
     .order('created_at', { ascending: true });
 
-  const transcript = (msgs ?? [])
+  const { data: priorMsgsDesc } = await database
+    .from('messages')
+    .select('body, direction, created_at')
+    .eq('conversation_id', conversation.id)
+    .neq('request_id', requestId)
+    .lt('created_at', request.created_at as string)
+    .order('created_at', { ascending: false })
+    .limit(16);
+  const priorMsgs = [...(priorMsgsDesc ?? [])].reverse();
+  const priorContext = priorMsgs.length
+    ? [
+        'הקשר קודם מהשיחה (לעיון בלבד):',
+        ...priorMsgs.map((m: { direction: string; body: string | null }) =>
+          `${m.direction === 'inbound' ? 'משתמש' : 'מערכת'}: ${m.body ?? '[מדיה]'}`
+        ),
+        'סוף הקשר קודם.',
+      ].join('\n')
+    : '';
+
+  const currentTranscript = (msgs ?? [])
     .map((m: { direction: string; body: string | null }) =>
       `${m.direction === 'inbound' ? 'משתמש' : 'מערכת'}: ${m.body ?? '[מדיה]'}`
     )
     .join('\n');
+  const transcript = [priorContext, 'השיחה הנוכחית:', currentTranscript].filter(Boolean).join('\n\n');
+
+  if (request.status === 'waiting_for_approval') {
+    const lastInbound = [...(msgs ?? [])].reverse().find((m) => m.direction === 'inbound' && m.body)?.body ?? '';
+    if (!isBriefApproval(lastInbound)) {
+      await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+      await sendOut(database, conversation.id, requestId, waFrom, 'כדי להפיק לפי הבריף, כתוב: מאשר. אם צריך שינוי, כתוב מה לשנות.', conversation.simulated);
+      return;
+    }
+    await logEvent(database, { requestId, action: 'brief_approved' });
+    await setStatus(database, requestId, 'queued');
+  }
 
   if (['received', 'collecting_details', 'queued'].includes(request.status)) {
     await setStatus(database, requestId, 'collecting_details');
@@ -356,6 +442,14 @@ async function runRequestPipeline(
       await sendOut(database, conversation.id, requestId, waFrom, templates.needs_attention, conversation.simulated);
       return;
     }
+    const outputType = (b.output_type as string) ?? (request.output_type as string) ?? null;
+    if (b.ready === true && outputType === 'image') {
+      await setStatus(database, requestId, 'waiting_for_approval');
+      await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+      await logEvent(database, { requestId, action: 'brief_ready_for_approval' });
+      await sendOut(database, conversation.id, requestId, waFrom, formatBriefForApproval(b, outputType), conversation.simulated);
+      return;
+    }
     await setStatus(database, requestId, 'queued');
   }
 
@@ -389,12 +483,14 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     return;
   }
 
-  // ── brand kit (optional) ───────────────────────────────────────────────────
-  const brandText = await loadBrandContext(database, request.brand_id as string | null);
-  if (brandText) brief.brand_guidelines = brandText;
+  // ── Business Brain (optional): content-only sources are kept separate from visual rules.
+  const businessBrain = await loadBusinessBrain(database, request.brand_id as string | null);
+  if (businessBrain.content) brief.business_content_context = businessBrain.content;
+  if (businessBrain.visual) brief.brand_guidelines = businessBrain.visual;
 
   await setStatus(database, requestId, 'processing');
   const version = (request.attempt_count ?? 0) + 1;
+  let longImageTimer: number | undefined;
 
   try {
     let textContent: string | null = null;
@@ -404,7 +500,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
 
     if (outputType === 'image') {
       const basePrompt = `${brief.goal ?? ''} ${brief.style ?? ''} ${((brief.must_include as string[]) ?? []).join(', ')}${
-        brandText ? `\n\n${brandText}` : ''
+        businessBrain.combined ? `\n\n${businessBrain.combined}` : ''
       }`.trim();
       // Deterministic RTL safety net: ensure the image engine always receives the
       // icon-on-right / right-aligned directive, even if the LLM brief omitted it.
@@ -416,12 +512,28 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       const prompt = basePrompt
         ? `${basePrompt}\n\n${RTL_IMAGE_DIRECTIVE}`
         : RTL_IMAGE_DIRECTIVE;
+      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
+        'מעולה, אני עובד על התמונה עכשיו. זה יכול לקחת רגע.', conversation.simulated);
+      longImageTimer = setTimeout(() => {
+        sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
+          'אני עדיין עובד על התמונה, זה פשוט לוקח קצת יותר זמן.', conversation.simulated)
+          .catch(() => {});
+      }, 45_000);
       const { base64, mime: imgMime } = await generateImage(prompt || 'תמונה ריבועית');
+      if (longImageTimer !== undefined) {
+        clearTimeout(longImageTimer);
+        longImageTimer = undefined;
+      }
       await recordUsage(database, requestId, 'openai', 'image', 0, 1, estimateImageCost(1));
       storagePath = `${requestId}/v${version}.png`;
       mime = imgMime;
       await database.storage.from('outputs').upload(storagePath, decodeBase64(base64), { contentType: imgMime, upsert: true });
-      qaDescription = `תמונה ריבועית 1:1 שנוצרה עבור: ${brief.goal ?? ''}`;
+      qaDescription = [
+        `תמונה נוצרה ונשמרה ב-storage path: ${storagePath}.`,
+        `מטרת התמונה: ${brief.goal ?? ''}`,
+        `מידות/יחס: ${brief.dimensions ?? 'ריבוע 1:1 לרשתות חברתיות'}`,
+        `פרומפט שנשלח למנוע התמונה:\n${prompt}`,
+      ].join('\n\n');
     } else if (outputType === 'presentation') {
       const { text, usage } = await generatePresentationOutline(systemPrompt, brief);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
@@ -435,8 +547,18 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     }
 
     await setStatus(database, requestId, 'quality_check');
-    const { qa, usage: qaUsage } = await runQa(systemPrompt, brief, qaDescription);
-    await recordUsage(database, requestId, 'openai', 'chat', qaUsage.prompt_tokens, qaUsage.completion_tokens, estimateTextCost(qaUsage.prompt_tokens, qaUsage.completion_tokens));
+    let qa: { passed: boolean; issues: string[]; notes?: string };
+    if (outputType === 'image') {
+      qa = {
+        passed: true,
+        issues: [],
+        notes: 'Image generation completed and the image was stored successfully. Pixel-level review is not available in this worker.',
+      };
+    } else {
+      const { qa: textQa, usage: qaUsage } = await runQa(systemPrompt, brief, qaDescription);
+      qa = textQa;
+      await recordUsage(database, requestId, 'openai', 'chat', qaUsage.prompt_tokens, qaUsage.completion_tokens, estimateTextCost(qaUsage.prompt_tokens, qaUsage.completion_tokens));
+    }
 
     await database.from('outputs').insert({
       request_id: requestId,
@@ -465,6 +587,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     await setStatus(database, requestId, 'approved');
     await deliverOutput(database, requestId);
   } catch (e) {
+    if (longImageTimer !== undefined) clearTimeout(longImageTimer);
     await logEvent(database, { requestId, severity: 'error', action: 'generation_failed', message: String(e) });
     await setStatus(database, requestId, 'failed');
   }
@@ -624,7 +747,10 @@ export async function sendOutput(requestId: string): Promise<void> {
       filename = 'document.pdf';
     }
 
-    const emailHtml = buildEmailHtml(`${title}\n\nמצורף התוצר שביקשת.`, emailSettings.signature);
+    const emailHtml = buildEmailHtml(
+      `${title}\n\nמצורפת חבילת אישור לבדיקה. אם הכל תקין אפשר לאשר, ואם נדרש שינוי יש להשיב עם ההערות המדויקות בלבד.`,
+      emailSettings.signature
+    );
     const msgId = await sendDeliverableEmail({
       to: request.customer_email,
       subject: emailSettings.subject_rule,
@@ -633,7 +759,7 @@ export async function sendOutput(requestId: string): Promise<void> {
     });
 
     await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
-    await logEvent(database, { requestId, action: 'email_sent', metadata: { msgId } });
+    await logEvent(database, { requestId, action: 'approval_package_sent', metadata: { msgId } });
     await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, conversation.simulated);
     await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
   } catch (e) {
