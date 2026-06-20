@@ -2,7 +2,7 @@
 // Images are handled with Vision (openai.describeImage); here we extract plain
 // text from DOCX and PDF so "summarize this document" actually works.
 import { unzipSync } from 'https://esm.sh/fflate@0.8.2';
-import { extractText, getDocumentProxy } from 'https://esm.sh/unpdf@0.12.6';
+import { extractText, getDocumentProxy } from 'https://esm.sh/unpdf@1.3.2';
 
 const MAX_EXTRACTED_CHARS = 12000; // keep prompts bounded
 
