@@ -173,8 +173,8 @@ export default function ConversationsPage() {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="חיפוש מספר / סטטוס / מזהה"
-          dir="auto"
-          className="w-full sm:w-72 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+          dir="rtl"
+          className="w-full sm:w-72 rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-right"
         />
       </div>
 
