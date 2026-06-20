@@ -1,4 +1,5 @@
 import type { DB } from './db.ts';
+import { editDistance } from './brand.ts';
 
 // ── logging ────────────────────────────────────────────────────────────────
 export async function logEvent(
@@ -42,17 +43,39 @@ export const DEFAULT_TEMPLATES: Record<string, string> = {
   reset: 'התחלנו מחדש ✅ ספר לי מה תרצה שניצור עבורך.',
 };
 
-// Detect an explicit "start over / new conversation" command so the user can
-// abandon the current request and begin fresh.
+// Detect an explicit "start over / new conversation" command — fuzzy, so typos
+// like "שיחה חדשנ" still trigger it. The user can abandon the current request
+// and begin fresh.
+const RESET_PHRASES = [
+  'שיחה חדשה', 'בקשה חדשה', 'התחל מחדש', 'להתחיל מחדש', 'נתחיל מחדש',
+  'מתחילים מחדש', 'התחלה מחדש', 'תתחיל מחדש', 'אתחול', 'איפוס',
+  'reset', 'restart', 'start over', 'new conversation', 'new request',
+];
+
+// ~1 allowed typo per 5 chars, capped at 2.
+function resetTolerance(len: number): number {
+  return Math.min(2, Math.floor(len / 5));
+}
+
+// True if `phrase` appears in `t` exactly, or a same-length word-window of `t`
+// is within edit distance of it (handles misspellings).
+function fuzzyPhraseHit(t: string, words: string[], phrase: string): boolean {
+  if (t.includes(phrase)) return true;
+  const tol = resetTolerance(phrase.length);
+  if (tol === 0) return false;
+  const pw = phrase.split(' ');
+  for (let i = 0; i + pw.length <= words.length; i++) {
+    const window = words.slice(i, i + pw.length).join(' ');
+    if (Math.abs(window.length - phrase.length) <= tol && editDistance(window, phrase) <= tol) return true;
+  }
+  return false;
+}
+
 export function isResetCommand(text: string): boolean {
   const t = (text || '').replace(/[",'׳״.\-?!;:()]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
   if (!t || t.length > 40) return false; // a long brief is not a reset command
-  const phrases = [
-    'שיחה חדשה', 'בקשה חדשה', 'התחל מחדש', 'להתחיל מחדש', 'נתחיל מחדש',
-    'מתחילים מחדש', 'התחלה מחדש', 'תתחיל מחדש', 'אתחול', 'איפוס',
-    'reset', 'restart', 'start over', 'new conversation', 'new request',
-  ];
-  return phrases.some((p) => t === p || t.includes(p));
+  const words = t.split(' ').filter(Boolean);
+  return RESET_PHRASES.some((p) => fuzzyPhraseHit(t, words, p));
 }
 
 export async function getTemplates(database: DB): Promise<Record<string, string>> {
