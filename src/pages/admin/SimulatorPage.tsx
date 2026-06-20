@@ -31,6 +31,9 @@ interface ChatMessage {
 const SIMULATOR_STORAGE_KEY = 'admin-simulator-conversations';
 // OpenAI transcription caps audio at 25MB; we apply the same ceiling to all uploads.
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+// When the brief is ready, the user confirms by typing one of these instead of
+// clicking a button — a more chat-like, WhatsApp-style flow.
+const CONFIRM_RE = /^(מאשר(?:ת|ים)?|אשר|לאשר|אישור|כן|אוקיי?|yes|ok|go)\s*$/i;
 
 export default function SimulatorPage() {
   const [searchParams] = useSearchParams();
@@ -50,6 +53,18 @@ export default function SimulatorPage() {
   const [processing, setProcessing] = useState(false);
   const [responding, setResponding] = useState(false);
   const [oversizeFile, setOversizeFile] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // The generation pending the user's typed confirmation ("מאשר").
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    outputType: string | null;
+    briefPrompt?: string;
+    brief?: any;
+  } | null>(null);
   const [questionRound, setQuestionRound] = useState(0);
   const [brandLogoPath, setBrandLogoPath] = useState<string | null>(null);
   const [presentationMode, setPresentationMode] = useState<'auto' | 'gemini'>('auto');
@@ -74,6 +89,12 @@ export default function SimulatorPage() {
       if (attachment?.url) URL.revokeObjectURL(attachment.url);
     };
   }, [attachment]);
+
+  useEffect(() => {
+    return () => {
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -132,6 +153,76 @@ export default function SimulatorPage() {
       throw new Error(error?.message ?? data?.error ?? 'עיבוד הקובץ נכשל');
     }
     return (data.text as string) ?? '';
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    if (Array.from(e.dataTransfer.types).includes('Files')) {
+      e.preventDefault();
+      if (!dragging) setDragging(true);
+    }
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    // Only clear when leaving the drop zone itself, not its children.
+    if (e.currentTarget === e.target) setDragging(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    if (busy) return;
+    const file = e.dataTransfer.files?.[0];
+    if (file) pickFile(file);
+  }
+
+  async function startRecording() {
+    if (busy || recording) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+      const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const type = recorder.mimeType || 'audio/webm';
+        const ext = type.includes('ogg') ? 'ogg' : 'webm';
+        const blob = new Blob(audioChunksRef.current, { type });
+        const file = new File([blob], `recording-${Date.now()}.${ext}`, { type });
+        if (attachment?.url) URL.revokeObjectURL(attachment.url);
+        setAttachment({ url: URL.createObjectURL(file), name: file.name, kind: 'audio', file });
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = setInterval(() => setRecordSeconds((s) => s + 1), 1000);
+    } catch {
+      alert('לא ניתן לגשת למיקרופון. ודאו שיש הרשאה.');
+    }
+  }
+
+  function stopRecording() {
+    if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    recordTimerRef.current = null;
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
+    setRecording(false);
+  }
+
+  function cancelRecording() {
+    if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    recordTimerRef.current = null;
+    const recorder = mediaRecorderRef.current;
+    if (recorder) {
+      recorder.onstop = () => recorder.stream.getTracks().forEach((t) => t.stop());
+      recorder.stop();
+    }
+    mediaRecorderRef.current = null;
+    audioChunksRef.current = [];
+    setRecording(false);
   }
 
   function clearAttachment() {
@@ -294,6 +385,22 @@ export default function SimulatorPage() {
   async function send() {
     const body = text.trim();
     if ((!body && !attachment) || busy) return;
+
+    // Chat-style confirmation: if a brief is ready and the user typed "מאשר"
+    // (and didn't attach a new file), trigger the generation instead of the bot.
+    if (pendingConfirm && !attachment && CONFIRM_RE.test(body)) {
+      addUserMessage(body, null);
+      const pc = pendingConfirm;
+      setPendingConfirm(null);
+      if (pc.outputType === 'image' && pc.briefPrompt) {
+        await createGeneratedImage(pc.briefPrompt);
+      } else if (pc.outputType === 'presentation_kit') {
+        if (presentationMode === 'gemini') await createPresentation(pc.brief);
+        else await createPresentationDeck(pc.brief);
+      }
+      return;
+    }
+
     const sentAttachment = attachment;
     const userMessage = addUserMessage(body, sentAttachment);
 
@@ -361,6 +468,14 @@ export default function SimulatorPage() {
     if (data?.brand) setBrandLogoPath(data.brand.logo_path ?? null);
     const nextRound = normalized.action === 'ask_clarification' ? questionRound + 1 : questionRound;
     setQuestionRound(nextRound);
+
+    const isReady = normalized.action === 'ready_to_generate';
+    const outputType = normalized.brief?.output_type ?? null;
+    const briefPrompt = isReady && outputType === 'image' ? buildImagePrompt(normalized.brief, body) : undefined;
+    // Arm the typed-confirmation flow (or disarm it if no longer ready).
+    setPendingConfirm(isReady ? { outputType, briefPrompt, brief: normalized.brief ?? undefined } : null);
+    const confirmHint = isReady ? confirmInstruction(outputType, presentationMode) : '';
+
     setMessages((current) => [
       ...current,
       {
@@ -368,16 +483,14 @@ export default function SimulatorPage() {
         mine: false,
         // Show the brief only once ready; during clarification show just the questions.
         body:
-          normalized.brief && normalized.action === 'ready_to_generate'
-            ? `${normalized.message_to_user}\n\n${formatBrief(normalized.brief)}`
+          normalized.brief && isReady
+            ? `${normalized.message_to_user}\n\n${formatBrief(normalized.brief)}\n\n${confirmHint}`
             : normalized.message_to_user,
         meta: {
           action: normalized.action,
           ready: Boolean(normalized.ready_for_generation),
-          outputType: normalized.brief?.output_type ?? null,
-          briefPrompt: normalized.action === 'ready_to_generate' && normalized.brief?.output_type === 'image'
-            ? buildImagePrompt(normalized.brief, body)
-            : undefined,
+          outputType,
+          briefPrompt,
           brief: normalized.brief ?? undefined,
         },
       },
@@ -386,7 +499,19 @@ export default function SimulatorPage() {
 
   return (
     <div className="mx-auto flex h-[calc(100vh-3rem)] max-w-md flex-col">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-sm">
+      <div
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-sm"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {dragging && (
+          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-[#075E54] bg-[#075E54]/10" dir="rtl">
+            <div className="rounded-xl bg-white px-5 py-3 text-sm font-semibold text-[#075E54] shadow">
+              שחררו כאן כדי לצרף את הקובץ 📎
+            </div>
+          </div>
+        )}
         <div className="bg-[#075E54] text-white px-4 py-3">
           <div className="font-semibold leading-tight">סוכן AI</div>
           <div className="text-[11px] text-white/80">צ׳אט + הפקת תמונה</div>
@@ -435,46 +560,6 @@ export default function SimulatorPage() {
                 >
                   הורדת המצגת
                 </a>
-              )}
-              {message.meta?.action === 'ready_to_generate' && (
-                <div className="mt-2 space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
-                  <div>
-                    {message.meta.outputType === 'presentation_kit'
-                      ? 'הבריף מוכן. אשר כדי להפיק את תוכן המצגת.'
-                      : 'הבריף מוכן. אשר כדי להפיק תמונה.'}
-                  </div>
-                  {message.meta.briefPrompt && (
-                    <button
-                      type="button"
-                      onClick={() => createGeneratedImage(message.meta?.briefPrompt ?? '')}
-                      disabled={busy}
-                      className="w-full rounded-full border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-800 disabled:opacity-50"
-                    >
-                      אשר והפק תמונה מהבריף
-                    </button>
-                  )}
-                  {message.meta.outputType === 'presentation_kit' && (
-                    presentationMode === 'gemini' ? (
-                      <button
-                        type="button"
-                        onClick={() => createPresentation(message.meta?.brief)}
-                        disabled={busy}
-                        className="w-full rounded-full bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                      >
-                        הפק פרומפט ל-Gemini / NotebookLM
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => createPresentationDeck(message.meta?.brief)}
-                        disabled={busy}
-                        className="w-full rounded-full bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                      >
-                        הכן והורד מצגת ממותגת
-                      </button>
-                    )
-                  )}
-                </div>
               )}
               {message.meta && (
                 <div className="mt-2 border-t border-black/5 pt-1 text-[10px] text-[#667781] ltr">
@@ -527,27 +612,46 @@ export default function SimulatorPage() {
             </div>
           </div>
         )}
-        <div className="flex items-center gap-2 p-2 bg-[#F0F0F0]">
+        <div className="flex items-center gap-1.5 px-2 py-1.5 bg-[#F0F0F0]">
           <input ref={fileInputRef} type="file" accept="image/*,audio/*,.docx,.txt,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" className="hidden" onChange={(e) => pickFile(e.target.files?.[0])} />
-          <button onClick={() => fileInputRef.current?.click()} className="w-11 h-11 rounded-full bg-white text-[#075E54] border border-[var(--border)] flex items-center justify-center text-xl" aria-label="צירוף קובץ">
-            +
-          </button>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            dir="auto"
-            rows={1}
-            placeholder={busy ? 'ממתין לתשובה...' : 'הודעה או תיאור לתמונה'}
-            disabled={busy}
-            className="max-h-[4.75rem] min-h-11 flex-1 resize-none rounded-3xl border border-[var(--border)] bg-white px-4 py-2 text-sm leading-7 disabled:bg-white/60"
-          />
-          <button onClick={send} disabled={busy || (!text.trim() && !attachment)} className="w-11 h-11 rounded-full bg-[#075E54] text-white flex items-center justify-center disabled:opacity-50">{responding ? '…' : '›'}</button>
+          {recording ? (
+            <div className="flex flex-1 items-center gap-2 rounded-3xl border border-[var(--border)] bg-white px-3 py-1.5">
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+              <span className="text-sm tabular-nums text-[#075E54]">{formatDuration(recordSeconds)}</span>
+              <span className="flex-1 text-xs text-[var(--muted)]">מקליט...</span>
+              <button onClick={cancelRecording} className="px-2 text-sm text-red-600" aria-label="ביטול הקלטה">
+                ביטול
+              </button>
+              <button onClick={stopRecording} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#075E54] text-white text-sm" aria-label="סיום הקלטה">
+                ✓
+              </button>
+            </div>
+          ) : (
+            <>
+              <button onClick={() => fileInputRef.current?.click()} disabled={busy} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#075E54] border border-[var(--border)] text-lg disabled:opacity-50" aria-label="צירוף קובץ">
+                +
+              </button>
+              <button onClick={startRecording} disabled={busy} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#075E54] border border-[var(--border)] text-base disabled:opacity-50" aria-label="הקלטה">
+                🎙️
+              </button>
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                dir="auto"
+                rows={1}
+                placeholder={busy ? 'ממתין לתשובה...' : 'הודעה או תיאור לתמונה'}
+                disabled={busy}
+                className="max-h-[4.75rem] min-h-9 flex-1 resize-none rounded-3xl border border-[var(--border)] bg-white px-3 py-1.5 text-sm leading-6 disabled:bg-white/60"
+              />
+              <button onClick={send} disabled={busy || (!text.trim() && !attachment)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#075E54] text-white disabled:opacity-50" aria-label="שליחה">{responding ? '…' : '›'}</button>
+            </>
+          )}
         </div>
       </div>
 
@@ -580,6 +684,25 @@ export default function SimulatorPage() {
       )}
     </div>
   );
+}
+
+function formatDuration(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// The chat-style line that tells the user to type "מאשר" to trigger generation.
+function confirmInstruction(outputType: string | null, presentationMode: 'auto' | 'gemini'): string {
+  if (outputType === 'image') {
+    return 'כדי לאשר ולהפיק את התמונה מהבריף, כתבו: *מאשר* ✅';
+  }
+  if (outputType === 'presentation_kit') {
+    return presentationMode === 'gemini'
+      ? 'כדי לאשר ולהפיק פרומפט ל-Gemini / NotebookLM, כתבו: *מאשר* ✅'
+      : 'כדי לאשר ולהכין את המצגת הממותגת להורדה, כתבו: *מאשר* ✅';
+  }
+  return 'כדי לאשר ולהמשיך, כתבו: *מאשר* ✅';
 }
 
 function detectAttachmentKind(file: File): AttachmentKind | null {

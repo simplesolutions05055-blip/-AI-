@@ -7,6 +7,8 @@ const DEFAULT_MODELS = {
   image_model: 'gpt-image-2',
   image_size: '1024x1024',
   image_quality: 'auto',
+  transcribe_model: 'gpt-4o-transcribe',
+  vision_model: 'gpt-4o',
   system_message: DEFAULT_SYSTEM_MESSAGE,
 };
 
@@ -105,6 +107,27 @@ export default function ModelsPage() {
             <option value="low">low</option>
           </select>
         </label>
+
+        <div className="border-t border-[var(--border)] pt-4 space-y-4">
+          <label className="block">
+            <span className="block text-sm font-medium mb-1">מודל תמלול אודיו</span>
+            <select className={input} value={models.transcribe_model} onChange={(e) => setModels((m) => ({ ...m, transcribe_model: e.target.value }))}>
+              <option value="gpt-4o-transcribe">gpt-4o-transcribe - המדויק ביותר</option>
+              <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe - מהיר וחסכוני</option>
+              <option value="whisper-1">whisper-1</option>
+            </select>
+            <span className="block text-xs text-[var(--muted)] mt-1">ממיר קבצי אודיו שמועלים בסימולטור לטקסט.</span>
+          </label>
+
+          <label className="block">
+            <span className="block text-sm font-medium mb-1">מודל הבנת תמונות (Vision)</span>
+            <select className={input} value={models.vision_model} onChange={(e) => setModels((m) => ({ ...m, vision_model: e.target.value }))}>
+              <option value="gpt-4o">gpt-4o</option>
+              <option value="gpt-4o-mini">gpt-4o-mini</option>
+            </select>
+            <span className="block text-xs text-[var(--muted)] mt-1">מנתח תמונות שמועלות כדי שהסוכן יבין את תוכנן.</span>
+          </label>
+        </div>
       </section>
     </div>
   );

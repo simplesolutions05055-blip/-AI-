@@ -140,33 +140,6 @@ export default function SettingsPage() {
           ברירת המחדל היא gpt-image-2, המודל המתקדם הנוכחי של OpenAI לתמונות.
         </p>
 
-        <div className="mt-4 border-t border-[var(--border)] pt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="מודל תמלול אודיו">
-            <select
-              className={input}
-              value={aiModels.transcribe_model ?? 'gpt-4o-transcribe'}
-              onChange={(e) => update('ai_models', { ...aiModels, transcribe_model: e.target.value })}
-            >
-              <option value="gpt-4o-transcribe">gpt-4o-transcribe - המדויק ביותר</option>
-              <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe - מהיר וחסכוני</option>
-              <option value="whisper-1">whisper-1</option>
-            </select>
-          </Field>
-          <Field label="מודל הבנת תמונות (Vision)">
-            <select
-              className={input}
-              value={aiModels.vision_model ?? 'gpt-4o'}
-              onChange={(e) => update('ai_models', { ...aiModels, vision_model: e.target.value })}
-            >
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="gpt-4o-mini">gpt-4o-mini</option>
-            </select>
-          </Field>
-        </div>
-        <p className="text-xs text-[var(--muted)] mt-2">
-          מודל התמלול ממיר קבצי אודיו שמועלים בסימולטור לטקסט. מודל ה-Vision מנתח תמונות שמועלות כדי שהסוכן יבין את תוכנן.
-        </p>
-
         <div className="mt-4 border-t border-[var(--border)] pt-4">
           <Field label="מצב הפקת מצגות">
             <select

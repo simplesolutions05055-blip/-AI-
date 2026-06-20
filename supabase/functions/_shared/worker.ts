@@ -270,9 +270,19 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     let qaDescription = '';
 
     if (outputType === 'image') {
-      const prompt = `${brief.goal ?? ''} ${brief.style ?? ''} ${((brief.must_include as string[]) ?? []).join(', ')}${
+      const basePrompt = `${brief.goal ?? ''} ${brief.style ?? ''} ${((brief.must_include as string[]) ?? []).join(', ')}${
         brandText ? `\n\n${brandText}` : ''
       }`.trim();
+      // Deterministic RTL safety net: ensure the image engine always receives the
+      // icon-on-right / right-aligned directive, even if the LLM brief omitted it.
+      const RTL_IMAGE_DIRECTIVE =
+        'דרישת RTL מחייבת: כל הטקסט העברי בתמונה מיושר לימין ונקרא מימין לשמאל. ' +
+        'בכל שורת מידע / יחידת אייקון+תווית (כגון תאריך, שעה, מיקום, "בהשתתפות", פרטי קשר) ' +
+        'האייקון נמצא בצד ימין והטקסט זורם משמאלו; כשיש כמה שורות, האייקונים יוצרים עמודה ישרה בצד ימין. ' +
+        'אסור פריסה בלוגיקת LTR (אייקון משמאל לטקסט או יישור לשמאל). סלוגן ושורת סיום בצד ימין.';
+      const prompt = basePrompt
+        ? `${basePrompt}\n\n${RTL_IMAGE_DIRECTIVE}`
+        : RTL_IMAGE_DIRECTIVE;
       const { base64, mime: imgMime } = await generateImage(prompt || 'תמונה ריבועית');
       await recordUsage(database, requestId, 'openai', 'image', 0, 1, estimateImageCost(1));
       storagePath = `${requestId}/v${version}.png`;

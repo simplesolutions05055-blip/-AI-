@@ -74,19 +74,30 @@ export default function ConversationsPage() {
     const simulatorRows = readSimulatorConversations();
     setSimulatorConversations(simulatorRows);
 
-    createSupabaseBrowserClient()
-      .from('conversations')
-      .select('id, whatsapp_from, status, current_request_id, started_at, last_message_at, closed_at')
-      .order('last_message_at', { ascending: false })
-      .limit(100)
-      .then(({ data }) => {
-        const databaseRows = (data ?? []) as ConversationRow[];
-        const localRows = simulatorRows.map(toConversationRow);
-        const rows = [...localRows, ...databaseRows];
-        setConversations(rows);
-        setSelectedId(rows[0]?.id ?? null);
-        setLoading(false);
-      });
+    let cancelled = false;
+    const loadConversations = async () => {
+      const { data } = await createSupabaseBrowserClient()
+        .from('conversations')
+        .select('id, whatsapp_from, status, current_request_id, started_at, last_message_at, closed_at')
+        .order('last_message_at', { ascending: false })
+        .limit(100);
+      if (cancelled) return;
+      const databaseRows = (data ?? []) as ConversationRow[];
+      const localRows = simulatorRows.map(toConversationRow);
+      const rows = [...localRows, ...databaseRows];
+      setConversations(rows);
+      // Only auto-select on first load; don't yank the user off their selection on refresh.
+      setSelectedId((current) => current ?? rows[0]?.id ?? null);
+      setLoading(false);
+    };
+
+    loadConversations();
+    // Poll so new WhatsApp conversations appear without a manual refresh.
+    const timer = window.setInterval(loadConversations, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -100,23 +111,35 @@ export default function ConversationsPage() {
     }
 
     const db = createSupabaseBrowserClient();
-    setLoadingMessages(true);
-    Promise.all([
-      db
-        .from('messages')
-        .select('id, conversation_id, request_id, direction, body, media_type, storage_path, created_at')
-        .eq('conversation_id', selectedId)
-        .order('created_at', { ascending: true }),
-      db
-        .from('requests')
-        .select('id, status, output_type, customer_email, created_at')
-        .eq('conversation_id', selectedId)
-        .order('created_at', { ascending: false }),
-    ]).then(([messageRows, requestRows]) => {
+    let cancelled = false;
+    const loadMessages = async (showSpinner: boolean) => {
+      if (showSpinner) setLoadingMessages(true);
+      const [messageRows, requestRows] = await Promise.all([
+        db
+          .from('messages')
+          .select('id, conversation_id, request_id, direction, body, media_type, storage_path, created_at')
+          .eq('conversation_id', selectedId)
+          .order('created_at', { ascending: true }),
+        db
+          .from('requests')
+          .select('id, status, output_type, customer_email, created_at')
+          .eq('conversation_id', selectedId)
+          .order('created_at', { ascending: false }),
+      ]);
+      if (cancelled) return;
       setMessages((messageRows.data ?? []) as MessageRow[]);
       setRequests((requestRows.data ?? []) as RequestRow[]);
       setLoadingMessages(false);
-    });
+    };
+
+    loadMessages(true);
+    // Poll the open conversation so the agent's replies and new inbound
+    // messages stream in without re-selecting it.
+    const timer = window.setInterval(() => loadMessages(false), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [selectedId]);
 
   const filtered = useMemo(() => {

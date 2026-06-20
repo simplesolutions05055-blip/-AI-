@@ -4,8 +4,16 @@
 // creates/links a request and triggers process-request in the background.
 import { db } from '../_shared/db.ts';
 import { validateSignature, sendWhatsApp, downloadMedia } from '../_shared/twilio.ts';
-import { logEvent, getSetting, isAllowedMime, isBlockedMime, extForMime, MAX_MEDIA_BYTES } from '../_shared/util.ts';
+import { logEvent, getSetting, isAllowedMime, isBlockedMime, extForMime, MAX_MEDIA_BYTES, recordUsageAndCost, estimateTranscriptionCost } from '../_shared/util.ts';
+import { transcribeAudio } from '../_shared/openai.ts';
 import { processRequest } from '../_shared/worker.ts';
+
+// Encode raw bytes to base64 for OpenAI's transcription API.
+function encodeBase64(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
 
 function twiml() {
   return new Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
@@ -91,10 +99,36 @@ Deno.serve(async (req) => {
   // media
   let storagePath: string | null = null;
   let mediaType: string | null = null;
+  let effectiveBody = body;
   if (numMedia > 0) {
     const mediaUrl = params.MediaUrl0;
     const contentType = params.MediaContentType0 ?? '';
-    if (isBlockedMime(contentType) || !isAllowedMime(contentType)) {
+    if (contentType.toLowerCase().startsWith('audio/')) {
+      // Voice notes: transcribe to text so the agent can read them. WhatsApp
+      // sends Ogg/Opus; transcribeAudio normalizes the extension for OpenAI.
+      try {
+        const { bytes } = await downloadMedia(mediaUrl);
+        if (bytes.byteLength <= MAX_MEDIA_BYTES) {
+          const aiModels = await getSetting<{ transcribe_model?: string }>(database, 'ai_models');
+          const model = aiModels?.transcribe_model || 'gpt-4o-transcribe';
+          const { text } = await transcribeAudio(encodeBase64(bytes), contentType, 'audio', { model });
+          effectiveBody = body ? `${body}\n${text}` : text;
+          mediaType = contentType;
+          await recordUsageAndCost(database, requestId, {
+            provider: 'openai',
+            model,
+            output: 0,
+            cost: estimateTranscriptionCost(),
+          });
+          await logEvent(database, { requestId, action: 'audio_transcribed', metadata: { chars: text.length } });
+        } else {
+          await sendWhatsApp(from, templates.rejected_media);
+        }
+      } catch (e) {
+        await logEvent(database, { requestId, severity: 'error', action: 'audio_transcribe_failed', message: String(e) });
+        try { await sendWhatsApp(from, templates.rejected_media); } catch { /* ignore */ }
+      }
+    } else if (isBlockedMime(contentType) || !isAllowedMime(contentType)) {
       try { await sendWhatsApp(from, templates.rejected_media); } catch { /* ignore */ }
       await logEvent(database, { requestId, action: 'media_rejected', metadata: { contentType } });
     } else {
@@ -118,7 +152,7 @@ Deno.serve(async (req) => {
     conversation_id: conversation.id,
     request_id: requestId,
     direction: 'inbound',
-    body,
+    body: effectiveBody,
     media_type: mediaType,
     storage_path: storagePath,
     twilio_message_sid: messageSid,

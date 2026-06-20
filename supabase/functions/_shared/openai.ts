@@ -215,6 +215,23 @@ export async function generateImage(
   return { base64: b64, mime: 'image/png', model };
 }
 
+// Map a mime/filename to an extension OpenAI's transcription API accepts.
+// (Supported: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm. WhatsApp sends
+// .opus which is an Ogg/Opus container, so we present it to OpenAI as .ogg.)
+function transcriptionExt(mime: string, filename: string): string {
+  const supported = new Set(['flac', 'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'ogg', 'wav', 'webm']);
+  const nameExt = (filename.split('.').pop() ?? '').toLowerCase();
+  if (nameExt === 'opus') return 'ogg';
+  if (supported.has(nameExt)) return nameExt;
+  const m = (mime || '').toLowerCase();
+  if (m.includes('opus') || m.includes('ogg')) return 'ogg';
+  if (m.includes('mp4') || m.includes('m4a') || m.includes('aac')) return 'm4a';
+  if (m.includes('wav')) return 'wav';
+  if (m.includes('webm')) return 'webm';
+  if (m.includes('flac')) return 'flac';
+  return 'mp3';
+}
+
 // Transcribe an uploaded audio file with an OpenAI transcription model
 // (gpt-4o-transcribe / gpt-4o-mini-transcribe / whisper-1). The model is
 // chosen in the admin settings; falls back to gpt-4o-transcribe.
@@ -225,8 +242,11 @@ export async function transcribeAudio(
   opts: { model?: string } = {}
 ): Promise<{ text: string }> {
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const ext = transcriptionExt(mime, filename);
+  // OpenAI rejects an empty/opus mime; normalize the ogg family to audio/ogg.
+  const safeMime = ext === 'ogg' ? 'audio/ogg' : mime || 'audio/mpeg';
   const form = new FormData();
-  form.append('file', new Blob([bytes], { type: mime || 'audio/mpeg' }), filename || 'audio');
+  form.append('file', new Blob([bytes], { type: safeMime }), `audio.${ext}`);
   form.append('model', opts.model || 'gpt-4o-transcribe');
   const res = await fetch(`${API}/audio/transcriptions`, {
     method: 'POST',
