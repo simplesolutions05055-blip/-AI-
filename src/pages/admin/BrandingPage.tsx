@@ -526,7 +526,7 @@ export default function BrandingPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* list */}
-        <section className="bg-white rounded-xl border border-[var(--border)] lg:col-span-1 overflow-x-auto">
+        <section className="bg-white rounded-xl border border-[var(--border)] lg:col-span-1 overflow-x-auto min-w-0">
           {/* bulk action bar */}
           {selectedIds.size > 0 && (
             <div className="flex items-center justify-between gap-2 bg-gray-50 border-b border-[var(--border)] px-3 py-2 text-sm">
@@ -606,7 +606,7 @@ export default function BrandingPage() {
 
         {/* editor */}
         {selected && (
-          <section className="bg-white rounded-xl border border-[var(--border)] p-4 lg:col-span-2 space-y-4">
+          <section className="bg-white rounded-xl border border-[var(--border)] p-4 lg:col-span-2 space-y-4 min-w-0">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">{selected.id ? 'עריכת מקום' : 'מקום חדש'}</h2>
               <div className="flex gap-2">
@@ -690,7 +690,7 @@ export default function BrandingPage() {
                       title="לחץ לבחירת צבע מדויק"
                     />
                     <input
-                      className={`${input} ltr w-24 shrink-0`}
+                      className={`${input} ltr !w-24 shrink-0`}
                       value={c.hex}
                       onChange={(e) => updateColor(i, { hex: e.target.value })}
                     />
