@@ -119,6 +119,7 @@ export interface Skill {
   description: string | null;
   category: SkillCategory;
   enforcement: SkillEnforcement;
+  implemented: boolean;
   order_index: number;
   enabled: boolean;
   created_at: string;
