@@ -9,7 +9,7 @@ import {
   estimateTextCost,
 } from '../_shared/util.ts';
 import { buildBusinessBrainContext, matchBrandInText, type BrandRow } from '../_shared/brand.ts';
-import { buildSkillInstructions } from '../_shared/skills.ts';
+import { buildSkillInstructions, applyBriefSkillGate } from '../_shared/skills.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -118,6 +118,10 @@ Deno.serve(async (req) => {
       model,
       questionRound: Number(questionRound ?? 0),
     });
+
+    // Deterministic gate: block ready_to_generate while required skill fields
+    // are missing (e.g. an event with no date). Final authority, in code.
+    result.response = applyBriefSkillGate(result.response, transcript);
 
     // Track this simulator conversation as a request and accumulate its cost.
     let requestId: string | null = null;

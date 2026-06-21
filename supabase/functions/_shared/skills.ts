@@ -58,15 +58,82 @@ export async function buildSkillInstructions(database: DB, stage: SkillStage): P
     if (ruleBlocks.length) parts.push('## חוקי ברזל (חלים על כל פעולה, ללא חריגים)\n\n' + ruleBlocks.join('\n\n'));
     if (!parts.length) return '';
 
-    return (
+    const header =
       '\n\n====================  הנחיות מחייבות מהמסמך המאוחד  ====================\n' +
       'ההנחיות הבאות (סקילים, סוכנים וחוקים) גוברות על כל הנחיה אחרת, וחלות על כל הודעה — ' +
       'במיוחד בהכנת בריף. אכוף את שדות החובה לכל סוג תוצר, שאל שאלת השלמה אחת כשחסר שדה קריטי, ' +
       'ואל תמציא נתונים שאינם במקור.\n' +
-      '=======================================================================\n\n' +
-      parts.join('\n\n')
-    );
+      '=======================================================================\n\n';
+
+    // The brief stage gets an explicit, authoritative output contract so the
+    // skill's required-fields table actually overrides the base "jump to ready"
+    // instruction. The model must compute required_missing from the active
+    // whatsapp-brief-parser table; code then hard-blocks on it.
+    const briefContract =
+      stage === 'brief'
+        ? '\n\n## חוזה פלט מחייב (גובר על כל הנחיה קודמת)\n' +
+          '1. זהה את סוג התוצר המדויק (אירוע, מבצע/מכירה, הצעת מחיר, מצגת משקיעים, פוסט מוצר וכו\').\n' +
+          '2. החזר שדה נוסף בשם "required_missing": מערך מחרוזות בעברית של שדות החובה לסוג התוצר שעדיין חסרים (לפי טבלת שדות החובה של whatsapp-brief-parser). לדוגמה לאירוע: ["תאריך האירוע", "מיקום מדויק"].\n' +
+          '3. אם "required_missing" אינו ריק — אסור להחזיר ready_to_generate. החזר action=collecting_details עם שאלה אחת קצרה שמבקשת את השדות החסרים. זה גובר על כל הנחיה שאומרת "אם הסוג והנושא ברורים החזר מוכן".\n' +
+          '4. אל תמציא ערכים לשדות חסרים — שאל עליהם.\n'
+        : '';
+
+    return header + parts.join('\n\n') + briefContract;
   } catch (_e) {
     return '';
+  }
+}
+
+// Hebrew date / time signals — used by the deterministic backstop below.
+const DATE_HINTS =
+  /(\d{1,2}[\/.\-]\d{1,2})|יום\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)|מחר(תיים)?|היום|הערב|הלילה|בשעה|\d{1,2}:\d{2}|(ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר)|בתאריך|ה-?\d{1,2}\s+ב/;
+// Output types that imply a dated event/sale, where a date is a required field.
+const EVENT_HINTS =
+  /(אירוע|פסטיבל|הרצא|כנס|השק[הת]|פתיח|יריד|מכיר[הת]|מבצע|הופע|טקס|סדנ|הפנינג|מצעד|תהלוכה|הזמנ)/;
+
+/**
+ * Deterministic brief gate. Runs AFTER the model replies and is the final
+ * authority on whether a brief may proceed to generation:
+ *  - blocks ready_to_generate whenever the model reports required_missing
+ *  - code backstop: an event/sale with no date in the conversation is blocked
+ *    and a date question is asked, even if the model tried to skip it
+ * Returns the (possibly adjusted) response object. Never throws.
+ */
+export function applyBriefSkillGate(
+  resp: Record<string, unknown> | null | undefined,
+  transcript: string,
+): Record<string, unknown> | null | undefined {
+  try {
+    if (!resp || typeof resp !== 'object') return resp;
+    const brief = (resp.brief as Record<string, unknown>) ?? {};
+    const outputType = (brief.output_type as string) ?? (resp.output_type as string) ?? null;
+
+    const missing: string[] = Array.isArray(resp.required_missing)
+      ? (resp.required_missing as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      : [];
+
+    // Code backstop for the date — the highest-value, must-not-slip check.
+    const hay = `${transcript}\n${JSON.stringify(brief)}`;
+    const looksLikeEvent = EVENT_HINTS.test(hay);
+    const hasDate = DATE_HINTS.test(hay);
+    if ((outputType === 'image' || outputType === null) && looksLikeEvent && !hasDate) {
+      if (!missing.some((m) => m.includes('תאריך'))) missing.push('תאריך האירוע');
+    }
+
+    if (missing.length === 0) return resp;
+
+    const question = `כדי שאכין בריף מדויק חסר לי: ${missing.join(', ')}. אפשר להשלים?`;
+    return {
+      ...resp,
+      action: 'collecting_details',
+      ready: false,
+      ready_for_generation: false,
+      missing_fields: missing,
+      required_missing: missing,
+      message_to_user: question,
+      brief: { ...brief, ready: false },
+    };
+  } catch (_e) {
+    return resp;
   }
 }

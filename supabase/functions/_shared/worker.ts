@@ -17,7 +17,7 @@ import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
 import { matchBrandInText, buildBusinessBrainContext, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
-import { buildSkillInstructions } from './skills.ts';
+import { buildSkillInstructions, applyBriefSkillGate } from './skills.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
@@ -426,20 +426,32 @@ async function runRequestPipeline(
         ? b.customer_email
         : (emailFromMsgs ?? null);
 
+    // Deterministic skill gate: block a ready brief while required fields are
+    // missing (e.g. an event with no date), and ask for them — final authority.
+    const gated = applyBriefSkillGate(
+      { brief: b, required_missing: b.required_missing, output_type: b.output_type },
+      transcript,
+    ) as Record<string, unknown>;
+    let effectiveNextQuestion = nextQuestion;
+    if (gated?.ready_for_generation === false && Array.isArray(gated.missing_fields) && gated.missing_fields.length) {
+      b.ready = false;
+      effectiveNextQuestion = String(gated.message_to_user ?? '') || nextQuestion;
+    }
+
     await database
       .from('requests')
       .update({ structured_brief: b, output_type: (b.output_type as string) ?? null, customer_email: email })
       .eq('id', requestId);
 
-    if (nextQuestion && roundsRemaining > 0) {
+    if (effectiveNextQuestion && roundsRemaining > 0) {
       await database.from('requests').update({ question_rounds: request.question_rounds + 1 }).eq('id', requestId);
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-      await sendOut(database, conversation.id, requestId, waFrom, nextQuestion, conversation.simulated);
+      await sendOut(database, conversation.id, requestId, waFrom, effectiveNextQuestion, conversation.simulated);
       return;
     }
     // Simulator parity: email is NOT required to generate. We keep it if given
     // (for an optional copy by mail) but never block the output on it.
-    if (nextQuestion && roundsRemaining <= 0 && b.ready !== true) {
+    if (effectiveNextQuestion && roundsRemaining <= 0 && b.ready !== true) {
       await setStatus(database, requestId, 'needs_attention');
       await sendOut(database, conversation.id, requestId, waFrom, templates.needs_attention, conversation.simulated);
       return;
