@@ -166,6 +166,11 @@ export default function SkillsPage() {
             </span>
           ))}
         </div>
+        <p className="mt-2 text-xs text-[var(--muted)] bg-gray-50 border border-[var(--border)] rounded-lg px-3 py-2">
+          חשוב: ברכיבים מסוג <strong>קוד</strong> או <strong>משולב</strong>, עריכה ושמירה כאן <strong>לא מספיקה</strong> כדי
+          לשנות את ההתנהגות בפועל. שמירת הטקסט רק מתעדת את הכוונה — כדי שהשינוי באמת יעבוד, מפתח צריך להטמיע אותו בקוד
+          (במיקום שמופיע בבאנר של הרכיב). רק רכיבים מסוג <strong>טקסט</strong> משתנים מיד עם השמירה.
+        </p>
       </div>
 
       {/* category tabs */}
@@ -270,6 +275,9 @@ export default function SkillsPage() {
                       הרכה של המודל; הכלל הקשיח נשאר בקוד.
                     </>
                   )}
+                  <div className="mt-1.5">
+                    גם לאחר שתשמור כאן גרסה חדשה — השינוי <strong>לא ייכנס לתוקף</strong> עד שמפתח יטמיע אותו בקוד.
+                  </div>
                   {CODE_REF[selected.key] && (
                     <div className="mt-1.5 text-xs opacity-90">
                       <span className="font-semibold">מוטמע ב־</span>
