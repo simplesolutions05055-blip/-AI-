@@ -8,6 +8,37 @@ const CATEGORIES: { key: SkillCategory; label: string }[] = [
   { key: 'rule', label: 'חוקים' },
 ];
 
+// Where the real logic lives, so a developer knows where to edit a code/mixed component.
+const CODE_REF: Record<string, string> = {
+  'whatsapp-brief-parser': 'supabase/functions/_shared/skills.ts (applyBriefSkillGate) + generate-chat-response / worker.ts',
+  'brand-compliance-qa': 'supabase/functions/_shared/worker.ts (generateAndQa — QA #1)',
+  'independent-qa-reviewer': 'supabase/functions/_shared/worker.ts (generateAndQa — QA #2)',
+  'agent-brief-intake': 'supabase/functions/generate-chat-response + _shared/worker.ts',
+  'agent-qa1': 'supabase/functions/_shared/worker.ts (QA #1)',
+  'agent-qa2': 'supabase/functions/_shared/worker.ts (QA #2)',
+  'rule-branding': 'supabase/functions/_shared/skills.ts (applyBriefSkillGate) + _shared/brand.ts',
+  'rule-no-fabrication': 'supabase/functions/_shared/skills.ts (applyBriefSkillGate)',
+  'rule-public-sector': 'supabase/functions/_shared/brand.ts (municipality block) + brands.client_type',
+  'business-onboarding': 'מסך מיתוג (BrandingPage) + _shared/brand.ts',
+  'approval-email-composer': 'supabase/functions/send-output + _shared/resend.ts',
+  'publishing-rules-meta': 'טרם הוטמע — ייכתב ב-_shared/worker.ts (deliverOutput)',
+  'cloud-archive-structurer': 'supabase/functions/_shared/worker.ts (storage upload)',
+  'revision-to-rule-converter': 'supabase/functions/_shared/learning.ts + openai.ts (extractRuleLLM)',
+  'agent-business-brain': 'supabase/functions/_shared/brand.ts + db.ts',
+  'agent-routing': 'supabase/functions/_shared/skills.ts (selectSkills)',
+  'agent-approval-orchestrator': 'supabase/functions/_shared/worker.ts',
+  'agent-publishing': 'טרם הוטמע — _shared/worker.ts',
+  'agent-archive': 'supabase/functions/_shared/worker.ts',
+  'agent-learning': 'supabase/functions/_shared/learning.ts',
+  'rule-approval': 'supabase/functions/_shared/worker.ts (waiting_for_approval)',
+  'rule-two-layers': 'supabase/functions/_shared/worker.ts (generateAndQa)',
+  'rule-consistency': 'supabase/functions/_shared/learning.ts (template_locks)',
+  'rule-no-delete': 'מעוצב בקוד — אין פעולת DELETE בארגז הכלים (worker.ts)',
+  'rule-tenant-isolation': 'migrations RLS + סינון brand_id (worker.ts)',
+  'rule-timezone': "supabase/functions/_shared/util.ts + src/lib/format.ts (Asia/Jerusalem)",
+  'rule-round-cap': 'supabase/functions/_shared/worker.ts (revision_round)',
+};
+
 const ENFORCEMENT: Record<SkillEnforcement, { label: string; chip: string; help: string }> = {
   prompt: {
     label: 'טקסט',
@@ -238,6 +269,12 @@ export default function SkillsPage() {
                       <strong>שים לב:</strong> חלק מההתנהגות מוטמע בקוד (שומר-סף). עריכת הטקסט תשנה רק את ההכוונה
                       הרכה של המודל; הכלל הקשיח נשאר בקוד.
                     </>
+                  )}
+                  {CODE_REF[selected.key] && (
+                    <div className="mt-1.5 text-xs opacity-90">
+                      <span className="font-semibold">מוטמע ב־</span>
+                      <code className="ltr">{CODE_REF[selected.key]}</code>
+                    </div>
                   )}
                 </div>
               )}
