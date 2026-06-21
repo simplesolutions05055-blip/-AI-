@@ -575,19 +575,37 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     }
 
     await setStatus(database, requestId, 'quality_check');
-    let qa: { passed: boolean; issues: string[]; notes?: string };
+    // ── Two-layer QA (rule 4): QA #1 technical/branding, then QA #2 holistic ──
+    // and independent — a separate model call (fresh context), run only after
+    // QA #1 passes. Both must pass for the output to proceed.
+    type QaLayer = { passed: boolean; issues: string[]; notes?: string };
+    let qa1: QaLayer;
     if (outputType === 'image') {
-      qa = {
-        passed: true,
-        issues: [],
-        notes: 'Image generation completed and the image was stored successfully. Pixel-level review is not available in this worker.',
-      };
+      // Pixel-level review isn't available here; QA #1 is a technical pass and
+      // the real scrutiny happens in the holistic QA #2 against the brief.
+      qa1 = { passed: true, issues: [], notes: 'QA#1: בדיקת פיקסלים אינה זמינה; התמונה נוצרה ונשמרה.' };
     } else {
-      const qaPrompt = systemPrompt + (await buildSkillInstructions(database, 'qa', { outputType, clientType: genClientType }));
-      const { qa: textQa, usage: qaUsage } = await runQa(qaPrompt, brief, qaDescription);
-      qa = textQa;
-      await recordUsage(database, requestId, 'openai', 'chat', qaUsage.prompt_tokens, qaUsage.completion_tokens, estimateTextCost(qaUsage.prompt_tokens, qaUsage.completion_tokens));
+      const qa1Prompt = systemPrompt + (await buildSkillInstructions(database, 'qa1', { outputType, clientType: genClientType }));
+      const r1 = await runQa(qa1Prompt, brief, qaDescription);
+      qa1 = r1.qa;
+      await recordUsage(database, requestId, 'openai', 'chat', r1.usage.prompt_tokens, r1.usage.completion_tokens, estimateTextCost(r1.usage.prompt_tokens, r1.usage.completion_tokens));
     }
+
+    let qa2: QaLayer = { passed: true, issues: [], notes: 'QA#2 דולג: QA#1 לא עבר.' };
+    if (qa1.passed) {
+      const qa2Prompt = systemPrompt + (await buildSkillInstructions(database, 'qa2', { outputType, clientType: genClientType }));
+      const r2 = await runQa(qa2Prompt, brief, qaDescription);
+      qa2 = r2.qa;
+      await recordUsage(database, requestId, 'openai', 'chat', r2.usage.prompt_tokens, r2.usage.completion_tokens, estimateTextCost(r2.usage.prompt_tokens, r2.usage.completion_tokens));
+    }
+
+    const qa = {
+      passed: qa1.passed && qa2.passed,
+      issues: [...qa1.issues, ...qa2.issues],
+      notes: `QA#1: ${qa1.notes ?? ''} | QA#2: ${qa2.notes ?? ''}`,
+      qa1,
+      qa2,
+    };
 
     await database.from('outputs').insert({
       request_id: requestId,

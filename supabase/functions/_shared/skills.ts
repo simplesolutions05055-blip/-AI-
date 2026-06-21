@@ -1,7 +1,7 @@
 import type { DB } from './db.ts';
 import { routeSkillsLLM } from './openai.ts';
 
-export type SkillStage = 'brief' | 'image' | 'presentation' | 'text' | 'qa';
+export type SkillStage = 'brief' | 'image' | 'presentation' | 'text' | 'qa1' | 'qa2';
 
 export interface SkillContext {
   outputType?: string | null;
