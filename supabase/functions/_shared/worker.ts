@@ -17,6 +17,7 @@ import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
 import { matchBrandInText, buildBusinessBrainContext, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
+import { buildSkillInstructions } from './skills.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
@@ -412,7 +413,8 @@ async function runRequestPipeline(
     const maxRounds = (await getSetting<{ max: number }>(database, 'question_rounds'))?.max ?? 3;
     const roundsRemaining = Math.max(0, maxRounds - request.question_rounds);
 
-    const { brief, nextQuestion, usage } = await analyzeBrief(systemPrompt, transcript, roundsRemaining);
+    const briefPrompt = systemPrompt + (await buildSkillInstructions(database, 'brief'));
+    const { brief, nextQuestion, usage } = await analyzeBrief(briefPrompt, transcript, roundsRemaining);
     await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
 
     const b = brief as Record<string, unknown>;
@@ -535,12 +537,14 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         `פרומפט שנשלח למנוע התמונה:\n${prompt}`,
       ].join('\n\n');
     } else if (outputType === 'presentation') {
-      const { text, usage } = await generatePresentationOutline(systemPrompt, brief);
+      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'presentation'));
+      const { text, usage } = await generatePresentationOutline(genPrompt, brief);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;
       qaDescription = text.slice(0, 4000);
     } else {
-      const { text, usage } = await generateText(systemPrompt, brief, brief.admin_note as string | undefined);
+      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'text'));
+      const { text, usage } = await generateText(genPrompt, brief, brief.admin_note as string | undefined);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;
       qaDescription = text.slice(0, 4000);
@@ -555,7 +559,8 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         notes: 'Image generation completed and the image was stored successfully. Pixel-level review is not available in this worker.',
       };
     } else {
-      const { qa: textQa, usage: qaUsage } = await runQa(systemPrompt, brief, qaDescription);
+      const qaPrompt = systemPrompt + (await buildSkillInstructions(database, 'qa'));
+      const { qa: textQa, usage: qaUsage } = await runQa(qaPrompt, brief, qaDescription);
       qa = textQa;
       await recordUsage(database, requestId, 'openai', 'chat', qaUsage.prompt_tokens, qaUsage.completion_tokens, estimateTextCost(qaUsage.prompt_tokens, qaUsage.completion_tokens));
     }

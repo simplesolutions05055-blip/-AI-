@@ -9,6 +9,7 @@ import {
   estimateTextCost,
 } from '../_shared/util.ts';
 import { buildBusinessBrainContext, matchBrandInText, type BrandRow } from '../_shared/brand.ts';
+import { buildSkillInstructions } from '../_shared/skills.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -106,6 +107,11 @@ Deno.serve(async (req) => {
         message: String(brandError),
       });
     }
+
+    // Inject the active skills/agents/rules that govern the brief stage. These
+    // are admin-editable in the Skills screen and steer question-asking,
+    // required-field enforcement, and the no-fabrication guardrail.
+    systemMessage += await buildSkillInstructions(database, 'brief');
 
     const model = aiModels?.text_model || 'gpt-4o';
     const result = await runAgentChat(systemMessage, transcript, {
