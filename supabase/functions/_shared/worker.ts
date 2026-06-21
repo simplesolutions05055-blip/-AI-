@@ -18,6 +18,13 @@ import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
 import { matchBrandInText, buildBusinessBrainContext, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
 import { buildSkillInstructions, applyBriefSkillGate } from './skills.ts';
+import {
+  loadLearnedRules,
+  extractAndStoreRule,
+  loadActiveTemplateLock,
+  buildTemplateLockBlock,
+  maybeLockTemplate,
+} from './learning.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
@@ -392,13 +399,41 @@ async function runRequestPipeline(
 
   if (request.status === 'waiting_for_approval') {
     const lastInbound = [...(msgs ?? [])].reverse().find((m) => m.direction === 'inbound' && m.body)?.body ?? '';
-    if (!isBriefApproval(lastInbound)) {
+    if (isBriefApproval(lastInbound)) {
+      await logEvent(database, { requestId, action: 'brief_approved' });
+      await setStatus(database, requestId, 'queued');
+      // local status intentionally left as 'waiting_for_approval' so the
+      // brief-analysis block below is skipped and we go straight to generation.
+    } else if (lastInbound.trim()) {
+      // A non-approval message is a change request → rule 10 + skill 10.
+      const nextRound = ((request.revision_round as number) ?? 0) + 1;
+      await database.from('requests').update({ revision_round: nextRound }).eq('id', requestId);
+
+      if (nextRound > 2) {
+        // Rule 10 — revision cap: stop auto-iterating, escalate to the owner.
+        await logEvent(database, {
+          requestId, severity: 'warning', action: 'revision_cap_reached',
+          message: `revision_round=${nextRound} — escalated to owner`,
+        });
+        await setStatus(database, requestId, 'needs_attention');
+        await sendOut(database, conversation.id, requestId, waFrom,
+          'התוצר עבר כמה סבבי תיקון. הבקשה הועברה לבדיקת מנהל כדי לוודא שאנחנו פותרים את השורש.',
+          conversation.simulated);
+        return;
+      }
+
+      // Skill 10 — turn the correction into a permanent rule for this client.
+      if (request.brand_id) {
+        await extractAndStoreRule(database, request.brand_id as string, lastInbound, request.output_type as string | null);
+      }
+      // Re-open the brief so the next pass re-analyses it with the change.
+      await setStatus(database, requestId, 'collecting_details');
+      request.status = 'collecting_details';
+    } else {
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
       await sendOut(database, conversation.id, requestId, waFrom, 'כדי להפיק לפי הבריף, כתוב: מאשר. אם צריך שינוי, כתוב מה לשנות.', conversation.simulated);
       return;
     }
-    await logEvent(database, { requestId, action: 'brief_approved' });
-    await setStatus(database, requestId, 'queued');
   }
 
   if (['received', 'collecting_details', 'queued'].includes(request.status)) {
@@ -419,7 +454,9 @@ async function runRequestPipeline(
       briefClientType = (br?.client_type as string | null) ?? null;
     }
     const briefPrompt =
-      systemPrompt + (await buildSkillInstructions(database, 'brief', { clientType: briefClientType }));
+      systemPrompt +
+      (await buildSkillInstructions(database, 'brief', { clientType: briefClientType })) +
+      (await loadLearnedRules(database, request.brand_id as string | null));
     const { brief, nextQuestion, usage } = await analyzeBrief(briefPrompt, transcript, roundsRemaining);
     await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
 
@@ -496,6 +533,11 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
   const outputType: string = (request.output_type as string) ?? 'text';
 
+  // Skill 10 + Rule 5 context, loaded once for this generation.
+  const learnedBlock = await loadLearnedRules(database, request.brand_id as string | null);
+  const templateLock = await loadActiveTemplateLock(database, request.brand_id as string | null, outputType);
+  const lockBlock = buildTemplateLockBlock(templateLock);
+
   // Per-request budget cap — stop runaway cost (buggy loop / abusive input)
   // before spending more on AI. Soft cap: hand off to the admin instead.
   const budget = await getSettingOr<{ max: number | null }>(database, 'request_budget_usd', { max: null });
@@ -527,7 +569,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     if (outputType === 'image') {
       const basePrompt = `${brief.goal ?? ''} ${brief.style ?? ''} ${((brief.must_include as string[]) ?? []).join(', ')}${
         businessBrain.combined ? `\n\n${businessBrain.combined}` : ''
-      }`.trim();
+      }${lockBlock}${learnedBlock}`.trim();
       // Deterministic RTL safety net: ensure the image engine always receives the
       // icon-on-right / right-aligned directive, even if the LLM brief omitted it.
       const RTL_IMAGE_DIRECTIVE =
@@ -561,13 +603,13 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         `פרומפט שנשלח למנוע התמונה:\n${prompt}`,
       ].join('\n\n');
     } else if (outputType === 'presentation') {
-      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'presentation', { outputType: 'presentation', clientType: genClientType }));
+      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'presentation', { outputType: 'presentation', clientType: genClientType })) + lockBlock + learnedBlock;
       const { text, usage } = await generatePresentationOutline(genPrompt, brief);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;
       qaDescription = text.slice(0, 4000);
     } else {
-      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'text', { outputType: 'text', clientType: genClientType }));
+      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'text', { outputType: 'text', clientType: genClientType })) + lockBlock + learnedBlock;
       const { text, usage } = await generateText(genPrompt, brief, brief.admin_note as string | undefined);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;
@@ -593,7 +635,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
 
     let qa2: QaLayer = { passed: true, issues: [], notes: 'QA#2 דולג: QA#1 לא עבר.' };
     if (qa1.passed) {
-      const qa2Prompt = systemPrompt + (await buildSkillInstructions(database, 'qa2', { outputType, clientType: genClientType }));
+      const qa2Prompt = systemPrompt + (await buildSkillInstructions(database, 'qa2', { outputType, clientType: genClientType })) + learnedBlock;
       const r2 = await runQa(qa2Prompt, brief, qaDescription);
       qa2 = r2.qa;
       await recordUsage(database, requestId, 'openai', 'chat', r2.usage.prompt_tokens, r2.usage.completion_tokens, estimateTextCost(r2.usage.prompt_tokens, r2.usage.completion_tokens));
@@ -632,6 +674,8 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
 
     // Simulator parity: no manual-approval gate. Deliver straight to WhatsApp.
     await setStatus(database, requestId, 'approved');
+    // Rule 5 — lock the template once a change-free streak proves the format.
+    await maybeLockTemplate(database, request.brand_id as string | null, outputType, brief);
     await deliverOutput(database, requestId);
   } catch (e) {
     if (longImageTimer !== undefined) clearTimeout(longImageTimer);

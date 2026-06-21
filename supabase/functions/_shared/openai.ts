@@ -14,6 +14,33 @@ export interface ChatUsage {
   completion_tokens: number;
 }
 
+// Learning Agent (skill 10): turn a client correction into one concrete,
+// auto-checkable rule. Returns null when the comment is too vague to be a rule.
+export async function extractRuleLLM(
+  comment: string,
+  model?: string,
+): Promise<{ rule: string | null; usage: ChatUsage }> {
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content:
+          'הלקוח ביקש תיקון לתוצר. נסח את ההערה ככלל קבוע אחד, קונקרטי וניתן לבדיקה אוטומטית (משפט פעולה), ' +
+          'שימנע מהטעות הזו בעתיד אצל אותו לקוח. אם ההערה כללית/מעורפלת מכדי לנסח ככלל בדיק (למשל "תהיה יותר טוב") — ' +
+          'החזר rule=null. החזר JSON בלבד: {"rule": string|null}.',
+      },
+      { role: 'user', content: (comment ?? '').slice(0, 1000) },
+    ],
+    { json: true, temperature: 0, model },
+  );
+  try {
+    const p = JSON.parse(content) as { rule?: unknown };
+    return { rule: typeof p.rule === 'string' && p.rule.trim() ? p.rule.trim() : null, usage };
+  } catch {
+    return { rule: null, usage };
+  }
+}
+
 // Hybrid skill router (LLM layer): given the skill catalog and the request
 // text, pick the skill keys relevant to fulfilling it and classify the exact
 // content subtype. Used only for ambiguous requests; fails open to [].
