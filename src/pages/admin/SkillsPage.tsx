@@ -207,7 +207,7 @@ export default function SkillsPage() {
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold text-sm">{s.display_name}</span>
                 <div className="flex items-center gap-1 shrink-0">
-                  {!s.implemented && (
+                  {s.implemented === false && (
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-white" title="הרכיב מתועד אך עדיין לא נבנה במערכת">
                       טרם הוטמע
                     </span>
@@ -249,7 +249,7 @@ export default function SkillsPage() {
                   <code className="text-xs text-[var(--muted)] ltr">{selected.key}</code>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {!selected.implemented && (
+                  {selected.implemented === false && (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-white">טרם הוטמע</span>
                   )}
                   <span
@@ -264,7 +264,7 @@ export default function SkillsPage() {
                 </div>
               </div>
 
-              {!selected.implemented && (
+              {selected.implemented === false && (
                 <div className="rounded-lg border border-gray-300 bg-gray-100 px-3 py-2 text-sm text-gray-800">
                   <strong>רכיב זה טרם הוטמע במערכת.</strong> ההגדרה כאן היא תיעוד של הכוונה בלבד — אין מאחוריה
                   קוד פעיל, ולכן היא לא משפיעה על שום תהליך עד שהיא תיבנה.
