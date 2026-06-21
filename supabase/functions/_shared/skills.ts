@@ -1,56 +1,90 @@
 import type { DB } from './db.ts';
+import { routeSkillsLLM } from './openai.ts';
 
-// Maps each pipeline stage to the skill/agent keys that govern it. Rules
-// (category 'rule') are always injected on top of every stage — they are
-// guardrails that apply to every message, per the unified spec.
-const STAGE_SKILLS: Record<string, string[]> = {
-  brief: ['whatsapp-brief-parser', 'agent-brief-intake', 'agent-business-brain'],
-  image: ['social-graphics-engine', 'brand-compliance-qa', 'agent-generation'],
-  presentation: ['presentation-doc-engine', 'brand-compliance-qa', 'agent-generation'],
-  text: ['presentation-doc-engine', 'brand-compliance-qa', 'agent-generation'],
-  qa: ['brand-compliance-qa', 'independent-qa-reviewer', 'agent-qa1', 'agent-qa2'],
-};
+export type SkillStage = 'brief' | 'image' | 'presentation' | 'text' | 'qa';
 
-export type SkillStage = keyof typeof STAGE_SKILLS;
+export interface SkillContext {
+  outputType?: string | null;
+  clientType?: string | null;
+  // Extra skill keys chosen by the LLM router (hybrid layer).
+  extraKeys?: string[];
+}
+
+interface SkillRow {
+  key: string;
+  category: string;
+  order_index: number;
+  applies_to: { stages?: string[]; output_types?: string[]; client_types?: string[] } | null;
+}
+
+// A condition list matches when: unspecified/empty (= any), contains '*', the
+// actual value is unknown (don't exclude), or it explicitly contains the value.
+function condMatches(vals: string[] | undefined, actual: string | null | undefined): boolean {
+  if (!Array.isArray(vals) || vals.length === 0) return true;
+  if (vals.includes('*')) return true;
+  if (actual == null) return true;
+  return vals.includes(actual);
+}
 
 /**
- * Builds a system-prompt fragment from the active versions of the skills that
- * govern `stage`, plus every enabled rule. Returns '' if nothing is enabled or
- * on any error — it must never break the live chat/worker pipeline.
+ * Deterministic selector. Returns the enabled skills relevant to the given
+ * stage + context, ordered by order_index. Rules always qualify (subject to
+ * their own client/output conditions); non-rule skills need an explicit stage
+ * match. extraKeys (from the LLM router) are unioned in.
  */
-export async function buildSkillInstructions(database: DB, stage: SkillStage): Promise<string> {
+export async function selectSkills(database: DB, stage: SkillStage, ctx: SkillContext): Promise<SkillRow[]> {
+  const { data } = await database
+    .from('skills')
+    .select('key, category, order_index, applies_to, enabled')
+    .eq('enabled', true)
+    .order('order_index');
+  const rows = (data ?? []) as unknown as (SkillRow & { enabled: boolean })[];
+  const extra = new Set(ctx.extraKeys ?? []);
+
+  return rows.filter((s) => {
+    const a = s.applies_to ?? {};
+    const isRule = s.category === 'rule';
+    const stageOk = isRule
+      ? true
+      : extra.has(s.key) ||
+        (Array.isArray(a.stages) && (a.stages.includes('*') || a.stages.includes(stage)));
+    return stageOk && condMatches(a.output_types, ctx.outputType) && condMatches(a.client_types, ctx.clientType);
+  });
+}
+
+/**
+ * Builds a system-prompt fragment from the active versions of the skills the
+ * selector deems relevant to `stage`+`ctx`, plus the qualifying rules. Returns
+ * '' if nothing qualifies or on any error — never breaks the live pipeline.
+ */
+export async function buildSkillInstructions(
+  database: DB,
+  stage: SkillStage,
+  ctx: SkillContext = {},
+): Promise<string> {
   try {
-    const stageKeys = STAGE_SKILLS[stage] ?? [];
+    const selected = await selectSkills(database, stage, ctx);
+    if (!selected.length) return '';
 
-    const { data: skills } = await database
-      .from('skills')
-      .select('key, category, enabled, order_index')
-      .eq('enabled', true)
-      .order('order_index');
-    if (!skills?.length) return '';
-
-    const wanted = skills.filter(
-      (s: { key: string; category: string }) => stageKeys.includes(s.key) || s.category === 'rule',
-    );
-    if (!wanted.length) return '';
-
-    const wantedKeys = wanted.map((s: { key: string }) => s.key);
+    const keys = selected.map((s) => s.key);
     const { data: versions } = await database
       .from('skill_versions')
       .select('skill_key, content')
       .eq('is_active', true)
-      .in('skill_key', wantedKeys);
+      .in('skill_key', keys);
     if (!versions?.length) return '';
 
     const byKey = new Map<string, string>(
-      versions.map((v: { skill_key: string; content: string }) => [v.skill_key, v.content]),
+      (versions as { skill_key: string; content: string }[]).map((v) => [v.skill_key, v.content]),
     );
 
-    // Stage skills first (in declared order), then rules (by order_index).
-    const stageBlocks = stageKeys.map((k) => byKey.get(k)).filter(Boolean) as string[];
-    const ruleBlocks = wanted
-      .filter((s: { category: string }) => s.category === 'rule')
-      .map((s: { key: string }) => byKey.get(s.key))
+    const stageBlocks = selected
+      .filter((s) => s.category !== 'rule')
+      .map((s) => byKey.get(s.key))
+      .filter(Boolean) as string[];
+    const ruleBlocks = selected
+      .filter((s) => s.category === 'rule')
+      .map((s) => byKey.get(s.key))
       .filter(Boolean) as string[];
 
     const parts: string[] = [];
@@ -65,10 +99,6 @@ export async function buildSkillInstructions(database: DB, stage: SkillStage): P
       'ואל תמציא נתונים שאינם במקור.\n' +
       '=======================================================================\n\n';
 
-    // The brief stage gets an explicit, authoritative output contract so the
-    // skill's required-fields table actually overrides the base "jump to ready"
-    // instruction. The model must compute required_missing from the active
-    // whatsapp-brief-parser table; code then hard-blocks on it.
     const briefContract =
       stage === 'brief'
         ? '\n\n## חוזה פלט מחייב (גובר על כל הנחיה קודמת)\n' +
@@ -86,6 +116,32 @@ export async function buildSkillInstructions(database: DB, stage: SkillStage): P
   }
 }
 
+/**
+ * Hybrid router entry point: deterministic selection always applies; this adds
+ * the LLM layer that picks extra relevant skill keys for an ambiguous request.
+ * Returns the chosen keys (and detected subtype) to feed back as ctx.extraKeys.
+ * Fails open to an empty result.
+ */
+export async function routeAmbiguousSkills(
+  database: DB,
+  text: string,
+  model?: string,
+): Promise<{ keys: string[]; subtype: string | null; usage: { prompt_tokens: number; completion_tokens: number } }> {
+  try {
+    const { data } = await database
+      .from('skills')
+      .select('key, display_name, description, enabled, category')
+      .eq('enabled', true);
+    const catalog = ((data ?? []) as { key: string; display_name: string; description: string | null; category: string }[])
+      .filter((s) => s.category !== 'rule')
+      .map((s) => ({ key: s.key, name: s.display_name, description: s.description ?? '' }));
+    if (!catalog.length) return { keys: [], subtype: null, usage: { prompt_tokens: 0, completion_tokens: 0 } };
+    return await routeSkillsLLM(catalog, text, model);
+  } catch (_e) {
+    return { keys: [], subtype: null, usage: { prompt_tokens: 0, completion_tokens: 0 } };
+  }
+}
+
 // Hebrew date / time signals — used by the deterministic backstop below.
 const DATE_HINTS =
   /(\d{1,2}[\/.\-]\d{1,2})|יום\s+(ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)|מחר(תיים)?|היום|הערב|הלילה|בשעה|\d{1,2}:\d{2}|(ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר)|בתאריך|ה-?\d{1,2}\s+ב/;
@@ -98,7 +154,7 @@ const EVENT_HINTS =
  * authority on whether a brief may proceed to generation:
  *  - blocks ready_to_generate whenever the model reports required_missing
  *  - code backstop: an event/sale with no date in the conversation is blocked
- *    and a date question is asked, even if the model tried to skip it
+ *  - rules 2+3: a branded visual with no matched client/brand is blocked
  * Returns the (possibly adjusted) response object. Never throws.
  */
 export function applyBriefSkillGate(

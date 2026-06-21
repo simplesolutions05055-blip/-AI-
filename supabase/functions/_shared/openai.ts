@@ -14,6 +14,40 @@ export interface ChatUsage {
   completion_tokens: number;
 }
 
+// Hybrid skill router (LLM layer): given the skill catalog and the request
+// text, pick the skill keys relevant to fulfilling it and classify the exact
+// content subtype. Used only for ambiguous requests; fails open to [].
+export async function routeSkillsLLM(
+  catalog: { key: string; name: string; description: string }[],
+  text: string,
+  model?: string,
+): Promise<{ keys: string[]; subtype: string | null; usage: ChatUsage }> {
+  const list = catalog.map((c) => `- ${c.key}: ${c.name} — ${c.description}`).join('\n');
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content:
+          'אתה נתב סקילים בצינור הפקת תוכן. מתוך הקטלוג הבא בלבד, בחר את ה-keys של הסקילים הרלוונטיים למילוי הבקשה, וזהה את סוג התוצר המדויק.\n' +
+          'החזר JSON בלבד: {"subtype": string, "keys": string[]}. בחר אך ורק keys שמופיעים בקטלוג.\n\nקטלוג:\n' +
+          list,
+      },
+      { role: 'user', content: (text ?? '').slice(0, 2000) },
+    ],
+    { json: true, temperature: 0, model },
+  );
+  try {
+    const parsed = JSON.parse(content) as { subtype?: unknown; keys?: unknown };
+    const allowed = new Set(catalog.map((c) => c.key));
+    const keys = Array.isArray(parsed.keys)
+      ? (parsed.keys as unknown[]).filter((k): k is string => typeof k === 'string' && allowed.has(k))
+      : [];
+    return { keys, subtype: typeof parsed.subtype === 'string' ? parsed.subtype : null, usage };
+  } catch {
+    return { keys: [], subtype: null, usage };
+  }
+}
+
 async function chat(
   messages: { role: string; content: string }[],
   opts: { json?: boolean; temperature?: number; model?: string } = {}

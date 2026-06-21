@@ -9,7 +9,7 @@ import {
   estimateTextCost,
 } from '../_shared/util.ts';
 import { buildBusinessBrainContext, matchBrandInText, type BrandRow } from '../_shared/brand.ts';
-import { buildSkillInstructions, applyBriefSkillGate } from '../_shared/skills.ts';
+import { buildSkillInstructions, applyBriefSkillGate, routeAmbiguousSkills } from '../_shared/skills.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -57,6 +57,7 @@ Deno.serve(async (req) => {
     // 10-slide presentation_spec.
     systemMessage += `\n\nהנחיה למצגות (presentation_kit): כאשר המשתמש מבקש מצגת ואין מספיק מידע, שאל בהודעה אחת בלבד את כל השאלות החיוניות יחד (מטרה, קהל יעד, נקודות/מסרים מרכזיים, קריאה לפעולה) — שאלות קצרות בהודעה אחת, בלי בריף. ברגע שיש מספיק מידע (גם אם המשתמש לא ענה על הכול), החזר action=ready_to_generate עם presentation_spec הכולל slide_count=10 ו-slide_structure של בדיוק 10 שקפים, כאשר לכל שקף יש title ו-content אינפורמטיבי ועשיר בעברית. הסתמך על מה שהמשתמש כתב והרחב אותו לתוכן מלא.`;
     let matchedBrand: { id: string; name: string } | null = null;
+    let clientType: string | null = null;
     let brandPayload: {
       id: string;
       name: string;
@@ -88,6 +89,7 @@ Deno.serve(async (req) => {
           .eq('brand_id', matchedBrand.id)
           .order('created_at', { ascending: false })
           .limit(12);
+        clientType = (brand?.client_type as string | null) ?? null;
         const businessBrain = buildBusinessBrainContext(brand, textSources ?? []);
         if (businessBrain.combined) systemMessage = `${systemMessage}\n\n${businessBrain.combined}`;
         if (brand && brand.is_active !== false) {
@@ -108,10 +110,15 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Inject the active skills/agents/rules that govern the brief stage. These
-    // are admin-editable in the Skills screen and steer question-asking,
-    // required-field enforcement, and the no-fabrication guardrail.
-    systemMessage += await buildSkillInstructions(database, 'brief');
+    // Hybrid skill selection: deterministic (stage + client type) always runs;
+    // on the first turn an LLM router adds any extra relevant skills for an
+    // ambiguous request. Result feeds the editable, admin-managed skill set.
+    let extraKeys: string[] = [];
+    if (Number(questionRound ?? 0) === 0) {
+      const routed = await routeAmbiguousSkills(database, transcript);
+      extraKeys = routed.keys;
+    }
+    systemMessage += await buildSkillInstructions(database, 'brief', { clientType, extraKeys });
 
     const model = aiModels?.text_model || 'gpt-4o';
     const result = await runAgentChat(systemMessage, transcript, {

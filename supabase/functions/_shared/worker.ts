@@ -413,7 +413,13 @@ async function runRequestPipeline(
     const maxRounds = (await getSetting<{ max: number }>(database, 'question_rounds'))?.max ?? 3;
     const roundsRemaining = Math.max(0, maxRounds - request.question_rounds);
 
-    const briefPrompt = systemPrompt + (await buildSkillInstructions(database, 'brief'));
+    let briefClientType: string | null = null;
+    if (request.brand_id) {
+      const { data: br } = await database.from('brands').select('client_type').eq('id', request.brand_id).single();
+      briefClientType = (br?.client_type as string | null) ?? null;
+    }
+    const briefPrompt =
+      systemPrompt + (await buildSkillInstructions(database, 'brief', { clientType: briefClientType }));
     const { brief, nextQuestion, usage } = await analyzeBrief(briefPrompt, transcript, roundsRemaining);
     await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
 
@@ -480,6 +486,11 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   if (!request) return;
   const conversation = request.conversations as Conv;
   const systemPrompt = await getActiveSystemPrompt(database);
+  let genClientType: string | null = null;
+  if (request.brand_id) {
+    const { data: br } = await database.from('brands').select('client_type').eq('id', request.brand_id).single();
+    genClientType = (br?.client_type as string | null) ?? null;
+  }
   const templates = await getTemplates(database);
   const maxAttempts = (await getSetting<{ max: number }>(database, 'generation_attempts'))?.max ?? 3;
   const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
@@ -550,13 +561,13 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         `פרומפט שנשלח למנוע התמונה:\n${prompt}`,
       ].join('\n\n');
     } else if (outputType === 'presentation') {
-      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'presentation'));
+      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'presentation', { outputType: 'presentation', clientType: genClientType }));
       const { text, usage } = await generatePresentationOutline(genPrompt, brief);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;
       qaDescription = text.slice(0, 4000);
     } else {
-      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'text'));
+      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'text', { outputType: 'text', clientType: genClientType }));
       const { text, usage } = await generateText(genPrompt, brief, brief.admin_note as string | undefined);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;
@@ -572,7 +583,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         notes: 'Image generation completed and the image was stored successfully. Pixel-level review is not available in this worker.',
       };
     } else {
-      const qaPrompt = systemPrompt + (await buildSkillInstructions(database, 'qa'));
+      const qaPrompt = systemPrompt + (await buildSkillInstructions(database, 'qa', { outputType, clientType: genClientType }));
       const { qa: textQa, usage: qaUsage } = await runQa(qaPrompt, brief, qaDescription);
       qa = textQa;
       await recordUsage(database, requestId, 'openai', 'chat', qaUsage.prompt_tokens, qaUsage.completion_tokens, estimateTextCost(qaUsage.prompt_tokens, qaUsage.completion_tokens));
