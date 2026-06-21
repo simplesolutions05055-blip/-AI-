@@ -97,46 +97,6 @@ async function chat(
   };
 }
 
-export async function runAgentChat(
-  systemPrompt: string,
-  transcript: string,
-  opts: { model?: string; questionRound?: number } = {}
-) {
-  const instruction = `${systemPrompt}
-
-הקשר מערכת:
-question_round הנוכחי הוא ${opts.questionRound ?? 0}.
-נתח את שיחת WhatsApp הבאה והחזר JSON בלבד לפי הפורמט שהוגדר ב־System Message.
-בקשת בריף/עיצוב/פוסט/תמונה עבור אירוע קהילתי, עירוני, פעילות ילדים או חירום אזרחי היא מותרת כברירת מחדל. אל תחסום בגלל המילה "חירום" בלבד; חסום רק אם יש בקשה להוראות מזיקות, הטעיה, פאניקה, התחזות או פעולה בלתי חוקית.`;
-
-  const { content, usage } = await chat(
-    [
-      { role: 'system', content: instruction },
-      { role: 'user', content: transcript },
-    ],
-    { json: true, temperature: 0.2, model: opts.model }
-  );
-
-  try {
-    return { response: JSON.parse(content), usage };
-  } catch {
-    return {
-      response: {
-        action: 'needs_attention',
-        message_to_user: 'לא הצלחנו להבין את הבקשה כרגע. הבקשה הועברה לבדיקה.',
-        brief: { output_type: null },
-        missing_fields: [],
-        question_round: opts.questionRound ?? 0,
-        ready_for_generation: false,
-        safety: { status: 'needs_review', reason: 'invalid_json_response' },
-        recommended_review: 'manual',
-        internal_notes: 'Model returned invalid JSON',
-      },
-      usage,
-    };
-  }
-}
-
 export async function classifyResetIntent(
   text: string,
   context: { lastAssistantMessage?: string | null } = {}
@@ -197,10 +157,13 @@ export async function analyzeBrief(
   "goal": "...", "audience": "...", "language": "עברית",
   "must_include": ["..."], "style": "...", "source_materials": "...",
   "dimensions": "...", "customer_email": "...",
+  "color_override": "...",
   "ready": true|false, "missing": ["שדות חסרים"],
   "next_question": "השאלה הבאה בעברית או null אם הבריף מוכן"
 }
 נותרו ${roundsRemaining} סבבי שאלות. אם נגמרו הסבבים, סמן ready=true עם המידע הקיים.
+אם המשתמש מבקש במפורש צבע אחר מזה של המותג (למשל "תעשה את הראשי כחול במקום אדום", "בלי הכתום", "בגוונים ירוקים"), רשום זאת ב-color_override כתיאור חופשי בעברית של מה לשנות; אחרת השאר color_override=null. שינוי כזה גובר על פלטת המותג רק לתוצר הנוכחי.
+אם המשתמש מבקש מידות/גודל אחרים (למשל "סטורי 1080x1920", "פוסט מלבני", "באנר רחב"), עדכן את dimensions בהתאם — גם באמצע שיחה, גם אם כבר נקבעו מידות קודם.
 אם הטרנסקריפט כולל "הקשר קודם מהשיחה", השתמש בו רק כאשר המשתמש מפנה אליו במפורש או במשתמע במילים כמו "כמו קודם", "אותו קהל", "גם", "המשך", "על אותו אירוע". במקרה כזה השלם פרטים חסרים מההקשר הקודם, למשל קהל יעד, עיר, אירוע, תאריך/זמן או מסרים.
 שאל שאלה אחת ממוקדת בלבד אם חסר מידע מהותי ליצירת התוצר.
 בתמונות, מידות/יחס תמונה אינם מידע מהותי: אם המשתמש לא ציין מידות, קבע dimensions="מידות מומלצות" או "ריבוע 1:1 לרשתות חברתיות" והמשך. אם המשתמש אומר "מידות מומלצות", סמן ready=true.
@@ -426,6 +389,53 @@ export async function runQa(systemPrompt: string, brief: unknown, outputDescript
   let qa: { passed: boolean; issues: string[]; notes?: string } = { passed: true, issues: [] };
   try {
     qa = JSON.parse(content);
+  } catch {
+    qa = { passed: false, issues: ['QA parse error'] };
+  }
+  return { qa, usage };
+}
+
+// Vision-based QA for a generated image: the model ACTUALLY sees the rendered
+// PNG and reviews it against the brief, instead of guessing from a text
+// description (which forced an "I couldn't inspect it → fail" loop). Used for
+// both QA layers on images so Rule 4 (two-layer QA) is real, not theatre.
+export async function reviewImageQa(
+  systemPrompt: string,
+  brief: unknown,
+  base64: string,
+  mime: string
+): Promise<{ qa: { passed: boolean; issues: string[]; notes?: string }; usage: ChatUsage }> {
+  const res = await fetch(`${API}/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `בצע QA על התמונה המצורפת מול הבריף. אתה רואה את התמונה בפועל — אל תכתוב "לא ניתן לבדוק"; קבע על סמך מה שאתה רואה.
+בדוק: כל הפריטים מ-"חייב לכלול" מופיעים ונכונים (תאריך/שם/אירוע), עברית תקינה ומאויתת נכון, יישור RTL (טקסט ואייקונים מימין), התאמה לפלטת הצבעים והסגנון של המותג, ואין מידע מומצא.
+בריף:\n${JSON.stringify(brief)}
+החזר JSON בלבד: {"passed": true|false, "issues": ["..."], "notes": "..."}`,
+            },
+            { type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } },
+          ],
+        },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`OpenAI vision QA ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const usage = data.usage ?? { prompt_tokens: 0, completion_tokens: 0 };
+  let qa: { passed: boolean; issues: string[]; notes?: string } = { passed: true, issues: [] };
+  try {
+    qa = JSON.parse(data.choices?.[0]?.message?.content ?? '{}');
   } catch {
     qa = { passed: false, issues: ['QA parse error'] };
   }

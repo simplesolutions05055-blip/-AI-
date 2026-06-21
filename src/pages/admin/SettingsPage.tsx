@@ -54,7 +54,9 @@ export default function SettingsPage() {
     image_quality: 'auto',
   };
   const approval = settings.approval_mode ?? { mode: 'by_output_type', by_type: {} };
+  const approvalQuickReply = settings.whatsapp_approval_quick_reply ?? { enabled: false, content_sid: '' };
   const limits = settings.rate_limits ?? {};
+  const budget = settings.request_budget_usd ?? { max: 0.08 };
   const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
   if (loading) return <p className="text-[var(--muted)]">טוען...</p>;
@@ -166,6 +168,23 @@ export default function SettingsPage() {
             <option value="by_output_type">לפי סוג תוצר</option>
           </select>
         </Field>
+        <label className="mb-3 flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={Boolean(approvalQuickReply.enabled)}
+            onChange={(e) => update('whatsapp_approval_quick_reply', { ...approvalQuickReply, enabled: e.target.checked })}
+          />
+          שליחת כפתור "מאשר" ב-WhatsApp
+        </label>
+        <Field label="Twilio ContentSid לכפתור מאשר">
+          <input
+            className={input}
+            dir="ltr"
+            placeholder="HX..."
+            value={approvalQuickReply.content_sid ?? ''}
+            onChange={(e) => update('whatsapp_approval_quick_reply', { ...approvalQuickReply, content_sid: e.target.value.trim() })}
+          />
+        </Field>
       </section>
 
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
@@ -176,6 +195,12 @@ export default function SettingsPage() {
           </Field>
           <Field label="ניסיונות יצירה מקסימלי">
             <input type="number" className={input} value={settings.generation_attempts?.max ?? 3} onChange={(e) => update('generation_attempts', { max: Number(e.target.value) })} />
+          </Field>
+          <Field label="ניסיונות תמונה מקסימלי">
+            <input type="number" min={1} className={input} value={settings.image_generation_attempts?.max ?? 1} onChange={(e) => update('image_generation_attempts', { max: Number(e.target.value) })} />
+          </Field>
+          <Field label="תקרת עלות לבקשה ($)">
+            <input type="number" step="0.01" min={0} className={input} value={budget.max ?? 0.08} onChange={(e) => update('request_budget_usd', { max: Number(e.target.value) })} />
           </Field>
           <Field label="הודעות ל-24 שעות">
             <input type="number" className={input} value={limits.messages_per_24h ?? 50} onChange={(e) => update('rate_limits', { ...limits, messages_per_24h: Number(e.target.value) })} />

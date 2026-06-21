@@ -41,6 +41,7 @@ export const DEFAULT_TEMPLATES: Record<string, string> = {
   timeout_warning: 'עוד 10 דקות נסגור את הבקשה הנוכחית. רוצה להמשיך? פשוט כתוב לי הודעה 🙂',
   closed_idle: 'סגרנו את הבקשה הקודמת מאחר שלא התקבלה תשובה. אפשר לפתוח בקשה חדשה בכל רגע.',
   reset: 'התחלנו מחדש ✅ ספר לי מה תרצה שניצור עבורך.',
+  welcome: 'היי! 👋 אני סוכן ה-AI שמכין עבורך תכנים — טקסטים, תמונות, מצגות ומסמכים. מה תרצה שניצור?',
 };
 
 // Detect an explicit "start over / new conversation" command — fuzzy, so typos
@@ -70,6 +71,25 @@ function fuzzyPhraseHit(t: string, words: string[], phrase: string): boolean {
     if (Math.abs(window.length - phrase.length) <= tol && editDistance(window, phrase) <= tol) return true;
   }
   return false;
+}
+
+// Bare greetings / openers carry no request — "היי", "שלום", "בוקר טוב מה נשמע".
+// We detect them so a first message that's just a hello gets a friendly welcome
+// + "what would you like to create?" instead of being fed to the brief analyzer
+// (which otherwise invents a confused follow-up question).
+const GREETING_WORDS = new Set([
+  'שלום', 'היי', 'הי', 'האו', 'הלו', 'אהלן', 'אהלין', 'יו', 'הייי', 'הייא',
+  'בוקר', 'טוב', 'צהריים', 'ערב', 'לילה', 'מה', 'נשמע', 'קורה', 'העניינים',
+  'שלומך', 'אחי', 'אחותי', 'גבר', 'יא', 'אלופים',
+  'hi', 'hii', 'hey', 'heya', 'hello', 'helo', 'yo', 'sup', 'hola', 'shalom',
+  'good', 'morning', 'evening', 'whatsup', 'up',
+]);
+export function isGreetingOnly(text: string): boolean {
+  const t = (text || '').replace(/[",'׳״.\-?!;:()@#]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!t || t.length > 30) return false; // anything longer is a real request
+  const words = t.split(' ').filter(Boolean);
+  if (!words.length) return false;
+  return words.every((w) => GREETING_WORDS.has(w));
 }
 
 export function isResetCommand(text: string): boolean {

@@ -68,10 +68,20 @@ export function matchBrandInText(
     .filter((c) => c.needle.length >= 2)
     .sort((a, z) => z.needle.length - a.needle.length);
 
-  // pass 1: exact substring (most reliable)
+  // pass 1: exact substring (most reliable). When several brands appear, prefer
+  // the one mentioned EARLIEST — the user names the client first ("זה של עיריית
+  // תל אביב, אירוע באירוח ראש ממשלת ישראל…": Tel Aviv is the client, the PM is
+  // just event content). Tie-break on the earliest position by the longer needle
+  // so a fuller alias ("עיריית תל אביב-יפו") wins over a short one at the same start.
+  let best: { id: string; name: string; pos: number; len: number } | null = null;
   for (const c of candidates) {
-    if (inboundText.includes(c.needle)) return { id: c.id, name: c.name, confidence: 'exact' };
+    const pos = inboundText.indexOf(c.needle);
+    if (pos < 0) continue;
+    if (!best || pos < best.pos || (pos === best.pos && c.needle.length > best.len)) {
+      best = { id: c.id, name: c.name, pos, len: c.needle.length };
+    }
   }
+  if (best) return { id: best.id, name: best.name, confidence: 'exact' };
 
   // pass 2: fuzzy — every word of the needle must fuzzy-hit some inbound word
   for (const c of candidates) {
@@ -160,4 +170,43 @@ export function buildBusinessBrainContext(
 // Build a Hebrew brand-guidelines block from a brand kit, fed into generation prompts.
 export function buildBrandContext(brand: BrandKit | null): string | null {
   return buildBusinessBrainContext(brand).visual;
+}
+
+// Build the Hebrew footer shown UNDER a delivered output: the colors and the
+// dimensions, explicitly attributed to the brand, plus an invitation to change.
+// Returns null when there's nothing brand-specific to show (no active brand /
+// empty palette and no dimensions) so we don't tack an empty block onto plain
+// outputs. Shared by the worker so WhatsApp and the simulator render it identically.
+export function buildBrandDeliveryFooter(
+  brand: BrandKit | null,
+  brief: Record<string, unknown>,
+  opts: { includeChangeHint?: boolean } = {}
+): string | null {
+  if (!brand || brand.is_active === false) return null;
+  const colors = (brand.color_palette ?? []).filter((c) => c?.hex);
+  const dims =
+    typeof brief.dimensions === 'string' && brief.dimensions.trim()
+      ? brief.dimensions.trim()
+      : null;
+  if (!colors.length && !dims) return null;
+
+  const colorOverride =
+    typeof brief.color_override === 'string' && brief.color_override.trim()
+      ? brief.color_override.trim()
+      : null;
+
+  const lines: string[] = [`📋 הפרטים הבאים נלקחו מהמיתוג של ${brand.name}:`];
+  if (colors.length) {
+    lines.push('🎨 צבעים:');
+    for (const c of colors) {
+      lines.push(`• ${c.role ? `${c.role} — ` : ''}${c.hex}`);
+    }
+  }
+  if (colorOverride) lines.push(`✏️ שינוי צבע לפי בקשתך (גובר על המותג): ${colorOverride}`);
+  if (dims) lines.push(`📐 מידות: ${dims}`);
+  if (opts.includeChangeHint !== false) {
+    lines.push('');
+    lines.push('רוצה לשנות צבע או מידה? כתוב לי מה לשנות ואעדכן 🙂');
+  }
+  return lines.join('\n');
 }

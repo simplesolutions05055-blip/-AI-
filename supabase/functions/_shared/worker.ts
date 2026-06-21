@@ -12,11 +12,11 @@ import {
   estimateImageCost,
   round4,
 } from './util.ts';
-import { analyzeBrief, generateText, generatePresentationOutline, generateImage, runQa } from './openai.ts';
+import { analyzeBrief, generateText, generatePresentationOutline, generateImage, runQa, reviewImageQa } from './openai.ts';
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
-import { matchBrandInText, buildBusinessBrainContext, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
+import { matchBrandInText, buildBusinessBrainContext, buildBrandDeliveryFooter, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
 import { buildSkillInstructions, applyBriefSkillGate } from './skills.ts';
 import {
   loadLearnedRules,
@@ -66,7 +66,11 @@ function isBriefApproval(text: string): boolean {
   return /^(מאשרת?|מאשרים|אשר|לאשר|אישור|כן|אוקיי?|ok|yes|go)$/.test(t);
 }
 
-function formatBriefForApproval(brief: Record<string, unknown>, outputType: string | null): string {
+function formatBriefForApproval(
+  brief: Record<string, unknown>,
+  outputType: string | null,
+  brandBlock?: string | null
+): string {
   const title =
     outputType === 'image' ? 'הכנתי בריף לתמונה' :
     outputType === 'presentation' ? 'הכנתי בריף למצגת' :
@@ -82,7 +86,8 @@ function formatBriefForApproval(brief: Record<string, unknown>, outputType: stri
     brief.dimensions ? `פורמט: ${brief.dimensions}` : '',
     mustInclude.length ? `חייב לכלול: ${mustInclude.join(', ')}` : '',
   ].filter(Boolean);
-  return `${lines.join('\n')}\n\nכדי לאשר ולהפיק, כתוב: מאשר`;
+  const body = brandBlock ? `${lines.join('\n')}\n\n${brandBlock}` : lines.join('\n');
+  return `${body}\n\nכדי לאשר ולהפיק, כתוב: מאשר. אם צריך שינוי, כתוב מה לשנות.`;
 }
 
 // Find an active brand whose name/alias appears in any inbound message.
@@ -150,11 +155,16 @@ async function handleBrandConfirmation(
           await logEvent(database, { requestId: request.id, action: 'brand_match_corrected_exact', metadata: { brand_id: alt.id } });
           return 'continue';
         }
-        await saveBrief({ pending_brand_id: alt.id, brand_unclear_count: 0 });
-        await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-        await logEvent(database, { requestId: request.id, action: 'brand_match_corrected', metadata: { brand_id: alt.id } });
-        await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
+        // Persist the new pending guess only if the confirmation question was
+        // actually delivered — otherwise leave state as-is so the next inbound
+        // re-matches and re-asks instead of stranding an unseen pending_brand_id.
+        const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
           `הבנתי שמדובר ב${alt.name}, נכון? השב כן או לא.`, conversation.simulated);
+        if (delivered) {
+          await saveBrief({ pending_brand_id: alt.id, brand_unclear_count: 0 });
+          await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+          await logEvent(database, { requestId: request.id, action: 'brand_match_corrected', metadata: { brand_id: alt.id } });
+        }
         return 'awaiting';
       }
       await saveBrief({ pending_brand_id: null, brand_declined: true });
@@ -170,10 +180,14 @@ async function handleBrandConfirmation(
         'אין בעיה, נמשיך ללא מיתוג ספציפי בינתיים.', conversation.simulated);
       return 'continue';
     }
-    await saveBrief({ brand_unclear_count: unclearCount });
-    await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-    await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
+    // Only count this retry if the user actually saw the re-ask; a failed send
+    // must not march brand_unclear_count toward the give-up cap on its own.
+    const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
       'רק לוודא — להשתמש במיתוג של המקום שזיהיתי? השב כן או לא.', conversation.simulated);
+    if (delivered) {
+      await saveBrief({ brand_unclear_count: unclearCount });
+      await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+    }
     return 'awaiting';
   }
 
@@ -188,11 +202,15 @@ async function handleBrandConfirmation(
     return 'continue';
   }
 
-  await saveBrief({ pending_brand_id: match.id });
-  await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-  await logEvent(database, { requestId: request.id, action: 'brand_match_suggested', metadata: { brand_id: match.id } });
-  await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
+  // Record the pending guess only on delivery, so an undelivered prompt doesn't
+  // strand a pending_brand_id the user never saw (the next inbound re-matches).
+  const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
     `הבנתי שמדובר ב${match.name}, נכון? השב כן או לא.`, conversation.simulated);
+  if (delivered) {
+    await saveBrief({ pending_brand_id: match.id });
+    await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+    await logEvent(database, { requestId: request.id, action: 'brand_match_suggested', metadata: { brand_id: match.id } });
+  }
   return 'awaiting';
 }
 
@@ -248,14 +266,19 @@ async function windowOpen(database: DB, conversationId: string): Promise<boolean
   return Date.now() - new Date(data.created_at as string).getTime() < 24 * 60 * 60 * 1000;
 }
 
-async function sendOut(
+// Returns true when the message actually reached the user (real send or
+// simulated), false when delivery failed (Twilio error, daily limit, or
+// outside the 24h window with no template). Callers that advance request
+// state — question rounds, brand handshake — MUST gate that progress on a
+// true return, so a failed send never silently burns the user's budget.
+export async function sendOut(
   database: DB,
   conversationId: string,
-  requestId: string,
+  requestId: string | null,
   to: string,
   body: string,
   simulated: boolean
-) {
+): Promise<boolean> {
   try {
     let sid: string;
     if (simulated) {
@@ -280,7 +303,7 @@ async function sendOut(
           direction: 'outbound', body: `[לא נשלח — מחוץ לחלון 24 שעות] ${body}`,
           twilio_message_sid: `undelivered-${crypto.randomUUID()}`,
         });
-        return;
+        return false;
       }
     }
     await database.from('messages').insert({
@@ -290,6 +313,7 @@ async function sendOut(
       body,
       twilio_message_sid: sid,
     });
+    return true;
   } catch (e) {
     const message = String(e);
     await logEvent(database, { requestId, severity: 'error', action: 'whatsapp_send_failed', message });
@@ -302,7 +326,46 @@ async function sendOut(
         twilio_message_sid: `twilio-limit-${crypto.randomUUID()}`,
       });
     }
+    return false;
   }
+}
+
+async function sendApprovalPrompt(
+  database: DB,
+  conversation: Conv,
+  requestId: string,
+  to: string,
+  body: string,
+): Promise<boolean> {
+  if (conversation.simulated) {
+    return sendOut(database, conversation.id, requestId, to, body, true);
+  }
+  const quickReply = await getSettingOr<{ enabled?: boolean; content_sid?: string }>(
+    database,
+    'whatsapp_approval_quick_reply',
+    { enabled: false, content_sid: '' },
+  );
+  if (quickReply.enabled && quickReply.content_sid) {
+    try {
+      const sid = await sendWhatsAppTemplate(to, quickReply.content_sid, { 1: body.slice(0, 1400) });
+      await database.from('messages').insert({
+        conversation_id: conversation.id,
+        request_id: requestId,
+        direction: 'outbound',
+        body,
+        twilio_message_sid: sid,
+      });
+      return true;
+    } catch (e) {
+      await logEvent(database, {
+        requestId,
+        severity: 'warning',
+        action: 'approval_quick_reply_failed',
+        message: String(e),
+      });
+    }
+  }
+  return sendOut(database, conversation.id, requestId, to, body, false);
 }
 
 // States where a fresh inbound WhatsApp message must NOT restart generation.
@@ -443,18 +506,31 @@ async function runRequestPipeline(
     if (!request.brand_id) {
       const step = await handleBrandConfirmation(database, request, conversation, msgs ?? [], templates);
       if (step === 'awaiting') return; // asked the user to confirm — wait for reply
+      // handleBrandConfirmation writes brand_id to the DB on a match/confirm but
+      // can't mutate our local row — refresh it so the skill gate below sees the
+      // brand and doesn't re-ask "which client?" for one already identified.
+      const { data: fresh } = await database.from('requests').select('brand_id').eq('id', requestId).single();
+      if (fresh?.brand_id) request.brand_id = fresh.brand_id;
     }
 
     const maxRounds = (await getSetting<{ max: number }>(database, 'question_rounds'))?.max ?? 3;
     const roundsRemaining = Math.max(0, maxRounds - request.question_rounds);
 
     let briefClientType: string | null = null;
+    let briefBrandName: string | null = null;
     if (request.brand_id) {
-      const { data: br } = await database.from('brands').select('client_type').eq('id', request.brand_id).single();
+      const { data: br } = await database.from('brands').select('name, client_type').eq('id', request.brand_id).single();
       briefClientType = (br?.client_type as string | null) ?? null;
+      briefBrandName = (br?.name as string | null) ?? null;
     }
+    // When the client/authority is already identified, tell the analyzer so it
+    // never re-asks "which client?" — the user already named it (e.g. "תל אביב").
+    const brandKnownDirective = briefBrandName
+      ? `\nהלקוח/הרשות כבר זוהה: ${briefBrandName}. אל תשאל לאיזה לקוח/רשות/עירייה מיועד התוצר — זה ידוע וסגור. השתמש בו ישירות והמשך; שאל רק על פרטים יצירתיים שבאמת חסרים (כגון מסר, קהל, או תאריך אם רלוונטי).`
+      : '';
     const briefPrompt =
       systemPrompt +
+      brandKnownDirective +
       (await buildSkillInstructions(database, 'brief', { clientType: briefClientType })) +
       (await loadLearnedRules(database, request.brand_id as string | null));
     const { brief, nextQuestion, usage } = await analyzeBrief(briefPrompt, transcript, roundsRemaining);
@@ -488,9 +564,21 @@ async function runRequestPipeline(
       .eq('id', requestId);
 
     if (effectiveNextQuestion && roundsRemaining > 0) {
-      await database.from('requests').update({ question_rounds: request.question_rounds + 1 }).eq('id', requestId);
-      await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-      await sendOut(database, conversation.id, requestId, waFrom, effectiveNextQuestion, conversation.simulated);
+      // Send FIRST, then advance the round only if the user actually received the
+      // question. If the send failed (Twilio down / daily limit / outside window)
+      // we leave question_rounds and status untouched, so the next inbound message
+      // re-asks the same round instead of silently burning the budget toward
+      // needs_attention — keeping WhatsApp behaviour identical to the simulator.
+      const delivered = await sendOut(database, conversation.id, requestId, waFrom, effectiveNextQuestion, conversation.simulated);
+      if (delivered) {
+        await database.from('requests').update({ question_rounds: request.question_rounds + 1 }).eq('id', requestId);
+        await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+      } else {
+        await logEvent(database, {
+          requestId, severity: 'warning', action: 'question_not_delivered',
+          message: 'Question send failed — round not consumed; will retry on next inbound.',
+        });
+      }
       return;
     }
     // Simulator parity: email is NOT required to generate. We keep it if given
@@ -500,12 +588,27 @@ async function runRequestPipeline(
       await sendOut(database, conversation.id, requestId, waFrom, templates.needs_attention, conversation.simulated);
       return;
     }
+    // Rule 1 (חוק האישור): a social-graphics output must be approved by a human
+    // before it is produced/published — never auto-run an image. When the brief
+    // is ready, present it and wait for an explicit "מאשר" instead of generating.
     const outputType = (b.output_type as string) ?? (request.output_type as string) ?? null;
     if (b.ready === true && outputType === 'image') {
       await setStatus(database, requestId, 'waiting_for_approval');
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
       await logEvent(database, { requestId, action: 'brief_ready_for_approval' });
-      await sendOut(database, conversation.id, requestId, waFrom, formatBriefForApproval(b, outputType), conversation.simulated);
+      // Append the brand colors+dimensions block to the approval card so the user
+      // can confirm them (or ask to change → reopens the brief above). The "want
+      // to change" hint is omitted here; the card's own approve/change line covers it.
+      let brandBlock: string | null = null;
+      if (request.brand_id) {
+        const { data: brand } = await database
+          .from('brands')
+          .select('name, color_palette, style_notes, is_active, client_type')
+          .eq('id', request.brand_id)
+          .single();
+        brandBlock = buildBrandDeliveryFooter(brand ?? null, b, { includeChangeHint: false });
+      }
+      await sendApprovalPrompt(database, conversation, requestId, waFrom, formatBriefForApproval(b, outputType, brandBlock));
       return;
     }
     await setStatus(database, requestId, 'queued');
@@ -529,9 +632,11 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     genClientType = (br?.client_type as string | null) ?? null;
   }
   const templates = await getTemplates(database);
-  const maxAttempts = (await getSetting<{ max: number }>(database, 'generation_attempts'))?.max ?? 3;
   const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
   const outputType: string = (request.output_type as string) ?? 'text';
+  const generalMaxAttempts = (await getSetting<{ max: number }>(database, 'generation_attempts'))?.max ?? 3;
+  const imageMaxAttempts = (await getSetting<{ max: number }>(database, 'image_generation_attempts'))?.max ?? 1;
+  const maxAttempts = outputType === 'image' ? Math.max(1, imageMaxAttempts) : generalMaxAttempts;
 
   // Skill 10 + Rule 5 context, loaded once for this generation.
   const learnedBlock = await loadLearnedRules(database, request.brand_id as string | null);
@@ -558,18 +663,30 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
 
   await setStatus(database, requestId, 'processing');
   const version = (request.attempt_count ?? 0) + 1;
-  let longImageTimer: number | undefined;
 
   try {
     let textContent: string | null = null;
     let storagePath: string | null = null;
     let mime: string | null = null;
     let qaDescription = '';
+    // Kept around so image QA #2 can actually SEE the pixels (vision QA), instead
+    // of grading a text description that can never confirm colors/logo.
+    let imageBase64: string | null = null;
 
     if (outputType === 'image') {
+      // A user-requested color change overrides the brand palette for THIS output
+      // only. Placed AFTER businessBrain so it wins over the "binding palette" block.
+      const colorOverride =
+        typeof brief.color_override === 'string' && brief.color_override.trim()
+          ? brief.color_override.trim()
+          : null;
+      const COLOR_OVERRIDE_DIRECTIVE = colorOverride
+        ? `\n\nעדיפות צבע מהמשתמש (גוברת על פלטת המותג לתוצר זה בלבד): ${colorOverride}. ` +
+          'יש ליישם בדיוק את שינוי הצבע שהמשתמש ביקש; שאר הצבעים שלא הוזכרו נשארים לפי המותג.'
+        : '';
       const basePrompt = `${brief.goal ?? ''} ${brief.style ?? ''} ${((brief.must_include as string[]) ?? []).join(', ')}${
         businessBrain.combined ? `\n\n${businessBrain.combined}` : ''
-      }${lockBlock}${learnedBlock}`.trim();
+      }${COLOR_OVERRIDE_DIRECTIVE}${lockBlock}${learnedBlock}`.trim();
       // Deterministic RTL safety net: ensure the image engine always receives the
       // icon-on-right / right-aligned directive, even if the LLM brief omitted it.
       const RTL_IMAGE_DIRECTIVE =
@@ -580,18 +697,27 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       const prompt = basePrompt
         ? `${basePrompt}\n\n${RTL_IMAGE_DIRECTIVE}`
         : RTL_IMAGE_DIRECTIVE;
-      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-        'מעולה, אני עובד על התמונה עכשיו. זה יכול לקחת רגע.', conversation.simulated);
-      longImageTimer = setTimeout(() => {
-        sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-          'אני עדיין עובד על התמונה, זה פשוט לוקח קצת יותר זמן.', conversation.simulated)
-          .catch(() => {});
-      }, 45_000);
-      const { base64, mime: imgMime } = await generateImage(prompt || 'תמונה ריבועית');
-      if (longImageTimer !== undefined) {
-        clearTimeout(longImageTimer);
-        longImageTimer = undefined;
+      // Map the requested dimensions to a supported image size (square / portrait /
+      // landscape) so a "story 1080x1920" request actually changes the output ratio.
+      const imageSize = dimensionsToImageSize(brief.dimensions as string | null | undefined);
+      // One waiting message only, and only on the first attempt — retries stay silent
+      // so the user never gets "מעולה אני עובד" spammed on each QA round.
+      if (version === 1) {
+        const delivered = await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
+          'מעולה, אני עובד על התמונה עכשיו. זה יכול לקחת רגע.', conversation.simulated);
+        if (!delivered && !conversation.simulated) {
+          await logEvent(database, {
+            requestId,
+            severity: 'warning',
+            action: 'generation_blocked_undeliverable',
+            message: 'Image generation skipped because WhatsApp could not deliver the preflight message.',
+          });
+          await setStatus(database, requestId, 'needs_attention');
+          return;
+        }
       }
+      const { base64, mime: imgMime } = await generateImage(prompt || 'תמונה ריבועית', { size: imageSize });
+      imageBase64 = base64;
       await recordUsage(database, requestId, 'openai', 'image', 0, 1, estimateImageCost(1));
       storagePath = `${requestId}/v${version}.png`;
       mime = imgMime;
@@ -636,7 +762,11 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     let qa2: QaLayer = { passed: true, issues: [], notes: 'QA#2 דולג: QA#1 לא עבר.' };
     if (qa1.passed) {
       const qa2Prompt = systemPrompt + (await buildSkillInstructions(database, 'qa2', { outputType, clientType: genClientType })) + learnedBlock;
-      const r2 = await runQa(qa2Prompt, brief, qaDescription);
+      // Images get a VISION QA that actually looks at the pixels — the text-based
+      // runQa can only ever say "can't verify colors/logo" and fail every retry.
+      const r2 = outputType === 'image' && imageBase64
+        ? await reviewImageQa(qa2Prompt, brief, imageBase64, mime ?? 'image/png')
+        : await runQa(qa2Prompt, brief, qaDescription);
       qa2 = r2.qa;
       await recordUsage(database, requestId, 'openai', 'chat', r2.usage.prompt_tokens, r2.usage.completion_tokens, estimateTextCost(r2.usage.prompt_tokens, r2.usage.completion_tokens));
     }
@@ -678,7 +808,6 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     await maybeLockTemplate(database, request.brand_id as string | null, outputType, brief);
     await deliverOutput(database, requestId);
   } catch (e) {
-    if (longImageTimer !== undefined) clearTimeout(longImageTimer);
     await logEvent(database, { requestId, severity: 'error', action: 'generation_failed', message: String(e) });
     await setStatus(database, requestId, 'failed');
   }
@@ -727,7 +856,7 @@ async function deliverOutput(database: DB, requestId: string): Promise<void> {
 
 async function deliverContentToWhatsApp(
   database: DB,
-  request: { id: string; structured_brief: Record<string, unknown> | null },
+  request: { id: string; brand_id?: string | null; structured_brief: Record<string, unknown> | null },
   conversation: Conv,
   output: { output_type: string; text_content: string | null; storage_path: string | null; mime_type: string | null; version: number }
 ): Promise<void> {
@@ -736,8 +865,22 @@ async function deliverContentToWhatsApp(
   const type = output.output_type;
   const caption = ((request.structured_brief?.goal as string) || 'התוצר שלך').slice(0, 200);
 
+  // Footer shown UNDER the output: brand colors + dimensions, attributed to the
+  // brand, with an invitation to request changes. Empty when no brand is set.
+  let brandFooter: string | null = null;
+  if (request.brand_id) {
+    const { data: brand } = await database
+      .from('brands')
+      .select('name, color_palette, style_notes, is_active, client_type')
+      .eq('id', request.brand_id)
+      .single();
+    brandFooter = buildBrandDeliveryFooter(brand ?? null, (request.structured_brief ?? {}) as Record<string, unknown>);
+  }
+
   if (type === 'text' || type === 'presentation') {
-    await sendOut(database, conversation.id, request.id, to, output.text_content ?? '(לא נוצר תוכן)', simulated);
+    const textBody = output.text_content ?? '(לא נוצר תוכן)';
+    const body = brandFooter ? `${textBody}\n\n${brandFooter}` : textBody;
+    await sendOut(database, conversation.id, request.id, to, body, simulated);
     return;
   }
 
@@ -756,30 +899,41 @@ async function deliverContentToWhatsApp(
     }
   }
 
+  // The caption that travels with the media (below the image on WhatsApp) carries
+  // the brand colors+dimensions footer; the bare `caption` stays the title.
+  const mediaCaption = brandFooter ? `${caption}\n\n${brandFooter}` : caption;
+
   if (simulated) {
-    await sendOut(database, conversation.id, request.id, to, `${caption}\n[תוצר ${type} נוצר — מצב סימולציה, לא נשלחה מדיה]`, true);
+    // Simulator parity: the media was really generated and stored — record it on
+    // an outbound message with its storage_path so the simulator UI can fetch a
+    // signed URL and display the exact image/PDF the user would get on WhatsApp.
+    await database.from('messages').insert({
+      conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
+      body: mediaCaption, media_type: contentType, storage_path: path,
+      twilio_message_sid: `sim-${crypto.randomUUID()}`,
+    });
     return;
   }
   if (!path) {
-    await sendOut(database, conversation.id, request.id, to, caption, false);
+    await sendOut(database, conversation.id, request.id, to, mediaCaption, false);
     return;
   }
 
   const { data: signed } = await database.storage.from('outputs').createSignedUrl(path, 3600);
   const url = signed?.signedUrl;
   if (!url) {
-    await sendOut(database, conversation.id, request.id, to, caption, false);
+    await sendOut(database, conversation.id, request.id, to, mediaCaption, false);
     return;
   }
   try {
-    const sid = await sendWhatsAppMedia(to, url, caption);
+    const sid = await sendWhatsAppMedia(to, url, mediaCaption);
     await database.from('messages').insert({
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
-      body: caption, media_type: contentType, storage_path: path, twilio_message_sid: sid,
+      body: mediaCaption, media_type: contentType, storage_path: path, twilio_message_sid: sid,
     });
   } catch (e) {
     await logEvent(database, { requestId: request.id, severity: 'error', action: 'whatsapp_media_send_failed', message: String(e) });
-    await sendOut(database, conversation.id, request.id, to, `${caption}\n${url}`, false);
+    await sendOut(database, conversation.id, request.id, to, `${mediaCaption}\n${url}`, false);
   }
 }
 
@@ -857,6 +1011,28 @@ export async function sendOutput(requestId: string): Promise<void> {
     await logEvent(database, { requestId, severity: 'error', action: 'send_failed', message: String(e) });
     await setStatus(database, requestId, 'needs_attention');
   }
+}
+
+// Map a free-text dimensions/aspect request to a size the image engine supports
+// (gpt-image-1: square / portrait / landscape). Honors explicit "WxH" numbers
+// first, then Hebrew/English orientation keywords, defaulting to square.
+function dimensionsToImageSize(dimensions: string | null | undefined): string {
+  const SQUARE = '1024x1024', PORTRAIT = '1024x1536', LANDSCAPE = '1536x1024';
+  const d = (dimensions ?? '').toLowerCase();
+  if (!d.trim()) return SQUARE;
+
+  const m = d.match(/(\d{2,5})\s*[x×*by:\/\s-]+\s*(\d{2,5})/);
+  if (m) {
+    const w = parseInt(m[1], 10), h = parseInt(m[2], 10);
+    if (w && h) {
+      if (h > w * 1.15) return PORTRAIT;
+      if (w > h * 1.15) return LANDSCAPE;
+      return SQUARE;
+    }
+  }
+  if (/(story|סטורי|סטורית|reel|ריל|רילס|אנכי|לאורך|portrait|9:16|טיקטוק|tiktok)/.test(d)) return PORTRAIT;
+  if (/(רחב|באנר|banner|לרוחב|אופקי|landscape|cover|כיסוי|16:9|נוף)/.test(d)) return LANDSCAPE;
+  return SQUARE;
 }
 
 // ── base64 helpers ───────────────────────────────────────────────────────────

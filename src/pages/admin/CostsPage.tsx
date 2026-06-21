@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { formatHebrewDateTime, formatUsd } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatIls, getUsdToIlsRates, rateForDate } from '@/lib/fx';
@@ -28,6 +29,7 @@ export default function CostsPage() {
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [rates, setRates] = useState<Map<string, number | null>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [dates, setDates] = useState({ from: '', to: '' });
 
@@ -35,29 +37,37 @@ export default function CostsPage() {
     const db = createSupabaseBrowserClient();
     let cancelled = false;
     setLoading(true);
+    setError(null);
     setPage(0);
 
     const loadAll = async () => {
-      const all: RequestRow[] = [];
-      for (let from = 0; ; from += FETCH_BATCH) {
-        let query = db
-          .from('requests')
-          .select('id, conversation_id, estimated_cost, created_at, conversations!requests_conversation_id_fkey(whatsapp_from)')
-          .order('created_at', { ascending: false })
-          .range(from, from + FETCH_BATCH - 1);
-        if (dates.from) query = query.gte('created_at', `${dates.from}T00:00:00`);
-        if (dates.to) query = query.lte('created_at', `${dates.to}T23:59:59`);
-        const { data } = await query;
-        const batch = (data ?? []) as unknown as RequestRow[];
-        all.push(...batch);
-        if (batch.length < FETCH_BATCH) break;
+      try {
+        const all: RequestRow[] = [];
+        for (let from = 0; ; from += FETCH_BATCH) {
+          let query = db
+            .from('requests')
+            .select('id, conversation_id, estimated_cost, created_at, conversations!requests_conversation_id_fkey(whatsapp_from)')
+            .order('created_at', { ascending: false })
+            .range(from, from + FETCH_BATCH - 1);
+          if (dates.from) query = query.gte('created_at', `${dates.from}T00:00:00`);
+          if (dates.to) query = query.lte('created_at', `${dates.to}T23:59:59`);
+          const { data, error: queryError } = await query;
+          if (queryError) throw queryError;
+          const batch = (data ?? []) as unknown as RequestRow[];
+          all.push(...batch);
+          if (batch.length < FETCH_BATCH) break;
+        }
+        if (cancelled) return;
+        setRows(all);
+        setLoading(false);
+        const fetchedRates = await getUsdToIlsRates(all.map((r) => r.created_at));
+        if (!cancelled) setRates(fetchedRates);
+      } catch (err) {
+        if (cancelled) return;
+        setRows([]);
+        setLoading(false);
+        setError(err instanceof Error ? err.message : String(err));
       }
-      if (cancelled) return;
-      setRows(all);
-      setLoading(false);
-      // Fetch the USD→ILS rate for each day a cost was incurred, then convert.
-      const fetchedRates = await getUsdToIlsRates(all.map((r) => r.created_at));
-      if (!cancelled) setRates(fetchedRates);
     };
 
     loadAll();
@@ -152,17 +162,19 @@ export default function CostsPage() {
           <tbody>
             {loading ? (
               <tr><td colSpan={5} className="p-6 text-center text-[var(--muted)]">טוען...</td></tr>
+            ) : error ? (
+              <tr><td colSpan={5} className="p-6 text-center text-red-600">לא ניתן לטעון עלויות: {error}</td></tr>
             ) : conversations.length === 0 ? (
               <tr><td colSpan={5} className="p-6 text-center text-[var(--muted)]">אין נתוני עלות להצגה.</td></tr>
             ) : pageRows.map((row) => (
               <tr key={row.conversationId} className="border-b border-[var(--border)] hover:bg-gray-50">
                 <td className="p-3">
-                  <a
-                    href={`/admin/conversations?id=${encodeURIComponent(row.conversationId)}`}
+                  <Link
+                    to={`/admin/conversations?id=${encodeURIComponent(row.conversationId)}`}
                     className="ltr text-blue-600 hover:underline"
                   >
                     {row.phone}
-                  </a>
+                  </Link>
                 </td>
                 <td className="p-3"><span className="ltr">{row.requestCount}</span></td>
                 <td className="p-3"><span className="ltr">{formatHebrewDateTime(row.lastAt)}</span></td>

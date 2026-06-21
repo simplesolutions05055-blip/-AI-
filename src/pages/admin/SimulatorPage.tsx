@@ -29,8 +29,8 @@ interface ChatMessage {
 }
 
 const SIMULATOR_STORAGE_KEY = 'admin-simulator-conversations';
-// OpenAI transcription caps audio at 25MB; we apply the same ceiling to all uploads.
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+// Match the WhatsApp inbound media ceiling used by the shared server path.
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 // When the brief is ready, the user confirms by typing one of these instead of
 // clicking a button — a more chat-like, WhatsApp-style flow.
 const CONFIRM_RE = /^(מאשר(?:ת|ים)?|אשר|לאשר|אישור|כן|אוקיי?|yes|ok|go)\s*$/i;
@@ -65,8 +65,6 @@ export default function SimulatorPage() {
     briefPrompt?: string;
     brief?: any;
   } | null>(null);
-  const [questionRound, setQuestionRound] = useState(0);
-  const [brandLogoPath, setBrandLogoPath] = useState<string | null>(null);
   const [presentationMode, setPresentationMode] = useState<'auto' | 'gemini'>('auto');
 
   useEffect(() => {
@@ -76,13 +74,14 @@ export default function SimulatorPage() {
       .eq('key', 'ai_models')
       .maybeSingle()
       .then(({ data }) => {
-        const mode = (data?.value_json as { presentation_mode?: string } | null)?.presentation_mode;
+        const row = data as { value_json?: { presentation_mode?: string } } | null;
+        const mode = row?.value_json?.presentation_mode;
         if (mode === 'gemini' || mode === 'auto') setPresentationMode(mode);
       });
   }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const busy = generating || presenting || responding || processing;
+  const busy = generating || presenting || processing;
 
   useEffect(() => {
     return () => {
@@ -128,31 +127,6 @@ export default function SimulatorPage() {
     if (attachment?.url) URL.revokeObjectURL(attachment.url);
     setAttachment({ url: URL.createObjectURL(file), name: file.name, kind, file });
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }
-
-  // Turn an uploaded attachment into text the agent can read: txt/md are read
-  // in the browser; docx/audio/image go to the process-upload function (docx
-  // parse, audio transcription, image vision description).
-  async function processAttachment(att: NonNullable<typeof attachment>): Promise<string> {
-    const lower = att.name.toLowerCase();
-    if (att.kind === 'document' && (lower.endsWith('.txt') || lower.endsWith('.md'))) {
-      return (await att.file.text()).slice(0, 20000);
-    }
-    const dataUrl = await blobToDataUrl(att.file);
-    const base64 = dataUrl.split(',')[1] ?? '';
-    const { data, error } = await createSupabaseBrowserClient().functions.invoke('process-upload', {
-      body: {
-        kind: att.kind,
-        base64,
-        mime: att.file.type,
-        name: att.name,
-        requestId: requestIdRef.current,
-      },
-    });
-    if (error || !data?.ok) {
-      throw new Error(error?.message ?? data?.error ?? 'עיבוד הקובץ נכשל');
-    }
-    return (data.text as string) ?? '';
   }
 
   function handleDragOver(e: React.DragEvent) {
@@ -253,164 +227,27 @@ export default function SimulatorPage() {
     return message;
   }
 
-  async function createGeneratedImage(prompt: string) {
-    if (!prompt.trim() || busy) return;
-    setGenerating(true);
-    const { data, error } = await createSupabaseBrowserClient().functions.invoke('generate-image', {
-      body: { prompt, requestId: requestIdRef.current },
-    });
-    setGenerating(false);
-
-    if (error || !data?.base64) {
-      setMessages((current) => [
-        ...current,
-        {
-          id: `err-${Date.now()}`,
-          mine: false,
-          body: `הפקת התמונה נכשלה: ${error?.message ?? data?.error ?? 'שגיאה לא ידועה'}`,
-        },
-      ]);
-      return;
-    }
-
-    let imageUrl = `data:${data.mime ?? 'image/png'};base64,${data.base64}`;
-    // Composite the real brand logo onto the generated image (the model can't
-    // reproduce an exact logo, so we overlay the actual file).
-    if (brandLogoPath) {
-      try {
-        const { data: signed } = await createSupabaseBrowserClient()
-          .storage.from('branding')
-          .createSignedUrl(brandLogoPath, 600);
-        if (signed?.signedUrl) {
-          imageUrl = await compositeLogo(imageUrl, signed.signedUrl);
-        }
-      } catch {
-        // If compositing fails (CORS/taint/load error), keep the base image.
-      }
-    }
-
-    setMessages((current) => [
-      ...current,
-      {
-        id: `out-${Date.now()}`,
-        mine: false,
-        body: `נוצר באמצעות ${data.model ?? 'gpt-image-2'}`,
-        imageUrl,
-        imageName: 'generated-image.png',
-      },
-    ]);
-  }
-
-  async function createPresentation(brief: any) {
-    if (!brief || busy) return;
-    setPresenting(true);
-    const { data, error } = await createSupabaseBrowserClient().functions.invoke('generate-presentation', {
-      body: { brief, requestId: requestIdRef.current },
-    });
-    setPresenting(false);
-
-    if (error || !data?.text) {
-      setMessages((current) => [
-        ...current,
-        {
-          id: `err-${Date.now()}`,
-          mine: false,
-          body: `הפקת המצגת נכשלה: ${error?.message ?? data?.error ?? 'שגיאה לא ידועה'}`,
-        },
-      ]);
-      return;
-    }
-
-    setMessages((current) => [
-      ...current,
-      {
-        id: `pres-${Date.now()}`,
-        mine: false,
-        body: data.text,
-      },
-    ]);
-  }
-
-  async function createPresentationDeck(brief: any) {
-    if (!brief || busy) return;
-    setPresenting(true);
-    try {
-      const [{ brand, images }, slidesRes] = await Promise.all([
-        brief.brand_id ? fetchBrandImages(brief.brand_id) : Promise.resolve({ brand: null, images: [] as DeckImage[] }),
-        createSupabaseBrowserClient().functions.invoke('generate-presentation', {
-          body: { brief, requestId: requestIdRef.current, format: 'deck' },
-        }),
-      ]);
-      const slides: any[] = Array.isArray(slidesRes?.data?.slides) ? slidesRes.data.slides : [];
-      const blob = await renderDeckToPdf(brief, brand, images, slides);
-      const url = URL.createObjectURL(blob);
-      const name = `presentation-${(brief.topic || 'deck').replace(/\s+/g, '-')}.pdf`;
-
-      // trigger immediate download
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-
-      const notebookText = buildNotebookLmPrompt(brief, brand, images, slides);
-
-      setMessages((current) => [
-        ...current,
-        {
-          id: `deck-${Date.now()}`,
-          mine: false,
-          body:
-            `המצגת (PDF) מוכנה (${images.length} תמונות מוטמעות, פלטת הצבעים של ${brand?.name ?? 'העיר'}).\n` +
-            'הקובץ ירד אוטומטית.',
-          meta: { deckUrl: url, deckName: name },
-        },
-        {
-          id: `nblm-${Date.now()}`,
-          mine: false,
-          body: notebookText,
-        },
-      ]);
-    } catch (err) {
-      setMessages((current) => [
-        ...current,
-        { id: `err-${Date.now()}`, mine: false, body: `יצירת המצגת נכשלה: ${String(err)}` },
-      ]);
-    } finally {
-      setPresenting(false);
-    }
-  }
-
   async function send() {
-    const body = text.trim();
-    if ((!body && !attachment) || busy) return;
+    await sendBody(text.trim(), true);
+  }
 
-    // Chat-style confirmation: if a brief is ready and the user typed "מאשר"
-    // (and didn't attach a new file), trigger the generation instead of the bot.
-    if (pendingConfirm && !attachment && CONFIRM_RE.test(body)) {
-      addUserMessage(body, null);
-      const pc = pendingConfirm;
-      setPendingConfirm(null);
-      if (pc.outputType === 'image' && pc.briefPrompt) {
-        await createGeneratedImage(pc.briefPrompt);
-      } else if (pc.outputType === 'presentation_kit') {
-        if (presentationMode === 'gemini') await createPresentation(pc.brief);
-        else await createPresentationDeck(pc.brief);
-      }
-      return;
-    }
+  async function sendBody(body: string, includeAttachment: boolean) {
+    const currentAttachment = includeAttachment ? attachment : null;
+    if ((!body && !currentAttachment) || busy) return;
 
-    const sentAttachment = attachment;
+    const sentAttachment = currentAttachment;
     const userMessage = addUserMessage(body, sentAttachment);
 
-    // Extract text from the upload (transcription / docx / vision) so the agent
-    // can understand it, and keep it on the message for the transcript.
-    let extractedText = '';
+    let outboundAttachments: Array<{ base64: string; mime: string; name: string }> = [];
     if (sentAttachment) {
       setProcessing(true);
       try {
-        extractedText = await processAttachment(sentAttachment);
+        const dataUrl = await blobToDataUrl(sentAttachment.file);
+        outboundAttachments = [{
+          base64: dataUrl.split(',')[1] ?? '',
+          mime: sentAttachment.file.type || 'application/octet-stream',
+          name: sentAttachment.name,
+        }];
       } catch (err) {
         setProcessing(false);
         setMessages((current) => [
@@ -420,27 +257,19 @@ export default function SimulatorPage() {
         return;
       }
       setProcessing(false);
-      setMessages((current) =>
-        current.map((m) => (m.id === userMessage.id ? { ...m, attachmentText: extractedText } : m))
-      );
     }
 
-    const userMessageWithText: ChatMessage = { ...userMessage, attachmentText: extractedText };
-    const transcript = [...messages, userMessageWithText].map((message) => ({
-      role: message.mine ? 'user' : 'assistant',
-      body: message.attachmentText
-        ? `${message.body}\n\n[תוכן הקובץ "${message.attachmentName ?? ''}"]:\n${message.attachmentText}`
-        : message.body,
-      imageName: message.imageName ?? message.attachmentName,
-    }));
-
     setResponding(true);
-    const { data, error } = await createSupabaseBrowserClient().functions.invoke('generate-chat-response', {
-      body: { messages: transcript, questionRound, requestId: requestIdRef.current },
+    const { data, error } = await createSupabaseBrowserClient().functions.invoke('simulator-message', {
+      body: {
+        sessionId: conversationIdRef.current,
+        body,
+        attachments: outboundAttachments,
+      },
     });
     setResponding(false);
 
-    if (error || !data?.message_to_user) {
+    if (error || !data?.ok) {
       setMessages((current) => [
         ...current,
         {
@@ -454,46 +283,26 @@ export default function SimulatorPage() {
     }
 
     if (data?.requestId) requestIdRef.current = data.requestId;
-    const normalized = normalizeAgentResponse(data);
-    // Deterministically apply the matched place brand palette/style to the brief,
-    // overriding the generic client-side defaults.
-    if (normalized.brief && data?.brand) {
-      normalized.brief.brand_id = data.brand.id ?? null;
-      normalized.brief.brand_palette = data.brand.palette ?? [];
-      normalized.brief.brand_name = data.brand.name ?? null;
-      if (data.brand.style_notes && !normalized.brief.style) {
-        normalized.brief.style = data.brand.style_notes;
-      }
-    }
-    if (data?.brand) setBrandLogoPath(data.brand.logo_path ?? null);
-    const nextRound = normalized.action === 'ask_clarification' ? questionRound + 1 : questionRound;
-    setQuestionRound(nextRound);
 
-    const isReady = normalized.action === 'ready_to_generate';
-    const outputType = normalized.brief?.output_type ?? null;
-    const briefPrompt = isReady && outputType === 'image' ? buildImagePrompt(normalized.brief, body) : undefined;
-    // Arm the typed-confirmation flow (or disarm it if no longer ready).
-    setPendingConfirm(isReady ? { outputType, briefPrompt, brief: normalized.brief ?? undefined } : null);
-    const confirmHint = isReady ? confirmInstruction(outputType, presentationMode) : '';
-
+    // Render every outbound message the engine emitted this turn — text as-is,
+    // image media inline, other media (PDF) as a download link.
+    type Reply = { id: string; body: string; mediaType: string | null; mediaUrl: string | null };
+    const replies: Reply[] = Array.isArray(data?.replies) ? data.replies : [];
+    if (data?.superseded && replies.length === 0) return;
     setMessages((current) => [
       ...current,
-      {
-        id: `out-${Date.now()}`,
-        mine: false,
-        // Show the brief only once ready; during clarification show just the questions.
-        body:
-          normalized.brief && isReady
-            ? `${normalized.message_to_user}\n\n${formatBrief(normalized.brief)}\n\n${confirmHint}`
-            : normalized.message_to_user,
-        meta: {
-          action: normalized.action,
-          ready: Boolean(normalized.ready_for_generation),
-          outputType,
-          briefPrompt,
-          brief: normalized.brief ?? undefined,
-        },
-      },
+      ...replies.map((reply): ChatMessage => {
+        const isImage = Boolean(reply.mediaType && reply.mediaType.startsWith('image/') && reply.mediaUrl);
+        const isOtherMedia = Boolean(reply.mediaUrl && reply.mediaType && !reply.mediaType.startsWith('image/'));
+        return {
+          id: `out-${reply.id}`,
+          mine: false,
+          body: reply.body,
+          imageUrl: isImage ? reply.mediaUrl! : undefined,
+          imageName: isImage ? 'generated-image.png' : undefined,
+          meta: isOtherMedia ? { deckUrl: reply.mediaUrl!, deckName: 'output.pdf' } : undefined,
+        };
+      }),
     ]);
   }
 
@@ -561,6 +370,16 @@ export default function SimulatorPage() {
                   הורדת המצגת
                 </a>
               )}
+              {!message.mine && isApprovalPrompt(message.body) && (
+                <button
+                  type="button"
+                  onClick={() => sendBody('מאשר', false)}
+                  disabled={busy}
+                  className="mt-2 rounded-full bg-[#075E54] px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  מאשר
+                </button>
+              )}
               {message.meta && (
                 <div className="mt-2 border-t border-black/5 pt-1 text-[10px] text-[#667781] ltr">
                   {message.meta.action}
@@ -604,11 +423,11 @@ export default function SimulatorPage() {
             </button>
           </div>
         )}
-        {busy && (
+        {(busy || responding) && (
           <div className="border-t border-[#d8d2c7] bg-[#fff8dc] px-4 py-2 text-xs text-[#5f5a4a]">
             <div className="flex items-center justify-between gap-3">
-              <TypingInline label={processing ? 'מעבד את הקובץ' : generating ? 'מפיק תמונה' : 'חושב על תשובה'} />
-              <span className="text-[10px]">אפשר להמתין, הכפתורים מושבתים עד שהפעולה מסתיימת</span>
+              <TypingInline label={processing ? 'מעלה קובץ' : generating ? 'מפיק תמונה' : 'ממתין לדבאנס'} />
+              <span className="text-[10px]">אפשר לשלוח עוד הודעה בזמן ההמתנה; האחרונה תעובד</span>
             </div>
           </div>
         )}
@@ -645,7 +464,7 @@ export default function SimulatorPage() {
                 }}
                 dir="auto"
                 rows={1}
-                placeholder={busy ? 'ממתין לתשובה...' : 'הודעה או תיאור לתמונה'}
+                placeholder={processing ? 'מעלה קובץ...' : responding ? 'אפשר להמשיך לכתוב...' : 'הודעה או תיאור לתמונה'}
                 disabled={busy}
                 className="max-h-[4.75rem] min-h-9 flex-1 resize-none rounded-3xl border border-[var(--border)] bg-white px-3 py-1.5 text-sm leading-6 disabled:bg-white/60"
               />
@@ -670,7 +489,7 @@ export default function SimulatorPage() {
               <h2 className="text-lg font-bold">הקובץ גדול מדי</h2>
             </div>
             <p className="text-sm text-[#444] leading-6">
-              הקובץ <span className="font-medium ltr">{oversizeFile}</span> חורג מהמגבלה של 25MB.
+              הקובץ <span className="font-medium ltr">{oversizeFile}</span> חורג מהמגבלה של 10MB.
               יש להעלות קובץ קטן יותר ולנסות שוב.
             </p>
             <button
@@ -690,6 +509,10 @@ function formatDuration(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function isApprovalPrompt(body: string): boolean {
+  return body.includes('כדי לאשר ולהפיק') && body.includes('מאשר');
 }
 
 // The chat-style line that tells the user to type "מאשר" to trigger generation.
@@ -749,7 +572,8 @@ async function fetchBrandImages(
   ]);
 
   const wanted: Array<{ path: string; caption: string; isLogo: boolean }> = [];
-  if (brand?.logo_path) wanted.push({ path: brand.logo_path, caption: 'לוגו', isLogo: true });
+  const brandRow = brand as { logo_path?: string | null } | null;
+  if (brandRow?.logo_path) wanted.push({ path: brandRow.logo_path, caption: 'לוגו', isLogo: true });
   for (const a of (assets as Array<{ storage_path: string; caption: string | null }>) ?? []) {
     wanted.push({ path: a.storage_path, caption: a.caption || 'תמונת מיתוג', isLogo: false });
   }
