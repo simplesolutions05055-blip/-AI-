@@ -84,6 +84,7 @@ export interface Brand {
   color_palette: BrandColor[];
   style_notes: string | null;
   is_active: boolean;
+  client_type: 'business' | 'municipality';
   created_by: string | null;
   created_at: string;
   updated_at: string;

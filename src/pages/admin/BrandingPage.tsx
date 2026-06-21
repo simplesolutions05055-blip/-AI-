@@ -27,6 +27,7 @@ const emptyBrand = (): Partial<Brand> => ({
   color_palette: [],
   style_notes: '',
   is_active: true,
+  client_type: 'business',
 });
 
 export default function BrandingPage() {
@@ -137,6 +138,7 @@ export default function BrandingPage() {
       color_palette: selected.color_palette ?? [],
       style_notes: selected.style_notes ?? null,
       is_active: selected.is_active ?? true,
+      client_type: selected.client_type ?? 'business',
       logo_path: selected.logo_path ?? null,
     };
     let id = selected.id ?? null;
@@ -651,6 +653,21 @@ export default function BrandingPage() {
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={selected.is_active ?? true} onChange={(e) => patch({ is_active: e.target.checked })} />
               מקום פעיל
+            </label>
+
+            <label className="block">
+              <span className="block text-sm font-medium mb-1">סוג לקוח</span>
+              <select
+                className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                value={selected.client_type ?? 'business'}
+                onChange={(e) => patch({ client_type: e.target.value as 'business' | 'municipality' })}
+              >
+                <option value="business">עסק</option>
+                <option value="municipality">רשות מקומית / עירייה</option>
+              </select>
+              <span className="block text-xs text-[var(--muted)] mt-1">
+                "רשות מקומית" מפעיל אוטומטית את חוק 9: שפה רשמית, ללא סלנג, ונגישות (WCAG).
+              </span>
             </label>
 
             {/* logo */}

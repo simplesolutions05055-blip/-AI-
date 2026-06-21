@@ -198,7 +198,7 @@ async function loadBusinessBrain(database: DB, brandId: string | null): Promise<
   if (!brandId) return { content: null, visual: null, combined: null };
   const { data: brand } = await database
     .from('brands')
-    .select('name, color_palette, style_notes, is_active')
+    .select('name, color_palette, style_notes, is_active, client_type')
     .eq('id', brandId)
     .single();
   const { data: textSources } = await database

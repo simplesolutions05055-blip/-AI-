@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
       if (matchedBrand) {
         const { data: brand } = await database
           .from('brands')
-          .select('name, color_palette, style_notes, is_active, logo_path')
+          .select('name, color_palette, style_notes, is_active, logo_path, client_type')
           .eq('id', matchedBrand.id)
           .single();
         const { data: textSources } = await database

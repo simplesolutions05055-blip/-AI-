@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
       const [{ data: brand }, { data: textSources }] = await Promise.all([
         database
           .from('brands')
-          .select('name, color_palette, style_notes, is_active')
+          .select('name, color_palette, style_notes, is_active, client_type')
           .eq('id', brandId)
           .single(),
         database

@@ -89,6 +89,7 @@ export interface BrandKit {
   color_palette: Array<{ hex: string; role: string }> | null;
   style_notes: string | null;
   is_active?: boolean;
+  client_type?: 'business' | 'municipality' | null;
 }
 
 export interface BusinessTextSource {
@@ -136,6 +137,15 @@ export function buildBusinessBrainContext(
     visualLines.push(
       'הנחיות העיצוב מגיעות רק מאזור העיצוב והמיתוג. אין להעתיק עיצוב ממסמכים שהוגדרו כאזור תוכן בלבד.'
     );
+    // Rule 9 — public-sector clients get the stricter standard automatically.
+    if (brand.client_type === 'municipality') {
+      visualLines.push('## מגזר ציבורי — דרישות מחייבות (חוק 9)');
+      visualLines.push(
+        "הלקוח הוא רשות מקומית/עירייה. חובה: שפה רשמית בלבד ללא סלנג; ניסוח מכבד ומכיל; " +
+          "ניגודיות גבוהה לעמידה בנגישות; שימוש נכון בסמל הרשות; ללא אימוג'ים מוגזמים; " +
+          'ואין נתונים, הבטחות או ציטוטים שלא נמסרו במפורש.'
+      );
+    }
   }
 
   const content = contentLines.length ? contentLines.join('\n\n') : null;
