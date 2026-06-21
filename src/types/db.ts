@@ -111,12 +111,14 @@ export interface BusinessTextSource {
 }
 
 export type SkillCategory = 'skill' | 'agent' | 'rule';
+export type SkillEnforcement = 'prompt' | 'code' | 'mixed';
 
 export interface Skill {
   key: string;
   display_name: string;
   description: string | null;
   category: SkillCategory;
+  enforcement: SkillEnforcement;
   order_index: number;
   enabled: boolean;
   created_at: string;

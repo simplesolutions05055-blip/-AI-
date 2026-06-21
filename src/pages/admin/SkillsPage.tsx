@@ -1,12 +1,30 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import type { Skill, SkillVersion, SkillCategory } from '@/types/db';
+import type { Skill, SkillVersion, SkillCategory, SkillEnforcement } from '@/types/db';
 
 const CATEGORIES: { key: SkillCategory; label: string }[] = [
   { key: 'skill', label: 'סקילים' },
   { key: 'agent', label: 'סוכנים' },
   { key: 'rule', label: 'חוקים' },
 ];
+
+const ENFORCEMENT: Record<SkillEnforcement, { label: string; chip: string; help: string }> = {
+  prompt: {
+    label: 'טקסט',
+    chip: 'bg-green-100 text-green-700',
+    help: 'הטקסט מוזרק כהנחיה. עריכה מהמסך משנה את ההתנהגות מיד.',
+  },
+  mixed: {
+    label: 'משולב',
+    chip: 'bg-amber-100 text-amber-700',
+    help: 'הטקסט מכוון את המודל, אבל יש שומר-סף בקוד. עריכת הטקסט משנה רק את החלק הרך — הכלל הקשיח מוטמע בקוד.',
+  },
+  code: {
+    label: 'קוד',
+    chip: 'bg-red-100 text-red-700',
+    help: 'ההיגיון מוטמע בקוד. עריכת הטקסט כאן היא תיעוד בלבד ולא תשנה התנהגות — נדרש שינוי בקוד על ידי מפתח.',
+  },
+};
 
 const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
@@ -108,6 +126,15 @@ export default function SkillsPage() {
         <p className="text-sm text-[var(--muted)] mt-1">
           עריכת ההנחיות לכל שלב בתהליך, שמירת גרסאות, ושחזור לגרסה קודמת. כל שמירה יוצרת גרסה חדשה.
         </p>
+        {/* legend: what each enforcement tag means */}
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+          {(Object.keys(ENFORCEMENT) as SkillEnforcement[]).map((k) => (
+            <span key={k} className="flex items-center gap-1.5">
+              <span className={`px-2 py-0.5 rounded-full ${ENFORCEMENT[k].chip}`}>{ENFORCEMENT[k].label}</span>
+              <span className="text-[var(--muted)]">{ENFORCEMENT[k].help}</span>
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* category tabs */}
@@ -143,13 +170,21 @@ export default function SkillsPage() {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold text-sm">{s.display_name}</span>
-                <span
-                  className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full ${
-                    s.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'
-                  }`}
-                >
-                  {s.enabled ? 'פעיל' : 'כבוי'}
-                </span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full ${ENFORCEMENT[s.enforcement]?.chip ?? ''}`}
+                    title={ENFORCEMENT[s.enforcement]?.help}
+                  >
+                    {ENFORCEMENT[s.enforcement]?.label}
+                  </span>
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full ${
+                      s.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'
+                    }`}
+                  >
+                    {s.enabled ? 'פעיל' : 'כבוי'}
+                  </span>
+                </div>
               </div>
               {s.description && (
                 <p className="text-xs text-[var(--muted)] mt-1 line-clamp-2">{s.description}</p>
@@ -172,15 +207,40 @@ export default function SkillsPage() {
                   <h2 className="text-lg font-bold">{selected.display_name}</h2>
                   <code className="text-xs text-[var(--muted)] ltr">{selected.key}</code>
                 </div>
-                <label className="flex items-center gap-2 text-sm shrink-0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={selected.enabled}
-                    onChange={() => toggleEnabled(selected)}
-                  />
-                  פעיל
-                </label>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded-full ${ENFORCEMENT[selected.enforcement]?.chip ?? ''}`}
+                  >
+                    {ENFORCEMENT[selected.enforcement]?.label}
+                  </span>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={selected.enabled} onChange={() => toggleEnabled(selected)} />
+                    פעיל
+                  </label>
+                </div>
               </div>
+
+              {selected.enforcement !== 'prompt' && (
+                <div
+                  className={`rounded-lg border px-3 py-2 text-sm ${
+                    selected.enforcement === 'code'
+                      ? 'border-red-200 bg-red-50 text-red-800'
+                      : 'border-amber-200 bg-amber-50 text-amber-800'
+                  }`}
+                >
+                  {selected.enforcement === 'code' ? (
+                    <>
+                      <strong>שים לב:</strong> ההיגיון של רכיב זה מוטמע בקוד. עריכת הטקסט כאן היא תיעוד בלבד —
+                      היא <strong>לא</strong> תשנה את ההתנהגות בפועל. לשינוי אמיתי נדרשת עריכה בקוד על ידי מפתח.
+                    </>
+                  ) : (
+                    <>
+                      <strong>שים לב:</strong> חלק מההתנהגות מוטמע בקוד (שומר-סף). עריכת הטקסט תשנה רק את ההכוונה
+                      הרכה של המודל; הכלל הקשיח נשאר בקוד.
+                    </>
+                  )}
+                </div>
+              )}
 
               <label className="block">
                 <span className="block text-sm font-medium mb-1">הנחיות הרכיב</span>
