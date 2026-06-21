@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
 
     // Deterministic gate: block ready_to_generate while required skill fields
     // are missing (e.g. an event with no date). Final authority, in code.
-    result.response = applyBriefSkillGate(result.response, transcript);
+    result.response = applyBriefSkillGate(result.response, transcript, { brandMatched: !!matchedBrand });
 
     // Track this simulator conversation as a request and accumulate its cost.
     let requestId: string | null = null;

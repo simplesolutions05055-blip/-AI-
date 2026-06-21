@@ -431,6 +431,7 @@ async function runRequestPipeline(
     const gated = applyBriefSkillGate(
       { brief: b, required_missing: b.required_missing, output_type: b.output_type },
       transcript,
+      { brandMatched: !!request.brand_id },
     ) as Record<string, unknown>;
     let effectiveNextQuestion = nextQuestion;
     if (gated?.ready_for_generation === false && Array.isArray(gated.missing_fields) && gated.missing_fields.length) {

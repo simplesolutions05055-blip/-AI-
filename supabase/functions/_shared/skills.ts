@@ -75,7 +75,9 @@ export async function buildSkillInstructions(database: DB, stage: SkillStage): P
           '1. זהה את סוג התוצר המדויק (אירוע, מבצע/מכירה, הצעת מחיר, מצגת משקיעים, פוסט מוצר וכו\').\n' +
           '2. החזר שדה נוסף בשם "required_missing": מערך מחרוזות בעברית של שדות החובה לסוג התוצר שעדיין חסרים (לפי טבלת שדות החובה של whatsapp-brief-parser). לדוגמה לאירוע: ["תאריך האירוע", "מיקום מדויק"].\n' +
           '3. אם "required_missing" אינו ריק — אסור להחזיר ready_to_generate. החזר action=collecting_details עם שאלה אחת קצרה שמבקשת את השדות החסרים. זה גובר על כל הנחיה שאומרת "אם הסוג והנושא ברורים החזר מוכן".\n' +
-          '4. אל תמציא ערכים לשדות חסרים — שאל עליהם.\n'
+          '4. אל תמציא ערכים לשדות חסרים — שאל עליהם.\n' +
+          '5. חוק המותג (חוק 2) + אי-הבדיה (חוק 3): תוצר ויזואלי ממותג (תמונה/גרפיקה/פוסט) חייב להיות משויך ללקוח/רשות מזוהים שמהם נטענים לוגו, צבעי מותג מדויקים ופונט מאושר. אם לא זוהה לקוח/מותג בשיחה — אסור להמציא פלטת צבעים, טון, קהל או לוגו, ואסור להחזיר ready_to_generate. הוסף ל-required_missing את "שיוך ללקוח/מותג" ושאל: "לאיזה לקוח או רשות מיועד הקמפיין?".\n' +
+          '6. אם הלקוח שזוהה הוא רשות מקומית/עירייה (חוק 9) — שפה רשמית בלבד, ללא סלנג, והקפדה על נגישות.\n'
         : '';
 
     return header + parts.join('\n\n') + briefContract;
@@ -102,6 +104,7 @@ const EVENT_HINTS =
 export function applyBriefSkillGate(
   resp: Record<string, unknown> | null | undefined,
   transcript: string,
+  opts: { brandMatched?: boolean } = {},
 ): Record<string, unknown> | null | undefined {
   try {
     if (!resp || typeof resp !== 'object') return resp;
@@ -118,6 +121,15 @@ export function applyBriefSkillGate(
     const hasDate = DATE_HINTS.test(hay);
     if ((outputType === 'image' || outputType === null) && looksLikeEvent && !hasDate) {
       if (!missing.some((m) => m.includes('תאריך'))) missing.push('תאריך האירוע');
+    }
+
+    // Rule 2 (branding) + Rule 3 (no fabrication): a branded visual deliverable
+    // must be tied to an identified client/brand. If none matched, never invent
+    // a palette/logo — ask which client instead.
+    if (outputType === 'image' && opts.brandMatched === false) {
+      if (!missing.some((m) => m.includes('מותג') || m.includes('לקוח'))) {
+        missing.push('שיוך ללקוח/מותג (למשל: עיריית תל אביב)');
+      }
     }
 
     if (missing.length === 0) return resp;
