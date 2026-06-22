@@ -1,6 +1,6 @@
 import { db } from '../_shared/db.ts';
-import { generatePresentationOutline, generateDeckSlides } from '../_shared/openai.ts';
-import { getSetting, logEvent, recordUsageAndCost, estimateTextCost } from '../_shared/util.ts';
+import { generatePresentationOutline, generateDeckSlides, generateImage } from '../_shared/openai.ts';
+import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost } from '../_shared/util.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 
 const corsHeaders = {
@@ -20,7 +20,45 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { brief, requestId, format } = await req.json();
+    const { brief, requestId, format, prompts } = await req.json();
+
+    // 'images' mode: generate up to 3 AI images from explicit prompts (built by
+    // the client from the deck's slides + brand palette) and return them as
+    // base64. Used to embed AI visuals into the downloadable deck.
+    if (format === 'images') {
+      const list = Array.isArray(prompts) ? prompts.slice(0, 3) : [];
+      if (!list.length) {
+        return new Response(JSON.stringify({ error: 'prompts array required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const aiModelsImg = await getSetting<{ image_model?: string; image_size?: string; image_quality?: string }>(database, 'ai_models');
+      const images: Array<{ base64: string; mime: string }> = [];
+      for (const p of list) {
+        const { base64, mime } = await generateImage(String(p || 'תמונה'), {
+          model: aiModelsImg?.image_model,
+          size: aiModelsImg?.image_size || '1024x1024',
+          quality: aiModelsImg?.image_quality || 'auto',
+        });
+        images.push({ base64, mime });
+      }
+      await recordUsageAndCost(database, requestId ?? null, {
+        provider: 'openai',
+        model: aiModelsImg?.image_model || 'gpt-image-1',
+        input: 0,
+        output: 0,
+        cost: estimateImageCost(images.length),
+      });
+      await logEvent(database, {
+        action: 'deck_ai_images_generated',
+        metadata: { count: images.length, request_id: requestId ?? null },
+      });
+      return new Response(JSON.stringify({ ok: true, images }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (!brief || typeof brief !== 'object') {
       return new Response(JSON.stringify({ error: 'brief object required' }), {
         status: 400,
@@ -31,10 +69,10 @@ Deno.serve(async (req) => {
     // 'deck' mode: return rich structured 10-slide content for the PDF renderer.
     if (format === 'deck') {
       const aiModelsDeck = await getSetting<{ system_message?: string; text_model?: string }>(database, 'ai_models');
-      const { slides, usage } = await generateDeckSlides(
-        aiModelsDeck?.system_message || fallbackSystemMessage,
-        brief
-      );
+      // Use a dedicated deck-writer prompt — NOT the conversational WhatsApp
+      // agent persona (ai_models.system_message), which forces its own chat JSON
+      // shape and buries the slides under brief.presentation_spec.
+      const { slides, usage } = await generateDeckSlides(fallbackSystemMessage, brief);
       await recordUsageAndCost(database, requestId ?? null, {
         provider: 'openai',
         model: aiModelsDeck?.text_model || 'gpt-4o',

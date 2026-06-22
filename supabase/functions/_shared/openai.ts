@@ -215,14 +215,20 @@ export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
     ],
     { json: true, temperature: 0.7 }
   );
-  let parsed: { slides?: unknown[] } = {};
+  let parsed: any = {};
   try {
     parsed = JSON.parse(content);
   } catch {
-    parsed = { slides: [] };
+    parsed = {};
   }
-  const slides = Array.isArray(parsed.slides) ? parsed.slides : [];
-  return { slides, usage };
+  // The model may return slides directly, or — when a strong conversational
+  // system prompt leaks in — nest them under brief.presentation_spec. Accept any.
+  const slides =
+    (Array.isArray(parsed?.slides) && parsed.slides) ||
+    (Array.isArray(parsed?.presentation_spec?.slide_structure) && parsed.presentation_spec.slide_structure) ||
+    (Array.isArray(parsed?.brief?.presentation_spec?.slide_structure) && parsed.brief.presentation_spec.slide_structure) ||
+    [];
+  return { slides, usage, raw: content };
 }
 
 export async function generateText(systemPrompt: string, brief: unknown, note?: string) {
@@ -287,6 +293,38 @@ export async function generateImage(
   const data = await res.json();
   const b64 = data.data?.[0]?.b64_json;
   if (!b64) throw new Error('OpenAI image returned no data');
+  return { base64: b64, mime: 'image/png', model };
+}
+
+// Edit an existing image (img2img): keep the source as the base and apply the
+// requested changes via OpenAI's images/edits endpoint. Used by the "fix this
+// output" flow so the user gets a revised version of the SAME image rather than
+// an unrelated regeneration.
+export async function editImage(
+  sourceBase64: string,
+  sourceMime: string,
+  prompt: string,
+  opts: { model?: string; size?: string; systemMessage?: string } = {}
+): Promise<{ base64: string; mime: string; model: string }> {
+  const model = opts.model || imageModel();
+  const finalPrompt = opts.systemMessage ? `${opts.systemMessage}\n\nבקשת המשתמש:\n${prompt}` : prompt;
+  const bytes = Uint8Array.from(atob(sourceBase64), (c) => c.charCodeAt(0));
+  const ext = (sourceMime || 'image/png').includes('jpeg') ? 'jpg' : 'png';
+  const form = new FormData();
+  form.append('model', model);
+  form.append('prompt', finalPrompt);
+  form.append('image', new Blob([bytes], { type: sourceMime || 'image/png' }), `source.${ext}`);
+  if (opts.size) form.append('size', opts.size);
+  form.append('n', '1');
+  const res = await fetch(`${API}/images/edits`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key()}` },
+    body: form,
+  });
+  if (!res.ok) throw new Error(`OpenAI image edit ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error('OpenAI image edit returned no data');
   return { base64: b64, mime: 'image/png', model };
 }
 

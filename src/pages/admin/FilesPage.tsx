@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { OUTPUT_LABEL } from '@/lib/labels';
+import { useNavigate } from 'react-router-dom';
+import { OUTPUT_LABEL, senderLabel } from '@/lib/labels';
 import { formatHebrewDateTime } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { OutputType } from '@/types/db';
@@ -8,7 +9,8 @@ interface FileRow {
   id: string;
   request_id: string;
   output_type: OutputType;
-  storage_path: string;
+  storage_path: string | null;
+  text_content: string | null;
   mime_type: string | null;
   created_at: string;
   creator: string;
@@ -22,6 +24,7 @@ const TYPE_ICON: Record<OutputType, string> = {
 };
 
 export default function FilesPage() {
+  const navigate = useNavigate();
   const [files, setFiles] = useState<FileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -34,11 +37,9 @@ export default function FilesPage() {
     (async () => {
       const { data } = await client
         .from('outputs')
-        .select('id, request_id, output_type, storage_path, mime_type, created_at')
-        // Only outputs backed by an actual file. text/presentation outputs are
-        // delivered as WhatsApp text and have no storage_path — showing them here
-        // renders a broken thumbnail with dead view/download buttons.
-        .not('storage_path', 'is', null)
+        // Show every produced תוצר — file-backed (image/PDF) and text-only
+        // (text/presentation delivered as WhatsApp text) alike.
+        .select('id, request_id, output_type, storage_path, text_content, mime_type, created_at')
         .order('created_at', { ascending: false })
         .limit(100);
       const rawRows = (data ?? []) as Omit<FileRow, 'creator'>[];
@@ -66,10 +67,10 @@ export default function FilesPage() {
         }>) {
           const conv = Array.isArray(req.conversations) ? req.conversations[0] : req.conversations;
           const isSimulator = conv?.simulated || conv?.whatsapp_from === 'simulator';
-          const phone = conv?.whatsapp_from?.replace('whatsapp:', '') ?? null;
+          const sender = conv?.whatsapp_from ? senderLabel(conv.whatsapp_from) : null;
           creatorByRequest[req.id] = isSimulator
             ? `${siteUser} (סימולטור)`
-            : phone || req.customer_email || 'לא ידוע';
+            : sender || req.customer_email || 'לא ידוע';
         }
       }
 
@@ -81,10 +82,10 @@ export default function FilesPage() {
       setLoading(false);
 
       // Generate signed preview URLs for image outputs.
-      const images = rows.filter((r) => r.output_type === 'image');
+      const images = rows.filter((r) => r.output_type === 'image' && r.storage_path);
       const pairs = await Promise.all(
         images.map(async (r) => {
-          const { data: s } = await client.storage.from('outputs').createSignedUrl(r.storage_path, 600);
+          const { data: s } = await client.storage.from('outputs').createSignedUrl(r.storage_path as string, 600);
           return [r.id, s?.signedUrl] as const;
         }),
       );
@@ -133,7 +134,7 @@ export default function FilesPage() {
     setDeleting(true);
     const client = createSupabaseBrowserClient();
     const toDelete = files.filter((f) => selected.has(f.id));
-    const paths = toDelete.map((f) => f.storage_path);
+    const paths = toDelete.map((f) => f.storage_path).filter((p): p is string => Boolean(p));
     // Delete the DB rows first: if RLS blocks this it returns an error (and 0
     // rows), so we can surface it instead of orphaning storage blobs.
     const { error } = await client.from('outputs').delete().in('id', Array.from(selected));
@@ -142,7 +143,7 @@ export default function FilesPage() {
       setDeleting(false);
       return;
     }
-    await client.storage.from('outputs').remove(paths);
+    if (paths.length) await client.storage.from('outputs').remove(paths);
     setFiles((prev) => prev.filter((f) => !selected.has(f.id)));
     clearSelection();
     setDeleting(false);
@@ -204,6 +205,10 @@ export default function FilesPage() {
                 <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
                   {file.output_type === 'image' && previews[file.id] ? (
                     <img src={previews[file.id]} alt="" className="w-full h-full object-cover" />
+                  ) : !file.storage_path && file.text_content ? (
+                    <div className="h-full w-full overflow-hidden p-2.5 text-[10px] leading-4 text-[var(--muted)] whitespace-pre-wrap break-words">
+                      {file.text_content.slice(0, 280)}
+                    </div>
                   ) : (
                     <span className="text-4xl">{TYPE_ICON[file.output_type]}</span>
                   )}
@@ -217,26 +222,41 @@ export default function FilesPage() {
                   <div className="text-[10px] text-[var(--muted)] ltr text-start mt-0.5">
                     {formatHebrewDateTime(file.created_at)}
                   </div>
-                  <div className="mt-2 flex gap-1.5">
+                  {file.storage_path ? (
+                    <div className="mt-2 flex gap-1.5">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          open(file.storage_path as string);
+                        }}
+                        className="flex-1 bg-brand text-white text-[11px] py-1.5 rounded-lg hover:opacity-90"
+                      >
+                        צפייה
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          download(file.storage_path as string);
+                        }}
+                        className="flex-1 border border-[var(--border)] text-[11px] py-1.5 rounded-lg hover:bg-gray-50"
+                      >
+                        הורדה
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-[10px] text-[var(--muted)]">תוצר טקסט — נשלח כהודעה</div>
+                  )}
+                  {(file.output_type === 'image' || file.output_type === 'presentation') && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        open(file.storage_path);
+                        navigate(`/admin/files/${file.request_id}/revise`);
                       }}
-                      className="flex-1 bg-brand text-white text-[11px] py-1.5 rounded-lg hover:opacity-90"
+                      className="mt-1.5 w-full border border-brand text-brand text-[11px] py-1.5 rounded-lg hover:bg-brand/5 font-medium"
                     >
-                      צפייה
+                      שיפור / עריכה
                     </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        download(file.storage_path);
-                      }}
-                      className="flex-1 border border-[var(--border)] text-[11px] py-1.5 rounded-lg hover:bg-gray-50"
-                    >
-                      הורדה
-                    </button>
-                  </div>
+                  )}
                 </div>
               </div>
             );

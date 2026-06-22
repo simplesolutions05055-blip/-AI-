@@ -40,3 +40,14 @@ export const OUTPUT_LABEL: Record<OutputType, string> = {
   pdf: 'PDF',
   presentation: 'מצגת',
 };
+
+// Human-readable Hebrew name for a conversation's source. WhatsApp chats keep
+// their phone number; internal sources (the production form, the simulator)
+// get a friendly Hebrew label instead of their raw English identifier.
+export function senderLabel(whatsappFrom: string | null | undefined): string {
+  if (!whatsappFrom) return '-';
+  const clean = whatsappFrom.replace('whatsapp:', '');
+  if (clean === 'production-form') return 'טופס הפקה';
+  if (clean === 'simulator') return 'סימולטור';
+  return clean;
+}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { formatHebrewDateTime, formatUsd } from '@/lib/format';
+import { senderLabel } from '@/lib/labels';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatIls, getUsdToIlsRates, rateForDate } from '@/lib/fx';
 
@@ -25,7 +26,7 @@ const PAGE_SIZE = 25;
 // Supabase returns at most 1000 rows per request, so page through with .range().
 const FETCH_BATCH = 1000;
 
-export default function CostsPage() {
+export default function CostsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [rates, setRates] = useState<Map<string, number | null>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -96,7 +97,7 @@ export default function CostsPage() {
       } else {
         map.set(id, {
           conversationId: id,
-          phone: row.conversations?.whatsapp_from?.replace('whatsapp:', '') ?? '-',
+          phone: senderLabel(row.conversations?.whatsapp_from),
           total: cost,
           totalIls: costIls,
           requestCount: 1,
@@ -120,10 +121,14 @@ export default function CostsPage() {
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">עלויות</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
-        </div>
+        {embedded ? (
+          <p className="text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
+        ) : (
+          <div>
+            <h1 className="text-2xl font-bold">עלויות</h1>
+            <p className="mt-1 text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1 text-sm text-[var(--muted)]">
             מתאריך

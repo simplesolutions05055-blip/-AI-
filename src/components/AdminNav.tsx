@@ -3,11 +3,11 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 const LINKS = [
   { href: '/admin', label: 'לוח בקרה' },
-  { href: '/admin/requests', label: 'בקשות' },
+  { href: '/admin/requests', label: 'בקשות ועלויות' },
   { href: '/admin/conversations', label: 'שיחות' },
-  { href: '/admin/costs', label: 'עלויות' },
+  { href: '/admin/production', label: 'הפקת תוצרים' },
   { href: '/admin/simulator', label: 'סימולטור צ׳אט' },
-  { href: '/admin/files', label: 'קבצים' },
+  { href: '/admin/files', label: 'תוצרים' },
   { href: '/admin/branding', label: 'מיתוג' },
   { href: '/admin/models', label: 'מודלים' },
   { href: '/admin/skills', label: 'סקילים' },

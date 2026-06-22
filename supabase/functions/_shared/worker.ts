@@ -427,6 +427,11 @@ async function runRequestPipeline(
   const waFrom = conversation.whatsapp_from;
   const systemPrompt = await getActiveSystemPrompt(database);
   const templates = await getTemplates(database);
+  const directBriefReady =
+    request.status === 'queued' &&
+    request.structured_brief &&
+    (request.structured_brief as Record<string, unknown>).ready === true &&
+    request.output_type;
 
   const { data: msgs } = await database
     .from('messages')
@@ -499,7 +504,7 @@ async function runRequestPipeline(
     }
   }
 
-  if (['received', 'collecting_details', 'queued'].includes(request.status)) {
+  if (!directBriefReady && ['received', 'collecting_details', 'queued'].includes(request.status)) {
     await setStatus(database, requestId, 'collecting_details');
 
     // ── brand identification + confirmation (before brief analysis) ──────────
@@ -625,6 +630,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     .single();
   if (!request) return;
   const conversation = request.conversations as Conv;
+  const productionForm = isProductionFormConversation(conversation);
   const systemPrompt = await getActiveSystemPrompt(database);
   let genClientType: string | null = null;
   if (request.brand_id) {
@@ -702,7 +708,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       const imageSize = dimensionsToImageSize(brief.dimensions as string | null | undefined);
       // One waiting message only, and only on the first attempt — retries stay silent
       // so the user never gets "מעולה אני עובד" spammed on each QA round.
-      if (version === 1) {
+      if (version === 1 && !productionForm) {
         const delivered = await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
           'מעולה, אני עובד על התמונה עכשיו. זה יכול לקחת רגע.', conversation.simulated);
         if (!delivered && !conversation.simulated) {
@@ -825,6 +831,7 @@ async function deliverOutput(database: DB, requestId: string): Promise<void> {
   if (!request) return;
   const conversation = request.conversations as Conv;
   const templates = await getTemplates(database);
+  const productionForm = isProductionFormConversation(conversation);
 
   const { data: output } = await database
     .from('outputs')
@@ -838,11 +845,17 @@ async function deliverOutput(database: DB, requestId: string): Promise<void> {
     return;
   }
 
-  await deliverContentToWhatsApp(database, request, conversation, output);
+  await deliverContentToWhatsApp(database, request, conversation, output, productionForm);
 
   if (request.customer_email) {
     // We have an address — also send a copy by mail (handles status + reset).
     await sendOutput(requestId);
+    return;
+  }
+  if (productionForm) {
+    await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
+    await logEvent(database, { requestId, action: 'delivered_production_form_only' });
+    await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
     return;
   }
   // No email: finish in WhatsApp only and free the slot for the next request.
@@ -858,7 +871,8 @@ async function deliverContentToWhatsApp(
   database: DB,
   request: { id: string; brand_id?: string | null; structured_brief: Record<string, unknown> | null },
   conversation: Conv,
-  output: { output_type: string; text_content: string | null; storage_path: string | null; mime_type: string | null; version: number }
+  output: { output_type: string; text_content: string | null; storage_path: string | null; mime_type: string | null; version: number },
+  productionForm = false
 ): Promise<void> {
   const to = conversation.whatsapp_from;
   const simulated = conversation.simulated;
@@ -880,6 +894,7 @@ async function deliverContentToWhatsApp(
   if (type === 'text' || type === 'presentation') {
     const textBody = output.text_content ?? '(לא נוצר תוכן)';
     const body = brandFooter ? `${textBody}\n\n${brandFooter}` : textBody;
+    if (productionForm) return;
     await sendOut(database, conversation.id, request.id, to, body, simulated);
     return;
   }
@@ -902,6 +917,8 @@ async function deliverContentToWhatsApp(
   // The caption that travels with the media (below the image on WhatsApp) carries
   // the brand colors+dimensions footer; the bare `caption` stays the title.
   const mediaCaption = brandFooter ? `${caption}\n\n${brandFooter}` : caption;
+
+  if (productionForm) return;
 
   if (simulated) {
     // Simulator parity: the media was really generated and stored — record it on
@@ -946,6 +963,7 @@ export async function sendOutput(requestId: string): Promise<void> {
     .single();
   if (!request) return;
   const conversation = request.conversations as Conv;
+  const productionForm = isProductionFormConversation(conversation);
 
   if (!request.customer_email) {
     await logEvent(database, { requestId, severity: 'error', action: 'send_no_email' });
@@ -970,7 +988,7 @@ export async function sendOutput(requestId: string): Promise<void> {
   }
 
   try {
-    if (conversation.simulated) {
+    if (conversation.simulated && !productionForm) {
       await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
       await logEvent(database, { requestId, action: 'email_sent', message: 'simulated (skipped Resend)' });
       await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, true);
@@ -1005,12 +1023,20 @@ export async function sendOutput(requestId: string): Promise<void> {
 
     await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
     await logEvent(database, { requestId, action: 'approval_package_sent', metadata: { msgId } });
+    if (productionForm) {
+      await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
+      return;
+    }
     await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, conversation.simulated);
     await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
   } catch (e) {
     await logEvent(database, { requestId, severity: 'error', action: 'send_failed', message: String(e) });
     await setStatus(database, requestId, 'needs_attention');
   }
+}
+
+function isProductionFormConversation(conversation: Conv): boolean {
+  return conversation.whatsapp_from === 'production-form';
 }
 
 // Map a free-text dimensions/aspect request to a size the image engine supports

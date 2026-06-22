@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatHebrewDateTime, formatUsd } from '@/lib/format';
-import type { ConversationStatus, MessageDirection, RequestStatus } from '@/types/db';
+import { OUTPUT_LABEL, STATUS_LABEL as REQUEST_STATUS_LABEL, senderLabel } from '@/lib/labels';
+import type { ConversationStatus, MessageDirection, OutputType, RequestStatus } from '@/types/db';
 
 interface ConversationRow {
   id: string;
@@ -42,6 +43,9 @@ interface OutputDebugRow {
   model_name: string | null;
   prompt_snapshot: string | null;
   qa_result: Record<string, unknown> | null;
+  text_content: string | null;
+  storage_path: string | null;
+  mime_type: string | null;
   created_at: string;
 }
 
@@ -89,6 +93,7 @@ export default function ConversationsPage() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [requests, setRequests] = useState<RequestRow[]>([]);
   const [outputsByRequest, setOutputsByRequest] = useState<Record<string, OutputDebugRow[]>>({});
+  const [outputPreviews, setOutputPreviews] = useState<Record<string, string>>({});
   const [logsByRequest, setLogsByRequest] = useState<Record<string, LogDebugRow[]>>({});
   const [conversationCost, setConversationCost] = useState(0);
   const [showPromptJson, setShowPromptJson] = useState(false);
@@ -141,6 +146,7 @@ export default function ConversationsPage() {
       setRequests([]);
       setMessages(toMessageRows(conversation));
       setOutputsByRequest({});
+      setOutputPreviews({});
       setLogsByRequest({});
       setConversationCost(0);
       setLoadingMessages(false);
@@ -175,7 +181,7 @@ export default function ConversationsPage() {
         const [outputRows, logRows, usageRows] = await Promise.all([
           db
             .from('outputs')
-            .select('id, request_id, version, output_type, model_name, prompt_snapshot, qa_result, created_at')
+            .select('id, request_id, version, output_type, model_name, prompt_snapshot, qa_result, text_content, storage_path, mime_type, created_at')
             .in('request_id', requestIds)
             .order('version', { ascending: false }),
           db
@@ -196,9 +202,23 @@ export default function ConversationsPage() {
         );
       }
 
+      // Sign preview URLs for file-backed outputs (images/PDFs) so the produced
+      // תוצרים can be shown inline in the chat, including production-form requests.
+      const fileOutputs = Object.values(nextOutputsByRequest)
+        .flat()
+        .filter((output) => output.storage_path);
+      const previewPairs = await Promise.all(
+        fileOutputs.map(async (output) => {
+          const { data } = await db.storage.from('outputs').createSignedUrl(output.storage_path as string, 600);
+          return [output.id, data?.signedUrl] as const;
+        }),
+      );
+      if (cancelled) return;
+
       setMessages(nextMessages);
       setRequests(nextRequests);
       setOutputsByRequest(nextOutputsByRequest);
+      setOutputPreviews(Object.fromEntries(previewPairs.filter(([, url]) => url)) as Record<string, string>);
       setLogsByRequest(nextLogsByRequest);
       setConversationCost(nextCost);
       setLoadingMessages(false);
@@ -261,7 +281,7 @@ export default function ConversationsPage() {
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold ltr">{conversation.whatsapp_from.replace('whatsapp:', '')}</span>
+                    <span className="font-semibold ltr">{senderLabel(conversation.whatsapp_from)}</span>
                     <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] text-gray-600">
                       {conversation.simulated ? 'סימולטור' : STATUS_LABEL[conversation.status]}
                     </span>
@@ -286,7 +306,7 @@ export default function ConversationsPage() {
               <header className="border-b border-[var(--border)] px-4 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-lg font-bold ltr">{selected.whatsapp_from.replace('whatsapp:', '')}</div>
+                    <div className="text-lg font-bold ltr">{senderLabel(selected.whatsapp_from)}</div>
                     <div className="text-xs text-[var(--muted)]">
                       התחילה: <span className="ltr">{formatHebrewDateTime(selected.started_at)}</span>
                     </div>
@@ -324,7 +344,7 @@ export default function ConversationsPage() {
                   <div className="mt-3 flex flex-wrap gap-2">
                     {requests.map((request) => (
                       <span key={request.id} className="rounded-full bg-blue-50 px-3 py-1 text-xs text-blue-700">
-                        {request.output_type ?? 'ללא סוג'} · {request.status}
+                        {(request.output_type ? OUTPUT_LABEL[request.output_type as OutputType] : null) ?? 'ללא סוג'} · {REQUEST_STATUS_LABEL[request.status] ?? request.status}
                       </span>
                     ))}
                   </div>
@@ -375,6 +395,13 @@ export default function ConversationsPage() {
                         </div>
                       );
                     })}
+
+                    {Object.values(outputsByRequest)
+                      .flat()
+                      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+                      .map((output) => (
+                        <OutputBubble key={output.id} output={output} previewUrl={outputPreviews[output.id]} />
+                      ))}
                   </div>
                 )}
               </div>
@@ -382,6 +409,38 @@ export default function ConversationsPage() {
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+// Renders a produced output (תוצר) as an agent-side chat bubble: an image
+// preview, a link to a file (PDF/presentation), or the generated text itself.
+function OutputBubble({ output, previewUrl }: { output: OutputDebugRow; previewUrl?: string }) {
+  const typeLabel = OUTPUT_LABEL[output.output_type as OutputType] ?? output.output_type;
+  return (
+    <div className="me-auto max-w-[78%] rounded-lg border border-[#25D366]/30 bg-white px-3 py-2 text-sm shadow-sm">
+      <div className="mb-1 text-[11px] font-semibold text-[#075E54]">תוצר: {typeLabel}</div>
+      {output.output_type === 'image' && previewUrl ? (
+        <a href={previewUrl} target="_blank" rel="noreferrer">
+          <img src={previewUrl} alt={typeLabel} className="max-h-72 w-full rounded-lg object-contain bg-gray-50" />
+        </a>
+      ) : output.storage_path && previewUrl ? (
+        <a
+          href={previewUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex rounded-lg bg-[#075E54] px-3 py-1.5 text-xs font-semibold text-white"
+        >
+          פתיחת הקובץ
+        </a>
+      ) : output.text_content ? (
+        <div dir="auto" className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words text-[#111B21]">
+          {output.text_content}
+        </div>
+      ) : (
+        <div className="text-[#667781]">התוצר נוצר ללא תצוגה זמינה.</div>
+      )}
+      <div className="mt-1 text-[10px] text-[#667781] ltr">{formatHebrewDateTime(output.created_at)}</div>
     </div>
   );
 }

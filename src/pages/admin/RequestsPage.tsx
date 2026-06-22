@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { STATUS_COLOR, STATUS_LABEL, OUTPUT_LABEL } from '@/lib/labels';
+import { Link } from 'react-router-dom';
+import { STATUS_COLOR, STATUS_LABEL, OUTPUT_LABEL, senderLabel } from '@/lib/labels';
 import { formatHebrewDateTime, formatUsd } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatIls, getUsdToIlsRates, rateForDate } from '@/lib/fx';
@@ -12,10 +13,11 @@ interface Row {
   status: RequestStatus;
   estimated_cost: number;
   created_at: string;
+  conversation_id: string | null;
   conversations: { whatsapp_from: string } | null;
 }
 
-export default function RequestsPage() {
+export default function RequestsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [rows, setRows] = useState<Row[]>([]);
   const [rates, setRates] = useState<Map<string, number | null>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -26,7 +28,7 @@ export default function RequestsPage() {
     let cancelled = false;
     let query = db
       .from('requests')
-      .select('id, customer_email, output_type, status, estimated_cost, created_at, conversations!requests_conversation_id_fkey(whatsapp_from)')
+      .select('id, customer_email, output_type, status, estimated_cost, created_at, conversation_id, conversations!requests_conversation_id_fkey(whatsapp_from)')
       .order('created_at', { ascending: false })
       .limit(100);
 
@@ -59,7 +61,7 @@ export default function RequestsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">בקשות</h1>
+      {!embedded && <h1 className="text-2xl font-bold mb-6">בקשות</h1>}
       <div className="flex flex-wrap gap-2 mb-4">
         <select aria-label="סטטוס" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           <option value="">כל הסטטוסים</option>
@@ -113,7 +115,18 @@ export default function RequestsPage() {
               return (
                 <tr key={row.id} className="border-b border-[var(--border)] hover:bg-gray-50">
                   <td className="p-3"><span className="ltr">{formatHebrewDateTime(row.created_at)}</span></td>
-                  <td className="p-3"><span className="ltr">{row.conversations?.whatsapp_from?.replace('whatsapp:', '') ?? '-'}</span></td>
+                  <td className="p-3">
+                    {row.conversation_id ? (
+                      <Link
+                        to={`/admin/conversations?id=${encodeURIComponent(row.conversation_id)}`}
+                        className="ltr text-blue-600 hover:underline"
+                      >
+                        {senderLabel(row.conversations?.whatsapp_from)}
+                      </Link>
+                    ) : (
+                      <span className="ltr">{senderLabel(row.conversations?.whatsapp_from)}</span>
+                    )}
+                  </td>
                   <td className="p-3"><span className="ltr">{row.customer_email ?? '-'}</span></td>
                   <td className="p-3">{row.output_type ? OUTPUT_LABEL[row.output_type] : '-'}</td>
                   <td className="p-3"><span className={`rounded-full px-2 py-1 text-xs ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</span></td>
