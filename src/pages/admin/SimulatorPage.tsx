@@ -307,7 +307,7 @@ export default function SimulatorPage() {
   }
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-3rem)] max-w-md flex-col">
+    <div className="mx-auto flex h-[calc(100dvh-6.5rem)] max-w-md flex-col lg:h-[calc(100dvh-3rem)]">
       <div
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-sm"
         onDragOver={handleDragOver}
@@ -431,7 +431,7 @@ export default function SimulatorPage() {
             </div>
           </div>
         )}
-        <div className="flex items-center gap-1.5 px-2 py-1.5 bg-[#F0F0F0]">
+        <div className="flex items-center gap-1.5 bg-[#F0F0F0] px-2 pb-[calc(var(--safe-bottom)+0.375rem)] pt-1.5">
           <input ref={fileInputRef} type="file" accept="image/*,audio/*,.docx,.txt,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" className="hidden" onChange={(e) => pickFile(e.target.files?.[0])} />
           {recording ? (
             <div className="flex flex-1 items-center gap-2 rounded-3xl border border-[var(--border)] bg-white px-3 py-1.5">

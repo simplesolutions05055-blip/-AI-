@@ -249,8 +249,8 @@ export default function ConversationsPage() {
   const selected = conversations.find((conversation) => conversation.id === selectedId) ?? null;
 
   return (
-    <div className="min-h-[calc(100vh-3rem)]">
-      <div className="mb-6 flex items-center justify-between gap-4">
+    <div className="min-h-[calc(100dvh-8rem)] lg:min-h-[calc(100dvh-3rem)]">
+      <div className={`mb-5 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:flex ${selected ? 'hidden lg:flex' : 'flex'}`}>
         <div>
           <h1 className="text-2xl font-bold">שיחות</h1>
           <p className="mt-1 text-sm text-[var(--muted)]">צפייה בכל השיחות וההודעות שנקלטו במערכת.</p>
@@ -264,12 +264,12 @@ export default function ConversationsPage() {
         />
       </div>
 
-      <div className="grid min-h-[70vh] grid-cols-1 gap-4 lg:grid-cols-[340px_1fr]">
-        <aside className="overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+      <div className="grid min-h-[calc(100dvh-11rem)] grid-cols-1 gap-4 lg:min-h-[70vh] lg:grid-cols-[340px_1fr]">
+        <aside className={`${selected ? 'hidden lg:block' : 'block'} overflow-hidden rounded-xl border border-[var(--border)] bg-white`}>
           <div className="border-b border-[var(--border)] px-4 py-3 text-sm font-semibold">
             {loading ? 'טוען...' : `${filtered.length} שיחות`}
           </div>
-          <div className="max-h-[70vh] overflow-y-auto">
+          <div className="max-h-[calc(100dvh-15rem)] overflow-y-auto lg:max-h-[70vh]">
             {filtered.map((conversation) => {
               const active = conversation.id === selectedId;
               return (
@@ -298,12 +298,19 @@ export default function ConversationsPage() {
           </div>
         </aside>
 
-        <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+        <section className={`${selected ? 'block' : 'hidden lg:block'} overflow-hidden rounded-xl border border-[var(--border)] bg-white`}>
           {!selected ? (
             <div className="grid h-full place-items-center p-8 text-sm text-[var(--muted)]">בחרו שיחה להצגה.</div>
           ) : (
-            <div className="flex h-full min-h-[70vh] flex-col">
+            <div className="flex h-full min-h-[calc(100dvh-8rem)] flex-col lg:min-h-[70vh]">
               <header className="border-b border-[var(--border)] px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(null)}
+                  className="mb-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold lg:hidden"
+                >
+                  חזרה לשיחות
+                </button>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="text-lg font-bold ltr">{senderLabel(selected.whatsapp_from)}</div>
@@ -311,7 +318,7 @@ export default function ConversationsPage() {
                       התחילה: <span className="ltr">{formatHebrewDateTime(selected.started_at)}</span>
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex max-w-full flex-wrap items-center gap-2">
                     {!selected.simulated && (
                       <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                         עלות השיחה: <span className="ltr">{formatUsd(conversationCost)}</span>
@@ -351,7 +358,7 @@ export default function ConversationsPage() {
                 )}
               </header>
 
-              <div className="flex-1 overflow-y-auto p-4" style={{ background: '#ECE5DD' }} dir="rtl">
+              <div className="flex-1 overflow-y-auto p-3 sm:p-4" style={{ background: '#ECE5DD' }} dir="rtl">
                 {loadingMessages ? (
                   <div className="py-8 text-center text-sm text-[#667781]">טוען הודעות...</div>
                 ) : messages.length === 0 ? (
@@ -364,8 +371,8 @@ export default function ConversationsPage() {
                       return (
                         <div
                           key={message.id}
-                          className={`max-w-[78%] rounded-lg px-3 py-2 text-sm shadow-sm ${
-                            inbound ? 'ms-auto bg-[#DCF8C6]' : 'me-auto bg-white'
+                          className={`rounded-lg px-3 py-2 text-sm shadow-sm ${
+                            inbound ? 'ms-auto max-w-[88%] bg-[#DCF8C6] lg:max-w-[78%]' : 'me-auto max-w-[88%] bg-white lg:max-w-[78%]'
                           }`}
                         >
                           {message.media_type && (
@@ -418,7 +425,7 @@ export default function ConversationsPage() {
 function OutputBubble({ output, previewUrl }: { output: OutputDebugRow; previewUrl?: string }) {
   const typeLabel = OUTPUT_LABEL[output.output_type as OutputType] ?? output.output_type;
   return (
-    <div className="me-auto max-w-[78%] rounded-lg border border-[#25D366]/30 bg-white px-3 py-2 text-sm shadow-sm">
+    <div className="me-auto max-w-[88%] rounded-lg border border-[#25D366]/30 bg-white px-3 py-2 text-sm shadow-sm lg:max-w-[78%]">
       <div className="mb-1 text-[11px] font-semibold text-[#075E54]">תוצר: {typeLabel}</div>
       {output.output_type === 'image' && previewUrl ? (
         <a href={previewUrl} target="_blank" rel="noreferrer">

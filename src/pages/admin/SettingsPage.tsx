@@ -63,7 +63,7 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="sticky top-[calc(var(--safe-top)+3.75rem)] z-20 -mx-3 flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0">
         <h1 className="text-2xl font-bold">הגדרות</h1>
         <button onClick={save} className="rounded-lg bg-brand text-white px-4 py-2 text-sm font-semibold">
           {saved ? 'נשמר' : 'שמירת הגדרות'}
@@ -189,24 +189,24 @@ export default function SettingsPage() {
 
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
         <h2 className="font-semibold mb-3">מגבלות ושימוש</h2>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="סבבי שאלות מקסימלי">
-            <input type="number" className={input} value={settings.question_rounds?.max ?? 3} onChange={(e) => update('question_rounds', { max: Number(e.target.value) })} />
+            <input type="number" inputMode="numeric" className={input} value={settings.question_rounds?.max ?? 3} onChange={(e) => update('question_rounds', { max: Number(e.target.value) })} />
           </Field>
           <Field label="ניסיונות יצירה מקסימלי">
-            <input type="number" className={input} value={settings.generation_attempts?.max ?? 3} onChange={(e) => update('generation_attempts', { max: Number(e.target.value) })} />
+            <input type="number" inputMode="numeric" className={input} value={settings.generation_attempts?.max ?? 3} onChange={(e) => update('generation_attempts', { max: Number(e.target.value) })} />
           </Field>
           <Field label="ניסיונות תמונה מקסימלי">
-            <input type="number" min={1} className={input} value={settings.image_generation_attempts?.max ?? 1} onChange={(e) => update('image_generation_attempts', { max: Number(e.target.value) })} />
+            <input type="number" inputMode="numeric" min={1} className={input} value={settings.image_generation_attempts?.max ?? 1} onChange={(e) => update('image_generation_attempts', { max: Number(e.target.value) })} />
           </Field>
           <Field label="תקרת עלות לבקשה ($)">
-            <input type="number" step="0.01" min={0} className={input} value={budget.max ?? 0.08} onChange={(e) => update('request_budget_usd', { max: Number(e.target.value) })} />
+            <input type="number" inputMode="decimal" step="0.01" min={0} className={input} value={budget.max ?? 0.08} onChange={(e) => update('request_budget_usd', { max: Number(e.target.value) })} />
           </Field>
           <Field label="הודעות ל-24 שעות">
-            <input type="number" className={input} value={limits.messages_per_24h ?? 50} onChange={(e) => update('rate_limits', { ...limits, messages_per_24h: Number(e.target.value) })} />
+            <input type="number" inputMode="numeric" className={input} value={limits.messages_per_24h ?? 50} onChange={(e) => update('rate_limits', { ...limits, messages_per_24h: Number(e.target.value) })} />
           </Field>
           <Field label="יצירות ל-24 שעות">
-            <input type="number" className={input} value={limits.generations_per_24h ?? 10} onChange={(e) => update('rate_limits', { ...limits, generations_per_24h: Number(e.target.value) })} />
+            <input type="number" inputMode="numeric" className={input} value={limits.generations_per_24h ?? 10} onChange={(e) => update('rate_limits', { ...limits, generations_per_24h: Number(e.target.value) })} />
           </Field>
         </div>
       </section>

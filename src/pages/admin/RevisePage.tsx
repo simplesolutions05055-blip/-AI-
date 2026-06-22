@@ -238,7 +238,7 @@ export default function RevisePage() {
       {loading ? (
         <div className="text-center text-[var(--muted)] p-10">טוען...</div>
       ) : outputType === 'presentation' ? (
-        <div className="grid lg:grid-cols-[1fr_400px] gap-5">
+        <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
           <div className="bg-white border border-[var(--border)] rounded-lg p-5">
             <h2 className="font-bold mb-3">תוכן המצגת הנוכחי</h2>
             <pre className="whitespace-pre-wrap text-sm bg-gray-50 rounded-lg p-4 overflow-auto max-h-[560px]">
@@ -247,7 +247,7 @@ export default function RevisePage() {
             <DeckExport brief={brief} requestId={presRequestId} outlineText={outline} />
           </div>
 
-          <div className="bg-white border border-[var(--border)] rounded-lg p-5 h-fit">
+          <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
             <label className="block text-sm font-semibold mb-2">מה לשנות במצגת?</label>
             <textarea
               value={feedback}
@@ -290,7 +290,7 @@ export default function RevisePage() {
           </div>
         </div>
       ) : (
-        <div className="grid lg:grid-cols-[1fr_400px] gap-5">
+        <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
           <div className="bg-white border border-[var(--border)] rounded-lg p-5">
             <h2 className="font-bold mb-3">{result ? 'התמונה הערוכה' : 'התמונה הנוכחית'}</h2>
             {(result?.previewUrl || source?.previewUrl) && (
@@ -317,7 +317,7 @@ export default function RevisePage() {
             )}
           </div>
 
-          <div className="bg-white border border-[var(--border)] rounded-lg p-5 h-fit">
+          <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
             <label className="block text-sm font-semibold mb-2">מה לא אהבתם / מה לשנות?</label>
             <textarea
               value={feedback}

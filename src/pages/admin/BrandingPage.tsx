@@ -485,9 +485,9 @@ export default function BrandingPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">מיתוג</h1>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           <input
             ref={csvRef}
             type="file"
@@ -528,7 +528,7 @@ export default function BrandingPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* list */}
-        <section className="bg-white rounded-xl border border-[var(--border)] lg:col-span-1 overflow-x-auto min-w-0">
+        <section className="max-h-[45dvh] min-w-0 overflow-auto rounded-xl border border-[var(--border)] bg-white lg:col-span-1 lg:max-h-none">
           {/* bulk action bar */}
           {selectedIds.size > 0 && (
             <div className="flex items-center justify-between gap-2 bg-gray-50 border-b border-[var(--border)] px-3 py-2 text-sm">
@@ -608,10 +608,10 @@ export default function BrandingPage() {
 
         {/* editor */}
         {selected && (
-          <section className="bg-white rounded-xl border border-[var(--border)] p-4 lg:col-span-2 space-y-4 min-w-0">
-            <div className="flex items-center justify-between">
+          <section className="min-w-0 space-y-4 rounded-xl border border-[var(--border)] bg-white p-4 lg:col-span-2">
+            <div className="sticky top-[calc(var(--safe-top)+3.75rem)] z-20 -mx-4 -mt-4 flex flex-col gap-2 border-b border-[var(--border)] bg-white p-4 sm:static sm:mx-0 sm:mt-0 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:bg-transparent sm:p-0">
               <h2 className="font-semibold">{selected.id ? 'עריכת מקום' : 'מקום חדש'}</h2>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {selected.id && (
                   <button
                     onClick={() => exportOne(selected as Brand)}

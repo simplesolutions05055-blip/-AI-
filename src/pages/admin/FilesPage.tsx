@@ -31,6 +31,7 @@ export default function FilesPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastIndex, setLastIndex] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [textPreview, setTextPreview] = useState<FileRow | null>(null);
 
   useEffect(() => {
     const client = createSupabaseBrowserClient();
@@ -181,7 +182,7 @@ export default function FilesPage() {
       ) : files.length === 0 ? (
         <div className="text-center text-[var(--muted)] p-10">אין תוצרים.</div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 min-[390px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
           {files.map((file, index) => {
             const isSelected = selected.has(file.id);
             return (
@@ -229,7 +230,7 @@ export default function FilesPage() {
                           e.stopPropagation();
                           open(file.storage_path as string);
                         }}
-                        className="flex-1 bg-brand text-white text-[11px] py-1.5 rounded-lg hover:opacity-90"
+                        className="min-h-11 flex-1 rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
                       >
                         צפייה
                       </button>
@@ -238,13 +239,21 @@ export default function FilesPage() {
                           e.stopPropagation();
                           download(file.storage_path as string);
                         }}
-                        className="flex-1 border border-[var(--border)] text-[11px] py-1.5 rounded-lg hover:bg-gray-50"
+                        className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
                       >
                         הורדה
                       </button>
                     </div>
                   ) : (
-                    <div className="mt-2 text-[10px] text-[var(--muted)]">תוצר טקסט — נשלח כהודעה</div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setTextPreview(file);
+                      }}
+                      className="mt-2 min-h-11 w-full rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                    >
+                      פתיחת הטקסט
+                    </button>
                   )}
                   {(file.output_type === 'image' || file.output_type === 'presentation') && (
                     <button
@@ -252,7 +261,7 @@ export default function FilesPage() {
                         e.stopPropagation();
                         navigate(`/admin/files/${file.request_id}/revise`);
                       }}
-                      className="mt-1.5 w-full border border-brand text-brand text-[11px] py-1.5 rounded-lg hover:bg-brand/5 font-medium"
+                      className="mt-1.5 min-h-11 w-full rounded-lg border border-brand px-2 py-2 text-xs font-semibold text-brand hover:bg-brand/5"
                     >
                       שיפור / עריכה
                     </button>
@@ -261,6 +270,41 @@ export default function FilesPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {selected.size > 0 && (
+        <div className="fixed inset-x-3 bottom-[calc(var(--safe-bottom)+0.75rem)] z-30 rounded-xl border border-[var(--border)] bg-white p-3 shadow-lg md:hidden" dir="rtl">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-semibold">{selected.size} נבחרו</span>
+            <div className="flex gap-2">
+              <button onClick={clearSelection} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold">
+                ביטול
+              </button>
+              <button onClick={deleteSelected} disabled={deleting} className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                מחיקה
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {textPreview && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-3 pb-[calc(var(--safe-bottom)+12px)] sm:items-center" dir="rtl">
+          <section className="flex max-h-[88dvh] w-[calc(100vw-24px)] max-w-2xl flex-col rounded-xl bg-white shadow-2xl">
+            <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] p-4">
+              <div>
+                <h2 className="font-bold">{OUTPUT_LABEL[textPreview.output_type]}</h2>
+                <p className="text-xs text-[var(--muted)] ltr">{formatHebrewDateTime(textPreview.created_at)}</p>
+              </div>
+              <button onClick={() => setTextPreview(null)} className="rounded-lg px-2 text-2xl leading-none text-[var(--muted)]" aria-label="סגירה">
+                ×
+              </button>
+            </header>
+            <div className="overflow-auto p-4">
+              <pre className="whitespace-pre-wrap break-words text-sm leading-6">{textPreview.text_content}</pre>
+            </div>
+          </section>
         </div>
       )}
     </div>

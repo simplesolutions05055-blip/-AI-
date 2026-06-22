@@ -12,6 +12,7 @@ import ConversationsPage from '@/pages/admin/ConversationsPage';
 import BrandingPage from '@/pages/admin/BrandingPage';
 import ProductionPage from '@/pages/admin/ProductionPage';
 import RevisePage from '@/pages/admin/RevisePage';
+import ReloadPrompt from '@/components/pwa/ReloadPrompt';
 
 export default function App() {
   return (
@@ -36,6 +37,7 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
+      <ReloadPrompt />
     </BrowserRouter>
   );
 }

@@ -158,7 +158,7 @@ export default function SkillsPage() {
           עריכת ההנחיות לכל שלב בתהליך, שמירת גרסאות, ושחזור לגרסה קודמת. כל שמירה יוצרת גרסה חדשה.
         </p>
         {/* legend: what each enforcement tag means */}
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+        <div className="mt-3 grid gap-2 text-xs sm:flex sm:flex-wrap sm:items-center sm:gap-3">
           {(Object.keys(ENFORCEMENT) as SkillEnforcement[]).map((k) => (
             <span key={k} className="flex items-center gap-1.5">
               <span className={`px-2 py-0.5 rounded-full ${ENFORCEMENT[k].chip}`}>{ENFORCEMENT[k].label}</span>
@@ -174,7 +174,7 @@ export default function SkillsPage() {
       </div>
 
       {/* category tabs */}
-      <div className="flex gap-2 mb-4">
+      <div className="-mx-3 mb-4 flex gap-2 overflow-x-auto px-3 pb-1 sm:mx-0 sm:px-0">
         {CATEGORIES.map((c) => (
           <button
             key={c.key}
@@ -182,7 +182,7 @@ export default function SkillsPage() {
               setActiveCat(c.key);
               setSelectedKey(null);
             }}
-            className={`rounded-lg px-4 py-2 text-sm font-medium ${
+            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
               activeCat === c.key ? 'bg-brand text-white' : 'bg-white border border-[var(--border)] hover:bg-gray-50'
             }`}
           >
@@ -204,9 +204,9 @@ export default function SkillsPage() {
                   : 'border-[var(--border)] bg-white hover:bg-gray-50'
               }`}
             >
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-start justify-between gap-2">
                 <span className="font-semibold text-sm">{s.display_name}</span>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                   {s.implemented === false && (
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-white" title="הרכיב מתועד אך עדיין לא נבנה במערכת">
                       טרם הוטמע
@@ -243,12 +243,12 @@ export default function SkillsPage() {
             </div>
           ) : (
             <div className="bg-white rounded-xl border border-[var(--border)] p-4 space-y-4">
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h2 className="text-lg font-bold">{selected.display_name}</h2>
                   <code className="text-xs text-[var(--muted)] ltr">{selected.key}</code>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
                   {selected.implemented === false && (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-white">טרם הוטמע</span>
                   )}

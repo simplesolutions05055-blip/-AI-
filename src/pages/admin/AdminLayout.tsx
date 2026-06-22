@@ -1,7 +1,25 @@
 import { useEffect, useState } from 'react';
 import { useLocation, Navigate } from 'react-router-dom';
 import AdminNav from '@/components/AdminNav';
+import InstallPrompt from '@/components/pwa/InstallPrompt';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+
+const ROUTE_TITLES: Array<[string, string]> = [
+  ['/admin/requests', 'בקשות ועלויות'],
+  ['/admin/costs', 'בקשות ועלויות'],
+  ['/admin/conversations', 'שיחות'],
+  ['/admin/production', 'הפקת תוצרים'],
+  ['/admin/simulator', 'סימולטור צ׳אט'],
+  ['/admin/files', 'תוצרים'],
+  ['/admin/branding', 'מיתוג'],
+  ['/admin/models', 'מודלים'],
+  ['/admin/skills', 'סקילים'],
+  ['/admin/settings', 'הגדרות'],
+];
+
+function titleForPath(pathname: string) {
+  return ROUTE_TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'לוח בקרה';
+}
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
@@ -21,11 +39,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setNavOpen(false);
   }, [pathname]);
 
-  if (loading) return <main className="min-h-screen grid place-items-center text-[var(--muted)]">טוען...</main>;
+  useEffect(() => {
+    document.body.style.overflow = navOpen ? 'hidden' : '';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [navOpen]);
+
+  if (loading) return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]">טוען...</main>;
   if (!email) return <Navigate to="/login" replace />;
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-[100dvh]">
       {/* desktop sidebar */}
       <div className="hidden lg:block">
         <AdminNav email={email} />
@@ -35,7 +60,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {navOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/40" onClick={() => setNavOpen(false)} />
-          <div className="absolute top-0 bottom-0 right-0 shadow-xl">
+          <div className="absolute bottom-0 right-0 top-0 w-[min(84vw,320px)] shadow-xl">
             <AdminNav email={email} onNavigate={() => setNavOpen(false)} />
           </div>
         </div>
@@ -43,7 +68,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* mobile top bar */}
-        <header className="lg:hidden flex items-center gap-3 bg-white border-b border-[var(--border)] px-4 py-3 sticky top-0 z-30">
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-[var(--border)] bg-white px-4 pb-3 pt-[calc(var(--safe-top)+0.75rem)] lg:hidden">
           <button
             onClick={() => setNavOpen(true)}
             aria-label="תפריט"
@@ -55,11 +80,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
           </button>
-          <div className="font-bold">סוכן AI</div>
+          <div className="min-w-0">
+            <div className="truncate font-bold">{titleForPath(pathname)}</div>
+            <div className="truncate text-xs text-[var(--muted)] ltr">{email}</div>
+          </div>
         </header>
 
-        <main className="flex-1 p-4 lg:p-6 max-w-6xl w-full">{children}</main>
+        <main className="w-full max-w-6xl flex-1 px-3 py-4 pb-[calc(var(--safe-bottom)+1rem)] sm:px-4 lg:p-6">{children}</main>
       </div>
+      <InstallPrompt />
     </div>
   );
 }

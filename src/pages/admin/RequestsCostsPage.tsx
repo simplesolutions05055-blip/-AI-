@@ -13,12 +13,12 @@ export default function RequestsCostsPage() {
 
   return (
     <div dir="rtl">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">בקשות ועלויות</h1>
-        <div className="inline-flex rounded-lg border border-[var(--border)] bg-white p-1 text-sm">
+        <div className="inline-flex w-full rounded-lg border border-[var(--border)] bg-white p-1 text-sm sm:w-auto">
           <button
             onClick={() => setTab('requests')}
-            className={`rounded-md px-4 py-1.5 font-semibold transition ${
+            className={`flex-1 rounded-md px-4 py-2 font-semibold transition sm:flex-none sm:py-1.5 ${
               tab === 'requests' ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'
             }`}
           >
@@ -26,7 +26,7 @@ export default function RequestsCostsPage() {
           </button>
           <button
             onClick={() => setTab('costs')}
-            className={`rounded-md px-4 py-1.5 font-semibold transition ${
+            className={`flex-1 rounded-md px-4 py-2 font-semibold transition sm:flex-none sm:py-1.5 ${
               tab === 'costs' ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'
             }`}
           >

@@ -62,24 +62,24 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
   return (
     <div>
       {!embedded && <h1 className="text-2xl font-bold mb-6">בקשות</h1>}
-      <div className="flex flex-wrap gap-2 mb-4">
-        <select aria-label="סטטוס" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
+      <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap">
+        <select aria-label="סטטוס" className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           <option value="">כל הסטטוסים</option>
           {Object.entries(STATUS_LABEL).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
         </select>
-        <select aria-label="סוג תוצר" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.output_type} onChange={(e) => setFilters((f) => ({ ...f, output_type: e.target.value }))}>
+        <select aria-label="סוג תוצר" className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.output_type} onChange={(e) => setFilters((f) => ({ ...f, output_type: e.target.value }))}>
           <option value="">כל הסוגים</option>
           {Object.entries(OUTPUT_LABEL).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
         </select>
-        <input placeholder="מייל" dir="ltr" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.email} onChange={(e) => setFilters((f) => ({ ...f, email: e.target.value }))} />
-        <input placeholder="מספר" dir="ltr" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.phone} onChange={(e) => setFilters((f) => ({ ...f, phone: e.target.value }))} />
-        <label className="flex items-center gap-1 text-sm text-[var(--muted)]">
+        <input placeholder="מייל" dir="ltr" className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.email} onChange={(e) => setFilters((f) => ({ ...f, email: e.target.value }))} />
+        <input placeholder="מספר" dir="ltr" className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.phone} onChange={(e) => setFilters((f) => ({ ...f, phone: e.target.value }))} />
+        <label className="flex items-center gap-1 text-sm text-[var(--muted)] lg:w-auto">
           מתאריך
-          <input type="date" aria-label="מתאריך" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} />
+          <input type="date" aria-label="מתאריך" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} />
         </label>
-        <label className="flex items-center gap-1 text-sm text-[var(--muted)]">
+        <label className="flex items-center gap-1 text-sm text-[var(--muted)] lg:w-auto">
           עד תאריך
-          <input type="date" aria-label="עד תאריך" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.to} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
+          <input type="date" aria-label="עד תאריך" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.to} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
         </label>
         {(filters.from || filters.to) && (
           <button
@@ -91,7 +91,53 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-[var(--border)] overflow-x-auto">
+      <div className="space-y-3 md:hidden">
+        {loading ? (
+          <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">טוען...</div>
+        ) : rows.length === 0 ? (
+          <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">אין בקשות להצגה.</div>
+        ) : rows.map((row) => {
+          const rate = rateForDate(rates, row.created_at);
+          const cost = Number(row.estimated_cost ?? 0);
+          return (
+            <article key={row.id} className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs text-[var(--muted)] ltr">{formatHebrewDateTime(row.created_at)}</div>
+                  <div className="mt-1 truncate font-semibold ltr">
+                    {row.conversation_id ? (
+                      <Link to={`/admin/conversations?id=${encodeURIComponent(row.conversation_id)}`} className="text-blue-600">
+                        {senderLabel(row.conversations?.whatsapp_from)}
+                      </Link>
+                    ) : senderLabel(row.conversations?.whatsapp_from)}
+                  </div>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-1 text-xs ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <div className="text-xs text-[var(--muted)]">סוג</div>
+                  <div>{row.output_type ? OUTPUT_LABEL[row.output_type] : '-'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--muted)]">מייל</div>
+                  <div className="truncate ltr">{row.customer_email ?? '-'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--muted)]">עלות ($)</div>
+                  <div className="font-semibold ltr">{formatUsd(cost)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--muted)]">עלות (₪)</div>
+                  <div className="font-semibold ltr">{ratesReady ? (rate != null ? formatIls(cost * rate) : '—') : '…'}</div>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-xl border border-[var(--border)] bg-white md:block">
         <table className="w-full text-sm" dir="rtl">
           <thead>
             <tr className="text-[var(--muted)] border-b border-[var(--border)]">

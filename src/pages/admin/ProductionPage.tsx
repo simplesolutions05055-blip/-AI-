@@ -274,14 +274,14 @@ function ProductionFlow({ type }: { type: ProductionType }) {
 
   return (
     <div dir="rtl">
-      <div className="flex items-center justify-between gap-3 mb-6">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <button onClick={() => navigate('/admin/production')} className="text-sm text-[var(--muted)] hover:underline mb-2">
             חזרה לבחירת תוצר
           </button>
           <h1 className="text-2xl font-bold">הפקת {OUTPUT_LABEL[type]}</h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {step === 'form' && (
             <div className="inline-flex rounded-lg border border-[var(--border)] bg-white p-1 text-sm">
               <button
@@ -325,7 +325,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       {step === 'brief' && brief && (
         <div className="grid lg:grid-cols-[1fr_360px] gap-5">
           <BriefCard type={type} brief={brief} revisionCount={revisionCount} />
-          <div className="bg-white border border-[var(--border)] rounded-lg p-5 h-fit">
+          <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] bg-white border border-[var(--border)] rounded-lg p-5 h-fit shadow-lg lg:static lg:shadow-none">
             <button onClick={generate} className="w-full bg-brand text-white rounded-lg px-4 py-2.5 font-semibold">
               מאשר, תפיק
             </button>
@@ -541,7 +541,7 @@ function FormWizard({
       </div>
 
       {/* Thumb-zone action row: primary forward action on the left (RTL progression). */}
-      <div className="mt-8 flex items-center justify-between gap-3">
+      <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] -mx-2 mt-8 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-white/95 p-2 shadow-lg backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
         <button
           type="button"
           onClick={goBack}

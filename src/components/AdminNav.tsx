@@ -25,7 +25,7 @@ export default function AdminNav({ email, onNavigate }: { email: string; onNavig
 
   return (
     // RTL playbook §17: primary navigation on the right
-    <aside className="w-60 shrink-0 bg-white border-l border-[var(--border)] min-h-screen h-full p-4 flex flex-col">
+    <aside className="flex h-full min-h-[100dvh] w-full shrink-0 flex-col border-l border-[var(--border)] bg-white p-4 pt-[calc(var(--safe-top)+1rem)] lg:w-60">
       <div className="mb-6">
         <div className="text-lg font-bold">סוכן AI</div>
         <div className="text-xs text-[var(--muted)] ltr">{email}</div>

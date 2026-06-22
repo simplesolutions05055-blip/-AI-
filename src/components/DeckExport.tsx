@@ -146,7 +146,7 @@ export default function DeckExport({
         </p>
       </div>
 
-      <div className="flex gap-3">
+      <div className="flex flex-col gap-3 min-[390px]:flex-row">
         <button
           onClick={() => build('pdf')}
           disabled={busy !== null}
@@ -201,9 +201,9 @@ function DeckBuildingOverlay({ format, aiCount }: { format: 'pdf' | 'pptx'; aiCo
   }, [messages.length]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" dir="rtl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-3 backdrop-blur-sm" dir="rtl">
       <style>{deckKeyframes}</style>
-      <div className="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-2xl">
+      <div className="w-[calc(100vw-24px)] max-w-sm rounded-2xl bg-white p-8 text-center shadow-2xl">
         <div className="relative mx-auto mb-6 h-20 w-20">
           <div className="absolute inset-0 rounded-full border-4 border-brand/15" />
           <div

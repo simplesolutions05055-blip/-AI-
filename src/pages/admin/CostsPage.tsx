@@ -120,7 +120,7 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
         {embedded ? (
           <p className="text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
         ) : (
@@ -129,14 +129,14 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
             <p className="mt-1 text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
           <label className="flex items-center gap-1 text-sm text-[var(--muted)]">
             מתאריך
-            <input type="date" aria-label="מתאריך" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={dates.from} onChange={(e) => setDates((d) => ({ ...d, from: e.target.value }))} />
+            <input type="date" aria-label="מתאריך" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={dates.from} onChange={(e) => setDates((d) => ({ ...d, from: e.target.value }))} />
           </label>
           <label className="flex items-center gap-1 text-sm text-[var(--muted)]">
             עד תאריך
-            <input type="date" aria-label="עד תאריך" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={dates.to} onChange={(e) => setDates((d) => ({ ...d, to: e.target.value }))} />
+            <input type="date" aria-label="עד תאריך" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={dates.to} onChange={(e) => setDates((d) => ({ ...d, to: e.target.value }))} />
           </label>
           {(dates.from || dates.to) && (
             <button
@@ -146,14 +146,48 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
               נקה תאריכים
             </button>
           )}
-          <div className="rounded-xl border border-[var(--border)] bg-white px-4 py-2 text-sm">
+          <div className="rounded-xl border border-[var(--border)] bg-white px-4 py-2 text-sm sm:col-span-2">
             סה״כ עלות: <span className="font-bold ltr">{formatUsd(total)}</span>
             {ratesReady && <span className="text-[var(--muted)]"> · <span className="ltr">{formatIls(totalIls)}</span></span>}
           </div>
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-white">
+      <div className="space-y-3 md:hidden">
+        {loading ? (
+          <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">טוען...</div>
+        ) : error ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-600">לא ניתן לטעון עלויות: {error}</div>
+        ) : conversations.length === 0 ? (
+          <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">אין נתוני עלות להצגה.</div>
+        ) : pageRows.map((row) => (
+          <article key={row.conversationId} className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+            <Link to={`/admin/conversations?id=${encodeURIComponent(row.conversationId)}`} className="block truncate font-semibold text-blue-600 ltr">
+              {row.phone}
+            </Link>
+            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <div className="text-xs text-[var(--muted)]">בקשות</div>
+                <div className="ltr">{row.requestCount}</div>
+              </div>
+              <div>
+                <div className="text-xs text-[var(--muted)]">פעילות אחרונה</div>
+                <div className="ltr">{formatHebrewDateTime(row.lastAt)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-[var(--muted)]">עלות ($)</div>
+                <div className="font-semibold ltr">{formatUsd(row.total)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-[var(--muted)]">עלות (₪)</div>
+                <div className="font-semibold ltr">{ratesReady ? formatIls(row.totalIls) : '…'}</div>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-xl border border-[var(--border)] bg-white md:block">
         <table className="w-full text-sm" dir="rtl">
           <thead>
             <tr className="border-b border-[var(--border)] text-[var(--muted)]">
@@ -192,7 +226,7 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
       </div>
 
       {!loading && conversations.length > 0 && (
-        <div className="mt-4 flex items-center justify-between gap-3 text-sm" dir="rtl">
+        <div className="sticky bottom-[calc(var(--safe-bottom)+0.5rem)] mt-4 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-white/95 p-2 text-sm shadow-sm backdrop-blur md:static md:border-0 md:bg-transparent md:p-0 md:shadow-none" dir="rtl">
           <span className="text-[var(--muted)]">
             {conversations.length} שיחות · עמוד {currentPage + 1} מתוך {pageCount}
           </span>

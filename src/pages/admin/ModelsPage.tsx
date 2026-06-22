@@ -44,7 +44,7 @@ export default function ModelsPage() {
 
   return (
     <div className="max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
+      <div className="sticky top-[calc(var(--safe-top)+3.75rem)] z-20 -mx-3 mb-6 flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0">
         <div>
           <h1 className="text-2xl font-bold">ניהול מודלים</h1>
           <p className="text-sm text-[var(--muted)] mt-1">
@@ -71,7 +71,7 @@ export default function ModelsPage() {
         <label className="block">
           <span className="block text-sm font-medium mb-1">System Message</span>
           <textarea
-            className={`${input} min-h-40 leading-relaxed`}
+            className={`${input} min-h-56 leading-relaxed sm:min-h-40`}
             dir="rtl"
             value={models.system_message}
             onChange={(e) => setModels((m) => ({ ...m, system_message: e.target.value }))}
