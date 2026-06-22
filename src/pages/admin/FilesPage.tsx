@@ -35,6 +35,10 @@ export default function FilesPage() {
       const { data } = await client
         .from('outputs')
         .select('id, request_id, output_type, storage_path, mime_type, created_at')
+        // Only outputs backed by an actual file. text/presentation outputs are
+        // delivered as WhatsApp text and have no storage_path — showing them here
+        // renders a broken thumbnail with dead view/download buttons.
+        .not('storage_path', 'is', null)
         .order('created_at', { ascending: false })
         .limit(100);
       const rawRows = (data ?? []) as Omit<FileRow, 'creator'>[];
@@ -130,8 +134,15 @@ export default function FilesPage() {
     const client = createSupabaseBrowserClient();
     const toDelete = files.filter((f) => selected.has(f.id));
     const paths = toDelete.map((f) => f.storage_path);
+    // Delete the DB rows first: if RLS blocks this it returns an error (and 0
+    // rows), so we can surface it instead of orphaning storage blobs.
+    const { error } = await client.from('outputs').delete().in('id', Array.from(selected));
+    if (error) {
+      window.alert(`מחיקה נכשלה: ${error.message}`);
+      setDeleting(false);
+      return;
+    }
     await client.storage.from('outputs').remove(paths);
-    await client.from('outputs').delete().in('id', Array.from(selected));
     setFiles((prev) => prev.filter((f) => !selected.has(f.id)));
     clearSelection();
     setDeleting(false);
