@@ -20,25 +20,29 @@ export default function SignupPage() {
     }
 
     setLoading(true);
-    const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
 
-    if (signUpError) {
+    // Register via the edge function (no email confirmation — the user is
+    // created pre-confirmed), then sign in straight away.
+    const { data, error: fnError } = await supabase.functions.invoke('signup', {
+      body: { email: email.trim().toLowerCase(), password },
+    });
+
+    const errorCode = (data as { error?: string } | null)?.error;
+    if (fnError || errorCode) {
       setLoading(false);
-      setError('ההרשמה נכשלה. ייתכן שכתובת המייל כבר רשומה.');
+      setError(errorCode === 'email_taken' ? 'כתובת המייל כבר רשומה.' : 'ההרשמה נכשלה. נסו שוב.');
       return;
     }
 
-    // No email confirmation flow — sign the user straight in.
-    if (!data.session) {
-      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInError) {
-        setLoading(false);
-        setError('נרשמת בהצלחה, אך הכניסה נכשלה. נסו להתחבר ממסך הכניסה.');
-        return;
-      }
-    }
-
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    });
     setLoading(false);
+    if (signInError) {
+      setError('נרשמת בהצלחה, אך הכניסה נכשלה. נסו להתחבר ממסך הכניסה.');
+      return;
+    }
     navigate('/admin', { replace: true });
   }
 

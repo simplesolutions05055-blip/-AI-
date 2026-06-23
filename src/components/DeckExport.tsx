@@ -4,12 +4,15 @@ import {
   fetchBrandImages,
   buildDeckSlides,
   generateAiImages,
+  fetchPersistedDeckImages,
+  loadPersistedDeckImage,
   renderDeckToPdf,
   renderDeckToPptx,
   downloadBlob,
   type DeckSlide,
   type DeckBrand,
   type DeckImage,
+  type PersistedDeckImage,
 } from '@/lib/deck';
 
 // Builds a real, branded Hebrew deck (PDF or editable PPTX) from a brief +
@@ -28,6 +31,10 @@ export default function DeckExport({
   const [busy, setBusy] = useState<null | 'pdf' | 'pptx'>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiCount, setAiCount] = useState(0);
+  // AI images already generated for this request (shown so they can be reused
+  // in the next export instead of regenerating from scratch).
+  const [existing, setExisting] = useState<PersistedDeckImage[]>([]);
+  const [reuseExisting, setReuseExisting] = useState(true);
   // Cache the fully-resolved deck (slides + AI images + brand pack) keyed by the
   // AI-image count, so a follow-up PDF reuses the EXACT same images & positions
   // produced for the PPTX (and vice versa) without regenerating.
@@ -44,8 +51,24 @@ export default function DeckExport({
     cacheRef.current = null;
   }, [outlineText, requestId]);
 
+  // Load any AI images previously generated + persisted for this request.
+  useEffect(() => {
+    let alive = true;
+    if (!requestId) {
+      setExisting([]);
+      return;
+    }
+    fetchPersistedDeckImages(requestId)
+      .then((imgs) => { if (alive) setExisting(imgs); })
+      .catch(() => { if (alive) setExisting([]); });
+    return () => { alive = false; };
+  }, [requestId]);
+
+  // When reuse is on we embed the persisted images; otherwise we generate aiCount.
+  const willReuse = reuseExisting && existing.length > 0;
+
   async function prepareDeck() {
-    const key = `ai:${aiCount}`;
+    const key = willReuse ? `reuse:${existing.map((e) => e.id).join(',')}` : `ai:${aiCount}`;
     if (cacheRef.current?.key === key) return cacheRef.current;
 
     const brandId = requestId ? await fetchRequestBrandId(requestId) : null;
@@ -56,7 +79,17 @@ export default function DeckExport({
     ]);
     if (!slides.length) throw new Error('לא נמצא תוכן שקפים להפקה');
 
-    if (aiCount > 0) {
+    if (willReuse) {
+      // Reuse the exact images already generated — no new generation/cost. Place
+      // each on its recorded slide, clamped to a valid content slide if the
+      // outline changed since.
+      const lastContent = slides.length - 1;
+      for (const e of existing) {
+        const image = await loadPersistedDeckImage(e);
+        const idx = Math.min(Math.max(1, e.slideIndex || 1), lastContent);
+        if (slides[idx]) slides[idx] = { ...slides[idx], aiImage: image };
+      }
+    } else if (aiCount > 0) {
       const ai = await generateAiImages(deckBrief, slides, aiCount, requestId, brandPack.brand);
       for (const { index, image } of ai) {
         if (slides[index]) slides[index] = { ...slides[index], aiImage: image };
@@ -99,7 +132,41 @@ export default function DeckExport({
         מצגת ממותגת בעברית RTL עם הלוגו, פלטת הצבעים והתמונות של המותג.
       </p>
 
-      <div className="mb-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3">
+      {existing.length > 0 && (
+        <div className="mb-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3">
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input
+              type="checkbox"
+              checked={reuseExisting}
+              onChange={(e) => { setReuseExisting(e.target.checked); cacheRef.current = null; }}
+              disabled={busy !== null}
+              className="h-4 w-4"
+            />
+            להשתמש בתמונות ה-AI שכבר הופקו ({existing.length})
+          </label>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {existing.map((img) => (
+              <figure key={img.id} className="w-20">
+                <img
+                  src={img.previewUrl}
+                  alt={img.caption}
+                  className="h-20 w-20 rounded-md border border-[var(--border)] object-cover bg-white"
+                />
+                <figcaption className="mt-1 truncate text-[10px] text-[var(--muted)]" title={img.caption}>
+                  {img.caption}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            {reuseExisting
+              ? 'אותן תמונות ישובצו בהפקה הבאה בלי לייצר מחדש (בלי עלות נוספת).'
+              : 'בטל את הסימון כדי לייצר תמונות AI חדשות לפי הבריף.'}
+          </p>
+        </div>
+      )}
+
+      <div className={`mb-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3 ${willReuse ? 'opacity-50' : ''}`}>
         <div className="flex items-center justify-between gap-3">
           <label htmlFor="ai-count" className="text-sm font-semibold">
             להוסיף תמונות AI למצגת?
@@ -108,7 +175,7 @@ export default function DeckExport({
             <button
               type="button"
               onClick={() => { setAiCount((c) => Math.max(0, c - 1)); cacheRef.current = null; }}
-              disabled={busy !== null || aiCount <= 0}
+              disabled={busy !== null || willReuse || aiCount <= 0}
               className="h-8 w-8 rounded-md border border-[var(--border)] bg-white text-lg font-bold disabled:opacity-40"
               aria-label="פחות"
             >
@@ -125,13 +192,13 @@ export default function DeckExport({
                 setAiCount(n);
                 cacheRef.current = null;
               }}
-              disabled={busy !== null}
+              disabled={busy !== null || willReuse}
               className="h-8 w-12 rounded-md border border-[var(--border)] bg-white text-center font-semibold"
             />
             <button
               type="button"
               onClick={() => { setAiCount((c) => Math.min(3, c + 1)); cacheRef.current = null; }}
-              disabled={busy !== null || aiCount >= 3}
+              disabled={busy !== null || willReuse || aiCount >= 3}
               className="h-8 w-8 rounded-md border border-[var(--border)] bg-white text-lg font-bold disabled:opacity-40"
               aria-label="עוד"
             >
@@ -163,7 +230,7 @@ export default function DeckExport({
         </button>
       </div>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      {busy && <DeckBuildingOverlay format={busy} aiCount={cacheRef.current ? 0 : aiCount} />}
+      {busy && <DeckBuildingOverlay format={busy} aiCount={willReuse || cacheRef.current ? 0 : aiCount} />}
     </div>
   );
 }

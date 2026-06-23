@@ -27,6 +27,9 @@ enable_signup = false
 enabled = true
 file_size_limit = "10MiB"
 
+[functions.signup]
+verify_jwt = false
+
 [functions.twilio-webhook]
 verify_jwt = false
 
