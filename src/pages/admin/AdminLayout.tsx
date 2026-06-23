@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useLocation, Navigate } from 'react-router-dom';
+import { useLocation, useNavigate, Navigate } from 'react-router-dom';
 import AdminNav from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
 import { useProfile } from '@/lib/useProfile';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 const ROUTE_TITLES: Array<[string, string]> = [
   ['/admin/requests', 'בקשות ועלויות'],
@@ -31,6 +32,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { loading, profile } = useProfile();
   const [navOpen, setNavOpen] = useState(false);
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  async function logout() {
+    await createSupabaseBrowserClient().auth.signOut();
+    navigate('/login', { replace: true });
+  }
 
   // close the mobile drawer on navigation
   useEffect(() => {
@@ -64,6 +71,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div>
             <h1 className="mb-2 text-xl font-bold">אין לך עדיין הרשאת יצירת תוצרים</h1>
             <p className="text-[var(--muted)]">פנה למנהל המערכת כדי שיפעיל עבורך את האפשרות.</p>
+            <div className="mt-4 text-xs text-[var(--muted)] ltr">{profile.email}</div>
+            <button
+              onClick={logout}
+              className="mt-4 rounded-lg border border-[var(--border)] px-5 py-2 text-sm font-semibold text-[var(--muted)] hover:bg-gray-50 hover:text-red-600"
+            >
+              התנתקות
+            </button>
           </div>
         </main>
       );
