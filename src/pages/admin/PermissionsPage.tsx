@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useProfile } from '@/lib/useProfile';
 
 interface ProfileRow {
   id: string;
@@ -17,6 +18,7 @@ interface BrandRow {
 
 export default function PermissionsPage() {
   const db = useMemo(() => createSupabaseBrowserClient(), []);
+  const { profile: me } = useProfile();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [brands, setBrands] = useState<BrandRow[]>([]);
   // user_id -> Set(brand_id)
@@ -68,6 +70,19 @@ export default function PermissionsPage() {
     if (error) return flash('שמירה נכשלה');
     setProfiles((prev) => prev.map((x) => (x.id === p.id ? { ...x, can_create_outputs: next } : x)));
     flash('נשמר');
+  }
+
+  async function deleteUser(p: ProfileRow) {
+    if (!confirm(`למחוק את המשתמש ${p.email}? פעולה זו אינה הפיכה.`)) return;
+    setSavingId(p.id);
+    const { data, error } = await db.functions.invoke('delete-user', { body: { user_id: p.id } });
+    setSavingId(null);
+    const code = (data as { error?: string } | null)?.error;
+    if (error || code) {
+      return flash(code === 'cannot_delete_self' ? 'אי אפשר למחוק את עצמך' : 'המחיקה נכשלה');
+    }
+    setProfiles((prev) => prev.filter((x) => x.id !== p.id));
+    flash('המשתמש נמחק');
   }
 
   async function toggleBrand(p: ProfileRow, brandId: string) {
@@ -145,6 +160,17 @@ export default function PermissionsPage() {
                   >
                     {p.can_create_outputs ? '✓ יוצר תוצרים' : 'יצירת תוצרים סגורה'}
                   </button>
+
+                  {/* delete — not allowed on your own account */}
+                  {me?.id !== p.id && (
+                    <button
+                      onClick={() => deleteUser(p)}
+                      disabled={savingId === p.id}
+                      className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                    >
+                      מחיקה
+                    </button>
+                  )}
                 </div>
               </div>
 
