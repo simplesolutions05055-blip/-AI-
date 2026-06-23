@@ -227,15 +227,30 @@ function RequestModal({ requestId, onClose }: { requestId: string; onClose: () =
       .select('id, customer_email, output_type, status, estimated_cost, created_at, brief, admin_note, conversation_id, conversations!requests_conversation_id_fkey(whatsapp_from)')
       .eq('id', requestId)
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) console.error('Error fetching request:', error);
         setDetail((data as unknown as RequestDetail | null) ?? null);
         setLoading(false);
       });
   }, [requestId]);
 
+  useEffect(() => {
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white rounded-xl">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white rounded-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="sticky top-0 border-b border-[var(--border)] bg-white p-4 flex items-center justify-between">
           <h2 className="font-bold text-lg">פרטי בקשה</h2>
           <button
