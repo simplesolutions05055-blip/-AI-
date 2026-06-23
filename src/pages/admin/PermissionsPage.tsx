@@ -21,11 +21,14 @@ export default function PermissionsPage() {
   const { profile: me } = useProfile();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [brands, setBrands] = useState<BrandRow[]>([]);
-  // user_id -> Set(brand_id)
   const [grants, setGrants] = useState<Record<string, Set<string>>>({});
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [tab, setTab] = useState<'admins' | 'users'>('admins');
+
+  const admins = profiles.filter((p) => p.role === 'admin');
+  const users = profiles.filter((p) => p.role === 'user');
 
   useEffect(() => {
     (async () => {
@@ -104,9 +107,9 @@ export default function PermissionsPage() {
   return (
     <div dir="rtl">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold">הרשאות</h1>
+        <h1 className="text-2xl font-bold">משתמשים והרשאות</h1>
         <p className="text-[var(--muted)] text-sm mt-1">
-          קבעו לכל משתמש את התפקיד, האם מותר לו ליצור תוצרים, ועם אילו מותגים.
+          ניהול תפקידים, הרשאות יצירה, ומותגים מותרים.
         </p>
       </div>
 
@@ -116,57 +119,84 @@ export default function PermissionsPage() {
         </div>
       )}
 
-      <div className="space-y-4">
-        {profiles.map((p) => {
+      {/* Tabs */}
+      <div className="mb-6 flex border-b border-[var(--border)]">
+        <button
+          onClick={() => setTab('admins')}
+          className={`px-4 py-3 font-semibold text-sm border-b-2 transition ${
+            tab === 'admins'
+              ? 'border-brand text-brand'
+              : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          אדמינים ({admins.length})
+        </button>
+        <button
+          onClick={() => setTab('users')}
+          className={`px-4 py-3 font-semibold text-sm border-b-2 transition ${
+            tab === 'users'
+              ? 'border-brand text-brand'
+              : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          משתמשים ({users.length})
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {(tab === 'admins' ? admins : users).map((p) => {
           const userBrands = grants[p.id] ?? new Set<string>();
           const isAdmin = p.role === 'admin';
           return (
-            <div key={p.id} className="rounded-xl border border-[var(--border)] bg-white p-4 sm:p-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <div className="font-semibold ltr truncate" style={{ direction: 'ltr', textAlign: 'right' }}>{p.email}</div>
-                  <div className="text-xs text-[var(--muted)]">
-                    הצטרף: {new Date(p.created_at).toLocaleDateString('he-IL')}
+            <div key={p.id} className="rounded-lg border border-[var(--border)] bg-white p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold ltr text-sm" style={{ direction: 'ltr', textAlign: 'right' }}>
+                    {p.email}
+                  </div>
+                  <div className="text-xs text-[var(--muted)] mt-0.5">
+                    {new Date(p.created_at).toLocaleDateString('he-IL')}
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* role */}
-                  <div className="inline-flex rounded-lg border border-[var(--border)] p-1 text-sm">
+                <div className="flex flex-wrap items-center gap-2 justify-end">
+                  {/* role toggle */}
+                  <div className="inline-flex rounded-lg border border-[var(--border)] p-0.5 text-xs">
                     <button
                       onClick={() => setRole(p, 'user')}
-                      className={`rounded-md px-3 py-1.5 font-semibold transition ${!isAdmin ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'}`}
+                      className={`rounded-md px-2.5 py-1 font-medium transition ${!isAdmin ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'}`}
                     >
                       רגיל
                     </button>
                     <button
                       onClick={() => setRole(p, 'admin')}
-                      className={`rounded-md px-3 py-1.5 font-semibold transition ${isAdmin ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'}`}
+                      className={`rounded-md px-2.5 py-1 font-medium transition ${isAdmin ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'}`}
                     >
                       אדמין
                     </button>
                   </div>
 
-                  {/* can create outputs */}
-                  <button
-                    onClick={() => toggleCreate(p)}
-                    disabled={isAdmin || savingId === p.id}
-                    className={`rounded-lg px-3 py-2 text-sm font-semibold border transition disabled:opacity-60 ${
-                      p.can_create_outputs
-                        ? 'border-green-300 bg-green-50 text-green-700'
-                        : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'
-                    }`}
-                    title={isAdmin ? 'לאדמין תמיד יש הרשאת יצירה' : ''}
-                  >
-                    {p.can_create_outputs ? '✓ יוצר תוצרים' : 'יצירת תוצרים סגורה'}
-                  </button>
+                  {/* create outputs toggle */}
+                  {!isAdmin && (
+                    <button
+                      onClick={() => toggleCreate(p)}
+                      disabled={savingId === p.id}
+                      className={`rounded-lg px-2.5 py-1 text-xs font-semibold border transition disabled:opacity-60 ${
+                        p.can_create_outputs
+                          ? 'border-green-300 bg-green-50 text-green-700'
+                          : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'
+                      }`}
+                    >
+                      {p.can_create_outputs ? '✓ יצירה' : 'סגור'}
+                    </button>
+                  )}
 
-                  {/* delete — not allowed on your own account */}
+                  {/* delete button */}
                   {me?.id !== p.id && (
                     <button
                       onClick={() => deleteUser(p)}
                       disabled={savingId === p.id}
-                      className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                      className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
                     >
                       מחיקה
                     </button>
@@ -174,39 +204,30 @@ export default function PermissionsPage() {
                 </div>
               </div>
 
-              {/* allowed brands — only meaningful for regular users */}
-              {!isAdmin && (
-                <div className="mt-4 border-t border-[var(--border)] pt-3">
-                  <div className="mb-2 text-sm font-medium">מותגים מותרים</div>
-                  {brands.length === 0 ? (
-                    <p className="text-sm text-[var(--muted)]">אין מותגים מוגדרים עדיין.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {brands.map((b) => {
-                        const on = userBrands.has(b.id);
-                        return (
-                          <button
-                            key={b.id}
-                            onClick={() => toggleBrand(p, b.id)}
-                            disabled={savingId === p.id}
-                            className={`rounded-full px-3 py-1.5 text-sm font-medium border transition disabled:opacity-60 ${
-                              on
-                                ? 'border-brand bg-brand/10 text-brand'
-                                : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'
-                            }`}
-                          >
-                            {on ? '✓ ' : ''}{b.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+              {/* brands for regular users */}
+              {!isAdmin && brands.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-[var(--border)]">
+                  <div className="text-xs font-medium mb-2">מותגים:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {brands.map((b) => {
+                      const on = userBrands.has(b.id);
+                      return (
+                        <button
+                          key={b.id}
+                          onClick={() => toggleBrand(p, b.id)}
+                          disabled={savingId === p.id}
+                          className={`rounded-full px-2.5 py-1 text-xs font-medium border transition disabled:opacity-60 ${
+                            on
+                              ? 'border-brand bg-brand/10 text-brand'
+                              : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'
+                          }`}
+                        >
+                          {on ? '✓ ' : ''}{b.name}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              )}
-              {isAdmin && (
-                <p className="mt-3 border-t border-[var(--border)] pt-3 text-xs text-[var(--muted)]">
-                  לאדמין יש גישה לכל המותגים ולכל מסכי הניהול.
-                </p>
               )}
             </div>
           );
