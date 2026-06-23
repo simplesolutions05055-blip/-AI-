@@ -235,10 +235,12 @@ export async function generateAiImages(
     .map((c) => `${c.role} ${c.hex}`)
     .join(', ');
   const prompts = chosen.map(({ s }) => buildAiImagePrompt(brief, s, palette));
+  const slideIndexes = chosen.map(({ i }) => i);
+  const captions = chosen.map(({ s }) => s.title || 'תמונת AI');
 
   const db = createSupabaseBrowserClient();
   const { data, error } = await db.functions.invoke('generate-presentation', {
-    body: { format: 'images', brief, requestId, prompts },
+    body: { format: 'images', brief, requestId, prompts, slideIndexes, captions },
   });
   if (error) throw error;
   const raws = (data as { images?: Array<{ base64: string; mime: string }> } | null)?.images ?? [];
@@ -253,6 +255,59 @@ export async function generateAiImages(
     });
   }
   return out;
+}
+
+// A previously generated + persisted AI image for a deck (deck_ai_images row).
+export interface PersistedDeckImage {
+  id: string;
+  slideIndex: number;
+  caption: string;
+  previewUrl: string; // signed URL, for thumbnails in the UI
+  storagePath: string;
+  mimeType: string;
+}
+
+// Load the AI images previously generated for a request, newest first, with a
+// signed preview URL each. Used by the /revise screen to show and reuse them.
+export async function fetchPersistedDeckImages(requestId: string): Promise<PersistedDeckImage[]> {
+  const db = createSupabaseBrowserClient();
+  const { data } = await db
+    .from('deck_ai_images')
+    .select('id, slide_index, caption, storage_path, mime_type')
+    .eq('request_id', requestId)
+    .order('created_at', { ascending: false });
+  const rows = (data as Array<{
+    id: string;
+    slide_index: number;
+    caption: string | null;
+    storage_path: string;
+    mime_type: string | null;
+  }>) ?? [];
+
+  const out: PersistedDeckImage[] = [];
+  for (const r of rows) {
+    const { data: signed } = await db.storage.from('outputs').createSignedUrl(r.storage_path, 600);
+    if (!signed?.signedUrl) continue;
+    out.push({
+      id: r.id,
+      slideIndex: r.slide_index ?? 0,
+      caption: r.caption || 'תמונת AI',
+      previewUrl: signed.signedUrl,
+      storagePath: r.storage_path,
+      mimeType: r.mime_type || 'image/png',
+    });
+  }
+  return out;
+}
+
+// Inline a persisted image as a self-contained DeckImage (base64 dataUrl) so it
+// can be embedded into an exported deck exactly like a freshly generated one.
+export async function loadPersistedDeckImage(img: PersistedDeckImage): Promise<DeckImage> {
+  const res = await fetch(img.previewUrl);
+  const blob = await res.blob();
+  const dataUrl = await blobToDataUrl(blob);
+  const dim = await imageSize(dataUrl);
+  return { caption: img.caption, isLogo: false, dataUrl, natW: dim.w, natH: dim.h };
 }
 
 // Pull the brand's logo + images, dedup by path, and inline them as base64 so

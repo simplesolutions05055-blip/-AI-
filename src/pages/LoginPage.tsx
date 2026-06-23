@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
@@ -40,6 +40,11 @@ export default function LoginPage() {
         <button type="submit" disabled={loading} className="w-full bg-brand hover:bg-brand-dark text-white rounded-lg py-2 font-semibold disabled:opacity-60">
           {loading ? 'מתחבר...' : 'כניסה'}
         </button>
+
+        <p className="text-center text-sm text-[var(--muted)] mt-4">
+          אין לך חשבון?{' '}
+          <Link to="/signup" className="text-brand font-semibold hover:underline">הירשם</Link>
+        </p>
       </form>
     </main>
   );

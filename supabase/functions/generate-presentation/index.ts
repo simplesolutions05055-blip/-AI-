@@ -20,11 +20,14 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { brief, requestId, format, prompts } = await req.json();
+    const { brief, requestId, format, prompts, slideIndexes, captions } = await req.json();
 
     // 'images' mode: generate up to 3 AI images from explicit prompts (built by
     // the client from the deck's slides + brand palette) and return them as
-    // base64. Used to embed AI visuals into the downloadable deck.
+    // base64. Used to embed AI visuals into the downloadable deck. When a
+    // requestId is supplied we also persist each image to the outputs bucket and
+    // record it in deck_ai_images, so the /revise screen can show and reuse them
+    // for the next deck export without regenerating.
     if (format === 'images') {
       const list = Array.isArray(prompts) ? prompts.slice(0, 3) : [];
       if (!list.length) {
@@ -33,15 +36,41 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+      const idxList = Array.isArray(slideIndexes) ? slideIndexes : [];
+      const capList = Array.isArray(captions) ? captions : [];
       const aiModelsImg = await getSetting<{ image_model?: string; image_size?: string; image_quality?: string }>(database, 'ai_models');
-      const images: Array<{ base64: string; mime: string }> = [];
-      for (const p of list) {
+      const images: Array<{ base64: string; mime: string; storagePath: string | null }> = [];
+      for (let k = 0; k < list.length; k++) {
+        const p = list[k];
         const { base64, mime } = await generateImage(String(p || 'תמונה'), {
           model: aiModelsImg?.image_model,
           size: aiModelsImg?.image_size || '1024x1024',
           quality: aiModelsImg?.image_quality || 'auto',
         });
-        images.push({ base64, mime });
+        let storagePath: string | null = null;
+        if (requestId) {
+          try {
+            const ext = (mime || 'image/png').includes('jpeg') ? 'jpg' : 'png';
+            const path = `deck-ai/${requestId}/${Date.now()}-${k}.${ext}`;
+            const { error: upErr } = await database.storage
+              .from('outputs')
+              .upload(path, decodeBase64(base64), { contentType: mime || 'image/png', upsert: true });
+            if (!upErr) {
+              storagePath = path;
+              await database.from('deck_ai_images').insert({
+                request_id: requestId,
+                slide_index: Number(idxList[k] ?? 0) || 0,
+                prompt: String(p || ''),
+                caption: capList[k] ? String(capList[k]) : null,
+                storage_path: path,
+                mime_type: mime || 'image/png',
+              });
+            }
+          } catch (_e) {
+            // Persistence is best-effort: a storage hiccup must not fail the deck.
+          }
+        }
+        images.push({ base64, mime, storagePath });
       }
       await recordUsageAndCost(database, requestId ?? null, {
         provider: 'openai',
@@ -196,3 +225,10 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+function decodeBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}

@@ -2,6 +2,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { OUTPUT_LABEL } from '@/lib/labels';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useProfile } from '@/lib/useProfile';
 import DeckExport from '@/components/DeckExport';
 import type { OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
 
@@ -35,6 +36,13 @@ interface ProductionForm {
   language: string;
   sendEmail: boolean;
   customerEmail: string;
+}
+
+interface BrandOption {
+  id: string;
+  name: string;
+  color_palette: Array<{ hex?: string; role?: string }> | null;
+  style_notes: string | null;
 }
 
 interface OutputRow {
@@ -156,13 +164,35 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [formMode, setFormMode] = useState<'wizard' | 'classic'>('wizard');
+  // Brands the current user may produce with. RLS already limits this list:
+  // admins see every active brand, a regular user sees only their granted ones.
+  const [brands, setBrands] = useState<BrandOption[]>([]);
+  const [brandId, setBrandId] = useState<string>('');
+  const { profile } = useProfile();
+  const isAdmin = profile?.role === 'admin';
+
+  useEffect(() => {
+    createSupabaseBrowserClient()
+      .from('brands')
+      .select('id, name, color_palette, style_notes')
+      .eq('is_active', true)
+      .order('name')
+      .then(({ data }) => setBrands((data as unknown as BrandOption[]) ?? []));
+  }, []);
+
+  // a regular user with brands available must pick one before producing
+  const brandRequired = !isAdmin && brands.length > 0;
+  const selectedBrand = brands.find((b) => b.id === brandId) ?? null;
 
   const fields = FIELDS[type];
   const missingRequired = useMemo(
     () => fields.filter((field) => field.required && !String(form[field.key] ?? '').trim()).map((field) => field.label),
     [fields, form],
   );
-  const canSubmit = missingRequired.length === 0 && (!form.sendEmail || isValidEmail(form.customerEmail));
+  const canSubmit =
+    missingRequired.length === 0 &&
+    (!form.sendEmail || isValidEmail(form.customerEmail)) &&
+    (!brandRequired || !!brandId);
 
   function update<K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -170,7 +200,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
 
   function prepareBrief() {
     if (!canSubmit) return;
-    setBrief(buildBrief(type, form, revisionCount));
+    setBrief(buildBrief(type, form, revisionCount, selectedBrand));
     setStep('brief');
     setError(null);
   }
@@ -307,6 +337,28 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       </div>
 
       {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 p-3 text-sm">{error}</div>}
+
+      {step === 'form' && brands.length > 0 && (
+        <div className="mb-5 rounded-lg border border-[var(--border)] bg-white p-4">
+          <label className="block text-sm font-semibold mb-2" htmlFor="brand-select">
+            מותג {brandRequired && <span className="text-red-600">*</span>}
+          </label>
+          <select
+            id="brand-select"
+            value={brandId}
+            onChange={(e) => setBrandId(e.target.value)}
+            className="w-full rounded-lg border border-[var(--border)] px-3 py-2 bg-white"
+          >
+            <option value="">{brandRequired ? 'בחרו מותג…' : 'ללא מותג'}</option>
+            {brands.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            צבעי המותג והנחיות הסגנון שלו ישולבו אוטומטית בתוצר.
+          </p>
+        </div>
+      )}
 
       {step === 'form' &&
         (formMode === 'wizard' ? (
@@ -810,10 +862,20 @@ function StepBadge({ step }: { step: Step }) {
   return <span className="bg-white border border-[var(--border)] rounded-full px-3 py-1 text-sm">{label[step]}</span>;
 }
 
-function buildBrief(type: ProductionType, form: ProductionForm, revisionCount: number): ProductionBrief {
+function buildBrief(
+  type: ProductionType,
+  form: ProductionForm,
+  revisionCount: number,
+  brand?: BrandOption | null,
+): ProductionBrief {
   const mustInclude = splitLines(form.mustInclude);
   if (form.requiredText.trim()) mustInclude.push(`טקסט חובה: ${form.requiredText.trim()}`);
   if (form.colors.trim()) mustInclude.push(`צבעים/מיתוג: ${form.colors.trim()}`);
+  if (brand) {
+    const hexes = (brand.color_palette ?? []).map((c) => c?.hex).filter(Boolean).join(', ');
+    mustInclude.push(`מותג: ${brand.name}${hexes ? ` (צבעים: ${hexes})` : ''}`);
+    if (brand.style_notes?.trim()) mustInclude.push(`הנחיות מותג: ${brand.style_notes.trim()}`);
+  }
   if (form.forbidden.trim()) mustInclude.push(`לא לכלול: ${form.forbidden.trim()}`);
   if (form.channel.trim()) mustInclude.push(`פלטפורמה/שימוש: ${form.channel.trim()}`);
   if (type === 'presentation' && form.slideCount.trim()) mustInclude.push(`מספר שקפים רצוי: ${form.slideCount.trim()}`);

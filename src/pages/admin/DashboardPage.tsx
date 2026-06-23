@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { STATUS_COLOR, STATUS_LABEL } from '@/lib/labels';
-import { formatHebrewDateTime, formatUsd } from '@/lib/format';
+import { formatUsd } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { RequestStatus } from '@/types/db';
 
@@ -9,7 +9,6 @@ export default function DashboardPage() {
   const [todayCount, setTodayCount] = useState(0);
   const [outputsCount, setOutputsCount] = useState(0);
   const [todayCost, setTodayCost] = useState(0);
-  const [errors, setErrors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -23,13 +22,11 @@ export default function DashboardPage() {
       db.from('requests').select('id', { count: 'exact', head: true }).gte('created_at', todayIso),
       db.from('usage_events').select('estimated_cost').gte('created_at', todayIso),
       db.from('outputs').select('id', { count: 'exact', head: true }),
-      db.from('logs').select('id, action, message, created_at, severity').eq('severity', 'error').order('created_at', { ascending: false }).limit(5),
-    ]).then(([statuses, today, costs, outputs, logRows]) => {
+    ]).then(([statuses, today, costs, outputs]) => {
       setStatusRows((statuses.data ?? []) as Array<{ status: RequestStatus }>);
       setTodayCount(today.count ?? 0);
       setTodayCost((costs.data ?? []).reduce((sum, row: any) => sum + Number(row.estimated_cost ?? 0), 0));
       setOutputsCount(outputs.count ?? 0);
-      setErrors(logRows.data ?? []);
       setLoading(false);
     });
   }, []);
@@ -72,23 +69,6 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-        <h2 className="font-semibold mb-3">שגיאות אחרונות</h2>
-        {errors.length === 0 ? (
-          <p className="text-[var(--muted)] text-sm">אין שגיאות.</p>
-        ) : (
-          <ul className="space-y-2">
-            {errors.map((error) => (
-              <li key={error.id} className="text-sm border-b border-[var(--border)] pb-2">
-                <span className="text-[var(--muted)] ltr">{formatHebrewDateTime(error.created_at)}</span>
-                {' - '}
-                <span className="font-medium">{error.action}</span>
-                {error.message ? <span className="text-[var(--muted)]">: {error.message}</span> : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </div>
   );
 }

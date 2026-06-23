@@ -1,22 +1,41 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
-const LINKS = [
-  { href: '/admin', label: 'לוח בקרה' },
-  { href: '/admin/requests', label: 'בקשות ועלויות' },
-  { href: '/admin/conversations', label: 'שיחות' },
+// adminOnly links are hidden from regular users.
+const LINKS: Array<{ href: string; label: string; adminOnly?: boolean }> = [
+  { href: '/admin', label: 'לוח בקרה', adminOnly: true },
+  { href: '/admin/requests', label: 'בקשות ועלויות', adminOnly: true },
+  { href: '/admin/conversations', label: 'שיחות', adminOnly: true },
   { href: '/admin/production', label: 'הפקת תוצרים' },
-  { href: '/admin/simulator', label: 'סימולטור צ׳אט' },
-  { href: '/admin/files', label: 'תוצרים' },
-  { href: '/admin/branding', label: 'מיתוג' },
-  { href: '/admin/models', label: 'מודלים' },
-  { href: '/admin/skills', label: 'סקילים' },
-  { href: '/admin/settings', label: 'הגדרות' },
+  { href: '/admin/simulator', label: 'סימולטור צ׳אט', adminOnly: true },
+  { href: '/admin/files', label: 'תוצרים', adminOnly: true },
+  { href: '/admin/branding', label: 'מיתוג', adminOnly: true },
+  { href: '/admin/models', label: 'מודלים', adminOnly: true },
+  { href: '/admin/skills', label: 'סקילים', adminOnly: true },
+  { href: '/admin/permissions', label: 'הרשאות', adminOnly: true },
+  { href: '/admin/errors', label: 'שגיאות', adminOnly: true },
+  { href: '/admin/settings', label: 'הגדרות', adminOnly: true },
 ];
 
-export default function AdminNav({ email, onNavigate }: { email: string; onNavigate?: () => void }) {
+export default function AdminNav({
+  email,
+  isAdmin,
+  canCreateOutputs,
+  onNavigate,
+}: {
+  email: string;
+  isAdmin: boolean;
+  canCreateOutputs: boolean;
+  onNavigate?: () => void;
+}) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
+
+  const links = LINKS.filter((l) => {
+    if (l.adminOnly && !isAdmin) return false;
+    if (l.href === '/admin/production' && !isAdmin && !canCreateOutputs) return false;
+    return true;
+  });
 
   async function logout() {
     await createSupabaseBrowserClient().auth.signOut();
@@ -31,7 +50,7 @@ export default function AdminNav({ email, onNavigate }: { email: string; onNavig
         <div className="text-xs text-[var(--muted)] ltr">{email}</div>
       </div>
       <nav className="flex flex-col gap-1">
-        {LINKS.map((l) => {
+        {links.map((l) => {
           const active = l.href === '/admin' ? pathname === '/admin' : pathname.startsWith(l.href);
           return (
             <Link

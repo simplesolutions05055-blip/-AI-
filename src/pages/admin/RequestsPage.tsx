@@ -62,29 +62,29 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
   return (
     <div>
       {!embedded && <h1 className="text-2xl font-bold mb-6">בקשות</h1>}
-      <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap">
-        <select aria-label="סטטוס" className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
+      <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-nowrap md:overflow-x-auto">
+        <select aria-label="סטטוס" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm md:shrink-0 md:min-w-max" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           <option value="">כל הסטטוסים</option>
           {Object.entries(STATUS_LABEL).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
         </select>
-        <select aria-label="סוג תוצר" className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.output_type} onChange={(e) => setFilters((f) => ({ ...f, output_type: e.target.value }))}>
+        <select aria-label="סוג תוצר" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm md:shrink-0 md:min-w-max" value={filters.output_type} onChange={(e) => setFilters((f) => ({ ...f, output_type: e.target.value }))}>
           <option value="">כל הסוגים</option>
           {Object.entries(OUTPUT_LABEL).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
         </select>
-        <input placeholder="מייל" dir="ltr" className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.email} onChange={(e) => setFilters((f) => ({ ...f, email: e.target.value }))} />
-        <input placeholder="מספר" dir="ltr" className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.phone} onChange={(e) => setFilters((f) => ({ ...f, phone: e.target.value }))} />
-        <label className="flex items-center gap-1 text-sm text-[var(--muted)] lg:w-auto">
+        <input placeholder="מייל" dir="ltr" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm md:shrink-0 md:min-w-max" value={filters.email} onChange={(e) => setFilters((f) => ({ ...f, email: e.target.value }))} />
+        <input placeholder="מספר" dir="ltr" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm md:shrink-0 md:min-w-max" value={filters.phone} onChange={(e) => setFilters((f) => ({ ...f, phone: e.target.value }))} />
+        <label className="flex items-center gap-1 text-sm text-[var(--muted)] md:shrink-0 md:whitespace-nowrap">
           מתאריך
-          <input type="date" aria-label="מתאריך" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} />
+          <input type="date" aria-label="מתאריך" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm md:min-w-auto md:flex-auto" value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} />
         </label>
-        <label className="flex items-center gap-1 text-sm text-[var(--muted)] lg:w-auto">
+        <label className="flex items-center gap-1 text-sm text-[var(--muted)] md:shrink-0 md:whitespace-nowrap">
           עד תאריך
-          <input type="date" aria-label="עד תאריך" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm" value={filters.to} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
+          <input type="date" aria-label="עד תאריך" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm md:min-w-auto md:flex-auto" value={filters.to} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
         </label>
         {(filters.from || filters.to) && (
           <button
             onClick={() => setFilters((f) => ({ ...f, from: '', to: '' }))}
-            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-gray-50"
+            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-gray-50 md:shrink-0 md:whitespace-nowrap"
           >
             נקה תאריכים
           </button>

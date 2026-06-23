@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, Navigate } from 'react-router-dom';
 import AdminNav from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
-import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useProfile } from '@/lib/useProfile';
 
 const ROUTE_TITLES: Array<[string, string]> = [
   ['/admin/requests', 'בקשות ועלויות'],
@@ -14,25 +14,23 @@ const ROUTE_TITLES: Array<[string, string]> = [
   ['/admin/branding', 'מיתוג'],
   ['/admin/models', 'מודלים'],
   ['/admin/skills', 'סקילים'],
+  ['/admin/permissions', 'הרשאות'],
+  ['/admin/errors', 'שגיאות ואזהרות'],
   ['/admin/settings', 'הגדרות'],
 ];
+
+// Pages a regular (non-admin) user is allowed to reach. Production is gated
+// further by can_create_outputs.
+const USER_ALLOWED_PREFIXES = ['/admin/production'];
 
 function titleForPath(pathname: string) {
   return ROUTE_TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'לוח בקרה';
 }
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const [email, setEmail] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { loading, profile } = useProfile();
   const [navOpen, setNavOpen] = useState(false);
   const { pathname } = useLocation();
-
-  useEffect(() => {
-    createSupabaseBrowserClient().auth.getUser().then(({ data }) => {
-      setEmail(data.user?.email ?? null);
-      setLoading(false);
-    });
-  }, []);
 
   // close the mobile drawer on navigation
   useEffect(() => {
@@ -47,13 +45,36 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }, [navOpen]);
 
   if (loading) return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]">טוען...</main>;
-  if (!email) return <Navigate to="/login" replace />;
+  if (!profile) return <Navigate to="/login" replace />;
+
+  const isAdmin = profile.role === 'admin';
+  const email = profile.email;
+
+  // Route gating for regular users: only the production screen, and only when
+  // output creation is enabled for them.
+  if (!isAdmin) {
+    const inProduction = pathname.startsWith('/admin/production');
+    const allowed = USER_ALLOWED_PREFIXES.some((p) => pathname.startsWith(p));
+    if (!allowed) {
+      return <Navigate to="/admin/production" replace />;
+    }
+    if (inProduction && !profile.can_create_outputs) {
+      return (
+        <main className="grid min-h-[100dvh] place-items-center p-6 text-center">
+          <div>
+            <h1 className="mb-2 text-xl font-bold">אין לך עדיין הרשאת יצירת תוצרים</h1>
+            <p className="text-[var(--muted)]">פנה למנהל המערכת כדי שיפעיל עבורך את האפשרות.</p>
+          </div>
+        </main>
+      );
+    }
+  }
 
   return (
     <div className="flex min-h-[100dvh]">
       {/* desktop sidebar */}
       <div className="hidden lg:block">
-        <AdminNav email={email} />
+        <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} />
       </div>
 
       {/* mobile drawer */}
@@ -61,7 +82,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/40" onClick={() => setNavOpen(false)} />
           <div className="absolute bottom-0 right-0 top-0 w-[min(84vw,320px)] shadow-xl">
-            <AdminNav email={email} onNavigate={() => setNavOpen(false)} />
+            <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} onNavigate={() => setNavOpen(false)} />
           </div>
         </div>
       )}
