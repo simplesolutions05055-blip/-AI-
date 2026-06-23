@@ -71,13 +71,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div>
             <h1 className="mb-2 text-xl font-bold">אין לך עדיין הרשאת יצירת תוצרים</h1>
             <p className="text-[var(--muted)]">פנה למנהל המערכת כדי שיפעיל עבורך את האפשרות.</p>
-            <div className="mt-4 text-xs text-[var(--muted)] ltr">{profile.email}</div>
-            <button
-              onClick={logout}
-              className="mt-4 rounded-lg border border-[var(--border)] px-5 py-2 text-sm font-semibold text-[var(--muted)] hover:bg-gray-50 hover:text-red-600"
-            >
-              התנתקות
-            </button>
+            <div className="mt-5 flex flex-col items-center gap-3">
+              <div className="text-xs text-[var(--muted)] ltr">{profile.email}</div>
+              <button
+                onClick={logout}
+                className="rounded-lg border border-[var(--border)] px-5 py-2 text-sm font-semibold text-[var(--muted)] hover:bg-gray-50 hover:text-red-600"
+              >
+                התנתקות
+              </button>
+            </div>
           </div>
         </main>
       );
