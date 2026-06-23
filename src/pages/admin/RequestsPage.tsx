@@ -22,6 +22,7 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
   const [rates, setRates] = useState<Map<string, number | null>>(new Map());
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ status: '', output_type: '', email: '', phone: '', from: '', to: '' });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     const db = createSupabaseBrowserClient();
@@ -100,7 +101,11 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
           const rate = rateForDate(rates, row.created_at);
           const cost = Number(row.estimated_cost ?? 0);
           return (
-            <article key={row.id} className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+            <article
+              key={row.id}
+              onClick={() => setSelectedId(row.id)}
+              className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm cursor-pointer hover:shadow-md transition"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-xs text-[var(--muted)] ltr">{formatHebrewDateTime(row.created_at)}</div>
@@ -159,7 +164,11 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
               const rate = rateForDate(rates, row.created_at);
               const cost = Number(row.estimated_cost ?? 0);
               return (
-                <tr key={row.id} className="border-b border-[var(--border)] hover:bg-gray-50">
+                <tr
+                  key={row.id}
+                  onClick={() => setSelectedId(row.id)}
+                  className="border-b border-[var(--border)] hover:bg-gray-50 cursor-pointer"
+                >
                   <td className="p-3"><span className="ltr">{formatHebrewDateTime(row.created_at)}</span></td>
                   <td className="p-3">
                     {row.conversation_id ? (
@@ -183,6 +192,125 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
             })}
           </tbody>
         </table>
+      </div>
+
+      {selectedId && (
+        <RequestModal
+          requestId={selectedId}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+interface RequestDetail {
+  id: string;
+  customer_email: string | null;
+  output_type: OutputType | null;
+  status: RequestStatus;
+  estimated_cost: number;
+  created_at: string;
+  brief: Record<string, unknown> | null;
+  admin_note: string | null;
+  conversation_id: string | null;
+  conversations: { whatsapp_from: string } | null;
+}
+
+function RequestModal({ requestId, onClose }: { requestId: string; onClose: () => void }) {
+  const [detail, setDetail] = useState<RequestDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const db = createSupabaseBrowserClient();
+    db.from('requests')
+      .select('id, customer_email, output_type, status, estimated_cost, created_at, brief, admin_note, conversation_id, conversations!requests_conversation_id_fkey(whatsapp_from)')
+      .eq('id', requestId)
+      .maybeSingle()
+      .then(({ data }) => {
+        setDetail((data as unknown as RequestDetail | null) ?? null);
+        setLoading(false);
+      });
+  }, [requestId]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white rounded-xl">
+        <div className="sticky top-0 border-b border-[var(--border)] bg-white p-4 flex items-center justify-between">
+          <h2 className="font-bold text-lg">פרטי בקשה</h2>
+          <button
+            onClick={onClose}
+            className="text-[var(--muted)] hover:text-[var(--text)] text-2xl leading-none"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {loading ? (
+            <div className="text-center text-[var(--muted)]">טוען...</div>
+          ) : detail ? (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs text-[var(--muted)]">מזהה</div>
+                  <div className="font-mono text-sm break-all">{detail.id}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--muted)]">סטטוס</div>
+                  <div className="text-sm">{STATUS_LABEL[detail.status]}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--muted)]">מייל</div>
+                  <div className="text-sm ltr break-all">{detail.customer_email ?? '-'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--muted)]">סוג</div>
+                  <div className="text-sm">{detail.output_type ? OUTPUT_LABEL[detail.output_type] : '-'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--muted)]">עלות</div>
+                  <div className="text-sm ltr">${detail.estimated_cost?.toFixed(2) ?? '0.00'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[var(--muted)]">תאריך</div>
+                  <div className="text-sm ltr">{formatHebrewDateTime(detail.created_at)}</div>
+                </div>
+              </div>
+
+              {detail.conversations?.whatsapp_from && (
+                <div>
+                  <div className="text-xs text-[var(--muted)]">מספר</div>
+                  <div className="text-sm ltr">{detail.conversations.whatsapp_from}</div>
+                </div>
+              )}
+
+              {detail.brief && (
+                <div>
+                  <div className="text-xs font-bold text-[var(--muted)] mb-2">בריף</div>
+                  <div className="bg-gray-50 rounded-lg p-3 text-xs space-y-1 max-h-48 overflow-y-auto">
+                    {Object.entries(detail.brief).map(([key, value]) => (
+                      <div key={key} className="leading-relaxed">
+                        <span className="font-semibold">{key}:</span> {String(value)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {detail.admin_note && (
+                <div>
+                  <div className="text-xs font-bold text-[var(--muted)] mb-2">הערת מנהל</div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm whitespace-pre-wrap">
+                    {detail.admin_note}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-center text-[var(--muted)]">לא נמצאה בקשה.</div>
+          )}
+        </div>
       </div>
     </div>
   );
