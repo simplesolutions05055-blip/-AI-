@@ -1,9 +1,11 @@
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { OUTPUT_LABEL } from '@/lib/labels';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import DeckExport from '@/components/DeckExport';
+import ImagePickerModal from '@/components/ImagePickerModal';
+import type { DeckImage } from '@/lib/deck';
 import type { OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
 
 type ProductionType = OutputType;
@@ -41,6 +43,7 @@ interface ProductionForm {
 interface BrandOption {
   id: string;
   name: string;
+  logo_path: string | null;
   color_palette: Array<{ hex?: string; role?: string }> | null;
   style_notes: string | null;
 }
@@ -60,6 +63,14 @@ const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: s
   { type: 'text', title: 'טקסט', description: 'פוסט, הודעה, מייל, נאום או תוכן שיווקי.' },
   { type: 'pdf', title: 'PDF / מסמך', description: 'מסמך מסודר להורדה או שליחה.' },
 ];
+
+const PANEL = 'rounded-2xl border border-[var(--border)] bg-white shadow-[0_20px_50px_rgba(15,23,42,0.06)]';
+const PRIMARY_BUTTON =
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-5 py-3 text-sm font-semibold text-white shadow-[0_14px_28px_rgba(59,130,246,0.24)] transition duration-200 hover:-translate-y-0.5 hover:bg-brand/95 hover:shadow-[0_18px_36px_rgba(59,130,246,0.32)] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0';
+const SECONDARY_BUTTON =
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-white px-5 py-3 text-sm font-semibold text-[var(--text)] shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:bg-brand/5 hover:text-brand active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0';
+const CHIP_BUTTON =
+  'rounded-full border px-3 py-1.5 text-sm transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2';
 
 const DEFAULT_FORM: ProductionForm = {
   goal: '',
@@ -128,21 +139,53 @@ export default function ProductionPage() {
 }
 
 function ProductionPicker() {
+  const navigate = useNavigate();
   return (
     <div dir="rtl">
-      <h1 className="text-2xl font-bold mb-2">הפקת תוצרים</h1>
-      <p className="text-[var(--muted)] mb-6">בחרו סוג תוצר, מלאו טופס, אשרו בריף והפעילו הפקה.</p>
+      <div className={`${PANEL} mb-6 overflow-hidden bg-[linear-gradient(135deg,#ffffff_0%,#f8fbff_45%,#eef4ff_100%)] p-6 sm:p-8`}>
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-brand/15 bg-brand/5 px-3 py-1 text-xs font-semibold text-brand">
+              <SparkIcon className="h-4 w-4" />
+              סטודיו ההפקה
+            </div>
+            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">הפקת תוצרים</h1>
+            <p className="mt-3 max-w-xl text-[var(--muted)]">
+              בחרו סוג תוצר, מלאו בריף ממוקד, ואפשרו למערכת להפיק תוכן עם מבנה ברור, אייקונים נקיים ואזורי פעולה מזמינים.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-sm sm:flex sm:flex-wrap">
+            <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-sm backdrop-blur">
+              <div className="text-xs text-[var(--muted)]">מצב</div>
+              <div className="font-semibold">בחירת תוצר</div>
+            </div>
+            <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-sm backdrop-blur">
+              <div className="text-xs text-[var(--muted)]">מיקוד</div>
+              <div className="font-semibold">בריף + אישור</div>
+            </div>
+          </div>
+        </div>
+      </div>
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {PRODUCT_TYPES.map((item) => (
-          <Link
+          <div
             key={item.type}
-            to={`/admin/production/${item.type}`}
-            className="bg-white border border-[var(--border)] rounded-lg p-5 hover:border-brand hover:shadow-sm transition"
+            className={`${PANEL} group flex h-full flex-col p-5 transition duration-200 hover:-translate-y-1 hover:border-brand/30 hover:shadow-[0_24px_60px_rgba(59,130,246,0.12)]`}
           >
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand/10 text-brand transition group-hover:scale-105">
+              <ProductIcon type={item.type} className="h-6 w-6" />
+            </div>
             <div className="text-lg font-bold mb-2">{item.title}</div>
-            <p className="text-sm text-[var(--muted)]">{item.description}</p>
-            <div className="mt-4 text-sm font-semibold text-brand">התחלה</div>
-          </Link>
+            <p className="text-sm text-[var(--muted)] leading-6">{item.description}</p>
+            <button
+              type="button"
+              onClick={() => navigate(`/admin/production/${item.type}`)}
+              className={`mt-auto ${PRIMARY_BUTTON} w-full sm:w-auto`}
+            >
+              <span>התחלה</span>
+              <ChevronIcon className="h-4 w-4 transition group-hover:translate-x-0.5" />
+            </button>
+          </div>
         ))}
       </div>
     </div>
@@ -150,7 +193,6 @@ function ProductionPicker() {
 }
 
 function ProductionFlow({ type }: { type: ProductionType }) {
-  const navigate = useNavigate();
   const [form, setForm] = useState<ProductionForm>(DEFAULT_FORM);
   const [step, setStep] = useState<Step>('form');
   const [brief, setBrief] = useState<ProductionBrief | null>(null);
@@ -168,21 +210,72 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   // admins see every active brand, a regular user sees only their granted ones.
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [brandId, setBrandId] = useState<string>('');
+  const [brandLogoUrl, setBrandLogoUrl] = useState<string | null>(null);
+  // Image selection chosen during the flow (brief step). Carried into the result
+  // so the deck + NotebookLM brief embed exactly these images.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickedImages, setPickedImages] = useState<DeckImage[] | null>(null);
+  const [pickedKeys, setPickedKeys] = useState<string[]>([]);
+  const brandSelectRef = useRef<HTMLSelectElement | null>(null);
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
 
   useEffect(() => {
     createSupabaseBrowserClient()
       .from('brands')
-      .select('id, name, color_palette, style_notes')
+      .select('id, name, logo_path, color_palette, style_notes')
       .eq('is_active', true)
       .order('name')
       .then(({ data }) => setBrands((data as unknown as BrandOption[]) ?? []));
   }, []);
 
-  // a regular user with brands available must pick one before producing
-  const brandRequired = !isAdmin && brands.length > 0;
+  // Presentations always require a brand (its images + palette drive the deck
+  // and the NotebookLM brief). Otherwise, a regular user with brands available
+  // must still pick one before producing.
+  const brandRequired = type === 'presentation' || (!isAdmin && brands.length > 0);
   const selectedBrand = brands.find((b) => b.id === brandId) ?? null;
+
+  useEffect(() => {
+    if (brandRequired && !brandId && brands.length === 1) {
+      setBrandId(brands[0].id);
+    }
+  }, [brandRequired, brandId, brands]);
+
+  useEffect(() => {
+    let active = true;
+    const logoPath = selectedBrand?.logo_path;
+    const selectedBrandId = selectedBrand?.id;
+    if (!logoPath) {
+      setBrandLogoUrl(null);
+      return;
+    }
+    const client = createSupabaseBrowserClient();
+    client
+      .storage
+      .from('branding')
+      .createSignedUrl(logoPath, 600)
+      .then(async ({ data, error }) => {
+        if (!active) return;
+        if (data?.signedUrl) {
+          setBrandLogoUrl(data.signedUrl);
+          return;
+        }
+        if (error) console.warn('Brand logo signed URL failed, trying function fallback:', error.message);
+        if (!selectedBrandId) {
+          setBrandLogoUrl(null);
+          return;
+        }
+        const { data: fallback, error: fallbackError } = await client.functions.invoke('brand-logo-url', {
+          body: { brand_id: selectedBrandId },
+        });
+        if (!active) return;
+        if (fallbackError) console.warn('Brand logo fallback failed:', fallbackError.message);
+        setBrandLogoUrl((fallback as { signedUrl?: string | null } | null)?.signedUrl ?? null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedBrand?.id, selectedBrand?.logo_path]);
 
   const fields = FIELDS[type];
   const missingRequired = useMemo(
@@ -198,8 +291,30 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function updateBrand(nextBrandId: string) {
+    setBrandId(nextBrandId);
+    setPickedImages(null);
+    setPickedKeys([]);
+    setError(null);
+  }
+
+  function openImagePicker() {
+    if (!brandId) {
+      setError('יש לבחור מותג לפני בחירת תמונות למצגת.');
+      brandSelectRef.current?.focus();
+      brandSelectRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    setPickerOpen(true);
+  }
+
   function prepareBrief() {
+    if (brandRequired && !brandId) {
+      setError('יש לבחור מותג לפני יצירת המצגת.');
+      return;
+    }
     if (!canSubmit) return;
+    setError(null);
     setBrief(buildBrief(type, form, revisionCount, selectedBrand));
     setStep('brief');
     setError(null);
@@ -229,6 +344,9 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           output_type: type,
           brief: { ...brief, revision_count: revisionCount },
           customer_email: null,
+          // Pass the explicitly chosen brand so the request is reliably tied to
+          // it (the result-page image picker + brand content depend on this).
+          brand_id: brandId || null,
         },
       });
       if (createError) throw createError;
@@ -306,63 +424,59 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     <div dir="rtl">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <button onClick={() => navigate('/admin/production')} className="text-sm text-[var(--muted)] hover:underline mb-2">
-            חזרה לבחירת תוצר
-          </button>
           <h1 className="text-2xl font-bold">הפקת {OUTPUT_LABEL[type]}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {step === 'form' && (
-            <div className="inline-flex rounded-lg border border-[var(--border)] bg-white p-1 text-sm">
+            <div className="inline-flex rounded-2xl border border-[var(--border)] bg-white p-1.5 text-sm shadow-sm">
               <button
                 onClick={() => setFormMode('wizard')}
-                className={`rounded-md px-3 py-1.5 font-semibold transition ${
-                  formMode === 'wizard' ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'
+                className={`rounded-xl px-4 py-2 font-semibold transition duration-200 ${
+                  formMode === 'wizard' ? 'bg-brand text-white shadow-sm' : 'text-[var(--muted)] hover:bg-gray-50 hover:text-[var(--text)]'
                 }`}
               >
                 שאלה אחר שאלה
               </button>
               <button
                 onClick={() => setFormMode('classic')}
-                className={`rounded-md px-3 py-1.5 font-semibold transition ${
-                  formMode === 'classic' ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'
+                className={`rounded-xl px-4 py-2 font-semibold transition duration-200 ${
+                  formMode === 'classic' ? 'bg-brand text-white shadow-sm' : 'text-[var(--muted)] hover:bg-gray-50 hover:text-[var(--text)]'
                 }`}
               >
                 טופס מלא
               </button>
             </div>
           )}
-          <StepBadge step={step} />
         </div>
       </div>
 
       {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 p-3 text-sm">{error}</div>}
 
       {step === 'form' && brands.length > 0 && (
-        <div className="mb-5 rounded-lg border border-[var(--border)] bg-white p-4">
-          <label className="block text-sm font-semibold mb-2" htmlFor="brand-select">
-            מותג {brandRequired && <span className="text-red-600">*</span>}
-          </label>
-          <select
-            id="brand-select"
-            value={brandId}
-            onChange={(e) => setBrandId(e.target.value)}
-            className="w-full rounded-lg border border-[var(--border)] px-3 py-2 bg-white"
-          >
-            <option value="">{brandRequired ? 'בחרו מותג…' : 'ללא מותג'}</option>
-            {brands.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
-          <p className="mt-2 text-xs text-[var(--muted)]">
-            צבעי המותג והנחיות הסגנון שלו ישולבו אוטומטית בתוצר.
-          </p>
-        </div>
+        <BrandProductionHeader
+          brands={brands}
+          selectedBrand={selectedBrand}
+          selectedLogoUrl={brandLogoUrl}
+          brandId={brandId}
+          brandRequired={brandRequired}
+          onChange={updateBrand}
+        />
       )}
 
       {step === 'form' &&
         (formMode === 'wizard' ? (
-          <FormWizard type={type} fields={fields} form={form} update={update} onComplete={prepareBrief} />
+          <FormWizard
+            type={type}
+            fields={fields}
+            form={form}
+            update={update}
+            onComplete={prepareBrief}
+            hasImageStep={type === 'presentation'}
+            brandId={brandId}
+            pickedCount={pickedImages?.length ?? null}
+            onOpenPicker={openImagePicker}
+            onResetPicked={() => { setPickedImages(null); setPickedKeys([]); }}
+          />
         ) : (
           <ClassicForm
             fields={fields}
@@ -371,14 +485,25 @@ function ProductionFlow({ type }: { type: ProductionType }) {
             missingRequired={missingRequired}
             canSubmit={canSubmit}
             onComplete={prepareBrief}
+            showImagePicker={type === 'presentation'}
+            pickedCount={pickedImages?.length ?? null}
+            imagePickerNeedsBrand={!brandId}
+            onOpenPicker={openImagePicker}
+            onResetPicked={() => { setPickedImages(null); setPickedKeys([]); }}
           />
         ))}
 
       {step === 'brief' && brief && (
         <div className="grid lg:grid-cols-[1fr_360px] gap-5">
           <BriefCard type={type} brief={brief} revisionCount={revisionCount} />
-          <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] bg-white border border-[var(--border)] rounded-lg p-5 h-fit shadow-lg lg:static lg:shadow-none">
-            <button onClick={generate} className="w-full bg-brand text-white rounded-lg px-4 py-2.5 font-semibold">
+          <div className={`${PANEL} sticky bottom-[calc(var(--safe-bottom)+0.75rem)] p-5 h-fit lg:static`}>
+            {type === 'presentation' && (
+              <div className="mb-4 rounded-2xl border border-[var(--border)] bg-gray-50 p-3 text-xs text-[var(--muted)]">
+                {pickedImages ? `נבחרו ${pickedImages.length} תמונות למצגת.` : 'לא נבחרו תמונות — אפשר לבחור בעמוד התוצר.'}
+              </div>
+            )}
+            <button onClick={generate} className={`w-full ${PRIMARY_BUTTON}`}>
+              <SparkIcon className="h-4 w-4" />
               מאשר, תפיק
             </button>
             <div className="mt-5">
@@ -388,13 +513,13 @@ function ProductionFlow({ type }: { type: ProductionType }) {
                 onChange={(e) => setRevision(e.target.value)}
                 disabled={revisionCount >= 3}
                 rows={5}
-                className="w-full rounded-lg border border-[var(--border)] px-3 py-2"
+                className="w-full rounded-xl border border-[var(--border)] px-3 py-3 shadow-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
                 placeholder="כתבו מה לשנות בבריף"
               />
               <button
                 onClick={applyRevision}
                 disabled={!revision.trim() || revisionCount >= 3}
-                className="mt-3 w-full border border-[var(--border)] rounded-lg px-4 py-2.5 font-semibold hover:bg-gray-50 disabled:opacity-50"
+                className={`mt-3 w-full ${SECONDARY_BUTTON}`}
               >
                 עדכון בריף
               </button>
@@ -422,7 +547,142 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           sendEmail={sendEmail}
           sendingEmail={sendingEmail}
           emailSent={emailSent}
+          initialPickedImages={pickedImages}
+          initialPickedKeys={pickedKeys}
         />
+      )}
+
+      <ImagePickerModal
+        brandId={brandId || null}
+        open={pickerOpen}
+        initialSelectedKeys={pickedKeys}
+        onClose={() => setPickerOpen(false)}
+        onConfirm={(images, keys) => {
+          setPickedImages(images);
+          setPickedKeys(keys);
+          setPickerOpen(false);
+        }}
+      />
+    </div>
+  );
+}
+
+function PresentationImagePickerPanel({
+  pickedCount,
+  needsBrand = false,
+  onOpenPicker,
+  onResetPicked,
+}: {
+  pickedCount?: number | null;
+  needsBrand?: boolean;
+  onOpenPicker?: () => void;
+  onResetPicked?: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-[var(--border)] bg-gray-50 p-4">
+      <p className="text-sm text-[var(--muted)] mb-3">
+        {pickedCount
+          ? `נבחרו ${pickedCount} תמונות שייכנסו למצגת.`
+          : 'עדיין לא נבחרו תמונות. אפשר לבחור עכשיו, או להמשיך ולבחור בעמוד התוצר.'}
+      </p>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => onOpenPicker?.()}
+          className={SECONDARY_BUTTON}
+        >
+          <SparkIcon className="h-4 w-4" />
+          בחירת תמונות
+        </button>
+        {pickedCount ? (
+          <button
+            type="button"
+            onClick={onResetPicked}
+            className="text-xs font-semibold text-[var(--muted)] hover:underline"
+          >
+            איפוס
+          </button>
+        ) : null}
+      </div>
+      {needsBrand && <p className="mt-2 text-xs text-amber-700">יש לבחור מותג כדי לטעון תמונות.</p>}
+    </div>
+  );
+}
+
+function BrandProductionHeader({
+  brands,
+  selectedBrand,
+  selectedLogoUrl,
+  brandId,
+  brandRequired,
+  onChange,
+}: {
+  brands: BrandOption[];
+  selectedBrand: BrandOption | null;
+  selectedLogoUrl: string | null;
+  brandId: string;
+  brandRequired: boolean;
+  onChange: (brandId: string) => void;
+}) {
+  const hasSingleBrand = brands.length === 1;
+  const title = selectedBrand ? `מפיקים תוצר ל${selectedBrand.name}` : 'בחרו מותג להפקה';
+
+  return (
+    <div className={`${PANEL} mb-5 p-4 sm:p-5`}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <BrandLogo name={selectedBrand?.name ?? 'מותג'} url={selectedLogoUrl} />
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-[var(--muted)]">מותג ההפקה</div>
+            <div className="truncate text-xl font-bold text-[var(--text)]">{title}</div>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              צבעי המותג והנחיות הסגנון שלו ישולבו אוטומטית בתוצר.
+            </p>
+          </div>
+        </div>
+
+        {!hasSingleBrand && (
+          <div className="flex flex-wrap gap-2 sm:justify-end" role="group" aria-label="בחירת מותג">
+            {!brandRequired && (
+              <button
+                type="button"
+                onClick={() => onChange('')}
+                className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                  !brandId ? 'border-brand bg-brand text-white' : 'border-[var(--border)] bg-white text-[var(--muted)] hover:bg-gray-50'
+                }`}
+              >
+                ללא מותג
+              </button>
+            )}
+            {brands.map((brand) => {
+              const active = brand.id === brandId;
+              return (
+                <button
+                  key={brand.id}
+                  type="button"
+                  onClick={() => onChange(brand.id)}
+                  className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                    active ? 'border-brand bg-brand text-white shadow-sm' : 'border-[var(--border)] bg-white text-[var(--text)] hover:border-brand/30 hover:bg-brand/5'
+                  }`}
+                >
+                  {brand.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BrandLogo({ name, url }: { name: string; url: string | null }) {
+  return (
+    <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-sm sm:h-24 sm:w-24">
+      {url ? (
+        <img src={url} alt={`לוגו ${name}`} className="h-full w-full object-contain p-1.5" />
+      ) : (
+        <span className="px-2 text-center text-xl font-bold text-brand">{name.slice(0, 2)}</span>
       )}
     </div>
   );
@@ -435,6 +695,11 @@ function ClassicForm({
   missingRequired,
   canSubmit,
   onComplete,
+  showImagePicker = false,
+  pickedCount,
+  imagePickerNeedsBrand = false,
+  onOpenPicker,
+  onResetPicked,
 }: {
   fields: FieldConfig[];
   form: ProductionForm;
@@ -442,22 +707,34 @@ function ClassicForm({
   missingRequired: string[];
   canSubmit: boolean;
   onComplete: () => void;
+  showImagePicker?: boolean;
+  pickedCount?: number | null;
+  imagePickerNeedsBrand?: boolean;
+  onOpenPicker?: () => void;
+  onResetPicked?: () => void;
 }) {
   return (
-    <div className="bg-white border border-[var(--border)] rounded-lg p-5">
+    <div className={`${PANEL} p-5`}>
       <div className="grid md:grid-cols-2 gap-4">
         {fields.map((field) => (
           <Field key={field.key} field={field} value={form[field.key]} onChange={update} />
         ))}
       </div>
+      {showImagePicker && (
+        <div className="mt-5">
+          <PresentationImagePickerPanel
+            pickedCount={pickedCount}
+            needsBrand={imagePickerNeedsBrand}
+            onOpenPicker={onOpenPicker}
+            onResetPicked={onResetPicked}
+          />
+        </div>
+      )}
       {missingRequired.length > 0 && (
         <div className="mt-4 text-sm text-[var(--muted)]">חסרים שדות חובה: {missingRequired.join(', ')}</div>
       )}
-      <button
-        onClick={onComplete}
-        disabled={!canSubmit}
-        className="mt-5 bg-brand text-white rounded-lg px-5 py-2.5 font-semibold disabled:opacity-50"
-      >
+      <button onClick={onComplete} disabled={!canSubmit} className={`mt-5 ${PRIMARY_BUTTON}`}>
+        <SparkIcon className="h-4 w-4" />
         יצירת בריף לאישור
       </button>
     </div>
@@ -473,7 +750,7 @@ function Field({
   value: string | boolean;
   onChange: <K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) => void;
 }) {
-  const common = 'w-full rounded-lg border border-[var(--border)] px-3 py-2';
+  const common = 'w-full rounded-xl border border-[var(--border)] px-3 py-3 shadow-sm transition focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15';
   return (
     <label className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
       <span className="block text-sm font-semibold mb-1">
@@ -512,33 +789,46 @@ function FormWizard({
   form,
   update,
   onComplete,
+  hasImageStep = false,
+  brandId,
+  pickedCount,
+  onOpenPicker,
+  onResetPicked,
 }: {
   type: ProductionType;
   fields: FieldConfig[];
   form: ProductionForm;
   update: <K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) => void;
   onComplete: () => void;
+  // For presentations: append a final "choose images" step before creating the brief.
+  hasImageStep?: boolean;
+  brandId?: string;
+  pickedCount?: number | null;
+  onOpenPicker?: () => void;
+  onResetPicked?: () => void;
 }) {
-  // One question per content field. The email decision happens later, only after
-  // the output exists (on the result screen).
-  const total = fields.length;
+  // One question per content field, plus an optional final image-selection step.
+  // The email decision happens later, only after the output exists.
+  const total = fields.length + (hasImageStep ? 1 : 0);
 
   const [index, setIndex] = useState(0);
   // RTL motion: advancing moves the filmstrip rightward (new question enters from
   // the left); going back moves it leftward (new question enters from the right).
   const [dir, setDir] = useState<'fwd' | 'back'>('fwd');
 
-  const current = fields[index];
+  // The image step sits at index === fields.length (after the last field).
+  const onImageStep = hasImageStep && index === fields.length;
+  const current = onImageStep ? null : fields[index];
 
   const stepValid = useMemo(() => {
-    if (current.required) {
+    if (current?.required) {
       return String(form[current.key] ?? '').trim().length > 0;
     }
-    return true;
+    return true; // image step + optional fields are always passable
   }, [current, form]);
 
   const isLast = index === total - 1;
-  const isOptionalEmpty = !current.required && !String(form[current.key] ?? '').trim();
+  const isOptionalEmpty = !onImageStep && !current?.required && !String(form[current!.key] ?? '').trim();
 
   function goNext() {
     if (!stepValid) return;
@@ -565,7 +855,7 @@ function FormWizard({
   }
 
   const progressPct = Math.round(((index + 1) / total) * 100);
-  const heading = current.label;
+  const heading = onImageStep ? 'בחירת תמונות למצגת' : current!.label;
 
   return (
     <div className="bg-white border border-[var(--border)] rounded-lg p-5 sm:p-8">
@@ -587,9 +877,18 @@ function FormWizard({
       >
         <h2 className="text-2xl sm:text-3xl font-bold mb-2 leading-snug">{heading}</h2>
         <p className="text-sm text-[var(--muted)] mb-5">
-          {current.required ? 'שדה חובה' : 'לא חובה — אפשר להמשיך גם בלי למלא'}
+          {onImageStep ? 'לא חובה — בחרו תמונות מותג / AI שייכנסו למצגת ולבריף' : current!.required ? 'שדה חובה' : 'לא חובה — אפשר להמשיך גם בלי למלא'}
         </p>
-        <WizardInput field={current} value={form[current.key]} onChange={update} autoFocus />
+        {onImageStep ? (
+          <PresentationImagePickerPanel
+            pickedCount={pickedCount}
+            needsBrand={!brandId}
+            onOpenPicker={onOpenPicker}
+            onResetPicked={onResetPicked}
+          />
+        ) : (
+          <WizardInput field={current!} value={form[current!.key]} onChange={update} autoFocus />
+        )}
       </div>
 
       {/* Thumb-zone action row: primary forward action on the left (RTL progression). */}
@@ -665,14 +964,21 @@ function WizardInput({
       {field.options && field.options.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {field.options.map((option) => {
-            const active = String(value) === option;
+            // Chips are multi-select: tapping one toggles it in a comma-separated
+            // list, so several can be combined (e.g. "שיווקי, משכנע").
+            const parts = String(value).split(',').map((p) => p.trim()).filter(Boolean);
+            const active = parts.includes(option);
+            const toggle = () => {
+              const next = active ? parts.filter((p) => p !== option) : [...parts, option];
+              onChange(field.key, next.join(', ') as never);
+            };
             return (
               <button
                 key={option}
                 type="button"
-                onClick={() => onChange(field.key, option as never)}
-                className={`rounded-full border px-3 py-1.5 text-sm transition ${
-                  active ? 'border-brand bg-brand/5 text-brand font-semibold' : 'border-[var(--border)] hover:bg-gray-50'
+                onClick={toggle}
+                className={`${CHIP_BUTTON} ${
+                  active ? 'border-brand bg-brand/10 text-brand font-semibold shadow-sm' : 'border-[var(--border)] hover:bg-gray-50 hover:text-[var(--text)]'
                 }`}
               >
                 {option}
@@ -699,10 +1005,10 @@ function BriefCard({ type, brief, revisionCount }: { type: ProductionType; brief
   ].filter(([, value]) => value);
 
   return (
-    <div className="bg-white border border-[var(--border)] rounded-lg p-5">
+    <div className={`${PANEL} p-5`}>
       <div className="flex items-center justify-between gap-3 mb-4">
         <h2 className="text-xl font-bold">בריף לאישור</h2>
-        <span className="text-xs bg-gray-100 rounded-full px-3 py-1">גרסה {revisionCount + 1}</span>
+        <span className="text-xs bg-gray-100 rounded-full px-3 py-1 font-semibold text-[var(--muted)]">גרסה {revisionCount + 1}</span>
       </div>
       <div className="divide-y divide-[var(--border)]">
         {rows.map(([label, value]) => (
@@ -726,6 +1032,8 @@ function ResultCard({
   sendEmail,
   sendingEmail,
   emailSent,
+  initialPickedImages,
+  initialPickedKeys,
 }: {
   output: OutputRow;
   previewUrl: string | null;
@@ -736,40 +1044,60 @@ function ResultCard({
   sendEmail: () => void;
   sendingEmail: boolean;
   emailSent: boolean;
+  initialPickedImages?: DeckImage[] | null;
+  initialPickedKeys?: string[];
 }) {
+  // Collapse the raw presentation outline once a NotebookLM brief is generated.
+  const [outlineCollapsed, setOutlineCollapsed] = useState(false);
   return (
     <div className="grid lg:grid-cols-[1fr_360px] gap-5">
-      <div className="bg-white border border-[var(--border)] rounded-lg p-5">
-        <h2 className="text-xl font-bold mb-4">התוצר מוכן</h2>
+      <div className={`${PANEL} p-5`}>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-xl font-bold">התוצר מוכן</h2>
+          {output.output_type === 'presentation' && outlineCollapsed && (
+            <button
+              type="button"
+              onClick={() => setOutlineCollapsed(false)}
+              className={SECONDARY_BUTTON.replace('px-5 py-3', 'px-3 py-2').replace('text-sm', 'text-xs')}
+            >
+              הצגת תוכן המצגת
+            </button>
+          )}
+        </div>
         {output.output_type === 'image' && previewUrl ? (
           <img src={previewUrl} alt="תוצר תמונה" className="max-h-[560px] w-full object-contain rounded-lg bg-gray-50" />
         ) : output.storage_path && previewUrl ? (
-          <a href={previewUrl} target="_blank" rel="noreferrer" className="inline-flex bg-brand text-white rounded-lg px-4 py-2.5">
+          <a href={previewUrl} target="_blank" rel="noreferrer" className={PRIMARY_BUTTON + ' w-fit'}>
+            <SparkIcon className="h-4 w-4" />
             פתיחת הקובץ
           </a>
-        ) : (
+        ) : output.output_type === 'presentation' && outlineCollapsed ? null : (
           <pre className="whitespace-pre-wrap text-sm bg-gray-50 rounded-lg p-4 overflow-auto max-h-[560px]">
             {output.text_content ?? 'התוצר נוצר ללא תצוגה טקסטואלית.'}
           </pre>
         )}
         {output.output_type === 'presentation' && (
-          <DeckExport brief={brief} requestId={requestId} outlineText={output.text_content} />
+          <DeckExport
+            brief={brief}
+            requestId={requestId}
+            outlineText={output.text_content}
+            onBriefGenerated={() => setOutlineCollapsed(true)}
+            initialPickedImages={initialPickedImages}
+            initialPickedKeys={initialPickedKeys}
+          />
         )}
       </div>
-      <div className="bg-white border border-[var(--border)] rounded-lg p-5 h-fit">
+      <div className={`${PANEL} p-5 h-fit`}>
         <h3 className="font-bold mb-3">שליחה במייל</h3>
         <input
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="name@example.com"
           dir="ltr"
-          className="w-full rounded-lg border border-[var(--border)] px-3 py-2 mb-3"
+          className="w-full rounded-xl border border-[var(--border)] px-3 py-3 mb-3 shadow-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
         />
-        <button
-          onClick={sendEmail}
-          disabled={!isValidEmail(email) || sendingEmail || emailSent}
-          className="w-full bg-brand text-white rounded-lg px-4 py-2.5 font-semibold disabled:opacity-50"
-        >
+        <button onClick={sendEmail} disabled={!isValidEmail(email) || sendingEmail || emailSent} className={`w-full ${PRIMARY_BUTTON}`}>
+          <MailIcon className="h-4 w-4" />
           {emailSent ? 'נשלח' : sendingEmail ? 'שולח...' : 'שליחה במייל'}
         </button>
         {output.qa_result && (
@@ -803,7 +1131,7 @@ function GeneratingView({ type, status }: { type: ProductionType; status: Reques
   }, [messages.length]);
 
   return (
-    <div className="bg-white border border-[var(--border)] rounded-lg p-10 sm:p-14 text-center overflow-hidden">
+    <div className={`${PANEL} overflow-hidden p-10 text-center sm:p-14`}>
       <style>{generatingKeyframes}</style>
 
       {/* Pulsing animated ring with an orbiting dot. */}
@@ -835,6 +1163,72 @@ function GeneratingView({ type, status }: { type: ProductionType; status: Reques
   );
 }
 
+function SparkIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M12 3.5l1.6 4.2L18 9.3l-4.4 1.6L12 15.1l-1.6-4.2L6 9.3l4.4-1.6L12 3.5Z"
+        fill="currentColor"
+      />
+      <path d="M18.6 13.2l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9.9-2.4Z" fill="currentColor" opacity="0.8" />
+      <path d="M5.6 14.3l.8 2-2 0.8 2 0.8-.8 2-.8-2-2-.8 2-.8.8-2Z" fill="currentColor" opacity="0.7" />
+    </svg>
+  );
+}
+
+function MailIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-9Z" stroke="currentColor" strokeWidth="1.8" />
+      <path d="m6 8 6 4 6-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="m9 6 6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ProductIcon({ type, className = 'h-6 w-6' }: { type: ProductionType; className?: string }) {
+  if (type === 'presentation') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+        <rect x="4" y="5" width="16" height="10" rx="2" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M8 19h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M12 15v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (type === 'text') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+        <path d="M6 5.5h12M6 10h12M6 14.5h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M6 19h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" opacity="0.65" />
+      </svg>
+    );
+  }
+  if (type === 'pdf') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+        <path d="M7 4.75h6.5L17 8.25V19a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5.75a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M13.5 4.75v3.5H17" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M8.5 15h7M8.5 12h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M6 9.5a6 6 0 0 1 12 0v5a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-5Z" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M9 9.5h6M9 12h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="m15.5 16.5 2 2 2-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 const generatingKeyframes = `
 @keyframes genSpin { to { transform: rotate(360deg); } }
 @keyframes genPulse {
@@ -851,16 +1245,6 @@ const generatingKeyframes = `
   100% { transform: translateX(-250%); }
 }
 `;
-
-function StepBadge({ step }: { step: Step }) {
-  const label: Record<Step, string> = {
-    form: 'מילוי פרטים',
-    brief: 'אישור בריף',
-    generating: 'הפקה',
-    result: 'תוצאה',
-  };
-  return <span className="bg-white border border-[var(--border)] rounded-full px-3 py-1 text-sm">{label[step]}</span>;
-}
 
 function buildBrief(
   type: ProductionType,

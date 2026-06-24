@@ -95,11 +95,21 @@ export default function PermissionsPage() {
     const { error } = has
       ? await db.from('user_brands').delete().eq('user_id', p.id).eq('brand_id', brandId)
       : await db.from('user_brands').insert({ user_id: p.id, brand_id: brandId } as never);
+    if (!error && !has && !p.can_create_outputs) {
+      const { error: profileError } = await db.from('profiles').update({ can_create_outputs: true } as never).eq('id', p.id);
+      if (profileError) {
+        setSavingId(null);
+        return flash('המותג נשמר, אבל הרשאת היצירה לא הופעלה');
+      }
+    }
     setSavingId(null);
     if (error) return flash('שמירה נכשלה');
     const nextSet = new Set(current);
     has ? nextSet.delete(brandId) : nextSet.add(brandId);
     setGrants((prev) => ({ ...prev, [p.id]: nextSet }));
+    if (!has && !p.can_create_outputs) {
+      setProfiles((prev) => prev.map((x) => (x.id === p.id ? { ...x, can_create_outputs: true } : x)));
+    }
   }
 
   if (loading) return <div className="text-[var(--muted)]">טוען...</div>;

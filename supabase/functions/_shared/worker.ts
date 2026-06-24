@@ -66,6 +66,10 @@ function isBriefApproval(text: string): boolean {
   return /^(מאשרת?|מאשרים|אשר|לאשר|אישור|כן|אוקיי?|ok|yes|go)$/.test(t);
 }
 
+function isProductionFormTarget(to: string): boolean {
+  return to === 'production-form' || to === 'whatsapp:production-form';
+}
+
 function formatBriefForApproval(
   brief: Record<string, unknown>,
   outputType: string | null,
@@ -281,7 +285,7 @@ export async function sendOut(
 ): Promise<boolean> {
   try {
     let sid: string;
-    if (simulated) {
+    if (simulated || isProductionFormTarget(to)) {
       sid = `sim-${crypto.randomUUID()}`;
     } else if (await windowOpen(database, conversationId)) {
       sid = await sendWhatsApp(to, body);
@@ -337,7 +341,7 @@ async function sendApprovalPrompt(
   to: string,
   body: string,
 ): Promise<boolean> {
-  if (conversation.simulated) {
+  if (conversation.simulated || isProductionFormTarget(to)) {
     return sendOut(database, conversation.id, requestId, to, body, true);
   }
   const quickReply = await getSettingOr<{ enabled?: boolean; content_sid?: string }>(

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import DeckExport from '@/components/DeckExport';
@@ -38,6 +38,15 @@ export default function RevisePage() {
   const [outputType, setOutputType] = useState<'image' | 'presentation' | null>(null);
   const [presRequestId, setPresRequestId] = useState<string | null>(null);
   const [outline, setOutline] = useState<string | null>(null);
+  // Once a NotebookLM brief is generated the raw outline is redundant, so we
+  // collapse it (re-openable with a button).
+  const [outlineCollapsed, setOutlineCollapsed] = useState(false);
+  const outlineButtonLabel = outlineCollapsed ? 'הצגת תוכן המצגת' : 'הסתרת תוכן המצגת';
+  const presentationOutline = useMemo(() => stripNotebookLmAppendix(outline || ''), [outline]);
+  const renderedOutline = useMemo(
+    () => renderMarkdown(presentationOutline || 'אין תוכן טקסטואלי לתוצר הזה.'),
+    [presentationOutline],
+  );
 
   useEffect(() => {
     if (!requestId) return;
@@ -239,12 +248,33 @@ export default function RevisePage() {
         <div className="text-center text-[var(--muted)] p-10">טוען...</div>
       ) : outputType === 'presentation' ? (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
-          <div className="bg-white border border-[var(--border)] rounded-lg p-5">
-            <h2 className="font-bold mb-3">תוכן המצגת הנוכחי</h2>
-            <pre className="whitespace-pre-wrap text-sm bg-gray-50 rounded-lg p-4 overflow-auto max-h-[560px]">
-              {outline || 'אין תוכן טקסטואלי לתוצר הזה.'}
-            </pre>
-            <DeckExport brief={brief} requestId={presRequestId} outlineText={outline} />
+          <div className="bg-white border border-[var(--border)] rounded-lg p-5 min-w-0">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h2 className="font-bold">תוכן המצגת הנוכחי</h2>
+              <button
+                type="button"
+                onClick={() => setOutlineCollapsed((v) => !v)}
+                className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--text)] shadow-sm transition hover:border-brand/30 hover:bg-brand/5 hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2"
+              >
+                {outlineButtonLabel}
+              </button>
+            </div>
+            {!outlineCollapsed && (
+              <div className="max-h-[560px] overflow-auto rounded-lg border border-[var(--border)] bg-gray-50 p-4">
+                <MarkdownPreview blocks={renderedOutline} />
+              </div>
+            )}
+            {outlineCollapsed && (
+              <div className="rounded-lg border border-dashed border-[var(--border)] bg-gray-50 px-4 py-5 text-sm text-[var(--muted)]">
+                תוכן המצגת מוסתר כרגע. אפשר להציג אותו מחדש בכל רגע עם הכפתור למעלה.
+              </div>
+            )}
+            <DeckExport
+              brief={brief}
+              requestId={presRequestId}
+              outlineText={outline}
+              onBriefGenerated={() => setOutlineCollapsed(true)}
+            />
           </div>
 
           <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
@@ -266,17 +296,6 @@ export default function RevisePage() {
             </button>
 
             {regenStatus && <p className="mt-3 text-sm text-[var(--muted)]">{regenStatus}…</p>}
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <p className="text-sm text-[var(--muted)] mb-2">לשנות סעיפים בבריף ולהפיק מצגת מחדש?</p>
-            <button
-              onClick={() => setBriefModalOpen(true)}
-              disabled={working || !brief}
-              className="w-full border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
-            >
-              לשנות בריף קיים
-            </button>
 
             <div className="my-4 border-t border-[var(--border)]" />
 
@@ -340,17 +359,6 @@ export default function RevisePage() {
 
             <div className="my-4 border-t border-[var(--border)]" />
 
-            <p className="text-sm text-[var(--muted)] mb-2">לשנות סעיפים בבריף ולהפיק מחדש?</p>
-            <button
-              onClick={() => setBriefModalOpen(true)}
-              disabled={working || !brief}
-              className="w-full border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
-            >
-              לשנות בריף קיים
-            </button>
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
             <p className="text-sm text-[var(--muted)] mb-2">רוצים תמונה אחרת לגמרי?</p>
             <button
               onClick={() => navigate('/admin/production/image')}
@@ -370,6 +378,192 @@ export default function RevisePage() {
         />
       )}
     </div>
+  );
+}
+
+type MarkdownBlock =
+  | { type: 'heading'; level: number; text: InlineNode[] }
+  | { type: 'paragraph'; text: InlineNode[] }
+  | { type: 'list'; ordered: boolean; items: InlineNode[][] }
+  | { type: 'quote'; text: InlineNode[] }
+  | { type: 'code'; text: string };
+
+type InlineNode = { type: 'text'; value: string } | { type: 'bold'; value: string } | { type: 'italic'; value: string };
+
+function renderMarkdown(input: string): MarkdownBlock[] {
+  const lines = input.replace(/\r\n/g, '\n').split('\n');
+  const blocks: MarkdownBlock[] = [];
+  let i = 0;
+
+  const pushParagraph = (buffer: string[]) => {
+    const text = buffer.join(' ').trim();
+    if (text) blocks.push({ type: 'paragraph', text: parseInline(text) });
+    buffer.length = 0;
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed) {
+      i += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('```')) {
+      const codeLines: string[] = [];
+      i += 1;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i += 1;
+      }
+      blocks.push({ type: 'code', text: codeLines.join('\n') });
+      i += 1;
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      blocks.push({ type: 'heading', level: headingMatch[1].length, text: parseInline(headingMatch[2]) });
+      i += 1;
+      continue;
+    }
+
+    if (/^>\s?/.test(trimmed)) {
+      blocks.push({ type: 'quote', text: parseInline(trimmed.replace(/^>\s?/, '')) });
+      i += 1;
+      continue;
+    }
+
+    if (/^([-*+])\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
+      const ordered = /^\d+\.\s+/.test(trimmed);
+      const items: InlineNode[][] = [];
+      while (i < lines.length) {
+        const current = lines[i].trim();
+        if (ordered ? !/^\d+\.\s+/.test(current) : !/^[-*+]\s+/.test(current)) break;
+        items.push(parseInline(current.replace(ordered ? /^\d+\.\s+/ : /^[-*+]\s+/, '')));
+        i += 1;
+      }
+      blocks.push({ type: 'list', ordered, items });
+      continue;
+    }
+
+    const paragraphBuffer = [trimmed];
+    i += 1;
+    while (i < lines.length) {
+      const next = lines[i].trim();
+      if (!next || /^(#{1,6}\s+|>\s?|([-*+])\s+|\d+\.\s+|```)/.test(next)) break;
+      paragraphBuffer.push(next);
+      i += 1;
+    }
+    pushParagraph(paragraphBuffer);
+  }
+
+  return blocks;
+}
+
+function stripNotebookLmAppendix(text: string): string {
+  if (!text) return '';
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const keep: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (/notebooklm/i.test(line)) break;
+    if (/^#{1,6}\s*(prompt|תוכן המצגת ל-NotebookLM|הפרומפט ל-NotebookLM|תמונות מהמיתוג|מקור)/i.test(line)) break;
+    keep.push(raw);
+  }
+  return keep.join('\n').trim();
+}
+
+function parseInline(text: string): InlineNode[] {
+  const nodes: InlineNode[] = [];
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  let last = 0;
+  for (const match of text.matchAll(regex)) {
+    if (match.index > last) nodes.push({ type: 'text', value: text.slice(last, match.index) });
+    const token = match[0];
+    if (token.startsWith('**')) nodes.push({ type: 'bold', value: token.slice(2, -2) });
+    else nodes.push({ type: 'italic', value: token.slice(1, -1) });
+    last = match.index + token.length;
+  }
+  if (last < text.length) nodes.push({ type: 'text', value: text.slice(last) });
+  return nodes.length ? nodes : [{ type: 'text', value: text }];
+}
+
+function MarkdownPreview({ blocks }: { blocks: MarkdownBlock[] }) {
+  return (
+    <div className="mx-auto w-full max-w-3xl space-y-4 text-[14px] leading-7 text-[var(--text)] sm:text-[15px]">
+      {blocks.map((block, idx) => {
+        if (block.type === 'heading') {
+          const levelClasses: Record<number, string> = {
+            1: 'text-xl font-bold mt-2 break-words',
+            2: 'text-lg font-bold mt-2 break-words',
+            3: 'text-base font-bold mt-2 break-words',
+            4: 'text-[15px] font-bold break-words',
+            5: 'text-[15px] font-semibold break-words',
+            6: 'text-xs font-semibold uppercase tracking-wide text-[var(--muted)] break-words',
+          };
+          return (
+            <div key={idx} className={levelClasses[block.level] ?? 'text-lg font-bold'}>
+              <InlineText nodes={block.text} />
+            </div>
+          );
+        }
+        if (block.type === 'paragraph') {
+          return (
+            <p key={idx} className="whitespace-pre-wrap break-words">
+              <InlineText nodes={block.text} />
+            </p>
+          );
+        }
+        if (block.type === 'quote') {
+          return (
+            <blockquote key={idx} className="border-r-4 border-brand/30 pr-4 italic text-[var(--muted)] break-words">
+              <InlineText nodes={block.text} />
+            </blockquote>
+          );
+        }
+        if (block.type === 'code') {
+          return (
+            <pre key={idx} className="overflow-x-auto rounded-xl bg-slate-900 p-4 text-sm leading-6 text-slate-100">
+              <code>{block.text}</code>
+            </pre>
+          );
+        }
+        return (
+          <div key={idx}>
+            {block.ordered ? (
+              <ol className="list-decimal space-y-2 pr-6 break-words">
+                {block.items.map((item, itemIdx) => (
+                  <li key={itemIdx} className="break-words">
+                    <InlineText nodes={item} />
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <ul className="list-disc space-y-2 pr-6 break-words">
+                {block.items.map((item, itemIdx) => (
+                  <li key={itemIdx} className="break-words">
+                    <InlineText nodes={item} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function InlineText({ nodes }: { nodes: InlineNode[] }) {
+  return (
+    <>
+      {nodes.map((node, idx) => {
+        if (node.type === 'bold') return <strong key={idx} className="font-bold text-[var(--text)] break-words">{node.value}</strong>;
+        if (node.type === 'italic') return <em key={idx} className="italic">{node.value}</em>;
+        return <span key={idx} className="break-words">{node.value}</span>;
+      })}
+    </>
   );
 }
 

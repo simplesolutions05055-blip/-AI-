@@ -98,6 +98,31 @@ Deno.serve(async (req) => {
     // 'deck' mode: return rich structured 10-slide content for the PDF renderer.
     if (format === 'deck') {
       const aiModelsDeck = await getSetting<{ system_message?: string; text_model?: string }>(database, 'ai_models');
+
+      // Ground the deck in the brand's full Business Brain: pull every linked
+      // text source (facts, messaging, services) + the brand kit, and fold them
+      // into the brief so the model writes real per-slide copy from this content
+      // — not generic placeholders.
+      const deckBrandId = (brief as { brand_id?: string }).brand_id ?? null;
+      if (deckBrandId) {
+        const [{ data: deckBrand }, { data: deckTextSources }] = await Promise.all([
+          database
+            .from('brands')
+            .select('name, color_palette, style_notes, is_active, client_type')
+            .eq('id', deckBrandId)
+            .single(),
+          database
+            .from('business_text_sources')
+            .select('title, content, source_kind')
+            .eq('brand_id', deckBrandId)
+            .order('created_at', { ascending: false })
+            .limit(12),
+        ]);
+        const deckBrain = buildBusinessBrainContext(deckBrand, deckTextSources ?? []);
+        if (deckBrain.content) (brief as Record<string, unknown>).business_content_context = deckBrain.content;
+        if (deckBrain.visual) (brief as Record<string, unknown>).brand_guidelines = deckBrain.visual;
+      }
+
       // Use a dedicated deck-writer prompt — NOT the conversational WhatsApp
       // agent persona (ai_models.system_message), which forces its own chat JSON
       // shape and buries the slides under brief.presentation_spec.

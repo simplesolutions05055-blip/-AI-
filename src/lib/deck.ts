@@ -28,6 +28,7 @@ export interface DeckBrand {
   name?: string;
   logo_path?: string | null;
   color_palette?: Array<{ hex: string; role: string }> | null;
+  style_notes?: string | null;
 }
 
 interface DeckPalette {
@@ -300,6 +301,89 @@ export async function fetchPersistedDeckImages(requestId: string): Promise<Persi
   return out;
 }
 
+function imageOutputCaption(brief: unknown): string {
+  if (!brief || typeof brief !== 'object') return 'תמונת AI';
+  const data = brief as Record<string, unknown>;
+  const value = data.goal || data.topic || data.title || data.prompt;
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 80) : 'תמונת AI';
+}
+
+// Load every AI image generated for ANY request of a given brand (newest
+// first), each with a signed preview URL. Powers the image picker, where the
+// user chooses across all of the brand's AI images — not just this request's.
+export async function fetchBrandAiImages(brandId: string): Promise<PersistedDeckImage[]> {
+  const db = createSupabaseBrowserClient();
+  const [{ data: deckData }, { data: outputData }] = await Promise.all([
+    db
+      .from('deck_ai_images')
+      .select('id, slide_index, caption, storage_path, mime_type, created_at, requests!inner(brand_id)')
+      .eq('requests.brand_id', brandId)
+      .order('created_at', { ascending: false }),
+    db
+      .from('outputs')
+      .select('id, output_type, storage_path, mime_type, created_at, requests!inner(brand_id, structured_brief)')
+      .eq('output_type', 'image')
+      .eq('requests.brand_id', brandId)
+      .not('storage_path', 'is', null)
+      .order('created_at', { ascending: false }),
+  ]);
+
+  const rows: Array<{
+    id: string;
+    slide_index: number;
+    caption: string | null;
+    storage_path: string;
+    mime_type: string | null;
+    created_at: string;
+    source: 'deck' | 'output';
+  }> = [
+    ...(((deckData as Array<{
+      id: string;
+      slide_index: number;
+      caption: string | null;
+      storage_path: string;
+      mime_type: string | null;
+      created_at: string;
+    }>) ?? []).map((row) => ({ ...row, source: 'deck' as const }))),
+    ...(((outputData as Array<{
+      id: string;
+      storage_path: string;
+      mime_type: string | null;
+      created_at: string;
+      requests?: { structured_brief?: unknown } | Array<{ structured_brief?: unknown }>;
+    }>) ?? []).map((row) => {
+      const request = Array.isArray(row.requests) ? row.requests[0] : row.requests;
+      return {
+        id: `output:${row.id}`,
+        slide_index: 0,
+        caption: imageOutputCaption(request?.structured_brief),
+        storage_path: row.storage_path,
+        mime_type: row.mime_type,
+        created_at: row.created_at,
+        source: 'output' as const,
+      };
+    })),
+  ].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+
+  const out: PersistedDeckImage[] = [];
+  const seenPaths = new Set<string>();
+  for (const r of rows) {
+    if (seenPaths.has(r.storage_path)) continue;
+    seenPaths.add(r.storage_path);
+    const { data: signed } = await db.storage.from('outputs').createSignedUrl(r.storage_path, 600);
+    if (!signed?.signedUrl) continue;
+    out.push({
+      id: r.id,
+      slideIndex: r.slide_index ?? 0,
+      caption: r.caption || 'תמונת AI',
+      previewUrl: signed.signedUrl,
+      storagePath: r.storage_path,
+      mimeType: r.mime_type || 'image/png',
+    });
+  }
+  return out;
+}
+
 // Inline a persisted image as a self-contained DeckImage (base64 dataUrl) so it
 // can be embedded into an exported deck exactly like a freshly generated one.
 export async function loadPersistedDeckImage(img: PersistedDeckImage): Promise<DeckImage> {
@@ -317,7 +401,7 @@ export async function fetchBrandImages(
 ): Promise<{ brand: DeckBrand | null; images: DeckImage[] }> {
   const db = createSupabaseBrowserClient();
   const [{ data: brand }, { data: assets }] = await Promise.all([
-    db.from('brands').select('name, logo_path, color_palette').eq('id', brandId).single(),
+    db.from('brands').select('name, logo_path, color_palette, style_notes').eq('id', brandId).single(),
     db.from('brand_assets').select('storage_path, caption').eq('brand_id', brandId),
   ]);
 
@@ -487,6 +571,244 @@ export async function renderDeckToPdf(
       if (i > 0) pdf.addPage([W, H], 'landscape');
       pdf.addImage(img, 'JPEG', 0, 0, W, H);
     }
+    return pdf.output('blob');
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
+// Build the ready-to-paste NotebookLM prompt, referencing each embedded brand
+// image by its number ("תמונה 1") so NotebookLM pulls them into the right slide.
+export function buildNotebookLmPrompt(
+  brief: any,
+  brand: DeckBrand | null,
+  images: DeckImage[],
+  slides: DeckSlide[],
+): string {
+  const { primary, secondary, accent } = resolvePalette(brand, brief);
+  const logo = images.find((i) => i.isLogo) || null;
+  const contentImages = images.filter((i) => !i.isLogo);
+  const lines: string[] = [];
+
+  lines.push('צור מצגת בעברית, בפורמט Presenter Slides, באורך ברירת מחדל.');
+  lines.push('השתמש רק במקורות המסומנים במחברת זו.');
+  lines.push('יישר את כל השקופיות מימין לשמאל (RTL) — טקסט עברי בלבד, מיושר לימין בכל שקופית.');
+  lines.push('');
+  if (brief?.audience) lines.push(`קהל יעד: ${brief.audience}`);
+  if (brief?.goal) lines.push(`מטרה: ${brief.goal}`);
+  if (brand?.name) lines.push(`טון וסגנון: בהתאם למותג ${brand.name}.`);
+  lines.push('');
+
+  // Image placement: logo in its place, other brand images mapped per slide,
+  // exactly as embedded (and numbered) in the brief PDF.
+  if (images.length) {
+    lines.push('שילוב התמונות (מוטמעות במסמך זה, ממוספרות) — מקם כל אחת במקומה:');
+    if (logo) {
+      const n = images.indexOf(logo) + 1;
+      lines.push(`- תמונה ${n} (לוגו): בשקופית השער ובפינת הכותרת של כל שקופית.`);
+    }
+    contentImages.forEach((img) => {
+      const n = images.indexOf(img) + 1;
+      lines.push(`- תמונה ${n} (${img.caption}): שבץ בשקופית התוכן המתאימה לפי הנושא.`);
+    });
+    lines.push('');
+  }
+
+  // Full per-slide content — the AI-written copy, slide by slide.
+  if (slides.length) {
+    lines.push('תוכן השקופיות (כתוב כל שקופית לפי התוכן הבא):');
+    slides.forEach((s, i) => {
+      lines.push(`שקופית ${i + 1}: ${s?.title || ''}`.trim());
+      if (s?.subtitle) lines.push(`  ${s.subtitle}`);
+      for (const b of Array.isArray(s?.bullets) ? s.bullets : []) lines.push(`  • ${b}`);
+      if (s?.body) lines.push(`  ${s.body}`);
+    });
+    lines.push('');
+  }
+
+  lines.push('כללי עיצוב:');
+  lines.push('- אל תעמיס טקסט. מסר מרכזי אחד לכל שקופית.');
+  lines.push('- כל שקופית: כותרת ברורה + עד 3 נקודות קצרות + ויזואל דומיננטי אחד.');
+  lines.push(`- פלטת צבעים: ראשי ${primary}, משני ${secondary}, הדגשה ${accent}, הרבה לבן.`);
+  return lines.join('\n');
+}
+
+// ── NotebookLM brief: an A4 source document (NOT a finished deck). It carries
+// the campaign brief, slide structure, the ready prompt, and the brand images
+// EMBEDDED inside the PDF (numbered "תמונה N") so NotebookLM reads them in
+// context — the only reliable way to feed external images to NotebookLM. The
+// "how to use" instructions live in the web UI, deliberately not in the file. ──
+export async function renderBriefToPdf(
+  brief: any,
+  brand: DeckBrand | null,
+  images: DeckImage[],
+  slides: DeckSlide[],
+): Promise<Blob> {
+  const esc = (s: unknown) =>
+    String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const topic = brief?.topic || brief?.goal || 'מצגת';
+  const palette = (brand?.color_palette ?? brief?.brand_palette ?? []) as Array<{ hex: string; role: string }>;
+  const promptText = buildNotebookLmPrompt(brief, brand, images, slides);
+
+  const detailRows: Array<[string, string]> = [];
+  if (brief?.goal) detailRows.push(['מטרה', brief.goal]);
+  if (brief?.audience) detailRows.push(['קהל יעד', brief.audience]);
+  if (brief?.style) detailRows.push(['סגנון', brief.style]);
+  if (brand?.name) detailRows.push(['מותג', brand.name]);
+
+  const keyMessages: string[] = Array.isArray(brief?.key_messages)
+    ? brief.key_messages
+    : Array.isArray(brief?.must_include)
+      ? brief.must_include
+      : [];
+
+  // Each entry is a self-contained block. Blocks are packed onto pages without
+  // ever being split, so an image (or any section) is never cut across pages.
+  const blocks: string[] = [];
+
+  blocks.push(`<div class="bf-block">
+    <div class="bf-kicker">בריף ליצירת מצגת · NotebookLM</div>
+    <h1>${esc(topic)}</h1>
+  </div>`);
+
+  if (detailRows.length) {
+    blocks.push(`<div class="bf-block">
+      <h2>פרטי הבריף</h2>
+      <table>${detailRows.map(([k, v]) => `<tr><td class="bf-k">${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>
+    </div>`);
+  }
+
+  if (keyMessages.length) {
+    blocks.push(`<div class="bf-block">
+      <h2>מסרי מפתח</h2>
+      <ul>${keyMessages.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>
+    </div>`);
+  }
+
+  if (slides.length) {
+    // Intro block for the section, then one block per slide carrying the full
+    // AI-written content (so a slide is never split across a page boundary).
+    blocks.push(`<div class="bf-block"><h2>תוכן השקופיות</h2>
+      <p class="bf-note">התוכן המלא לכל שקופית, שנכתב לפי תוכני המותג. זה הטקסט שייכנס למצגת.</p></div>`);
+    slides.forEach((s, i) => {
+      const bullets = Array.isArray(s?.bullets) ? s.bullets.filter(Boolean) : [];
+      blocks.push(`<div class="bf-block">
+        <h3>שקופית ${i + 1} — ${esc(s?.title || '')}</h3>
+        ${s?.subtitle ? `<p class="bf-sub">${esc(s.subtitle)}</p>` : ''}
+        ${bullets.length ? `<ul>${bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
+        ${s?.body ? `<p class="bf-para">${esc(s.body)}</p>` : ''}
+      </div>`);
+    });
+  }
+
+  blocks.push(`<div class="bf-block">
+    <h2>הפרומפט ל-NotebookLM</h2>
+    <p class="bf-note">העתיקו ל-Studio → Slide Deck. ודאו ש-Output Language = עברית.</p>
+    <div class="bf-prompt">${esc(promptText).replace(/\n/g, '<br>')}</div>
+  </div>`);
+
+  if (images.length) {
+    blocks.push(`<div class="bf-block">
+      <h2>התמונות (מוטמעות במסמך)</h2>
+      <p class="bf-note">אלו התמונות הזמינות במותג. NotebookLM קורא אותן מתוך ה-PDF — אין צורך להעלות קובצי תמונה בנפרד.</p>
+    </div>`);
+    // One block per image so a picture is always kept whole on a single page.
+    images.forEach((img, i) => {
+      blocks.push(`<div class="bf-block">
+        <h3>תמונה ${i + 1} — ${esc(img.caption)}</h3>
+        <img class="bf-img" src="${img.dataUrl}">
+        <div class="bf-cap">${img.isLogo ? 'תפקיד: שקופית השער והכותרות.' : 'תפקיד: ויזואל לשקופית מתאימה.'}</div>
+      </div>`);
+    });
+  } else {
+    blocks.push(`<div class="bf-block">
+      <h2>התמונות</h2>
+      <p>למותג זה אין כרגע תמונות. השקופיות יעוצבו בצבעי המותג בלבד.</p>
+    </div>`);
+  }
+
+  if (palette.length || brand?.style_notes) {
+    const swatches = palette
+      .map((c) => `<tr><td class="bf-k">${esc(c.role)}</td><td>${esc(c.hex)}</td></tr>`)
+      .join('');
+    blocks.push(`<div class="bf-block">
+      <h2>נתוני מותג${brand?.name ? ` — ${esc(brand.name)}` : ''}</h2>
+      ${palette.length ? `<table>${swatches}</table>` : ''}
+      ${brand?.style_notes ? `<p class="bf-para">${esc(brand.style_notes)}</p>` : ''}
+    </div>`);
+  }
+
+  // A4 @ ~96dpi, with margins. Content is laid out at CONTENT_W and packed into
+  // pages by measuring each block.
+  const PAGE_W = 794;
+  const PAGE_H = 1123;
+  const MARGIN = 48;
+  const CONTENT_W = PAGE_W - MARGIN * 2;
+  const GAP = 14; // vertical gap between blocks (PDF px)
+  const font = `'Heebo','Assistant','Arial Hebrew',Arial,sans-serif`;
+  // Deliberately minimal: black text on white, thin rules, no color fills.
+  const css = `
+    .bf-block{width:${CONTENT_W}px;background:#fff;color:#1a1a1a;font-family:${font};direction:rtl;text-align:right;
+      box-sizing:border-box;font-size:15px;line-height:1.55}
+    .bf-block h1{font-size:26px;font-weight:700;margin:0 0 6px;line-height:1.25}
+    .bf-block h2{font-size:19px;font-weight:700;margin:0 0 8px;border-bottom:1px solid #000;padding-bottom:4px}
+    .bf-block h3{font-size:16px;font-weight:700;margin:0 0 6px}
+    .bf-kicker{font-size:12px;color:#555;margin-bottom:4px}
+    .bf-block table{width:100%;border-collapse:collapse;font-size:14px}
+    .bf-block td{border:1px solid #999;padding:6px 9px;vertical-align:top}
+    .bf-k{font-weight:700;white-space:nowrap;width:120px}
+    .bf-block ul{margin:0;padding-right:20px}
+    .bf-block li{margin:4px 0}
+    .bf-note{font-size:13px;color:#555;margin:0 0 6px}
+    .bf-sub{font-size:14px;font-weight:700;margin:0 0 6px}
+    .bf-para{font-size:14px;line-height:1.6;margin:6px 0 0}
+    .bf-prompt{border:1px solid #999;padding:12px 14px;font-size:13px;line-height:1.7;white-space:pre-wrap}
+    .bf-img{max-width:100%;border:1px solid #999;display:block}
+    .bf-cap{font-size:12px;color:#555;margin-top:4px}
+  `;
+
+  const container = document.createElement('div');
+  container.style.cssText = `position:fixed;left:-99999px;top:0;width:${CONTENT_W}px;`;
+  container.innerHTML = `<style>${css}</style>${blocks.join('')}`;
+  document.body.appendChild(container);
+
+  try {
+    await (document as any).fonts?.ready?.catch?.(() => {});
+    await new Promise((r) => setTimeout(r, 120));
+
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: [PAGE_W, PAGE_H] });
+    const usableH = PAGE_H - MARGIN * 2;
+    const els = Array.from(container.querySelectorAll('.bf-block')) as HTMLElement[];
+    let y = MARGIN;
+    let first = true;
+
+    for (const el of els) {
+      const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff', width: CONTENT_W });
+      const blockH = (canvas.height * CONTENT_W) / canvas.width; // height in PDF px
+      const img = canvas.toDataURL('image/jpeg', 0.92);
+
+      if (blockH > usableH) {
+        // Taller than a full page (e.g. a big image): give it its own page,
+        // scaled down to fit — never cut. Mark the page full so the next block
+        // starts fresh, without leaving a trailing blank page.
+        if (!first) pdf.addPage([PAGE_W, PAGE_H], 'portrait');
+        const w = CONTENT_W * (usableH / blockH);
+        pdf.addImage(img, 'JPEG', MARGIN + (CONTENT_W - w) / 2, MARGIN, w, usableH);
+        y = PAGE_H; // sentinel: current page is full
+        first = false;
+        continue;
+      }
+
+      // Start a new page if this block would overflow the current one.
+      if (!first && y + blockH > PAGE_H - MARGIN) {
+        pdf.addPage([PAGE_W, PAGE_H], 'portrait');
+        y = MARGIN;
+      }
+      pdf.addImage(img, 'JPEG', MARGIN, y, CONTENT_W, blockH);
+      y += blockH + GAP;
+      first = false;
+    }
+
     return pdf.output('blob');
   } finally {
     document.body.removeChild(container);

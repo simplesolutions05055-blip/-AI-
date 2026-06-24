@@ -23,7 +23,10 @@ html,
 body {
   padding: 0;
   margin: 0;
-  background: var(--bg);
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 30%),
+    radial-gradient(circle at top left, rgba(16, 185, 129, 0.08), transparent 24%),
+    linear-gradient(180deg, #f8fafc 0%, var(--bg) 55%, #eef2f7 100%);
   color: var(--text);
   font-family: 'Assistant', 'Heebo', system-ui, sans-serif;
   line-height: 1.55;
@@ -50,10 +53,38 @@ a.btn {
   min-height: 44px;
 }
 
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 input,
 textarea,
 select {
   font-family: inherit;
+}
+
+.image-loading-sheen {
+  position: relative;
+  overflow: hidden;
+}
+
+.image-loading-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.78), transparent);
+  animation: image-loading-sheen 1.35s ease-in-out infinite;
+}
+
+@keyframes image-loading-sheen {
+  100% {
+    transform: translateX(-100%);
+  }
 }
 
 @media (max-width: 767px) {

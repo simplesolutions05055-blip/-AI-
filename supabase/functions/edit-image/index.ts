@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
     // Persist as a fresh production-form request + output.
     const { data: conversation, error: convError } = await database
       .from('conversations')
-      .insert({ whatsapp_from: 'production-form', status: 'active', simulated: false })
+      .insert({ whatsapp_from: 'production-form', status: 'active', simulated: true })
       .select('id')
       .single();
     if (convError || !conversation) throw convError ?? new Error('conversation create failed');

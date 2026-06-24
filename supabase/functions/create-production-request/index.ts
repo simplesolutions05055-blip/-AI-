@@ -1,3 +1,4 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { matchBrandInText, type BrandRow } from '../_shared/brand.ts';
 
@@ -8,6 +9,7 @@ interface Body {
   brief?: Record<string, unknown>;
   customer_email?: string | null;
   request_id?: string;
+  brand_id?: string | null;
 }
 
 const corsHeaders = {
@@ -38,9 +40,14 @@ Deno.serve(async (req) => {
     if (!body.brief || typeof body.brief !== 'object') {
       return json({ error: 'brief required' }, 400);
     }
+    // Resolve the producing system user from their JWT (best-effort): used to
+    // attribute the request on the dashboard's per-user breakdown. The form is
+    // admin-gated, so a token is normally present.
+    const createdBy = await resolveUserId(req);
+
     const { data: conversation, error: convError } = await database
       .from('conversations')
-      .insert({ whatsapp_from: 'production-form', status: 'active', simulated: false })
+      .insert({ whatsapp_from: 'production-form', status: 'active', simulated: true })
       .select('id')
       .single();
     if (convError || !conversation) throw convError ?? new Error('conversation create failed');
@@ -52,11 +59,12 @@ Deno.serve(async (req) => {
       source: 'production_form',
     };
 
-    // Auto-detect the brand from what the user wrote in the brief (e.g. "תל אביב").
-    // When matched, the request carries its brand_id so the generation pipeline
+    // Prefer the brand the user explicitly chose in the form; otherwise fall back
+    // to auto-detecting it from what they wrote in the brief (e.g. "תל אביב").
+    // Either way the request carries its brand_id so the generation pipeline
     // pulls that brand's content area (Business Brain) + visual identity, exactly
     // like the chat flow does.
-    const brandId = await detectBrand(database, structuredBrief);
+    const brandId = body.brand_id ?? (await detectBrand(database, structuredBrief));
 
     const { data: requestRow, error: requestError } = await database
       .from('requests')
@@ -65,6 +73,7 @@ Deno.serve(async (req) => {
         customer_email: cleanEmail(body.customer_email),
         output_type: body.output_type,
         brand_id: brandId,
+        created_by: createdBy,
         structured_brief: structuredBrief,
         status: 'queued',
       })
@@ -84,6 +93,25 @@ Deno.serve(async (req) => {
     return json({ error: String(e) }, 500);
   }
 });
+
+// Best-effort: extract the calling user's id from their JWT. Returns null when
+// no/invalid token (e.g. server-side callers) so request creation never fails
+// just because attribution couldn't be resolved.
+async function resolveUserId(req: Request): Promise<string | null> {
+  const authHeader = req.headers.get('Authorization') ?? '';
+  const token = authHeader.replace(/^Bearer\s+/i, '');
+  if (!token) return null;
+  try {
+    const { data } = await createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { global: { headers: { Authorization: authHeader } } },
+    ).auth.getUser(token);
+    return data.user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function json(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {

@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     .gte('last_message_at', closeBefore)
     .is('timeout_warned_at', null);
   for (const c of toWarn ?? []) {
-    if (!c.simulated) {
+    if (!c.simulated && !isProductionFormConversation(c.whatsapp_from as string)) {
       try { await sendWhatsApp(c.whatsapp_from as string, templates.timeout_warning); } catch { /* ignore */ }
     }
     await database.from('conversations').update({ timeout_warned_at: new Date().toISOString() }).eq('id', c.id);
@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
     .in('status', ['active', 'waiting_for_user'])
     .lt('last_message_at', closeBefore);
   for (const c of toClose ?? []) {
-    if (!c.simulated) {
+    if (!c.simulated && !isProductionFormConversation(c.whatsapp_from as string)) {
       try { await sendWhatsApp(c.whatsapp_from as string, templates.closed_idle); } catch { /* ignore */ }
     }
     if (c.current_request_id) {
@@ -82,3 +82,7 @@ Deno.serve(async (req) => {
     headers: { 'Content-Type': 'application/json' },
   });
 });
+
+function isProductionFormConversation(whatsappFrom: string): boolean {
+  return whatsappFrom === 'production-form' || whatsappFrom === 'whatsapp:production-form';
+}

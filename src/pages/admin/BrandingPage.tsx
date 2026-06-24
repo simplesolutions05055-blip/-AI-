@@ -39,6 +39,7 @@ export default function BrandingPage() {
   const [newSourceTitle, setNewSourceTitle] = useState('');
   const [newSourceContent, setNewSourceContent] = useState('');
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [brandLogoUrls, setBrandLogoUrls] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [aliasesText, setAliasesText] = useState('');
   const [logoFile, setLogoFile] = useState<File | null>(null);
@@ -57,8 +58,10 @@ export default function BrandingPage() {
 
   async function loadBrands() {
     const { data } = await db.from('brands').select('*').order('created_at', { ascending: false });
-    setBrands((data ?? []) as Brand[]);
+    const nextBrands = (data ?? []) as Brand[];
+    setBrands(nextBrands);
     setLoading(false);
+    await loadBrandLogoUrls(nextBrands);
   }
 
   useEffect(() => {
@@ -68,6 +71,16 @@ export default function BrandingPage() {
   async function signedUrl(path: string) {
     const { data } = await db.storage.from('branding').createSignedUrl(path, 600);
     return data?.signedUrl ?? '';
+  }
+
+  async function loadBrandLogoUrls(rows: Brand[]) {
+    const entries = await Promise.all(
+      rows.map(async (brand) => {
+        if (!brand.logo_path) return [brand.id, ''] as const;
+        return [brand.id, await signedUrl(brand.logo_path)] as const;
+      }),
+    );
+    setBrandLogoUrls(Object.fromEntries(entries));
   }
 
   async function openBrand(b: Partial<Brand> | null) {
@@ -223,7 +236,9 @@ export default function BrandingPage() {
     if (error) return alert('העלאה נכשלה: ' + error.message);
     await db.from('brands').update({ logo_path: path } as never).eq('id', id);
     patch({ logo_path: path });
-    setPreviews((p) => ({ ...p, __logo: URL.createObjectURL(file) }));
+    const localUrl = URL.createObjectURL(file);
+    setPreviews((p) => ({ ...p, __logo: localUrl }));
+    setBrandLogoUrls((p) => ({ ...p, [id]: localUrl }));
     await loadBrands();
   }
 
@@ -591,7 +606,10 @@ export default function BrandingPage() {
                         />
                       </td>
                       <td className="p-2 font-medium" onClick={() => openBrand(b)}>
-                        {b.name}
+                        <div className="flex items-center gap-2">
+                          <BrandListLogo name={b.name} url={brandLogoUrls[b.id] ?? ''} />
+                          <span className="min-w-0 truncate">{b.name}</span>
+                        </div>
                       </td>
                       <td className="p-2" onClick={() => openBrand(b)}>
                         <span className={`text-xs ${b.is_active ? 'text-green-600' : 'text-[var(--muted)]'}`}>
@@ -849,6 +867,18 @@ export default function BrandingPage() {
           </section>
         )}
       </div>
+    </div>
+  );
+}
+
+function BrandListLogo({ name, url }: { name: string; url: string }) {
+  return (
+    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+      {url ? (
+        <img src={url} alt={`לוגו ${name}`} className="h-full w-full object-contain p-1" />
+      ) : (
+        <span className="px-1 text-center text-sm font-bold text-brand">{name.slice(0, 2)}</span>
+      )}
     </div>
   );
 }
