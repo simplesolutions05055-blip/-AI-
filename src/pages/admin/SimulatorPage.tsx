@@ -322,7 +322,9 @@ export default function SimulatorPage() {
           </div>
         )}
         <div className="bg-[#075E54] text-white px-4 py-3">
-          <div className="font-semibold leading-tight">סוכן AI</div>
+          <div className="inline-flex rounded-md bg-white/95 px-2 py-1">
+            <img src="/primeos-logo.png" alt="PrimeOS" className="h-6 w-auto object-contain" />
+          </div>
           <div className="text-[11px] text-white/80">צ׳אט + הפקת תמונה</div>
         </div>
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2" style={{ background: '#ECE5DD' }} dir="rtl">

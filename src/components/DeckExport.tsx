@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, ChangeEvent } from 'react';
 import {
   fetchRequestBrandId,
   fetchBrandImages,
@@ -16,6 +16,7 @@ import {
   type DeckImage,
   type PersistedDeckImage,
 } from '@/lib/deck';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import ImagePickerModal from '@/components/ImagePickerModal';
 
 const NOTEBOOKLM_CUSTOMIZE_SCREEN = '/notebooklm/customize-slide-deck.png';
@@ -46,6 +47,8 @@ export default function DeckExport({
 }) {
   const [busy, setBusy] = useState<null | 'pdf' | 'pptx' | 'brief'>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   // The full ready-to-paste NotebookLM prompt (per-slide content + RTL + image
   // placement), produced alongside the brief PDF and shown with a copy button.
   const [promptText, setPromptText] = useState<string | null>(null);
@@ -104,6 +107,48 @@ export default function DeckExport({
 
   // When reuse is on we embed the persisted images; otherwise we generate aiCount.
   const willReuse = reuseExisting && existing.length > 0;
+
+  async function handleFileUpload(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file || !requestId) return;
+
+    setUploadingFile(true);
+    try {
+      const ext = file.name.split('.').pop() || 'pdf';
+      const path = `${requestId}/${crypto.randomUUID()}.${ext}`;
+      const client = createSupabaseBrowserClient();
+
+      const { error: uploadError } = await client.storage.from('outputs').upload(path, file, { contentType: file.type });
+      if (uploadError) throw uploadError;
+
+      // Fetch the latest presentation output for this request
+      const { data: outputs } = await client
+        .from('outputs')
+        .select('id')
+        .eq('request_id', requestId)
+        .eq('output_type', 'presentation')
+        .order('version', { ascending: false })
+        .limit(1);
+
+      if (!outputs || outputs.length === 0) throw new Error('לא נמצא תוצר מצגת לעדכון');
+
+      const outputId = (outputs[0] as { id: string }).id;
+      const { error: dbError } = await client
+        .from('outputs')
+        .update({ storage_path: path, mime_type: file.type } as never)
+        .eq('id', outputId);
+
+      if (dbError) throw dbError;
+
+      setError(null);
+      alert('הקובץ הועלה בהצלחה!');
+    } catch (err) {
+      setError('העלאה נכשלה: ' + String(err));
+    } finally {
+      setUploadingFile(false);
+    }
+  }
 
   async function prepareDeck() {
     // The picked-image selection is part of the cache identity, so changing it
@@ -181,6 +226,13 @@ export default function DeckExport({
 
   return (
     <div className="mt-5 border-t border-[var(--border)] pt-4">
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        className="hidden"
+        onChange={handleFileUpload}
+      />
       <div>
         <div className="text-sm font-semibold mb-1">בריף ל-NotebookLM (PDF)</div>
         <p className="text-xs text-[var(--muted)] mb-2">
@@ -191,14 +243,14 @@ export default function DeckExport({
         </p>
 
         <div className="mb-3 rounded-lg border border-[var(--border)] bg-blue-50/60 p-3 text-xs leading-relaxed">
-          <div className="mb-1 flex items-center justify-between gap-3">
+          <div className="mb-2 flex flex-col items-start gap-2 sm:mb-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
             <div className="font-semibold">איך משתמשים:</div>
             <button
               type="button"
               onClick={() => setGuideImageOpen(true)}
-              className="shrink-0 rounded-md border border-brand/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5"
+              className="rounded-md border border-brand/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5 text-right text-balance"
             >
-              כיצד נראה Describe the slide deck you want to create
+              כיצד נראה Describe the slide deck you want to create בממשק של NotebookLM
             </button>
           </div>
           <ol className="list-decimal pr-4 space-y-0.5 text-[var(--muted)]">
@@ -386,6 +438,20 @@ export default function DeckExport({
           {busy === 'pptx' ? 'בונה PPTX…' : 'הורדת PPTX'}
         </button>
       </div>
+      </div>
+
+      <div className="mt-5 border-t border-[var(--border)] pt-4">
+        <div className="text-sm font-semibold mb-1">העלאת קובץ מ-NotebookLM</div>
+        <p className="text-xs text-[var(--muted)] mb-3">
+          אם יצרתם את המצגת ב-NotebookLM, אפשר להעלות את ה-PDF או ה-PPTX שנוצר כאן.
+        </p>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploadingFile}
+          className="w-full border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
+        >
+          {uploadingFile ? 'מעלה...' : 'העלאת קובץ PDF או PPTX'}
+        </button>
       </div>
 
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}

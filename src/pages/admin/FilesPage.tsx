@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { OUTPUT_LABEL, senderLabel } from '@/lib/labels';
 import { formatHebrewDateTime } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useProfile } from '@/lib/useProfile';
 import type { OutputType } from '@/types/db';
 
 interface FileRow {
@@ -25,6 +26,8 @@ const TYPE_ICON: Record<OutputType, string> = {
 
 export default function FilesPage() {
   const navigate = useNavigate();
+  const { profile } = useProfile();
+  const isAdmin = profile?.role === 'admin';
   const [files, setFiles] = useState<FileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -32,6 +35,54 @@ export default function FilesPage() {
   const [lastIndex, setLastIndex] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [textPreview, setTextPreview] = useState<FileRow | null>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [targetFileRow, setTargetFileRow] = useState<FileRow | null>(null);
+
+  useEffect(() => {
+    if (targetFileRow && fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  }, [targetFileRow]);
+
+  async function handleUploadFinal(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const row = targetFileRow;
+    setTargetFileRow(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    
+    if (!file || !row) return;
+    
+    setUploadingId(row.id);
+    try {
+      const ext = file.name.split('.').pop() || 'pdf';
+      const path = `${row.request_id}/${crypto.randomUUID()}.${ext}`;
+      const client = createSupabaseBrowserClient();
+      const { error } = await client.storage.from('outputs').upload(path, file, { contentType: file.type });
+      if (error) throw error;
+      
+      const { error: dbError } = await client.from('outputs').update({ storage_path: path, mime_type: file.type } as never).eq('id', row.id);
+      if (dbError) throw dbError;
+      
+      setFiles(cur => cur.map(f => f.id === row.id ? { ...f, storage_path: path, mime_type: file.type } : f));
+    } catch (err) {
+      alert('העלאה נכשלה: ' + String(err));
+    } finally {
+      setUploadingId(null);
+    }
+  }
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setTextPreview(null);
+      }
+    }
+    if (textPreview) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [textPreview]);
 
   useEffect(() => {
     const client = createSupabaseBrowserClient();
@@ -107,6 +158,7 @@ export default function FilesPage() {
   }
 
   function toggle(index: number, shiftKey: boolean) {
+    if (!isAdmin) return;
     const file = files[index];
     setSelected((prev) => {
       const next = new Set(prev);
@@ -130,6 +182,7 @@ export default function FilesPage() {
   }
 
   async function deleteSelected() {
+    if (!isAdmin) return;
     if (selected.size === 0) return;
     if (!window.confirm(`למחוק ${selected.size} תוצרים? פעולה זו אינה הפיכה.`)) return;
     setDeleting(true);
@@ -152,9 +205,16 @@ export default function FilesPage() {
 
   return (
     <div dir="rtl">
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        className="hidden"
+        onChange={handleUploadFinal}
+      />
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <h1 className="text-2xl font-bold">תוצרים</h1>
-        {selected.size > 0 && (
+        {isAdmin && selected.size > 0 && (
           <div className="flex items-center gap-3">
             <span className="text-sm text-[var(--muted)]">{selected.size} נבחרו</span>
             <button onClick={clearSelection} className="text-sm text-[var(--muted)] hover:underline">
@@ -171,7 +231,7 @@ export default function FilesPage() {
         )}
       </div>
 
-      {selected.size === 0 && !loading && files.length > 0 && (
+      {isAdmin && selected.size === 0 && !loading && files.length > 0 && (
         <p className="text-xs text-[var(--muted)] mb-4">
           לחיצה לבחירה. Shift+לחיצה לבחירת טווח. בחירה מרובה או יחידה ומחיקה.
         </p>
@@ -182,7 +242,7 @@ export default function FilesPage() {
       ) : files.length === 0 ? (
         <div className="text-center text-[var(--muted)] p-10">אין תוצרים.</div>
       ) : (
-        <div className="grid grid-cols-1 min-[390px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
           {files.map((file, index) => {
             const isSelected = selected.has(file.id);
             return (
@@ -193,7 +253,7 @@ export default function FilesPage() {
                   isSelected ? 'border-brand ring-2 ring-brand' : 'border-[var(--border)] hover:border-brand'
                 }`}
               >
-                <div className="absolute top-2 start-2 z-10">
+                {isAdmin && <div className="absolute top-2 start-2 z-10">
                   <span
                     className={`flex items-center justify-center w-5 h-5 rounded border text-xs ${
                       isSelected ? 'bg-brand border-brand text-white' : 'bg-white/80 border-[var(--border)]'
@@ -201,7 +261,7 @@ export default function FilesPage() {
                   >
                     {isSelected ? '✓' : ''}
                   </span>
-                </div>
+                </div>}
 
                 <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
                   {file.output_type === 'image' && previews[file.id] ? (
@@ -217,9 +277,9 @@ export default function FilesPage() {
 
                 <div className="p-2.5">
                   <div className="text-xs font-medium mb-1">{OUTPUT_LABEL[file.output_type]}</div>
-                  <div className="text-[10px] text-[var(--muted)] text-start truncate" title={file.creator}>
+                  {isAdmin && <div className="text-[10px] text-[var(--muted)] text-start truncate" title={file.creator}>
                     נוצר ע״י: <span className="ltr">{file.creator}</span>
-                  </div>
+                  </div>}
                   <div className="text-[10px] text-[var(--muted)] ltr text-start mt-0.5">
                     {formatHebrewDateTime(file.created_at)}
                   </div>
@@ -245,15 +305,29 @@ export default function FilesPage() {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setTextPreview(file);
-                      }}
-                      className="mt-2 min-h-11 w-full rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
-                    >
-                      פתיחת הטקסט
-                    </button>
+                    <div className="mt-2 flex gap-1.5">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTextPreview(file);
+                        }}
+                        className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                      >
+                        פתיחת הטקסט
+                      </button>
+                      {file.output_type === 'presentation' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTargetFileRow(file);
+                          }}
+                          disabled={uploadingId === file.id}
+                          className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                        >
+                          {uploadingId === file.id ? 'מעלה...' : 'העלאת קובץ'}
+                        </button>
+                      )}
+                    </div>
                   )}
                   {(file.output_type === 'image' || file.output_type === 'presentation') && (
                     <button
@@ -273,7 +347,7 @@ export default function FilesPage() {
         </div>
       )}
 
-      {selected.size > 0 && (
+      {isAdmin && selected.size > 0 && (
         <div className="fixed inset-x-3 bottom-[calc(var(--safe-bottom)+0.75rem)] z-30 rounded-xl border border-[var(--border)] bg-white p-3 shadow-lg md:hidden" dir="rtl">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm font-semibold">{selected.size} נבחרו</span>
@@ -290,8 +364,15 @@ export default function FilesPage() {
       )}
 
       {textPreview && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-3 pb-[calc(var(--safe-bottom)+12px)] sm:items-center" dir="rtl">
-          <section className="flex max-h-[88dvh] w-[calc(100vw-24px)] max-w-2xl flex-col rounded-xl bg-white shadow-2xl">
+        <div 
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-3 pb-[calc(var(--safe-bottom)+12px)] sm:items-center" 
+          dir="rtl"
+          onClick={() => setTextPreview(null)}
+        >
+          <section 
+            className="flex max-h-[88dvh] w-[calc(100vw-24px)] max-w-2xl flex-col rounded-xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] p-4">
               <div>
                 <h2 className="font-bold">{OUTPUT_LABEL[textPreview.output_type]}</h2>

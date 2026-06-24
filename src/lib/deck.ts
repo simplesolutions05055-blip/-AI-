@@ -313,22 +313,13 @@ function imageOutputCaption(brief: unknown): string {
 // user chooses across all of the brand's AI images — not just this request's.
 export async function fetchBrandAiImages(brandId: string): Promise<PersistedDeckImage[]> {
   const db = createSupabaseBrowserClient();
-  const [{ data: deckData }, { data: outputData }] = await Promise.all([
-    db
-      .from('deck_ai_images')
-      .select('id, slide_index, caption, storage_path, mime_type, created_at, requests!inner(brand_id)')
-      .eq('requests.brand_id', brandId)
-      .order('created_at', { ascending: false }),
-    db
-      .from('outputs')
-      .select('id, output_type, storage_path, mime_type, created_at, requests!inner(brand_id, structured_brief)')
-      .eq('output_type', 'image')
-      .eq('requests.brand_id', brandId)
-      .not('storage_path', 'is', null)
-      .order('created_at', { ascending: false }),
-  ]);
+  // Goes through a security-definer RPC: it returns only the brand's AI-image
+  // rows (gated by user_brands membership) without granting the caller SELECT
+  // on the requests table, so customer email/costs are never exposed.
+  const { data, error } = await db.rpc('brand_ai_images', { p_brand_id: brandId } as never);
+  if (error) throw error;
 
-  const rows: Array<{
+  const rows = ((data as Array<{
     id: string;
     slide_index: number;
     caption: string | null;
@@ -336,34 +327,11 @@ export async function fetchBrandAiImages(brandId: string): Promise<PersistedDeck
     mime_type: string | null;
     created_at: string;
     source: 'deck' | 'output';
-  }> = [
-    ...(((deckData as Array<{
-      id: string;
-      slide_index: number;
-      caption: string | null;
-      storage_path: string;
-      mime_type: string | null;
-      created_at: string;
-    }>) ?? []).map((row) => ({ ...row, source: 'deck' as const }))),
-    ...(((outputData as Array<{
-      id: string;
-      storage_path: string;
-      mime_type: string | null;
-      created_at: string;
-      requests?: { structured_brief?: unknown } | Array<{ structured_brief?: unknown }>;
-    }>) ?? []).map((row) => {
-      const request = Array.isArray(row.requests) ? row.requests[0] : row.requests;
-      return {
-        id: `output:${row.id}`,
-        slide_index: 0,
-        caption: imageOutputCaption(request?.structured_brief),
-        storage_path: row.storage_path,
-        mime_type: row.mime_type,
-        created_at: row.created_at,
-        source: 'output' as const,
-      };
-    })),
-  ].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+    brief: unknown;
+  }>) ?? []).map((row) => ({
+    ...row,
+    caption: row.caption ?? imageOutputCaption(row.brief),
+  }));
 
   const out: PersistedDeckImage[] = [];
   const seenPaths = new Set<string>();
@@ -421,7 +389,13 @@ export async function fetchBrandImages(
       const { data: signed } = await db.storage.from('branding').createSignedUrl(w.path, 600);
       if (!signed?.signedUrl) continue;
       const res = await fetch(signed.signedUrl);
-      const dataUrl = await blobToDataUrl(await res.blob());
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      // Guard against non-image bodies (404/auth error pages return JSON/text):
+      // converting those to a data URL yields an <img> that never fires load/error
+      // and shows an eternal spinner in the picker.
+      if (blob.size === 0 || !blob.type.startsWith('image/')) continue;
+      const dataUrl = await blobToDataUrl(blob);
       const dim = await imageSize(dataUrl);
       images.push({ caption: w.caption, isLogo: w.isLogo, dataUrl, natW: dim.w, natH: dim.h });
     } catch {

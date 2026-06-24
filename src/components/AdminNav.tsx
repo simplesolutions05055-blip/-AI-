@@ -31,7 +31,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'תוכן',
     links: [
-      { href: '/admin/files', label: 'תוצרים', adminOnly: true, icon: 'files' },
+      { href: '/admin/files', label: 'תוצרים', icon: 'files' },
       { href: '/admin/simulator', label: 'סימולטור צ׳אט', adminOnly: true, icon: 'chat' },
     ],
   },
@@ -53,7 +53,22 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
-type NavIconName = 'spark' | 'users' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout';
+type NavIconName = 'spark' | 'users' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu';
+
+function visibleSections(isAdmin: boolean, canCreateOutputs: boolean) {
+  return NAV_SECTIONS.map((sec) => ({
+    title: sec.title,
+    links: sec.links.filter((l) => {
+      if (l.adminOnly && !isAdmin) return false;
+      if (l.href === '/admin/production' && !isAdmin && !canCreateOutputs) return false;
+      return true;
+    }),
+  })).filter((sec) => sec.links.length > 0);
+}
+
+function isActivePath(pathname: string, href: string) {
+  return href === '/admin' ? pathname === '/admin' : pathname.startsWith(href);
+}
 
 export default function AdminNav({
   email,
@@ -69,14 +84,7 @@ export default function AdminNav({
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
-  const sections = NAV_SECTIONS.map((sec) => ({
-    title: sec.title,
-    links: sec.links.filter((l) => {
-      if (l.adminOnly && !isAdmin) return false;
-      if (l.href === '/admin/production' && !isAdmin && !canCreateOutputs) return false;
-      return true;
-    }),
-  })).filter((sec) => sec.links.length > 0);
+  const sections = visibleSections(isAdmin, canCreateOutputs);
 
   async function logout() {
     await createSupabaseBrowserClient().auth.signOut();
@@ -85,12 +93,12 @@ export default function AdminNav({
 
   return (
     // RTL playbook §17: primary navigation on the right
-    <aside className="flex h-full min-h-[100dvh] w-full shrink-0 flex-col border-l border-[var(--border)] bg-white p-4 pt-[calc(var(--safe-top)+1rem)] lg:w-60">
-      <div className="mb-6">
-        <div className="text-lg font-bold">סוכן AI</div>
+    <aside className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-[var(--border)] bg-white p-4 pb-[calc(var(--safe-bottom)+1rem)] pt-[calc(var(--safe-top)+1rem)] lg:w-60">
+      <div className="mb-6 shrink-0">
+        <img src="/primeos-logo.png" alt="PrimeOS" className="h-10 w-auto object-contain" />
         <div className="text-xs text-[var(--muted)] ltr">{email}</div>
       </div>
-      <nav className="flex flex-col gap-5 flex-1">
+      <nav className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain pe-1">
         {sections.map((sec) => (
           <div key={sec.title}>
             <div className="px-3 py-1.5 text-xs font-bold text-[var(--muted)] uppercase tracking-wide">
@@ -98,7 +106,7 @@ export default function AdminNav({
             </div>
             <div className="flex flex-col gap-1">
               {sec.links.map((l) => {
-                const active = l.href === '/admin' ? pathname === '/admin' : pathname.startsWith(l.href);
+                const active = isActivePath(pathname, l.href);
                 return (
                   <Link
                     key={l.href}
@@ -119,7 +127,7 @@ export default function AdminNav({
       </nav>
       <button
         onClick={logout}
-        className="mt-auto flex items-center gap-2 px-3 py-2 text-start text-sm text-[var(--muted)] hover:text-red-600"
+        className="mt-4 flex shrink-0 items-center gap-2 px-3 py-2 text-start text-sm text-[var(--muted)] hover:text-red-600"
       >
         <NavIcon name="logout" className="h-4 w-4 shrink-0" />
         יציאה
@@ -128,8 +136,72 @@ export default function AdminNav({
   );
 }
 
+export function AdminBottomNav({
+  isAdmin,
+  canCreateOutputs,
+  onOpenMenu,
+}: {
+  isAdmin: boolean;
+  canCreateOutputs: boolean;
+  onOpenMenu: () => void;
+}) {
+  const { pathname } = useLocation();
+  const allLinks = visibleSections(isAdmin, canCreateOutputs).flatMap((sec) => sec.links);
+  const primaryHrefs = isAdmin
+    ? ['/admin', '/admin/production', '/admin/files', '/admin/requests']
+    : ['/admin/production', '/admin/files'];
+  const items = primaryHrefs
+    .map((href) => allLinks.find((link) => link.href === href))
+    .filter(Boolean) as NavLink[];
+  const activeInPrimary = items.some((item) => isActivePath(pathname, item.href));
+
+  return (
+    <nav
+      aria-label="ניווט ראשי"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border)] bg-white/95 px-[max(0.5rem,var(--safe-right))] pb-[calc(var(--safe-bottom)+0.375rem)] pt-1.5 shadow-[0_-10px_28px_rgba(15,23,42,0.1)] backdrop-blur lg:hidden"
+    >
+      <div className="mx-auto grid max-w-md items-end gap-1" style={{ gridTemplateColumns: `repeat(${items.length + 1}, minmax(0, 1fr))` }}>
+        {items.map((item) => {
+          const active = isActivePath(pathname, item.href);
+          return (
+            <Link
+              key={item.href}
+              to={item.href}
+              aria-current={active ? 'page' : undefined}
+              className={`flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${
+                active ? 'bg-brand/10 text-brand' : 'text-[var(--muted)] hover:bg-gray-100 hover:text-[var(--text)]'
+              }`}
+            >
+              <NavIcon name={item.icon} active={active} className="h-5 w-5" />
+              <span className="max-w-full truncate">{item.label}</span>
+            </Link>
+          );
+        })}
+        <button
+          type="button"
+          onClick={onOpenMenu}
+          aria-label="פתיחת כל התפריט"
+          className={`flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${
+            activeInPrimary ? 'text-[var(--muted)] hover:bg-gray-100 hover:text-[var(--text)]' : 'bg-brand/10 text-brand'
+          }`}
+        >
+          <NavIcon name="menu" active={!activeInPrimary} className="h-5 w-5" />
+          <span>עוד</span>
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 function NavIcon({ name, active = false, className = 'h-4 w-4' }: { name: NavIconName; active?: boolean; className?: string }) {
   const stroke = active ? 'currentColor' : 'currentColor';
+  if (name === 'menu') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+        <path d="M5 7h14M5 12h14M5 17h14" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
   if (name === 'spark') {
     return (
       <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">

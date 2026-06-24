@@ -57,11 +57,11 @@ interface OutputRow {
   qa_result: QaResult | null;
 }
 
-const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: string }> = [
-  { type: 'image', title: 'תמונה', description: 'פוסט, מודעה, הזמנה או גרפיקה לרשתות.' },
-  { type: 'presentation', title: 'מצגת', description: 'מבנה ותוכן שקפים למצגת עסקית או שיווקית.' },
-  { type: 'text', title: 'טקסט', description: 'פוסט, הודעה, מייל, נאום או תוכן שיווקי.' },
-  { type: 'pdf', title: 'PDF / מסמך', description: 'מסמך מסודר להורדה או שליחה.' },
+const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: string; accent: string; iconBg: string; iconText: string }> = [
+  { type: 'image', title: 'תמונה', description: 'פוסט, מודעה, הזמנה או גרפיקה לרשתות.', accent: 'hover:border-violet-300', iconBg: 'bg-violet-100', iconText: 'text-violet-600' },
+  { type: 'presentation', title: 'מצגת', description: 'מבנה ותוכן שקפים למצגת עסקית או שיווקית.', accent: 'hover:border-blue-300', iconBg: 'bg-blue-100', iconText: 'text-blue-600' },
+  { type: 'text', title: 'טקסט', description: 'פוסט, הודעה, מייל, נאום או תוכן שיווקי.', accent: 'hover:border-emerald-300', iconBg: 'bg-emerald-100', iconText: 'text-emerald-600' },
+  { type: 'pdf', title: 'PDF / מסמך', description: 'מסמך מסודר להורדה או שליחה.', accent: 'hover:border-rose-300', iconBg: 'bg-rose-100', iconText: 'text-rose-600' },
 ];
 
 const PANEL = 'rounded-2xl border border-[var(--border)] bg-white shadow-[0_20px_50px_rgba(15,23,42,0.06)]';
@@ -142,14 +142,14 @@ function ProductionPicker() {
   const navigate = useNavigate();
   return (
     <div dir="rtl">
-      <div className={`${PANEL} mb-6 overflow-hidden bg-[linear-gradient(135deg,#ffffff_0%,#f8fbff_45%,#eef4ff_100%)] p-6 sm:p-8`}>
+      <div className={`hidden md:block ${PANEL} mb-6 overflow-hidden bg-[linear-gradient(135deg,#ffffff_0%,#f8fbff_45%,#eef4ff_100%)] p-6 sm:p-8`}>
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-brand/15 bg-brand/5 px-3 py-1 text-xs font-semibold text-brand">
               <SparkIcon className="h-4 w-4" />
               סטודיו ההפקה
             </div>
-            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">הפקת תוצרים</h1>
+            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">הפקה</h1>
             <p className="mt-3 max-w-xl text-[var(--muted)]">
               בחרו סוג תוצר, מלאו בריף ממוקד, ואפשרו למערכת להפיק תוכן עם מבנה ברור, אייקונים נקיים ואזורי פעולה מזמינים.
             </p>
@@ -166,26 +166,27 @@ function ProductionPicker() {
           </div>
         </div>
       </div>
-      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {PRODUCT_TYPES.map((item) => (
-          <div
+          <button
             key={item.type}
-            className={`${PANEL} group flex h-full flex-col p-5 transition duration-200 hover:-translate-y-1 hover:border-brand/30 hover:shadow-[0_24px_60px_rgba(59,130,246,0.12)]`}
+            type="button"
+            onClick={() => navigate(`/admin/production/${item.type}`)}
+            className={`${PANEL} group flex w-full items-center gap-4 p-4 text-right transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(15,23,42,0.10)] ${item.accent} sm:h-full sm:flex-col sm:items-start sm:p-5`}
           >
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand/10 text-brand transition group-hover:scale-105">
-              <ProductIcon type={item.type} className="h-6 w-6" />
+            <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition group-hover:scale-105 ${item.iconBg} ${item.iconText} sm:mb-4 sm:h-14 sm:w-14`}>
+              <ProductIcon type={item.type} className="h-6 w-6 sm:h-7 sm:w-7" />
             </div>
-            <div className="text-lg font-bold mb-2">{item.title}</div>
-            <p className="text-sm text-[var(--muted)] leading-6">{item.description}</p>
-            <button
-              type="button"
-              onClick={() => navigate(`/admin/production/${item.type}`)}
-              className={`mt-auto ${PRIMARY_BUTTON} w-full sm:w-auto`}
-            >
-              <span>התחלה</span>
-              <ChevronIcon className="h-4 w-4 transition group-hover:translate-x-0.5" />
-            </button>
-          </div>
+            <div className="min-w-0 flex-1 sm:flex-none">
+              <div className="text-lg font-bold">{item.title}</div>
+              <p className="mt-0.5 text-sm leading-6 text-[var(--muted)] sm:mt-2">{item.description}</p>
+            </div>
+            <ChevronIcon className="h-5 w-5 shrink-0 text-[var(--muted)] transition group-hover:-translate-x-0.5 group-hover:text-brand sm:hidden" />
+            <span className="mt-auto hidden items-center gap-1.5 pt-4 text-sm font-semibold text-brand transition group-hover:gap-2.5 sm:inline-flex">
+              התחלה
+              <ChevronIcon className="h-4 w-4" />
+            </span>
+          </button>
         ))}
       </div>
     </div>
@@ -498,8 +499,19 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           <BriefCard type={type} brief={brief} revisionCount={revisionCount} />
           <div className={`${PANEL} sticky bottom-[calc(var(--safe-bottom)+0.75rem)] p-5 h-fit lg:static`}>
             {type === 'presentation' && (
-              <div className="mb-4 rounded-2xl border border-[var(--border)] bg-gray-50 p-3 text-xs text-[var(--muted)]">
-                {pickedImages ? `נבחרו ${pickedImages.length} תמונות למצגת.` : 'לא נבחרו תמונות — אפשר לבחור בעמוד התוצר.'}
+              <div className="mb-4 flex items-center justify-between rounded-2xl border border-[var(--border)] bg-gray-50 p-3">
+                <span className="text-xs text-[var(--muted)]">
+                  {pickedImages ? `נבחרו ${pickedImages.length} תמונות למצגת.` : 'לא נבחרו תמונות — אפשר לבחור בעמוד התוצר.'}
+                </span>
+                {pickedImages && pickedImages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={openImagePicker}
+                    className="ms-3 shrink-0 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-semibold text-brand hover:bg-brand/5"
+                  >
+                    עריכה
+                  </button>
+                )}
               </div>
             )}
             <button onClick={generate} className={`w-full ${PRIMARY_BUTTON}`}>
@@ -847,8 +859,14 @@ function FormWizard({
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    // Enter advances, except inside a textarea where it should add a new line.
-    if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) {
+    if (e.key !== 'Enter') return;
+
+    const isTextarea = e.target instanceof HTMLTextAreaElement;
+    const isSubmitShortcut = e.metaKey || e.ctrlKey;
+
+    // Plain Enter advances, except inside a textarea where it should add a new line.
+    // Cmd+Enter / Ctrl+Enter submits textarea steps without losing multiline editing.
+    if (!isTextarea || isSubmitShortcut) {
       e.preventDefault();
       goNext();
     }
@@ -892,12 +910,12 @@ function FormWizard({
       </div>
 
       {/* Thumb-zone action row: primary forward action on the left (RTL progression). */}
-      <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] -mx-2 mt-8 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-white/95 p-2 shadow-lg backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none">
+      <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] -mx-2 mt-8 flex items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-white/95 p-2 shadow-lg backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0 sm:gap-3 sm:shadow-none">
         <button
           type="button"
           onClick={goBack}
           disabled={index === 0}
-          className="rounded-lg px-4 py-3 text-sm font-semibold text-[var(--muted)] hover:bg-gray-50 disabled:opacity-40"
+          className="rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-xs sm:text-sm font-semibold text-[var(--muted)] hover:bg-gray-50 disabled:opacity-40 shrink-0"
         >
           → חזרה
         </button>
@@ -905,7 +923,7 @@ function FormWizard({
           type="button"
           onClick={goNext}
           disabled={!stepValid}
-          className="bg-brand text-white rounded-lg px-8 py-3 text-base font-semibold disabled:opacity-50 min-w-[140px]"
+          className="bg-brand text-white rounded-lg px-4 py-2 sm:px-8 sm:py-3 text-sm sm:text-base font-semibold disabled:opacity-50 flex-1 sm:flex-none sm:min-w-[140px]"
         >
           {isLast ? 'יצירת בריף' : isOptionalEmpty ? 'דילוג' : 'אישור והמשך'}
         </button>

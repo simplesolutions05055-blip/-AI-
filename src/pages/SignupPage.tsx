@@ -50,7 +50,7 @@ export default function SignupPage() {
     <main className="min-h-screen flex items-center justify-center p-4">
       <form onSubmit={onSubmit} className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-[var(--border)] p-6">
         <h1 className="text-2xl font-bold mb-1">הרשמה</h1>
-        <p className="text-[var(--muted)] mb-6 text-sm">פתחו חשבון חדש לסוכן ה-AI</p>
+        <img src="/primeos-logo.png" alt="PrimeOS" className="mb-6 h-12 w-auto object-contain" />
 
         <label className="block mb-1 text-sm font-medium" htmlFor="email">כתובת מייל</label>
         <input id="email" type="email" dir="ltr" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mb-4 rounded-lg border border-[var(--border)] px-3 py-2" style={{ textAlign: 'left' }} />

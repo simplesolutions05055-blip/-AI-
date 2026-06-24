@@ -23,6 +23,9 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ status: '', output_type: '', email: '', phone: '', from: '', to: '' });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   useEffect(() => {
     const db = createSupabaseBrowserClient();
@@ -63,7 +66,29 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
   return (
     <div>
       {!embedded && <h1 className="text-2xl font-bold mb-6">בקשות</h1>}
-      <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-nowrap md:overflow-x-auto">
+
+      <div className="mb-3 flex items-center justify-between gap-2 md:hidden">
+        <button
+          onClick={() => setShowFilters((v) => !v)}
+          className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm"
+        >
+          <span>סינון</span>
+          {activeFilterCount > 0 && (
+            <span className="rounded-full bg-blue-600 px-1.5 text-xs font-semibold text-white">{activeFilterCount}</span>
+          )}
+          <span className="text-[var(--muted)]">{showFilters ? '▲' : '▼'}</span>
+        </button>
+        {activeFilterCount > 0 && (
+          <button
+            onClick={() => setFilters({ status: '', output_type: '', email: '', phone: '', from: '', to: '' })}
+            className="text-sm text-blue-600"
+          >
+            נקה הכל
+          </button>
+        )}
+      </div>
+
+      <div className={`${showFilters ? 'grid' : 'hidden'} mb-4 grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-nowrap md:overflow-x-auto`}>
         <select aria-label="סטטוס" className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm md:shrink-0 md:min-w-max" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           <option value="">כל הסטטוסים</option>
           {Object.entries(STATUS_LABEL).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
@@ -106,36 +131,23 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
               onClick={() => setSelectedId(row.id)}
               className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm cursor-pointer hover:shadow-md transition"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-xs text-[var(--muted)] ltr">{formatHebrewDateTime(row.created_at)}</div>
-                  <div className="mt-1 truncate font-semibold ltr">
-                    {row.conversation_id ? (
-                      <Link to={`/admin/conversations?id=${encodeURIComponent(row.conversation_id)}`} className="text-blue-600">
-                        {senderLabel(row.conversations?.whatsapp_from)}
-                      </Link>
-                    ) : senderLabel(row.conversations?.whatsapp_from)}
-                  </div>
-                </div>
+              <div className="flex items-center justify-between gap-3">
                 <span className={`shrink-0 rounded-full px-2 py-1 text-xs ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</span>
+                <span className="text-xs text-[var(--muted)] ltr">{formatHebrewDateTime(row.created_at)}</span>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                <div>
-                  <div className="text-xs text-[var(--muted)]">סוג</div>
-                  <div>{row.output_type ? OUTPUT_LABEL[row.output_type] : '-'}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-[var(--muted)]">מייל</div>
-                  <div className="truncate ltr">{row.customer_email ?? '-'}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-[var(--muted)]">עלות ($)</div>
-                  <div className="font-semibold ltr">{formatUsd(cost)}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-[var(--muted)]">עלות (₪)</div>
-                  <div className="font-semibold ltr">{ratesReady ? (rate != null ? formatIls(cost * rate) : '—') : '…'}</div>
-                </div>
+              <div className="mt-2 font-semibold">
+                {row.output_type ? OUTPUT_LABEL[row.output_type] : 'בקשה'}
+              </div>
+              <div className="mt-1 truncate text-sm ltr text-[var(--muted)]">
+                {row.conversation_id ? (
+                  <Link to={`/admin/conversations?id=${encodeURIComponent(row.conversation_id)}`} className="text-blue-600" onClick={(e) => e.stopPropagation()}>
+                    {row.customer_email ?? senderLabel(row.conversations?.whatsapp_from)}
+                  </Link>
+                ) : (row.customer_email ?? senderLabel(row.conversations?.whatsapp_from))}
+              </div>
+              <div className="mt-3 border-t border-[var(--border)] pt-2 flex items-baseline gap-2 text-sm">
+                <span className="font-semibold ltr">{formatUsd(cost)}</span>
+                <span className="ltr text-[var(--muted)]">{ratesReady ? (rate != null ? formatIls(cost * rate) : '—') : '…'}</span>
               </div>
             </article>
           );

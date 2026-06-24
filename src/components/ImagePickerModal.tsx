@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   fetchBrandImages,
   fetchBrandAiImages,
@@ -35,9 +35,16 @@ function SelectableImageCard({
   onToggle: () => void;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
     setImageLoaded(false);
+    // Data URLs (brand images) decode synchronously and can already be
+    // `complete` before React binds onLoad, so that event never fires and the
+    // spinner would hang forever. Check completion synchronously after mount.
+    if (imgRef.current?.complete && imgRef.current.naturalWidth > 0) {
+      setImageLoaded(true);
+    }
   }, [item.previewUrl]);
 
   return (
@@ -56,6 +63,7 @@ function SelectableImageCard({
           </div>
         )}
         <img
+          ref={imgRef}
           src={item.previewUrl}
           alt={item.caption}
           onLoad={() => setImageLoaded(true)}
@@ -114,35 +122,47 @@ export default function ImagePickerModal({
     let alive = true;
     setLoading(true);
     setError(null);
-    Promise.all([fetchBrandImages(brandId), fetchBrandAiImages(brandId)])
-      .then(([brandPack, ai]) => {
+    // Run the two sources independently so one failing (e.g. RLS on AI outputs)
+    // doesn't blank or hang the other.
+    Promise.allSettled([fetchBrandImages(brandId), fetchBrandAiImages(brandId)])
+      .then(([brandRes, aiRes]) => {
         if (!alive) return;
-        const brandPickItems: PickItem[] = brandPack.images.map((img, i) => ({
-          key: `brand:${i}:${img.isLogo ? 'logo' : img.caption}`,
-          kind: 'brand' as const,
-          caption: img.caption,
-          isLogo: img.isLogo,
-          previewUrl: img.dataUrl,
-          image: img,
-        }));
-        setBrandItems(brandPickItems);
-        // The logo is selected by default — always.
-        const logoKeys = brandPickItems.filter((it) => it.isLogo).map((it) => it.key);
-        if (logoKeys.length) {
-          setSelected((prev) => new Set([...prev, ...logoKeys]));
+        if (brandRes.status === 'fulfilled') {
+          const brandPickItems: PickItem[] = brandRes.value.images.map((img, i) => ({
+            key: `brand:${i}:${img.isLogo ? 'logo' : img.caption}`,
+            kind: 'brand' as const,
+            caption: img.caption,
+            isLogo: img.isLogo,
+            previewUrl: img.dataUrl,
+            image: img,
+          }));
+          setBrandItems(brandPickItems);
+          // The logo is selected by default — always.
+          const logoKeys = brandPickItems.filter((it) => it.isLogo).map((it) => it.key);
+          if (logoKeys.length) {
+            setSelected((prev) => new Set([...prev, ...logoKeys]));
+          }
         }
-        setAiItems(
-          ai.map((row) => ({
-            key: `ai:${row.id}`,
-            kind: 'ai' as const,
-            caption: row.caption,
-            isLogo: false as const,
-            previewUrl: row.previewUrl,
-            row,
-          })),
-        );
+        if (aiRes.status === 'fulfilled') {
+          setAiItems(
+            aiRes.value.map((row) => ({
+              key: `ai:${row.id}`,
+              kind: 'ai' as const,
+              caption: row.caption,
+              isLogo: false as const,
+              previewUrl: row.previewUrl,
+              row,
+            })),
+          );
+        }
+        const failures = [brandRes, aiRes].filter((r) => r.status === 'rejected');
+        if (failures.length) {
+          console.error('Image picker load failures:', failures);
+          if (brandRes.status === 'rejected' && aiRes.status === 'rejected') {
+            setError('טעינת התמונות נכשלה. ייתכן שאין לך הרשאה למותג זה.');
+          }
+        }
       })
-      .catch((e) => { if (alive) setError(String(e)); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [open, brandId, initialSelectedKeys]);
