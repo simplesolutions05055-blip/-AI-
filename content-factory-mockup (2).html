@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Content Factory — PrimeOS</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Heebo',sans-serif;background:#F0F2F7;direction:rtl;color:#1a1a2e;-webkit-font-smoothing:antialiased}
+.shell{display:flex;min-height:100vh}
+.sidebar{width:220px;background:#fff;border-left:1px solid #EAECF0;display:flex;flex-direction:column;flex-shrink:0}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.topbar{background:#fff;border-bottom:1px solid #EAECF0;padding:0 28px;height:60px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.content{flex:1;padding:24px 28px;overflow-y:auto}
+
+/* sidebar */
+.sb-logo{padding:20px 20px 16px;border-bottom:1px solid #F0F2F7}
+.logo-wrap{display:flex;align-items:center;gap:8px}
+.logo-icon{width:32px;height:32px;background:#2563EB;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700}
+.logo-text{font-size:17px;font-weight:700;color:#1a1a2e}.logo-text span{color:#2563EB}
+.sb-email{font-size:11px;color:#94A3B8;margin-top:3px}
+.sb-nav{padding:16px 12px;flex:1}
+.sb-label{font-size:11px;color:#94A3B8;font-weight:600;letter-spacing:.05em;padding:0 8px;margin-bottom:6px}
+.nav-item{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;cursor:pointer;font-size:14px;color:#64748B;transition:all .15s;margin-bottom:2px}
+.nav-item:hover{background:#F8FAFF;color:#2563EB}
+.nav-item.active{background:#EFF6FF;color:#2563EB;font-weight:600}
+.nav-badge{margin-right:auto;background:#EFF6FF;color:#2563EB;font-size:11px;font-weight:600;padding:1px 7px;border-radius:20px}
+.sb-footer{padding:16px 12px;border-top:1px solid #F0F2F7}
+.btn-logout{display:flex;align-items:center;gap:6px;padding:9px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:#94A3B8;margin-top:4px;transition:all .15s;border:none;background:none;width:100%;text-align:right;font-family:'Heebo',sans-serif}
+.btn-logout:hover{color:#EF4444;background:#FEF2F2}
+
+/* topbar */
+.page-title{font-size:15px;font-weight:600;color:#1a1a2e}
+.user-chip{display:flex;align-items:center;gap:8px}
+.user-avatar{width:32px;height:32px;border-radius:50%;background:#EFF6FF;color:#2563EB;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.user-email{font-size:13px;color:#64748B}
+
+/* ══ WORK SCREEN — main input ══ */
+.work-card{background:#fff;border-radius:16px;border:1px solid #EAECF0;padding:28px 32px;margin-bottom:20px}
+.work-headline{font-size:22px;font-weight:700;color:#1a1a2e;margin-bottom:6px}
+.work-sub{font-size:14px;color:#94A3B8;margin-bottom:22px}
+
+/* type chip selector */
+.type-chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+.type-chip{display:flex;align-items:center;gap:7px;padding:8px 16px;border-radius:24px;border:1.5px solid #E5E7EB;background:#fff;cursor:pointer;font-size:13px;font-weight:500;color:#374151;transition:all .18s;white-space:nowrap;font-family:'Heebo',sans-serif}
+.type-chip:hover{border-color:#93C5FD;background:#F8FAFF;color:#2563EB}
+.type-chip.selected{border-color:#2563EB;background:#EFF6FF;color:#2563EB;font-weight:600}
+.type-chip .chip-icon{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.chip-pink{background:#FEE2E2}
+.chip-green{background:#D1FAE5}
+.chip-blue{background:#DBEAFE}
+.chip-purple{background:#EDE9FE}
+.chip-amber{background:#FEF3C7}
+
+/* textarea input */
+.brief-input-wrap{position:relative;margin-bottom:16px}
+.brief-textarea{width:100%;border:1.5px solid #E5E7EB;border-radius:12px;padding:16px 18px 52px;font-size:15px;font-family:'Heebo',sans-serif;resize:none;height:130px;color:#1a1a2e;outline:none;transition:border-color .15s;line-height:1.7;background:#FAFBFC}
+.brief-textarea:focus{border-color:#2563EB;background:#fff}
+.brief-textarea::placeholder{color:#CBD5E1}
+.brief-submit{position:absolute;bottom:14px;left:14px;background:#2563EB;color:#fff;border:none;border-radius:10px;padding:9px 22px;font-size:14px;font-weight:700;cursor:pointer;font-family:'Heebo',sans-serif;transition:background .15s;display:flex;align-items:center;gap:6px}
+.brief-submit:hover{background:#1D4ED8}
+.brief-submit:disabled{background:#93C5FD;cursor:not-allowed}
+.char-hint{position:absolute;bottom:20px;right:18px;font-size:11px;color:#CBD5E1}
+
+/* selected type indicator */
+.type-selected-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#F0F9FF;border-radius:10px;border:1px solid #BAE6FD;margin-bottom:16px;font-size:13px;color:#0369A1}
+.type-selected-bar .tsb-icon{font-size:16px}
+.type-none-hint{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#FFFBEB;border-radius:10px;border:1px solid #FDE68A;margin-bottom:16px;font-size:13px;color:#92400E}
+
+/* ── Cards generic ── */
+.card{background:#fff;border-radius:14px;border:1px solid #EAECF0;padding:24px}
+
+/* ── gallery cards ── */
+.gal-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.gal-card{background:#fff;border-radius:12px;border:1px solid #EAECF0;overflow:hidden;cursor:pointer;transition:all .2s}
+.gal-card:hover{border-color:#BFDBFE;transform:translateY(-2px)}
+.gal-thumb{aspect-ratio:1.2;display:flex;align-items:center;justify-content:center;font-size:26px}
+.gal-info{padding:12px}
+.gal-name{font-size:13px;font-weight:600;color:#1a1a2e;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gal-meta{font-size:11px;color:#94A3B8}
+.gal-status{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;margin-top:6px}
+.dot-g{width:6px;height:6px;border-radius:50%;background:#10B981}
+.dot-a{width:6px;height:6px;border-radius:50%;background:#F59E0B}
+.dot-b{width:6px;height:6px;border-radius:50%;background:#2563EB}
+
+/* ── brief form (after selection) ── */
+.form-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px;padding-top:18px;border-top:1px solid #F0F2F7}
+.form-label{font-size:12px;font-weight:600;color:#374151;margin-bottom:4px}
+.form-input{width:100%;border:1px solid #E5E7EB;border-radius:8px;padding:9px 12px;font-size:13px;color:#1a1a2e;font-family:'Heebo',sans-serif;transition:border-color .15s;outline:none}
+.form-input:focus{border-color:#2563EB}
+.form-select{width:100%;border:1px solid #E5E7EB;border-radius:8px;padding:9px 12px;font-size:13px;color:#1a1a2e;font-family:'Heebo',sans-serif;background:#fff;cursor:pointer;outline:none}
+.form-ta{resize:none;height:70px;line-height:1.6}
+.auto-tag{display:inline-flex;align-items:center;gap:4px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:6px;padding:3px 9px;font-size:11px;color:#16A34A;font-weight:500}
+.auto-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;grid-column:1/-1}
+
+/* ── preview screen ── */
+.preview-wrap{display:grid;grid-template-columns:1fr 340px;gap:20px}
+.preview-main{background:#fff;border-radius:14px;border:1px solid #EAECF0;overflow:hidden}
+.preview-topbar{padding:12px 18px;border-bottom:1px solid #F0F2F7;display:flex;align-items:center;justify-content:space-between}
+.ptab{padding:5px 11px;border-radius:6px;font-size:12px;cursor:pointer;color:#64748B;border:none;background:none;font-family:'Heebo',sans-serif;transition:all .15s}
+.ptab.active{background:#EFF6FF;color:#2563EB;font-weight:600}
+.preview-canvas{background:#F0F4FF;min-height:320px;display:flex;align-items:center;justify-content:center}
+.mock-graphic{width:72%;background:#fff;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:10px}
+.mg-logo{width:30px;height:30px;background:#EFF6FF;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#2563EB}
+.mg-img{background:linear-gradient(135deg,#DBEAFE,#EDE9FE);height:78px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#7C3AED;font-size:11px}
+.mg-bar{background:#2563EB;height:7px;border-radius:4px}
+.mg-cta{background:#2563EB;color:#fff;border-radius:6px;padding:7px 14px;font-size:11px;font-weight:600;text-align:center}
+.preview-statusbar{padding:10px 18px;background:#F8FAFF;display:flex;align-items:center;gap:8px;border-top:1px solid #F0F2F7;font-size:12px;color:#64748B}
+.status-dot{width:8px;height:8px;border-radius:50%;background:#10B981}
+.ver-pill{padding:3px 10px;border-radius:12px;font-size:11px;cursor:pointer;font-weight:500;border:1px solid #E5E7EB;color:#64748B;background:#fff}
+.ver-pill.active{background:#2563EB;color:#fff;border-color:#2563EB}
+.revision-panel{background:#fff;border-radius:14px;border:1px solid #EAECF0;display:flex;flex-direction:column;overflow:hidden}
+.rp-header{padding:14px 18px;border-bottom:1px solid #F0F2F7}
+.rp-title{font-size:14px;font-weight:700;color:#1a1a2e}
+.rp-sub{font-size:12px;color:#64748B;margin-top:2px}
+.rp-chat{padding:14px;display:flex;flex-direction:column;gap:10px;min-height:140px;max-height:200px;overflow-y:auto}
+.msg{padding:10px 13px;border-radius:10px;font-size:13px;line-height:1.6;max-width:92%}
+.msg-ai{background:#F0F2F7;color:#374151;border-radius:10px 10px 10px 2px}
+.msg-user{background:#EFF6FF;color:#1E40AF;border-radius:10px 10px 2px 10px;margin-right:auto}
+.rp-input-area{padding:14px;border-top:1px solid #F0F2F7;background:#FAFAFA}
+.rp-input{width:100%;border:1px solid #E5E7EB;border-radius:8px;padding:9px 12px;font-size:13px;font-family:'Heebo',sans-serif;resize:none;height:68px;outline:none;transition:border-color .15s;background:#fff}
+.rp-input:focus{border-color:#2563EB}
+.rp-actions{display:flex;gap:8px;margin-top:8px}
+.btn-fix{flex:1;background:#2563EB;color:#fff;border:none;border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Heebo',sans-serif}
+.btn-approve{flex:1;background:#10B981;color:#fff;border:none;border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Heebo',sans-serif}
+
+/* ── publish screen ── */
+.publish-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.publish-card{background:#fff;border-radius:14px;border:1px solid #EAECF0;padding:20px}
+.pc-title{font-size:14px;font-weight:700;margin-bottom:14px}
+.plat-btn{display:flex;align-items:center;gap:6px;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:2px solid transparent;transition:all .15s;flex:1;justify-content:center;font-family:'Heebo',sans-serif}
+.plat-btn.fb{background:#EFF6FF;color:#1D4ED8;border-color:#BFDBFE}
+.plat-btn.ig{background:#FDF4FF;color:#7E22CE;border-color:#E9D5FF}
+.plat-btn.fb.on{background:#2563EB;color:#fff;border-color:#2563EB}
+.plat-btn.ig.on{background:#7E22CE;color:#fff;border-color:#7E22CE}
+.dl-option{display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;border:1px solid #E5E7EB;cursor:pointer;transition:all .15s;margin-bottom:8px}
+.dl-option:hover{border-color:#2563EB;background:#F8FAFF}
+.dl-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.dl-title{font-size:13px;font-weight:600;color:#1a1a2e}
+.dl-sub{font-size:11px;color:#94A3B8}
+.pub-btn{width:100%;padding:13px;border-radius:10px;font-size:15px;font-weight:700;border:none;cursor:pointer;font-family:'Heebo',sans-serif;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px}
+.pub-now{background:#10B981;color:#fff}.pub-now:hover{background:#059669}
+.pub-sched{background:#F8FAFF;color:#2563EB;border:2px solid #BFDBFE}.pub-sched:hover{background:#EFF6FF}
+.time-picker{background:#F8FAFF;border-radius:8px;padding:14px;margin-top:10px}
+.time-row{display:flex;gap:8px;margin-bottom:8px}
+.time-input{flex:1;border:1px solid #E5E7EB;border-radius:6px;padding:8px 10px;font-size:13px;font-family:'Heebo',sans-serif;outline:none}
+.best-time{font-size:12px;color:#10B981;background:#D1FAE5;border-radius:6px;padding:4px 10px}
+.info-box{background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400E;line-height:1.6}
+.qa-bar{background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px;padding:10px 16px;display:flex;align-items:center;gap:10px;margin-bottom:16px;font-size:13px;color:#166534}
+.qa-badge{background:#10B981;color:#fff;border-radius:20px;padding:2px 10px;font-size:11px;font-weight:700}
+
+/* ── calendar ── */
+.cal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.cal-month{font-size:16px;font-weight:700}
+.cal-nav-btn{background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;font-family:'Heebo',sans-serif}
+.cal-view-toggle{display:flex;gap:2px;background:#F0F2F7;border-radius:8px;padding:2px}
+.view-btn{padding:5px 14px;border-radius:6px;font-size:12px;cursor:pointer;border:none;background:none;font-family:'Heebo',sans-serif;color:#64748B}
+.view-btn.active{background:#fff;color:#2563EB;font-weight:600}
+.cal-days-header{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;padding:0 8px}
+.day-head{text-align:center;font-size:12px;font-weight:600;color:#94A3B8;padding:8px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;background:#EAECF0;border-radius:10px;overflow:hidden}
+.cal-day{background:#fff;min-height:88px;padding:8px;position:relative}
+.cal-day.other{background:#F9FAFB}
+.cal-day-num{font-size:12px;font-weight:600;color:#374151;margin-bottom:4px}
+.cal-day.today .cal-day-num{background:#2563EB;color:#fff;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px}
+.cal-ev{padding:3px 5px;border-radius:4px;font-size:10px;font-weight:600;margin-bottom:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev-pu{background:#EDE9FE;color:#6D28D9}
+.ev-bl{background:#DBEAFE;color:#1D4ED8}
+.ev-gr{background:#D1FAE5;color:#065F46}
+.ev-am{background:#FEF3C7;color:#92400E}
+.ev-pk{background:#FCE7F3;color:#9D174D}
+
+/* ── gallery filters ── */
+.filter-pill{padding:6px 16px;border-radius:20px;font-size:13px;cursor:pointer;border:1px solid #E5E7EB;background:#fff;color:#64748B;font-family:'Heebo',sans-serif;transition:all .15s;font-weight:500}
+.filter-pill.active{background:#2563EB;color:#fff;border-color:#2563EB}
+
+/* ── btn utility ── */
+.btn-primary{background:#2563EB;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Heebo',sans-serif;transition:background .15s}
+.btn-primary:hover{background:#1D4ED8}
+.btn-secondary{background:#fff;color:#374151;border:1px solid #E5E7EB;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Heebo',sans-serif;transition:all .15s}
+.btn-secondary:hover{border-color:#2563EB;color:#2563EB}
+
+.hidden{display:none!important}
+.fade-in{animation:fi .22s ease}
+@keyframes fi{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+
+/* loading */
+.loading-overlay{position:fixed;inset:0;background:rgba(255,255,255,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;gap:16px}
+.spinner{width:40px;height:40px;border:3px solid #DBEAFE;border-top-color:#2563EB;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:14px;color:#2563EB;font-weight:600}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ══ SIDEBAR ══ -->
+<aside class="sidebar">
+  <div class="sb-logo">
+    <div class="logo-wrap">
+      <div class="logo-icon">P</div>
+      <div>
+        <div class="logo-text">Prime<span>OS</span></div>
+        <div class="sb-email">itayk93@yahoo.com</div>
+      </div>
+    </div>
+  </div>
+  <nav class="sb-nav">
+    <div class="sb-label">תפריט</div>
+    <div class="nav-item active" id="nav-work" onclick="showScreen('work')">
+      <span>✦</span> הפקה
+    </div>
+    <div class="nav-item" id="nav-gallery" onclick="showScreen('gallery')">
+      <span>📁</span> תוצרים
+      <span class="nav-badge">12</span>
+    </div>
+    <div class="nav-item" id="nav-calendar" onclick="showScreen('calendar')">
+      <span>📅</span> לוח שנה
+    </div>
+    <div class="nav-item" onclick="">
+      <span>⚙️</span> הגדרות מותג
+    </div>
+  </nav>
+  <div class="sb-footer">
+    <button class="btn-logout">← יציאה</button>
+  </div>
+</aside>
+
+<!-- ══ MAIN ══ -->
+<div class="main">
+  <header class="topbar">
+    <div class="page-title" id="page-title">הפקה</div>
+    <div class="user-chip">
+      <div class="user-avatar">IT</div>
+      <span class="user-email">itayk93@yahoo.com</span>
+    </div>
+  </header>
+
+  <div class="content">
+
+    <!-- ══════════════ SCREEN: WORK (DEFAULT LANDING) ══════════════ -->
+    <div id="screen-work" class="fade-in">
+
+      <!-- Main work card -->
+      <div class="work-card">
+        <div class="work-headline">מה תרצה ליצור היום?</div>
+        <div class="work-sub">בחרו סוג תוצר, הקלידו בריף — והמערכת תתחיל לעבוד</div>
+
+        <!-- Type chip selector -->
+        <div class="type-chips" id="type-chips">
+          <button class="type-chip" data-type="graphic" onclick="selectChip(this,'graphic')">
+            <span class="chip-icon chip-pink">🖼️</span> תמונה / גרפיקה
+          </button>
+          <button class="type-chip" data-type="text" onclick="selectChip(this,'text')">
+            <span class="chip-icon chip-green">📝</span> פוסט / טקסט
+          </button>
+          <button class="type-chip" data-type="presentation" onclick="selectChip(this,'presentation')">
+            <span class="chip-icon chip-blue">🖥️</span> מצגת
+          </button>
+          <button class="type-chip" data-type="pdf" onclick="selectChip(this,'pdf')">
+            <span class="chip-icon chip-purple">📄</span> מסמך / PDF
+          </button>
+          <button class="type-chip" data-type="quote" onclick="selectChip(this,'quote')">
+            <span class="chip-icon chip-amber">💰</span> הצעת מחיר
+          </button>
+        </div>
+
+        <!-- Selection feedback bar -->
+        <div id="type-selected-bar" class="type-selected-bar hidden">
+          <span class="tsb-icon" id="tsb-icon"></span>
+          <span id="tsb-text"></span>
+          <span style="margin-right:auto;font-size:12px;color:#0EA5E9;cursor:pointer" onclick="clearChip()">× שנה</span>
+        </div>
+        <div id="type-none-bar" class="type-none-hint">
+          <span>💡</span> בחרו קודם סוג תוצר מהכפתורים למעלה
+        </div>
+
+        <!-- Textarea brief input -->
+        <div class="brief-input-wrap">
+          <textarea class="brief-textarea" id="brief-ta" placeholder="תארו מה אתם צריכים... לדוגמה: &quot;גרפיקה לאירוע יוני, כיכר העירייה, כותרת: הצטרפו לחגיגה!&quot;" oninput="onBriefInput()"></textarea>
+          <span class="char-hint" id="char-hint">0 / 500</span>
+          <button class="brief-submit" id="brief-submit" onclick="startCreation()" disabled>
+            ✦ צור תוצר
+          </button>
+        </div>
+
+        <!-- Extra fields — shown per type after selection -->
+        <div id="extra-fields" class="hidden"></div>
+      </div>
+
+      <!-- Recent outputs -->
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <span style="font-size:14px;font-weight:700">תוצרים אחרונים</span>
+          <span style="font-size:13px;font-weight:500;color:#2563EB;cursor:pointer" onclick="showScreen('gallery')">כל התוצרים ←</span>
+        </div>
+        <div class="gal-grid">
+          <div class="gal-card" onclick="showScreen('preview')">
+            <div class="gal-thumb" style="background:#EDE9FE">🖼️</div>
+            <div class="gal-info"><div class="gal-name">מודעת אירוע יוני</div><div class="gal-meta">לפני 2 שעות · FB+IG</div><div class="gal-status"><div class="dot-g"></div><span style="color:#10B981">פורסם</span></div></div>
+          </div>
+          <div class="gal-card">
+            <div class="gal-thumb" style="background:#D1FAE5">📝</div>
+            <div class="gal-info"><div class="gal-name">פוסט אינסטגרם שבועי</div><div class="gal-meta">אתמול</div><div class="gal-status"><div class="dot-a"></div><span style="color:#F59E0B">ממתין לאישור</span></div></div>
+          </div>
+          <div class="gal-card">
+            <div class="gal-thumb" style="background:#DBEAFE">🖥️</div>
+            <div class="gal-info"><div class="gal-name">מצגת משקיעים Q3</div><div class="gal-meta">לפני 3 ימים</div><div class="gal-status"><div class="dot-g"></div><span style="color:#10B981">פורסם</span></div></div>
+          </div>
+          <div class="gal-card">
+            <div class="gal-thumb" style="background:#FEF3C7">💰</div>
+            <div class="gal-info"><div class="gal-name">הצעת מחיר — לקוח טכנולוגיה</div><div class="gal-meta">לפני 4 ימים</div><div class="gal-status"><div class="dot-b"></div><span style="color:#2563EB">בעריכה</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ SCREEN: PREVIEW ══════════════ -->
+    <div id="screen-preview" class="hidden fade-in">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div><div style="font-size:18px;font-weight:700">תצוגת תוצר</div><div style="font-size:13px;color:#64748B">בדקו ואשרו — או בקשו תיקון ספציפי</div></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn-secondary" onclick="showScreen('work')">← חזרה</button>
+          <button class="btn-primary" onclick="showScreen('publish')">אשר ופרסם ✓</button>
+        </div>
+      </div>
+
+      <div class="qa-bar">
+        <span>✦</span>
+        <span style="flex:1">QA אוטומטי עבר — מיתוג, מידות ופלטפורמה אושרו.</span>
+        <div class="qa-badge">עבר ✓</div>
+      </div>
+
+      <div class="preview-wrap">
+        <div class="preview-main">
+          <div class="preview-topbar">
+            <div style="display:flex;gap:4px">
+              <button class="ptab active">פייסבוק פיד</button>
+              <button class="ptab" onclick="swTab(this)">אינסטגרם</button>
+              <button class="ptab" onclick="swTab(this)">סטורי</button>
+            </div>
+            <div style="display:flex;gap:6px">
+              <div class="ver-pill active">גרסה 1</div>
+              <div class="ver-pill">גרסה 2</div>
+            </div>
+          </div>
+          <div class="preview-canvas">
+            <div class="mock-graphic">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <div class="mg-logo">P</div>
+                <div><div style="font-size:12px;font-weight:700">PrimeOS Studio</div><div style="font-size:10px;color:#64748B">פתרונות תוכן</div></div>
+              </div>
+              <div class="mg-img">תמונה ויזואלית</div>
+              <div style="font-size:13px;font-weight:700">הצטרפו לאירוע השנה ✦</div>
+              <div class="mg-bar"></div>
+              <div class="mg-bar" style="width:60%;background:#BFDBFE"></div>
+              <div style="font-size:10px;color:#64748B">יוני 2026 | תל אביב</div>
+              <div class="mg-cta">לחצו להרשמה ←</div>
+            </div>
+          </div>
+          <div class="preview-statusbar">
+            <div class="status-dot"></div>
+            <span>QA עבר · מיתוג מלא · מוכן לפרסום</span>
+            <span style="margin-right:auto;font-size:11px;color:#94A3B8">1080×1080 px</span>
+          </div>
+        </div>
+
+        <div class="revision-panel">
+          <div class="rp-header">
+            <div class="rp-title">✎ סבב תיקונים</div>
+            <div class="rp-sub">ציינו מה לשנות — המערכת תעדכן רק את זה</div>
+          </div>
+          <div class="rp-chat" id="rp-chat">
+            <div class="msg msg-ai">התוצר מוכן! האם תרצו לבצע שינויים?</div>
+          </div>
+          <div class="rp-input-area">
+            <textarea class="rp-input" id="rev-input" placeholder='"שנה כותרת ל-..." / "צבע רקע כחול" ...'></textarea>
+            <div class="rp-actions">
+              <button class="btn-fix" onclick="sendRevision()">✎ שלח תיקון</button>
+              <button class="btn-approve" onclick="showScreen('publish')">✓ אשר ופרסם</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ SCREEN: PUBLISH ══════════════ -->
+    <div id="screen-publish" class="hidden fade-in">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div><div style="font-size:18px;font-weight:700">פרסום ושיתוף</div><div style="font-size:13px;color:#64748B">בחרו איך ומתי להפיץ</div></div>
+        <button class="btn-secondary" onclick="showScreen('preview')">← חזרה לתצוגה</button>
+      </div>
+      <div class="qa-bar"><span>✓</span><span style="flex:1">התוצר אושר — מוכן לפרסום מיידי או מתוזמן</span><div class="qa-badge">מאושר</div></div>
+
+      <div class="publish-grid">
+        <div class="publish-card">
+          <div class="pc-title">📢 פרסום לרשתות</div>
+          <div style="display:flex;gap:10px;margin-bottom:16px">
+            <button class="plat-btn fb on" id="fb-btn" onclick="this.classList.toggle('on')">f Facebook</button>
+            <button class="plat-btn ig" id="ig-btn" onclick="this.classList.toggle('on')">◈ Instagram</button>
+          </div>
+          <button class="pub-btn pub-now" onclick="doPublish()">▶ פרסם עכשיו</button>
+          <button class="pub-btn pub-sched" onclick="toggleSched()">📅 תזמן פרסום</button>
+          <div id="sched-panel" class="time-picker hidden">
+            <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:8px">תאריך ושעה</div>
+            <div class="time-row">
+              <input type="date" class="time-input" value="2026-06-25">
+              <input type="time" class="time-input" value="10:00">
+            </div>
+            <div class="best-time">✓ זמן מומלץ: 10:00–12:00</div>
+            <button class="btn-primary" style="margin-top:12px;width:100%;padding:9px" onclick="doPublish()">אשר תזמון</button>
+          </div>
+        </div>
+        <div class="publish-card">
+          <div class="pc-title">⬇ הורדה למכשיר</div>
+          <div class="dl-option"><div class="dl-icon" style="background:#EFF6FF">🖼️</div><div><div class="dl-title">PNG רזולוציה מלאה</div><div class="dl-sub">1080×1080 px</div></div><span style="color:#2563EB;font-size:13px;font-weight:600;margin-right:auto">הורד</span></div>
+          <div class="dl-option"><div class="dl-icon" style="background:#F0FDF4">📄</div><div><div class="dl-title">PDF — גרסה סופית</div><div class="dl-sub">מקור + פלט</div></div><span style="color:#2563EB;font-size:13px;font-weight:600;margin-right:auto">הורד</span></div>
+          <div class="dl-option"><div class="dl-icon" style="background:#FDF4FF">🎨</div><div><div class="dl-title">Canva — קובץ עורך</div><div class="dl-sub">עדכן ישירות ב-Canva</div></div><span style="color:#2563EB;font-size:13px;font-weight:600;margin-right:auto">פתח</span></div>
+          <div class="info-box" style="margin-top:12px">📂 נשמר אוטומטית ב-Google Drive</div>
+        </div>
+      </div>
+
+      <div id="pub-success" class="hidden" style="margin-top:20px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:14px;padding:28px;text-align:center">
+        <div style="font-size:38px;margin-bottom:8px">🎉</div>
+        <div style="font-size:18px;font-weight:700;color:#166534;margin-bottom:4px">פורסם בהצלחה!</div>
+        <div style="font-size:14px;color:#16A34A;margin-bottom:18px">התוצר עלה לרשתות החברתיות</div>
+        <div style="display:flex;gap:10px;justify-content:center">
+          <button class="btn-primary" onclick="showScreen('calendar')">📅 ראה בלוח שנה</button>
+          <button class="btn-secondary" onclick="resetAndWork()">✦ תוצר חדש</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ SCREEN: CALENDAR ══════════════ -->
+    <div id="screen-calendar" class="hidden fade-in">
+      <div class="cal-header">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="cal-nav-btn">←</button>
+          <div class="cal-month">יוני 2026</div>
+          <button class="cal-nav-btn">→</button>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <div class="cal-view-toggle">
+            <button class="view-btn active">שבוע</button>
+            <button class="view-btn">חודש</button>
+            <button class="view-btn">רשימה</button>
+          </div>
+          <button class="btn-primary" style="padding:8px 16px;font-size:13px" onclick="resetAndWork()">+ תזמן פרסום</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="cal-days-header" style="padding:0 8px">
+          <div class="day-head">ראשון</div><div class="day-head">שני</div><div class="day-head">שלישי</div>
+          <div class="day-head">רביעי</div><div class="day-head">חמישי</div><div class="day-head">שישי</div><div class="day-head">שבת</div>
+        </div>
+        <div class="cal-grid">
+          <div class="cal-day other"></div><div class="cal-day other"></div><div class="cal-day other"></div>
+          <div class="cal-day other"></div><div class="cal-day other"></div><div class="cal-day other"></div>
+          <div class="cal-day"><div class="cal-day-num">1</div></div>
+          <div class="cal-day"><div class="cal-day-num">2</div><div class="cal-ev ev-pu">🖼️ מודעה 10:00</div></div>
+          <div class="cal-day"><div class="cal-day-num">3</div></div>
+          <div class="cal-day"><div class="cal-day-num">4</div><div class="cal-ev ev-bl">📝 פוסט 14:00</div></div>
+          <div class="cal-day"><div class="cal-day-num">5</div></div>
+          <div class="cal-day"><div class="cal-day-num">6</div><div class="cal-ev ev-gr">💰 הצעה</div></div>
+          <div class="cal-day"><div class="cal-day-num">7</div></div>
+          <div class="cal-day"><div class="cal-day-num">8</div></div>
+          <div class="cal-day"><div class="cal-day-num">9</div><div class="cal-ev ev-pk">📄 PDF</div></div>
+          <div class="cal-day"><div class="cal-day-num">10</div></div>
+          <div class="cal-day"><div class="cal-day-num">11</div><div class="cal-ev ev-pu">🖼️ באנר</div></div>
+          <div class="cal-day today"><div class="cal-day-num">12</div><div class="cal-ev ev-am">🖥️ מצגת 16:00</div></div>
+          <div class="cal-day"><div class="cal-day-num">13</div></div>
+          <div class="cal-day"><div class="cal-day-num">14</div><div class="cal-ev ev-bl">📝 פוסט שבועי</div></div>
+          <div class="cal-day"><div class="cal-day-num">15</div></div>
+          <div class="cal-day"><div class="cal-day-num">16</div></div>
+          <div class="cal-day"><div class="cal-day-num">17</div><div class="cal-ev ev-pu">🖼️ גרפיקה 09:00</div></div>
+          <div class="cal-day"><div class="cal-day-num">18</div></div>
+          <div class="cal-day"><div class="cal-day-num">19</div><div class="cal-ev ev-gr">💰 הצעה חדשה</div></div>
+          <div class="cal-day"><div class="cal-day-num">20</div></div>
+          <div class="cal-day"><div class="cal-day-num">21</div><div class="cal-ev ev-pk">📄 דוח חודשי</div></div>
+          <div class="cal-day"><div class="cal-day-num">22</div></div>
+          <div class="cal-day"><div class="cal-day-num">23</div><div class="cal-ev ev-bl">📝 FB פוסט</div><div class="cal-ev ev-pu">🖼️ IG Story</div></div>
+          <div class="cal-day"><div class="cal-day-num">24</div></div>
+          <div class="cal-day"><div class="cal-day-num">25</div></div>
+          <div class="cal-day"><div class="cal-day-num">26</div></div>
+          <div class="cal-day"><div class="cal-day-num">27</div></div>
+          <div class="cal-day"><div class="cal-day-num">28</div></div>
+          <div class="cal-day"><div class="cal-day-num">29</div></div>
+          <div class="cal-day"><div class="cal-day-num">30</div></div>
+          <div class="cal-day other"></div><div class="cal-day other"></div><div class="cal-day other"></div>
+          <div class="cal-day other"></div><div class="cal-day other"></div><div class="cal-day other"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ SCREEN: GALLERY ══════════════ -->
+    <div id="screen-gallery" class="hidden fade-in">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div><div style="font-size:18px;font-weight:700">כל התוצרים</div><div style="font-size:13px;color:#64748B">12 תוצרים · 8 פורסמו</div></div>
+        <button class="btn-primary" onclick="resetAndWork()">+ תוצר חדש</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+        <button class="filter-pill active" onclick="activePill(this)">הכל</button>
+        <button class="filter-pill" onclick="activePill(this)">תמונות</button>
+        <button class="filter-pill" onclick="activePill(this)">טקסט</button>
+        <button class="filter-pill" onclick="activePill(this)">מצגות</button>
+        <button class="filter-pill" onclick="activePill(this)">מסמכים</button>
+        <button class="filter-pill" onclick="activePill(this)">הצעות מחיר</button>
+        <button class="filter-pill" onclick="activePill(this)">פורסם</button>
+        <button class="filter-pill" onclick="activePill(this)">טיוטה</button>
+      </div>
+      <div class="gal-grid">
+        <div class="gal-card" onclick="showScreen('preview')"><div class="gal-thumb" style="background:#EDE9FE">🖼️</div><div class="gal-info"><div class="gal-name">מודעת אירוע יוני</div><div class="gal-meta">12.6.26 · FB+IG</div><div class="gal-status"><div class="dot-g"></div><span style="color:#10B981">פורסם</span></div></div></div>
+        <div class="gal-card"><div class="gal-thumb" style="background:#D1FAE5">📝</div><div class="gal-info"><div class="gal-name">פוסט אינסטגרם שבועי</div><div class="gal-meta">11.6.26</div><div class="gal-status"><div class="dot-a"></div><span style="color:#F59E0B">ממתין</span></div></div></div>
+        <div class="gal-card"><div class="gal-thumb" style="background:#DBEAFE">🖥️</div><div class="gal-info"><div class="gal-name">מצגת משקיעים Q3</div><div class="gal-meta">10.6.26</div><div class="gal-status"><div class="dot-g"></div><span style="color:#10B981">פורסם</span></div></div></div>
+        <div class="gal-card"><div class="gal-thumb" style="background:#FEF3C7">💰</div><div class="gal-info"><div class="gal-name">הצעת מחיר — לקוח טכנולוגיה</div><div class="gal-meta">9.6.26</div><div class="gal-status"><div class="dot-b"></div><span style="color:#2563EB">בעריכה</span></div></div></div>
+        <div class="gal-card"><div class="gal-thumb" style="background:#FCE7F3">📄</div><div class="gal-info"><div class="gal-name">ברושור שירותים</div><div class="gal-meta">8.6.26</div><div class="gal-status"><div class="dot-g"></div><span style="color:#10B981">פורסם</span></div></div></div>
+        <div class="gal-card"><div class="gal-thumb" style="background:#EDE9FE">🖼️</div><div class="gal-info"><div class="gal-name">באנר מבצע קיץ</div><div class="gal-meta">7.6.26 · FB</div><div class="gal-status"><div class="dot-g"></div><span style="color:#10B981">פורסם</span></div></div></div>
+        <div class="gal-card"><div class="gal-thumb" style="background:#D1FAE5">📝</div><div class="gal-info"><div class="gal-name">פוסט הצגת מוצר</div><div class="gal-meta">6.6.26 · IG</div><div class="gal-status"><div class="dot-g"></div><span style="color:#10B981">פורסם</span></div></div></div>
+        <div class="gal-card"><div class="gal-thumb" style="background:#FEF3C7">💰</div><div class="gal-info"><div class="gal-name">הצעה — לקוח בריאות</div><div class="gal-meta">5.6.26</div><div class="gal-status"><div class="dot-g"></div><span style="color:#10B981">פורסם</span></div></div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<!-- Loading -->
+<div class="loading-overlay hidden" id="loading-overlay">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loading-text">✦ יוצר את התוצר...</div>
+</div>
+
+<script>
+const CHIP_LABELS = {
+  graphic:      { icon:'🖼️', label:'תמונה / גרפיקה', color:'chip-pink',   extra: extraGraphic },
+  text:         { icon:'📝', label:'פוסט / טקסט',     color:'chip-green',  extra: extraText },
+  presentation: { icon:'🖥️', label:'מצגת',             color:'chip-blue',   extra: extraPresentation },
+  pdf:          { icon:'📄', label:'מסמך / PDF',       color:'chip-purple', extra: extraPDF },
+  quote:        { icon:'💰', label:'הצעת מחיר',        color:'chip-amber',  extra: extraQuote }
+};
+
+function extraGraphic(){return`
+  <div class="form-fields">
+    <div><div class="form-label">פלטפורמה</div>
+    <select class="form-select"><option>אינסטגרם — מרובע (1080×1080)</option><option>פייסבוק — פיד (1200×630)</option><option>סטורי (1080×1920)</option><option>כל הפורמטים</option></select></div>
+    <div><div class="form-label">CTA (קריאה לפעולה)</div>
+    <input class="form-input" type="text" placeholder="לדוגמה: לחצו להרשמה"></div>
+    <div><div class="form-label">תאריך (אופציונלי)</div>
+    <input class="form-input" type="text" placeholder="לדוגמה: 20 יוני 2026"></div>
+    <div class="auto-row">
+      <span style="font-size:12px;color:#64748B">אוטומטי מהפרופיל:</span>
+      <span class="auto-tag">✓ לוגו</span><span class="auto-tag">✓ צבעים</span><span class="auto-tag">✓ פונט</span>
+    </div>
+  </div>`}
+
+function extraText(){return`
+  <div class="form-fields">
+    <div><div class="form-label">פלטפורמה</div>
+    <select class="form-select"><option>אינסטגרם</option><option>פייסבוק</option><option>לינקדאין</option><option>מייל</option></select></div>
+    <div><div class="form-label">טון</div>
+    <select class="form-select"><option>מקצועי ואמין</option><option>חופשי ואישי</option><option>שיווקי ומרגש</option><option>מידעי</option></select></div>
+    <div class="auto-row">
+      <span class="auto-tag">✓ טון מותג</span><span class="auto-tag">✓ האשטאגים</span>
+    </div>
+  </div>`}
+
+function extraPresentation(){return`
+  <div class="form-fields">
+    <div><div class="form-label">קהל מאזינים</div>
+    <input class="form-input" type="text" placeholder="משקיעים / לקוחות / צוות..."></div>
+    <div><div class="form-label">מספר שקפים</div>
+    <select class="form-select"><option>5–8</option><option>10–15</option><option>20+</option></select></div>
+    <div class="auto-row">
+      <span class="auto-tag">✓ מבנה Problem→Solution</span><span class="auto-tag">✓ מיתוג מלא</span>
+    </div>
+  </div>`}
+
+function extraPDF(){return`
+  <div class="form-fields">
+    <div><div class="form-label">סוג מסמך</div>
+    <select class="form-select"><option>ברושור שיווקי</option><option>קטלוג מוצרים</option><option>מדריך שימוש</option><option>דוח תקופתי</option></select></div>
+    <div><div class="form-label">אורך משוער</div>
+    <select class="form-select"><option>1–2 עמודים</option><option>3–5 עמודים</option><option>10+ עמודים</option></select></div>
+    <div class="auto-row">
+      <span class="auto-tag">✓ שער ממותג</span><span class="auto-tag">✓ פוטר</span>
+    </div>
+  </div>`}
+
+function extraQuote(){return`
+  <div class="form-fields">
+    <div><div class="form-label">שם לקוח / חברה</div>
+    <input class="form-input" type="text" placeholder="שם לקוח הקצה"></div>
+    <div><div class="form-label">הנחה (אופציונלי)</div>
+    <input class="form-input" type="text" placeholder="לדוגמה: 15% — מחיר מקורי יוצג מחוק"></div>
+    <div><div class="form-label">תוקף הצעה</div>
+    <input class="form-input" type="text" placeholder="לדוגמה: 30 יום"></div>
+    <div class="auto-row">
+      <span class="auto-tag">✓ קטלוג מוצרים</span><span class="auto-tag">✓ פרטי חברה</span>
+    </div>
+  </div>`}
+
+let currentType = null;
+
+function selectChip(el, type) {
+  document.querySelectorAll('.type-chip').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  currentType = type;
+  const data = CHIP_LABELS[type];
+  document.getElementById('tsb-icon').textContent = data.icon;
+  document.getElementById('tsb-text').textContent = 'נבחר: ' + data.label + ' — מלאו את הבריף ולחצו "צור תוצר"';
+  document.getElementById('type-selected-bar').classList.remove('hidden');
+  document.getElementById('type-none-bar').classList.add('hidden');
+  document.getElementById('extra-fields').innerHTML = data.extra();
+  document.getElementById('extra-fields').classList.remove('hidden');
+  updateSubmitState();
+  document.getElementById('brief-ta').focus();
+}
+
+function clearChip() {
+  document.querySelectorAll('.type-chip').forEach(c => c.classList.remove('selected'));
+  currentType = null;
+  document.getElementById('type-selected-bar').classList.add('hidden');
+  document.getElementById('type-none-bar').classList.remove('hidden');
+  document.getElementById('extra-fields').classList.add('hidden');
+  document.getElementById('extra-fields').innerHTML = '';
+  updateSubmitState();
+}
+
+function onBriefInput() {
+  const ta = document.getElementById('brief-ta');
+  document.getElementById('char-hint').textContent = ta.value.length + ' / 500';
+  updateSubmitState();
+}
+
+function updateSubmitState() {
+  const hasType = currentType !== null;
+  const hasText = document.getElementById('brief-ta').value.trim().length > 0;
+  document.getElementById('brief-submit').disabled = !(hasType && hasText);
+}
+
+function startCreation() {
+  const overlay = document.getElementById('loading-overlay');
+  const type = CHIP_LABELS[currentType];
+  const steps = [
+    '✦ מנתח בריף...',
+    '⬤ טוען פרופיל מיתוג (' + type.icon + ' ' + type.label + ')...',
+    '◈ מייצר את התוצר...',
+    '✓ מריץ QA אוטומטי...'
+  ];
+  let i = 0;
+  overlay.classList.remove('hidden');
+  document.getElementById('loading-text').textContent = steps[0];
+  const iv = setInterval(() => {
+    i++;
+    if (i >= steps.length) { clearInterval(iv); overlay.classList.add('hidden'); showScreen('preview'); return; }
+    document.getElementById('loading-text').textContent = steps[i];
+  }, 750);
+}
+
+function sendRevision() {
+  const inp = document.getElementById('rev-input');
+  const txt = inp.value.trim(); if (!txt) return;
+  const chat = document.getElementById('rp-chat');
+  const um = document.createElement('div'); um.className='msg msg-user'; um.textContent=txt; chat.appendChild(um);
+  inp.value=''; chat.scrollTop=chat.scrollHeight;
+  const ov = document.getElementById('loading-overlay');
+  document.getElementById('loading-text').textContent='✎ מעדכן רק את מה שביקשתם...';
+  ov.classList.remove('hidden');
+  setTimeout(()=>{
+    ov.classList.add('hidden');
+    const am=document.createElement('div'); am.className='msg msg-ai fade-in';
+    am.textContent='עדכנתי בדיוק את מה שביקשתם — שאר התוצר נשמר כמות שהוא. מה דעתכם?';
+    chat.appendChild(am); chat.scrollTop=chat.scrollHeight;
+  },1200);
+}
+
+let schedOpen=false;
+function toggleSched(){ schedOpen=!schedOpen; document.getElementById('sched-panel').classList.toggle('hidden',!schedOpen); }
+function doPublish(){
+  const ov=document.getElementById('loading-overlay');
+  document.getElementById('loading-text').textContent='▶ מפרסם ברשתות...';
+  ov.classList.remove('hidden');
+  setTimeout(()=>{ ov.classList.add('hidden'); document.getElementById('pub-success').classList.remove('hidden'); },1300);
+}
+
+function showScreen(id){
+  document.querySelectorAll('[id^="screen-"]').forEach(s=>s.classList.add('hidden'));
+  const el=document.getElementById('screen-'+id);
+  if(el){el.classList.remove('hidden');el.classList.add('fade-in');}
+  const titles={work:'הפקה',preview:'תצוגת תוצר',publish:'פרסום',calendar:'לוח שנה',gallery:'גלריה'};
+  document.getElementById('page-title').textContent=titles[id]||'';
+  ['work','gallery','calendar'].forEach((s,i)=>{
+    document.querySelectorAll('.nav-item')[i].classList.toggle('active',s===id);
+  });
+}
+
+function resetAndWork(){
+  clearChip();
+  document.getElementById('brief-ta').value='';
+  document.getElementById('char-hint').textContent='0 / 500';
+  document.getElementById('pub-success').classList.add('hidden');
+  showScreen('work');
+}
+
+function swTab(el){ document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); }
+function activePill(el){ document.querySelectorAll('.filter-pill').forEach(p=>p.classList.remove('active')); el.classList.add('active'); }
+</script>
+</body>
+</html>

@@ -1,14 +1,11 @@
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { OUTPUT_LABEL } from '@/lib/labels';
-import { formatHebrewDate } from '@/lib/format';
-import { RichTextPreview, exportRichTextDocx, parseRichText, plainTextFromBlocks } from '@/lib/richText';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
-import ImagePickerModal from '@/components/ImagePickerModal';
 import DeckExport from '@/components/DeckExport';
+import ImagePickerModal from '@/components/ImagePickerModal';
 import type { DeckImage } from '@/lib/deck';
-import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, type Quote } from '@/lib/quote';
 import type { OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
 
 type ProductionType = OutputType;
@@ -58,14 +55,6 @@ interface OutputRow {
   storage_path: string | null;
   mime_type: string | null;
   qa_result: QaResult | null;
-}
-
-interface RecentOutputPreviewRow {
-  id: string;
-  output_type: OutputType;
-  text_content: string | null;
-  storage_path: string | null;
-  created_at: string;
 }
 
 const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: string; accent: string; iconBg: string; iconText: string }> = [
@@ -185,333 +174,21 @@ const FIELDS: Record<ProductionType, FieldConfig[]> = {
 
 export default function ProductionPage() {
   const { type } = useParams();
-  // Quote is a production type with its own lightweight flow (no brief wizard):
-  // the prompt goes straight to the quote builder, and the price is read from it.
-  if (type === 'quote') return <QuoteFlow />;
   const selectedType = isProductionType(type) ? type : null;
 
   if (!selectedType) return <ProductionPicker />;
   return <ProductionFlow type={selectedType} />;
 }
 
-// In-flow price-quote REVIEW screen — mirrors the brief-approval step of other
-// products. On entry it generates the quote content from the prompt, shows it for
-// review, lets the user revise it with AI (free-text instruction → regenerate),
-// and only on "אישור" builds + downloads the PDF. Price is read from the prompt
-// only; the PDF renderer never splits a section across pages.
-function QuoteFlow() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const navState = (location.state as { freeText?: string; brandId?: string | null } | null) ?? null;
-  const freeText = navState?.freeText?.trim() ?? '';
-  const brandId = navState?.brandId ?? null;
-
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [building, setBuilding] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [savedRequestId, setSavedRequestId] = useState<string | null>(null);
-  const [revision, setRevision] = useState('');
-  const ran = useRef(false);
-
-  // Generate (or regenerate with a revision note). The previous quote + the note
-  // are passed so the model edits in place rather than starting from scratch.
-  async function generate(revisionNote?: string) {
-    setGenerating(true);
-    setError(null);
-    try {
-      const brief: Record<string, unknown> = {
-        goal: freeText,
-        raw_prompt: freeText,
-        brand_id: brandId,
-      };
-      if (revisionNote && quote) {
-        brief.revision_request = revisionNote;
-        brief.previous_quote = quote;
-      }
-      const q = await fetchQuote(brief, null, getSessionOpenAiKey());
-      setQuote(q);
-      setRevision('');
-    } catch (e) {
-      const msg = String((e as { message?: string })?.message ?? e);
-      setError(/402|quota|insufficient/i.test(msg) ? OPENAI_QUOTA_MESSAGE : `יצירת ההצעה נכשלה: ${msg}`);
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!ran.current && freeText) {
-      ran.current = true;
-      void generate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freeText]);
-
-  async function approveAndBuild() {
-    if (!quote || building) return;
-    setBuilding(true);
-    setError(null);
-    try {
-      const blob = await renderQuoteToPdf(quote);
-      const safeName = String(quote.title || 'הצעת מחיר').slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'הצעת-מחיר';
-      const fileBase64 = await blobToBase64(blob);
-      const { data, error: saveError } = await createSupabaseBrowserClient().functions.invoke('save-quote-output', {
-        body: {
-          file_base64: fileBase64,
-          file_name: safeName,
-          prompt: freeText,
-          quote_title: quote.title || 'הצעת מחיר',
-          brand_id: brandId,
-        },
-      });
-      if (saveError) throw saveError;
-      const requestId = (data as { request_id?: string } | null)?.request_id;
-      if (requestId) setSavedRequestId(requestId);
-      downloadQuoteBlob(blob, `${safeName}.pdf`);
-    } catch (e) {
-      setError(`בניית/שמירת ה-PDF נכשלה: ${String((e as { message?: string })?.message ?? e)}`);
-    } finally {
-      setBuilding(false);
-    }
-  }
-
-  // Missing prompt (e.g. direct URL) → send the user back to the picker.
-  if (!freeText) {
-    return (
-      <div dir="rtl" className="min-h-full bg-[#F0F2F7] p-8">
-        <p className="text-[14px] text-[#64748B]">עדיין לא יצרת הצעות מחיר.</p>
-        <button
-          type="button"
-          onClick={() => navigate('/admin/production')}
-          className="mt-4 inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[13px] font-semibold text-[#374151] shadow-sm transition hover:border-[#93C5FD] hover:bg-[#F8FAFF] hover:text-[#2563EB]"
-        >
-          → חזרה לבחירת תוצר
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div dir="rtl" className="min-h-full bg-[#F0F2F7]">
-      <div className="px-5 py-6 sm:px-8 lg:px-10">
-        <button
-          type="button"
-          onClick={() => navigate('/admin/production')}
-          className="mb-4 inline-flex items-center gap-1.5 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[13px] font-semibold text-[#374151] shadow-sm transition hover:border-[#93C5FD] hover:bg-[#F8FAFF] hover:text-[#2563EB]"
-        >
-          → חזרה לבחירת תוצר
-        </button>
-
-        <section className="rounded-[16px] border border-[#EAECF0] bg-white px-5 py-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8">
-          <h1 className="text-[22px] font-bold text-[#1A1A2E]">הצעת מחיר — סקירה ואישור</h1>
-          <p className="mt-1 text-[14px] text-[#94A3B8]">
-            עברו על התוכן, תקנו עם AI אם צריך, ורק אז אשרו לבניית ה-PDF. המחיר מוצג בדיוק כפי שכתבתם.
-          </p>
-
-          {generating && !quote && <QuoteReviewLoader />}
-          {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-
-          {quote && (
-            <>
-              <div className={`mt-5 ${generating ? 'pointer-events-none opacity-50' : ''}`}>
-                <QuoteReview quote={quote} />
-              </div>
-
-              <div className="mt-6 rounded-xl border border-[#E5E7EB] bg-[#F8FAFF] p-4">
-                <div className="text-[14px] font-bold text-[#1A1A2E]">תיקון עם AI</div>
-                <p className="mt-0.5 text-[12.5px] text-[#64748B]">הסבירו מה לשנות (טקסט, סדר, ניסוח, רכיבים) — לא כולל המצאת מחירים.</p>
-                <textarea
-                  value={revision}
-                  onChange={(e) => setRevision(e.target.value)}
-                  rows={3}
-                  placeholder='לדוגמה: "תוסיף רכיב של צילום ועריכת וידאו", "תקצר את התקציר", "תשנה את הטון לרשמי יותר"'
-                  className="mt-2 w-full rounded-lg border border-[#E5E7EB] p-3 text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => revision.trim() && generate(revision.trim())}
-                  disabled={generating || building || !revision.trim()}
-                  className="mt-2 rounded-lg border border-[#2563EB] px-4 py-2 text-sm font-semibold text-[#2563EB] hover:bg-[#EFF6FF] disabled:opacity-50"
-                >
-                  {generating ? 'מעדכן…' : 'תקן עם AI'}
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={approveAndBuild}
-                disabled={building || generating}
-                className="mt-6 w-full rounded-xl bg-[#2563EB] px-5 py-3 text-[15px] font-bold text-white shadow-sm hover:bg-[#1D4ED8] disabled:opacity-60"
-              >
-                {building ? 'בונה ושומר PDF…' : 'אישור ובניית הצעת המחיר (PDF)'}
-              </button>
-              {savedRequestId && (
-                <button
-                  type="button"
-                  onClick={() => navigate('/admin/files?type=pdf')}
-                  className="mt-3 w-full rounded-xl border border-[#2563EB] bg-white px-5 py-3 text-[14px] font-bold text-[#2563EB] shadow-sm hover:bg-[#EFF6FF]"
-                >
-                  הצעת המחיר נשמרה — צפייה בתוצרים
-                </button>
-              )}
-            </>
-          )}
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function QuoteReviewLoader() {
-  return (
-    <div className="mt-6 flex items-center gap-3 text-[#64748B]">
-      <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#2563EB] border-t-transparent" />
-      <span className="text-sm">בונה את תוכן ההצעה…</span>
-    </div>
-  );
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? '').split(',').pop() ?? '');
-    reader.onerror = () => reject(reader.error ?? new Error('blob read failed'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-// On-screen preview of the structured quote (not the PDF). Mirrors the PDF
-// sections so the user reviews exactly what they'll get.
-function QuoteReview({ quote }: { quote: Quote }) {
-  const meta = quote.meta ?? {};
-  const metaCells = [
-    ['מסמך', meta.doc], ['תאריך', meta.date], ['סוג פרויקט', meta.project_type], ['פלטפורמה', meta.platform],
-  ].filter(([, v]) => v && String(v).trim()) as Array<[string, string]>;
-  const comps = (quote.components ?? []).filter((c) => c?.title?.trim());
-  const included = (quote.included ?? []).filter((x) => x?.trim());
-  const tech = (quote.technologies ?? []).filter((x) => x?.trim());
-  const pay = (quote.payment_terms ?? []).filter((p) => p?.title?.trim());
-  const terms = (quote.terms ?? []).filter((x) => x?.trim());
-
-  return (
-    <div className="space-y-4 text-[#1f2233]">
-      <div className="rounded-xl bg-gradient-to-l from-[#2563EB] to-[#1E3A8A] p-5 text-white">
-        <div className="text-[20px] font-extrabold">{quote.title || 'הצעת מחיר'}</div>
-        {quote.subtitle && <div className="mt-1 text-[13px] text-[#d7d7ea]">{quote.subtitle}</div>}
-      </div>
-
-      {metaCells.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {metaCells.map(([k, v]) => (
-            <div key={k} className="rounded-lg bg-[#EFF6FF] p-2.5 text-center">
-              <div className="text-[11px] text-[#6b6b80]">{k}</div>
-              <div className="text-[13px] font-bold text-[#1E3A8A]">{v}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {quote.summary && <div className="rounded-xl bg-[#EFF6FF] p-4 text-[13.5px] leading-relaxed">{quote.summary}</div>}
-
-      {(quote.headline?.label || quote.headline?.price) && (
-        <div className="flex items-center justify-between gap-3 rounded-xl bg-gradient-to-l from-[#2563EB] to-[#1E3A8A] p-4 text-white">
-          <div>
-            <div className="text-[16px] font-extrabold">{quote.headline?.label || 'מחיר כולל'}</div>
-            {quote.headline?.sub && <div className="text-[12px] text-[#cfcfe6]">{quote.headline.sub}</div>}
-          </div>
-          {quote.headline?.price && <div className="text-[22px] font-extrabold text-[#c9a14a]">{quote.headline.price}</div>}
-        </div>
-      )}
-
-      {comps.length > 0 && (
-        <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">היקף הפיתוח — רכיבי המערכת</div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {comps.map((c, i) => (
-              <div key={i} className="flex items-start gap-2.5 rounded-xl bg-[#EFF6FF] p-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#c9a14a] text-[12px] font-extrabold text-[#1E3A8A]">{i + 1}</span>
-                <div>
-                  <div className="text-[13px] font-extrabold text-[#1E3A8A]">{c.title}</div>
-                  {c.desc && <div className="text-[12px] text-[#6b6b80]">{c.desc}</div>}
-                  {c.price && <div className="mt-1 text-[12.5px] font-extrabold text-[#c9a14a]">{c.price}</div>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {included.length > 0 && (
-        <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">כלול בפיתוח</div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {included.map((x, i) => (
-              <div key={i} className="flex items-start gap-2 rounded-lg bg-[#EFF6FF] p-2.5 text-[12.5px]">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#c9a14a] text-[10px] font-extrabold text-[#1E3A8A]">✓</span>
-                <span>{x}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {tech.length > 0 && (
-        <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">טכנולוגיות וכלים</div>
-          <div className="flex flex-wrap gap-2">
-            {tech.map((x, i) => <span key={i} className="rounded-full bg-[#EFF6FF] px-3 py-1.5 text-[12.5px] font-bold text-[#1E3A8A]">{x}</span>)}
-          </div>
-        </div>
-      )}
-
-      {pay.length > 0 && (
-        <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">תנאי תשלום</div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {pay.map((p, i) => (
-              <div key={i} className="rounded-xl border border-[#c9a14a55] bg-[#fbf6ea] p-3">
-                <div className="text-[13px] font-extrabold text-[#1E3A8A]">{p.title}</div>
-                {p.desc && <div className="text-[12px] text-[#6b6b80]">{p.desc}</div>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {terms.length > 0 && (
-        <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">תנאים והגבלות</div>
-          <ul className="list-disc pr-5 text-[13px] leading-relaxed">{terms.map((x, i) => <li key={i}>{x}</li>)}</ul>
-        </div>
-      )}
-
-      {quote.disclaimer && (
-        <div className="rounded-xl border border-[#c9a14a66] bg-[#fbf6ea] p-4">
-          <div className="text-[13px] font-extrabold text-[#1E3A8A]">לתשומת לבך</div>
-          <div className="text-[12.5px] leading-relaxed">{quote.disclaimer}</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ProductionPicker() {
   const navigate = useNavigate();
-  const [selected, setSelected] = useState<ProductionType | 'quote' | null>(null);
+  const [selected, setSelected] = useState<ProductionType | null>(null);
   const [description, setDescription] = useState('');
   // Brand chosen here is passed to the brief builder so the brand's content +
   // official color palette are folded into the AI brief.
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [brandId, setBrandId] = useState('');
   const [brandLogoUrls, setBrandLogoUrls] = useState<Record<string, string>>({});
-  const [recentFiles, setRecentFiles] = useState<Record<OutputType, RecentOutputPreviewRow[]>>({
-    image: [],
-    pdf: [],
-    presentation: [],
-    text: [],
-  });
-  const [recentPreviews, setRecentPreviews] = useState<Record<string, string>>({});
   // For presentations we open the image picker before leaving this page, so the
   // chosen images ride into the flow (and onward into the deck).
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -553,46 +230,6 @@ function ProductionPicker() {
     };
   }, [brands]);
 
-  useEffect(() => {
-    let active = true;
-    const client = createSupabaseBrowserClient();
-
-    client
-      .from('outputs')
-      .select('id, output_type, text_content, storage_path, created_at')
-      .order('created_at', { ascending: false })
-      .limit(20)
-      .then(async ({ data }) => {
-        if (!active) return;
-        const grouped: Record<OutputType, RecentOutputPreviewRow[]> = {
-          image: [],
-          pdf: [],
-          presentation: [],
-          text: [],
-        };
-
-        for (const file of (data ?? []) as RecentOutputPreviewRow[]) {
-          if (grouped[file.output_type].length < 2) {
-            grouped[file.output_type].push(file);
-          }
-        }
-        setRecentFiles(grouped);
-
-        const images = grouped.image.filter((file) => file.storage_path);
-        const pairs = await Promise.all(
-          images.map(async (file) => {
-            const { data: signed } = await client.storage.from('outputs').createSignedUrl(file.storage_path as string, 600);
-            return [file.id, signed?.signedUrl] as const;
-          }),
-        );
-        if (active) setRecentPreviews(Object.fromEntries(pairs.filter(([, url]) => url)) as Record<string, string>);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
   function goToFlow(extra?: { pickedImages?: DeckImage[] | null; pickedKeys?: string[] }) {
     if (!selected) return;
     // Hand the free-text brief + chosen brand to the flow, which skips the
@@ -609,12 +246,6 @@ function ProductionPicker() {
 
   function handleCreate() {
     if (!canCreate || !selected) return;
-    // Quote: go to the in-flow review screen (show content → revise with AI →
-    // approve → build PDF). Same production chrome, not a foreign page.
-    if (selected === 'quote') {
-      goToFlow();
-      return;
-    }
     // Presentations: pick the deck images first, then continue into the flow.
     if (selected === 'presentation') {
       if (!brandId) {
@@ -628,21 +259,19 @@ function ProductionPicker() {
     goToFlow();
   }
 
-  const pickerChips: Array<{ key: string; label: string; icon: string; color: string; to?: ProductionType | 'quote'; disabled?: boolean }> = [
+  const pickerChips: Array<{ key: string; label: string; icon: string; color: string; to?: ProductionType; disabled?: boolean }> = [
     { key: 'image', label: 'תמונה / גרפיקה', icon: '🖼️', color: 'bg-[#FEE2E2]', to: 'image' },
     { key: 'text', label: 'פוסט / טקסט', icon: '📝', color: 'bg-[#D1FAE5]', to: 'text' },
     { key: 'presentation', label: 'מצגת', icon: '🖥️', color: 'bg-[#DBEAFE]', to: 'presentation' },
     { key: 'pdf', label: 'מסמך / PDF', icon: '📄', color: 'bg-[#EDE9FE]', to: 'pdf' },
-    // Quote is a real production type: same textarea + same "צור תוצר" button.
-    // The price is taken from the prompt only (see QuoteFlow / generateQuote).
-    { key: 'quote', label: 'הצעת מחיר', icon: '💰', color: 'bg-[#FEF3C7]', to: 'quote' },
+    { key: 'quote', label: 'הצעת מחיר', icon: '💰', color: 'bg-[#FEF3C7]', to: 'pdf', disabled: true },
   ];
   const selectedPickerLabel = pickerChips.find((item) => !item.disabled && item.to === selected)?.label ?? null;
-  const recentOutputCategories: Array<{ key: string; label: string; bg: string; icon: string; to: string; type?: OutputType }> = [
-    { key: 'image', type: 'image', label: 'תמונה/גרפיקה', bg: '#FEF3C7', icon: '🖼️', to: '/admin/files?type=image' },
-    { key: 'presentation', type: 'presentation', label: 'מצגת', bg: '#D1FAE5', icon: '📊', to: '/admin/files?type=presentation' },
-    { key: 'pdf', type: 'pdf', label: 'מסמך/PDF', bg: '#DBEAFE', icon: '📕', to: '/admin/files?type=pdf' },
-    { key: 'quote', label: 'הצעת מחיר', bg: '#EDE9FE', icon: '💰', to: '/admin/production/quote' },
+  const recentOutputs = [
+    { title: 'פוסט קהילתי', tone: 'צהוב', color: 'bg-[#FEF3C7]' },
+    { title: 'מודעת פייסבוק', tone: 'תכלת', color: 'bg-[#DBEAFE]' },
+    { title: 'קרוסלת מוצר', tone: 'מנטה', color: 'bg-[#D1FAE5]' },
+    { title: 'מצגת משקיעים', tone: 'סגול', color: 'bg-[#EDE9FE]' },
   ];
 
   return (
@@ -777,7 +406,7 @@ function ProductionPicker() {
                   }`}
                 >
                   <SparkIcon className="h-4 w-4" />
-                  {selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}
+                  צור תוצר
                 </button>
               </div>
               <div className="absolute bottom-5 right-4 text-[11px] font-normal text-[#CBD5E1]">500 / {description.length}</div>
@@ -799,63 +428,21 @@ function ProductionPicker() {
             </Link>
           </div>
 
-          <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {recentOutputCategories.map(({ key, type, label, bg, icon, to }) => {
-              const items = type ? recentFiles[type] : [];
-              return (
-                <Link
-                  key={key}
-                  to={to}
-                  className="group flex min-h-[210px] flex-col overflow-hidden rounded-[12px] border border-[#EAECF0] bg-white text-right transition hover:-translate-y-0.5 hover:border-[#BFDBFE]"
-                >
-                  <div className="flex items-center gap-2 px-3 py-2.5" style={{ backgroundColor: bg }}>
-                    <span className="text-[20px]">{icon}</span>
-                    <span className="text-[13px] font-bold text-[#1A1A2E]">{label}</span>
+          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {recentOutputs.map((item) => (
+              <button key={item.title} type="button" className="group overflow-hidden rounded-[12px] border border-[#EAECF0] bg-white text-right transition hover:-translate-y-0.5 hover:border-[#BFDBFE]">
+                <div className={`flex aspect-[1.2] w-full items-center justify-center text-[26px] ${item.color}`}>
+                  {item.color.includes('FEF3') ? '💰' : item.color.includes('DBEA') ? '🖥️' : item.color.includes('D1FA') ? '📝' : '🖼️'}
+                </div>
+                <div className="flex items-center justify-between px-3 py-3">
+                  <div>
+                    <div className="text-[13px] font-semibold text-[#1A1A2E]">{item.title}</div>
+                    <div className="mt-0.5 text-[11px] text-[#94A3B8]">{item.tone}</div>
                   </div>
-
-                  <div className="flex flex-1 flex-col gap-2 p-3">
-                    {!type ? (
-                      <div className="flex flex-1 items-center justify-center py-6 text-center text-[11px] leading-5 text-[#94A3B8]">
-                        יצירת הצעת מחיר מעוצבת כ-PDF מתוך בריף חופשי
-                      </div>
-                    ) : items.length === 0 ? (
-                      <div className="flex flex-1 items-center justify-center py-6 text-center text-[11px] text-[#94A3B8]">
-                        אין תוצרים עדיין
-                      </div>
-                    ) : (
-                      items.map((file) => (
-                        <div key={file.id} className="flex items-center gap-2 rounded-[8px] border border-[#F1F5F9] p-1.5">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-[#F8FAFC]">
-                            {file.output_type === 'image' && recentPreviews[file.id] ? (
-                              <img src={recentPreviews[file.id]} alt="" className="h-full w-full object-cover" />
-                            ) : file.text_content ? (
-                              <span className="line-clamp-3 break-all px-0.5 text-[6px] leading-[7px] text-[#94A3B8]">
-                                {file.text_content.slice(0, 60)}
-                              </span>
-                            ) : (
-                              <span className="text-[16px]">{icon}</span>
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[11px] font-medium text-[#1A1A2E]">
-                              {file.text_content ? file.text_content.slice(0, 30) : OUTPUT_LABEL[file.output_type]}
-                            </div>
-                            <div className="ltr text-start text-[10px] text-[#94A3B8]">{formatHebrewDate(file.created_at)}</div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <div className="border-t border-[#F1F5F9] px-3 py-3">
-                    <span className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-[9px] bg-[#2563EB] px-3 py-2 text-center text-[11px] font-bold text-white shadow-sm transition group-hover:bg-[#1D4ED8]">
-                      <span>{type ? `צפייה בכל ה${label}` : 'יצירת הצעת מחיר'}</span>
-                      <span aria-hidden="true">←</span>
-                    </span>
-                  </div>
-                </Link>
-              );
-            })}
+                  <span className="rounded-full bg-[#F8FAFF] px-2.5 py-1 text-[11px] font-semibold text-[#94A3B8]">חדש</span>
+                </div>
+              </button>
+            ))}
           </div>
         </section>
       </div>
@@ -1948,21 +1535,22 @@ function ResultCard({
   initialPickedImages?: DeckImage[] | null;
   initialPickedKeys?: string[];
 }) {
-  const [copied, setCopied] = useState(false);
-  const textBlocks = useMemo(() => parseRichText(output.text_content ?? ''), [output.text_content]);
-  const isTextOutput = !output.storage_path && output.output_type !== 'image' && output.output_type !== 'presentation';
-
-  async function copyTextOutput() {
-    await navigator.clipboard.writeText(plainTextFromBlocks(textBlocks));
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  }
-
+  // Collapse the raw presentation outline once a NotebookLM brief is generated.
+  const [outlineCollapsed, setOutlineCollapsed] = useState(false);
   return (
     <div className="grid lg:grid-cols-[1fr_360px] gap-5">
       <div className={`${PANEL} p-5`}>
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-xl font-bold">התוצר מוכן</h2>
+          {output.output_type === 'presentation' && outlineCollapsed && (
+            <button
+              type="button"
+              onClick={() => setOutlineCollapsed(false)}
+              className={SECONDARY_BUTTON.replace('px-5 py-3', 'px-3 py-2').replace('text-sm', 'text-xs')}
+            >
+              הצגת תוכן המצגת
+            </button>
+          )}
         </div>
         {output.output_type === 'image' && previewUrl ? (
           <img src={previewUrl} alt="תוצר תמונה" className="max-h-[560px] w-full object-contain rounded-lg bg-gray-50" />
@@ -1971,28 +1559,17 @@ function ResultCard({
             <SparkIcon className="h-4 w-4" />
             פתיחת הקובץ
           </a>
-        ) : output.output_type === 'presentation' ? null : (
-          <div className="rounded-lg bg-gray-50 p-4">
-            {isTextOutput && output.text_content && (
-              <div className="mb-4 flex flex-wrap justify-end gap-2">
-                <button type="button" onClick={copyTextOutput} className={SECONDARY_BUTTON}>
-                  {copied ? 'הועתק' : 'העתקה'}
-                </button>
-                <button type="button" onClick={() => exportRichTextDocx(textBlocks, 'text-output.docx')} className={SECONDARY_BUTTON}>
-                  ייצוא DOCX
-                </button>
-              </div>
-            )}
-            <div className="max-h-[560px] overflow-auto">
-              {output.text_content ? <RichTextPreview blocks={textBlocks} /> : 'התוצר נוצר ללא תצוגה טקסטואלית.'}
-            </div>
-          </div>
+        ) : output.output_type === 'presentation' && outlineCollapsed ? null : (
+          <pre className="whitespace-pre-wrap text-sm bg-gray-50 rounded-lg p-4 overflow-auto max-h-[560px]">
+            {output.text_content ?? 'התוצר נוצר ללא תצוגה טקסטואלית.'}
+          </pre>
         )}
         {output.output_type === 'presentation' && (
           <DeckExport
             brief={brief}
             requestId={requestId}
             outlineText={output.text_content}
+            onBriefGenerated={() => setOutlineCollapsed(true)}
             initialPickedImages={initialPickedImages}
             initialPickedKeys={initialPickedKeys}
           />

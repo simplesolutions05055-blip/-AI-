@@ -45,6 +45,7 @@ export default function BrandingPage() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [logoPreviewOpen, setLogoPreviewOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const anchorRef = useRef<number | null>(null);
   const longPress = useRef<{ timer: number | null; fired: boolean }>({ timer: null, fired: false });
@@ -67,6 +68,20 @@ export default function BrandingPage() {
   useEffect(() => {
     loadBrands();
   }, []);
+
+  useEffect(() => {
+    if (!logoPreviewOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLogoPreviewOpen(false);
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [logoPreviewOpen]);
 
   async function signedUrl(path: string) {
     const { data } = await db.storage.from('branding').createSignedUrl(path, 600);
@@ -693,14 +708,21 @@ export default function BrandingPage() {
               <span className="block text-sm font-medium mb-1">לוגו</span>
               <div className="flex items-center gap-3">
                 {previews['__logo'] && (
-                  <img src={previews['__logo']} alt="logo" className="h-16 w-16 object-contain rounded border border-[var(--border)]" />
+                  <button
+                    type="button"
+                    onClick={() => setLogoPreviewOpen(true)}
+                    className="rounded border border-[var(--border)] p-1 transition hover:border-brand/40 hover:bg-gray-50"
+                    aria-label="פתיחת תצוגת לוגו"
+                  >
+                    <img src={previews['__logo']} alt="logo" className="h-16 w-16 object-contain rounded" />
+                  </button>
                 )}
                 <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadLogo(e.target.files[0])} />
-                <button onClick={() => logoRef.current?.click()} className="text-sm text-brand">
+                <button type="button" onClick={() => logoRef.current?.click()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold text-brand hover:bg-gray-50">
                   {previews['__logo'] ? 'החלף לוגו' : 'העלה לוגו'}
                 </button>
                 {logoFile && (
-                  <button onClick={() => extractColors(logoFile)} className="text-sm text-brand" disabled={extracting}>
+                  <button type="button" onClick={() => extractColors(logoFile)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold text-brand hover:bg-gray-50 disabled:opacity-50" disabled={extracting}>
                     {extracting ? 'מחלץ...' : 'חלץ צבעים מהלוגו'}
                   </button>
                 )}
@@ -867,6 +889,38 @@ export default function BrandingPage() {
           </section>
         )}
       </div>
+
+      {logoPreviewOpen && previews['__logo'] && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          dir="rtl"
+          role="dialog"
+          aria-modal="true"
+          aria-label="תצוגת לוגו"
+          onClick={() => setLogoPreviewOpen(false)}
+        >
+          <div
+            className="relative w-full max-w-4xl rounded-2xl bg-white p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setLogoPreviewOpen(false)}
+              className="absolute left-3 top-3 rounded-full border border-[var(--border)] bg-white px-3 py-1 text-sm font-semibold text-[var(--muted)] hover:bg-gray-50"
+              aria-label="סגירה"
+            >
+              סגור
+            </button>
+            <div className="flex min-h-[60vh] items-center justify-center rounded-xl bg-gray-50 p-4">
+              <img
+                src={previews['__logo']}
+                alt="תצוגת לוגו גדולה"
+                className="max-h-[75vh] w-full max-w-full object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

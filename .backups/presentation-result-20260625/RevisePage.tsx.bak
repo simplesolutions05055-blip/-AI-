@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import { RichTextPreview, exportRichTextDocx, parseRichText, plainTextFromBlocks } from '@/lib/richText';
 import DeckExport from '@/components/DeckExport';
 
 interface SourceImage {
@@ -36,12 +35,18 @@ export default function RevisePage() {
   const [briefModalOpen, setBriefModalOpen] = useState(false);
   const [regenStatus, setRegenStatus] = useState<string | null>(null);
   // Presentation editing: the active request id + the current outline text.
-  const [outputType, setOutputType] = useState<'image' | 'presentation' | 'text' | null>(null);
+  const [outputType, setOutputType] = useState<'image' | 'presentation' | null>(null);
   const [presRequestId, setPresRequestId] = useState<string | null>(null);
   const [outline, setOutline] = useState<string | null>(null);
-  const [textRequestId, setTextRequestId] = useState<string | null>(null);
-  const [textContent, setTextContent] = useState<string | null>(null);
-  const [copiedText, setCopiedText] = useState(false);
+  // Once a NotebookLM brief is generated the raw outline is redundant, so we
+  // collapse it (re-openable with a button).
+  const [outlineCollapsed, setOutlineCollapsed] = useState(false);
+  const outlineButtonLabel = outlineCollapsed ? 'הצגת תוכן המצגת' : 'הסתרת תוכן המצגת';
+  const presentationOutline = useMemo(() => stripNotebookLmAppendix(outline || ''), [outline]);
+  const renderedOutline = useMemo(
+    () => renderMarkdown(presentationOutline || 'אין תוכן טקסטואלי לתוצר הזה.'),
+    [presentationOutline],
+  );
 
   useEffect(() => {
     if (!requestId) return;
@@ -64,14 +69,6 @@ export default function RevisePage() {
         setOutputType('presentation');
         setPresRequestId(requestId);
         setOutline((latest as { text_content?: string } | null)?.text_content ?? '');
-        setLoading(false);
-        return;
-      }
-
-      if (type === 'text') {
-        setOutputType('text');
-        setTextRequestId(requestId);
-        setTextContent((latest as { text_content?: string } | null)?.text_content ?? '');
         setLoading(false);
         return;
       }
@@ -159,73 +156,6 @@ export default function RevisePage() {
       admin_note: [brief.admin_note, `תיקון: ${note}`].filter(Boolean).join('\n'),
       must_include: [...((brief.must_include as string[]) ?? []), `תיקון משתמש: ${note}`],
     });
-  }
-
-  async function regenerateText(briefToUse: Brief) {
-    setBriefModalOpen(false);
-    setWorking(true);
-    setRegenStatus('שולחים את הבריף');
-    setError(null);
-    try {
-      const client = createSupabaseBrowserClient();
-      const { data: created, error: createError } = await client.functions.invoke('create-production-request', {
-        body: { output_type: 'text', brief: { ...briefToUse, ready: true }, customer_email: null },
-      });
-      if (createError) throw createError;
-      const id = (created as { request_id?: string })?.request_id;
-      if (!id) throw new Error('לא התקבל מזהה בקשה');
-      setRegenStatus('כותבים טקסט מעודכן');
-      const { error: processError } = await client.functions.invoke('process-request', { body: { request_id: id } });
-      if (processError) throw processError;
-
-      for (let i = 0; i < 90; i++) {
-        const [{ data: r }, { data: out }] = await Promise.all([
-          client.from('requests').select('status').eq('id', id).single(),
-          client
-            .from('outputs')
-            .select('text_content')
-            .eq('request_id', id)
-            .eq('output_type', 'text')
-            .order('version', { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-        ]);
-        const text = (out as { text_content?: string } | null)?.text_content;
-        if (text) {
-          setTextContent(text);
-          setTextRequestId(id);
-          setBrief({ ...briefToUse });
-          setFeedback('');
-          return;
-        }
-        const st = (r as { status?: string } | null)?.status;
-        if (st === 'failed' || st === 'needs_attention') throw new Error('ההפקה נעצרה ודורשת בדיקה במסך הבקשות.');
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-      throw new Error('ההפקה עדיין רצה. אפשר לבדוק במסך הבקשות.');
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setWorking(false);
-      setRegenStatus(null);
-    }
-  }
-
-  function regenerateTextFromFeedback() {
-    if (!feedback.trim() || !brief) return;
-    const note = feedback.trim();
-    regenerateText({
-      ...brief,
-      admin_note: [brief.admin_note, `תיקון: ${note}`].filter(Boolean).join('\n'),
-      must_include: [...((brief.must_include as string[]) ?? []), `תיקון משתמש: ${note}`],
-    });
-  }
-
-  async function copyTextOutput() {
-    const blocks = parseRichText(textContent ?? '');
-    await navigator.clipboard.writeText(plainTextFromBlocks(blocks));
-    setCopiedText(true);
-    window.setTimeout(() => setCopiedText(false), 1600);
   }
 
   // Regenerate a fresh image from an edited brief (full pipeline, not img2img).
@@ -319,10 +249,31 @@ export default function RevisePage() {
       ) : outputType === 'presentation' ? (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
           <div className="bg-white border border-[var(--border)] rounded-lg p-5 min-w-0">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h2 className="font-bold">תוכן המצגת הנוכחי</h2>
+              <button
+                type="button"
+                onClick={() => setOutlineCollapsed((v) => !v)}
+                className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--text)] shadow-sm transition hover:border-brand/30 hover:bg-brand/5 hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2"
+              >
+                {outlineButtonLabel}
+              </button>
+            </div>
+            {!outlineCollapsed && (
+              <div className="max-h-[560px] overflow-auto rounded-lg border border-[var(--border)] bg-gray-50 p-4">
+                <MarkdownPreview blocks={renderedOutline} />
+              </div>
+            )}
+            {outlineCollapsed && (
+              <div className="rounded-lg border border-dashed border-[var(--border)] bg-gray-50 px-4 py-5 text-sm text-[var(--muted)]">
+                תוכן המצגת מוסתר כרגע. אפשר להציג אותו מחדש בכל רגע עם הכפתור למעלה.
+              </div>
+            )}
             <DeckExport
               brief={brief}
               requestId={presRequestId}
               outlineText={outline}
+              onBriefGenerated={() => setOutlineCollapsed(true)}
             />
           </div>
 
@@ -351,70 +302,6 @@ export default function RevisePage() {
             <p className="text-sm text-[var(--muted)] mb-2">רוצים מצגת אחרת לגמרי?</p>
             <button
               onClick={() => navigate('/admin/production/presentation')}
-              className="w-full border border-[var(--border)] rounded-lg px-4 py-2.5 font-semibold hover:bg-gray-50"
-            >
-              להתחיל מבריף חדש
-            </button>
-          </div>
-        </div>
-      ) : outputType === 'text' ? (
-        <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
-          <div className="bg-white border border-[var(--border)] rounded-lg p-5 min-w-0">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="font-bold">הטקסט המעודכן</h2>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={copyTextOutput}
-                  disabled={!textContent}
-                  className="border border-[var(--border)] rounded-lg px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
-                >
-                  {copiedText ? 'הועתק' : 'העתקה'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => exportRichTextDocx(parseRichText(textContent ?? ''), 'text-output.docx')}
-                  disabled={!textContent}
-                  className="border border-[var(--border)] rounded-lg px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
-                >
-                  ייצוא DOCX
-                </button>
-              </div>
-            </div>
-            <div className="rounded-lg bg-gray-50 p-4">
-              <RichTextPreview blocks={parseRichText(textContent ?? '')} />
-            </div>
-            {textRequestId && (
-              <Link to="/admin/files" className="mt-4 inline-flex bg-brand text-white rounded-lg px-4 py-2 font-semibold">
-                הגרסה נשמרה — לכל התוצרים
-              </Link>
-            )}
-          </div>
-
-          <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
-            <label className="block text-sm font-semibold mb-2">מה לשנות בטקסט?</label>
-            <textarea
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
-              disabled={working}
-              rows={5}
-              placeholder="למשל: לקצר, להפוך לרשמי יותר, להוסיף פתיחה חזקה"
-              className="w-full rounded-lg border border-[var(--border)] px-3 py-2"
-            />
-            <button
-              onClick={regenerateTextFromFeedback}
-              disabled={working || !feedback.trim()}
-              className="mt-3 w-full bg-brand text-white rounded-lg px-4 py-2.5 font-semibold disabled:opacity-50"
-            >
-              {working && !regenStatus ? 'מעדכן את הטקסט...' : 'עדכון הטקסט לפי ההערות'}
-            </button>
-
-            {regenStatus && <p className="mt-3 text-sm text-[var(--muted)]">{regenStatus}…</p>}
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <button
-              onClick={() => navigate('/admin/production/text')}
               className="w-full border border-[var(--border)] rounded-lg px-4 py-2.5 font-semibold hover:bg-gray-50"
             >
               להתחיל מבריף חדש
@@ -487,10 +374,196 @@ export default function RevisePage() {
         <BriefModal
           brief={brief}
           onClose={() => setBriefModalOpen(false)}
-          onSubmit={outputType === 'presentation' ? regeneratePresentation : outputType === 'text' ? regenerateText : regenerateFromBrief}
+          onSubmit={outputType === 'presentation' ? regeneratePresentation : regenerateFromBrief}
         />
       )}
     </div>
+  );
+}
+
+type MarkdownBlock =
+  | { type: 'heading'; level: number; text: InlineNode[] }
+  | { type: 'paragraph'; text: InlineNode[] }
+  | { type: 'list'; ordered: boolean; items: InlineNode[][] }
+  | { type: 'quote'; text: InlineNode[] }
+  | { type: 'code'; text: string };
+
+type InlineNode = { type: 'text'; value: string } | { type: 'bold'; value: string } | { type: 'italic'; value: string };
+
+function renderMarkdown(input: string): MarkdownBlock[] {
+  const lines = input.replace(/\r\n/g, '\n').split('\n');
+  const blocks: MarkdownBlock[] = [];
+  let i = 0;
+
+  const pushParagraph = (buffer: string[]) => {
+    const text = buffer.join(' ').trim();
+    if (text) blocks.push({ type: 'paragraph', text: parseInline(text) });
+    buffer.length = 0;
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed) {
+      i += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('```')) {
+      const codeLines: string[] = [];
+      i += 1;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i += 1;
+      }
+      blocks.push({ type: 'code', text: codeLines.join('\n') });
+      i += 1;
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      blocks.push({ type: 'heading', level: headingMatch[1].length, text: parseInline(headingMatch[2]) });
+      i += 1;
+      continue;
+    }
+
+    if (/^>\s?/.test(trimmed)) {
+      blocks.push({ type: 'quote', text: parseInline(trimmed.replace(/^>\s?/, '')) });
+      i += 1;
+      continue;
+    }
+
+    if (/^([-*+])\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
+      const ordered = /^\d+\.\s+/.test(trimmed);
+      const items: InlineNode[][] = [];
+      while (i < lines.length) {
+        const current = lines[i].trim();
+        if (ordered ? !/^\d+\.\s+/.test(current) : !/^[-*+]\s+/.test(current)) break;
+        items.push(parseInline(current.replace(ordered ? /^\d+\.\s+/ : /^[-*+]\s+/, '')));
+        i += 1;
+      }
+      blocks.push({ type: 'list', ordered, items });
+      continue;
+    }
+
+    const paragraphBuffer = [trimmed];
+    i += 1;
+    while (i < lines.length) {
+      const next = lines[i].trim();
+      if (!next || /^(#{1,6}\s+|>\s?|([-*+])\s+|\d+\.\s+|```)/.test(next)) break;
+      paragraphBuffer.push(next);
+      i += 1;
+    }
+    pushParagraph(paragraphBuffer);
+  }
+
+  return blocks;
+}
+
+function stripNotebookLmAppendix(text: string): string {
+  if (!text) return '';
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const keep: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (/notebooklm/i.test(line)) break;
+    if (/^#{1,6}\s*(prompt|תוכן המצגת ל-NotebookLM|הפרומפט ל-NotebookLM|תמונות מהמיתוג|מקור)/i.test(line)) break;
+    keep.push(raw);
+  }
+  return keep.join('\n').trim();
+}
+
+function parseInline(text: string): InlineNode[] {
+  const nodes: InlineNode[] = [];
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  let last = 0;
+  for (const match of text.matchAll(regex)) {
+    if (match.index > last) nodes.push({ type: 'text', value: text.slice(last, match.index) });
+    const token = match[0];
+    if (token.startsWith('**')) nodes.push({ type: 'bold', value: token.slice(2, -2) });
+    else nodes.push({ type: 'italic', value: token.slice(1, -1) });
+    last = match.index + token.length;
+  }
+  if (last < text.length) nodes.push({ type: 'text', value: text.slice(last) });
+  return nodes.length ? nodes : [{ type: 'text', value: text }];
+}
+
+function MarkdownPreview({ blocks }: { blocks: MarkdownBlock[] }) {
+  return (
+    <div className="mx-auto w-full max-w-3xl space-y-4 text-[14px] leading-7 text-[var(--text)] sm:text-[15px]">
+      {blocks.map((block, idx) => {
+        if (block.type === 'heading') {
+          const levelClasses: Record<number, string> = {
+            1: 'text-xl font-bold mt-2 break-words',
+            2: 'text-lg font-bold mt-2 break-words',
+            3: 'text-base font-bold mt-2 break-words',
+            4: 'text-[15px] font-bold break-words',
+            5: 'text-[15px] font-semibold break-words',
+            6: 'text-xs font-semibold uppercase tracking-wide text-[var(--muted)] break-words',
+          };
+          return (
+            <div key={idx} className={levelClasses[block.level] ?? 'text-lg font-bold'}>
+              <InlineText nodes={block.text} />
+            </div>
+          );
+        }
+        if (block.type === 'paragraph') {
+          return (
+            <p key={idx} className="whitespace-pre-wrap break-words">
+              <InlineText nodes={block.text} />
+            </p>
+          );
+        }
+        if (block.type === 'quote') {
+          return (
+            <blockquote key={idx} className="border-r-4 border-brand/30 pr-4 italic text-[var(--muted)] break-words">
+              <InlineText nodes={block.text} />
+            </blockquote>
+          );
+        }
+        if (block.type === 'code') {
+          return (
+            <pre key={idx} className="overflow-x-auto rounded-xl bg-slate-900 p-4 text-sm leading-6 text-slate-100">
+              <code>{block.text}</code>
+            </pre>
+          );
+        }
+        return (
+          <div key={idx}>
+            {block.ordered ? (
+              <ol className="list-decimal space-y-2 pr-6 break-words">
+                {block.items.map((item, itemIdx) => (
+                  <li key={itemIdx} className="break-words">
+                    <InlineText nodes={item} />
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <ul className="list-disc space-y-2 pr-6 break-words">
+                {block.items.map((item, itemIdx) => (
+                  <li key={itemIdx} className="break-words">
+                    <InlineText nodes={item} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function InlineText({ nodes }: { nodes: InlineNode[] }) {
+  return (
+    <>
+      {nodes.map((node, idx) => {
+        if (node.type === 'bold') return <strong key={idx} className="font-bold text-[var(--text)] break-words">{node.value}</strong>;
+        if (node.type === 'italic') return <em key={idx} className="italic">{node.value}</em>;
+        return <span key={idx} className="break-words">{node.value}</span>;
+      })}
+    </>
   );
 }
 

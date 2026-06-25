@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { OUTPUT_LABEL, STATUS_COLOR, STATUS_LABEL, senderLabel } from '@/lib/labels';
-import { formatUsd } from '@/lib/format';
+import { formatUsd, formatHebrewDate } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { OutputType, RequestStatus } from '@/types/db';
 
@@ -19,6 +19,14 @@ type OutputRow = {
   } | null;
 };
 
+type RecentFileRow = {
+  id: string;
+  output_type: OutputType;
+  text_content: string | null;
+  storage_path: string | null;
+  created_at: string;
+};
+
 const PRODUCT_LINKS: Array<{ type: OutputType; description: string }> = [
   { type: 'image', description: 'פוסט, מודעה או גרפיקה לרשתות.' },
   { type: 'presentation', description: 'מבנה ותוכן שקפים למצגת.' },
@@ -32,6 +40,13 @@ export default function DashboardPage() {
   const [outputsCount, setOutputsCount] = useState(0);
   const [todayCost, setTodayCost] = useState(0);
   const [outputRows, setOutputRows] = useState<OutputRow[]>([]);
+  const [recentFiles, setRecentFiles] = useState<Record<OutputType, RecentFileRow[]>>({
+    image: [],
+    pdf: [],
+    presentation: [],
+    text: [],
+  });
+  const [previews, setPreviews] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -72,13 +87,39 @@ export default function DashboardPage() {
       db.from('usage_events').select('estimated_cost').gte('created_at', todayIso),
       db.from('outputs').select('id', { count: 'exact', head: true }),
       fetchRecentOutputs(),
-    ]).then(([statuses, today, costs, outputs, recentOutputs]) => {
+      db.from('outputs').select('id, output_type, text_content, storage_path, created_at').order('created_at', { ascending: false }).limit(20),
+    ]).then(([statuses, today, costs, outputs, recentOutputs, recentFilesData]) => {
       setStatusRows((statuses.data ?? []) as Array<{ status: RequestStatus }>);
       setTodayCount(today.count ?? 0);
       setTodayCost((costs.data ?? []).reduce((sum, row: any) => sum + Number(row.estimated_cost ?? 0), 0));
       setOutputsCount(outputs.count ?? 0);
       setOutputRows((recentOutputs ?? []) as unknown as OutputRow[]);
+
+      // Group recent files by type, taking 2 per type
+      const grouped: Record<OutputType, RecentFileRow[]> = {
+        image: [],
+        pdf: [],
+        presentation: [],
+        text: [],
+      };
+      for (const file of (recentFilesData.data ?? []) as RecentFileRow[]) {
+        if (grouped[file.output_type].length < 2) {
+          grouped[file.output_type].push(file);
+        }
+      }
+      setRecentFiles(grouped);
       setLoading(false);
+
+      // Generate signed thumbnail URLs for the image outputs shown in the boxes.
+      const images = grouped.image.filter((f) => f.storage_path);
+      Promise.all(
+        images.map(async (f) => {
+          const { data: s } = await db.storage.from('outputs').createSignedUrl(f.storage_path as string, 600);
+          return [f.id, s?.signedUrl] as const;
+        }),
+      ).then((pairs) => {
+        setPreviews(Object.fromEntries(pairs.filter(([, url]) => url)) as Record<string, string>);
+      });
     });
   }, []);
 
@@ -136,6 +177,80 @@ export default function DashboardPage() {
         <DailyOutputsChart data={daily} />
         <PerUserOutputsChart data={perUser} />
       </div>
+
+      <section className="mt-5 rounded-[14px] border border-[#EAECF0] bg-white px-5 py-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8 mb-8">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-[18px] font-bold text-[#1A1A2E]">תוצרים אחרונים</h2>
+          <Link to="/admin/files" className="text-[13px] font-semibold text-[#2563EB] hover:underline">
+            ← כל התוצרים
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          {(['image', 'pdf', 'presentation', 'text'] as const).map((type) => {
+            const bgColors: Record<OutputType, string> = {
+              image: '#FEF3C7',
+              pdf: '#DBEAFE',
+              presentation: '#D1FAE5',
+              text: '#EDE9FE',
+            };
+            const typeIcon: Record<OutputType, string> = {
+              image: '🖼️',
+              pdf: '📕',
+              presentation: '📊',
+              text: '📄',
+            };
+            const items = recentFiles[type];
+            return (
+              <Link
+                key={type}
+                to={`/admin/files?type=${type}`}
+                className="group flex flex-col overflow-hidden rounded-[12px] border border-[#EAECF0] bg-white text-right transition hover:-translate-y-0.5 hover:border-[#BFDBFE]"
+              >
+                {/* Header band — category color + icon + name */}
+                <div className="flex items-center gap-2 px-3 py-2.5" style={{ backgroundColor: bgColors[type] }}>
+                  <span className="text-[20px]">{typeIcon[type]}</span>
+                  <span className="text-[13px] font-bold text-[#1A1A2E]">{OUTPUT_LABEL[type]}</span>
+                </div>
+
+                {/* Up to 2 real recent products from this category */}
+                <div className="flex flex-1 flex-col gap-2 p-3">
+                  {items.length === 0 ? (
+                    <div className="flex flex-1 items-center justify-center py-6 text-[11px] text-[#94A3B8]">
+                      אין תוצרים עדיין
+                    </div>
+                  ) : (
+                    items.map((file) => (
+                      <div key={file.id} className="flex items-center gap-2 rounded-[8px] border border-[#F1F5F9] p-1.5">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-[#F8FAFC]">
+                          {file.output_type === 'image' && previews[file.id] ? (
+                            <img src={previews[file.id]} alt="" className="h-full w-full object-cover" />
+                          ) : file.text_content ? (
+                            <span className="px-0.5 text-[6px] leading-[7px] text-[#94A3B8] line-clamp-3 break-all">
+                              {file.text_content.slice(0, 60)}
+                            </span>
+                          ) : (
+                            <span className="text-[16px]">{typeIcon[file.output_type]}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[11px] font-medium text-[#1A1A2E]">
+                            {file.text_content ? file.text_content.slice(0, 30) : OUTPUT_LABEL[file.output_type]}
+                          </div>
+                          <div className="text-[10px] text-[#94A3B8] ltr text-start">{formatHebrewDate(file.created_at)}</div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="border-t border-[#F1F5F9] px-3 py-2 text-[11px] font-semibold text-[#2563EB] group-hover:underline">
+                  צפייה בכל ה{OUTPUT_LABEL[type]} ←
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </section>
 
       <section className="bg-white rounded-xl border border-[var(--border)] p-4 mb-8">
         <h2 className="font-semibold mb-3">בקשות לפי סטטוס</h2>

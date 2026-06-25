@@ -10,6 +10,7 @@ const ROUTE_TITLES: Array<[string, string]> = [
   ['/admin/costs', 'בקשות ועלויות'],
   ['/admin/conversations', 'שיחות'],
   ['/admin/production', 'הפקת תוצרים'],
+  ['/admin/quote', 'הצעת מחיר'],
   ['/admin/simulator', 'סימולטור צ׳אט'],
   ['/admin/files', 'תוצרים'],
   ['/admin/branding', 'מיתוג'],
@@ -22,7 +23,7 @@ const ROUTE_TITLES: Array<[string, string]> = [
 
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
 // further by can_create_outputs. Files is view-only for regular users.
-const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/files'];
+const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files'];
 
 function titleForPath(pathname: string) {
   return ROUTE_TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'לוח בקרה';
@@ -75,6 +76,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const isAdmin = profile.role === 'admin';
   const email = profile.email;
+  const isProductionLanding = pathname === '/admin/production';
 
   // Route gating for regular users: only the production screen, and only when
   // output creation is enabled for them.
@@ -158,7 +160,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </header>
 
-        <main className="w-full max-w-6xl flex-1 px-3 py-4 pb-[calc(var(--safe-bottom)+5.75rem)] sm:px-4 lg:p-6">{children}</main>
+        <main
+          className={
+            isProductionLanding
+              ? 'w-full flex-1 pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-0'
+              : 'w-full max-w-6xl flex-1 px-3 py-4 pb-[calc(var(--safe-bottom)+5.75rem)] sm:px-4 lg:p-6'
+          }
+        >
+          {children}
+        </main>
       </div>
       <AdminBottomNav isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} onOpenMenu={() => setNavOpen(true)} />
       <InstallPrompt />

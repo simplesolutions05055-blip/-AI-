@@ -1,8 +1,19 @@
 // OpenAI access for Edge Functions — reads OPENAI_API_KEY from Supabase secrets.
 const API = 'https://api.openai.com/v1';
 
+// Optional per-request key override. Set around a single processRequest run so
+// the WHOLE generation pipeline (image, text, QA) uses a caller-supplied one-off
+// key instead of the project secret. Cleared in a finally by the caller.
+let overrideKey: string | null = null;
+export function setOpenAiKeyOverride(k: string | null) {
+  overrideKey = k && k.trim() ? k.trim() : null;
+}
+export function clearOpenAiKeyOverride() {
+  overrideKey = null;
+}
+
 const key = () => {
-  const k = Deno.env.get('OPENAI_API_KEY');
+  const k = overrideKey || Deno.env.get('OPENAI_API_KEY');
   if (!k) throw new Error('Missing OPENAI_API_KEY (Supabase secret)');
   return k;
 };
@@ -77,11 +88,11 @@ export async function routeSkillsLLM(
 
 async function chat(
   messages: { role: string; content: string }[],
-  opts: { json?: boolean; temperature?: number; model?: string } = {}
+  opts: { json?: boolean; temperature?: number; model?: string; apiKey?: string } = {}
 ): Promise<{ content: string; usage: ChatUsage }> {
   const res = await fetch(`${API}/chat/completions`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${opts.apiKey || key()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: opts.model || textModel(),
       messages,
@@ -147,7 +158,8 @@ export async function classifyResetIntent(
 export async function analyzeBrief(
   systemPrompt: string,
   transcript: string,
-  roundsRemaining: number
+  roundsRemaining: number,
+  apiKey?: string
 ) {
   const instruction = `${systemPrompt}
 
@@ -175,7 +187,7 @@ export async function analyzeBrief(
       { role: 'system', content: instruction },
       { role: 'user', content: transcript },
     ],
-    { json: true, temperature: 0.3 }
+    { json: true, temperature: 0.3, apiKey }
   );
 
   let parsed: Record<string, unknown> = {};
@@ -231,6 +243,51 @@ export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
   return { slides, usage, raw: content };
 }
 
+// Build a structured Hebrew price-quote ("הצעת מחיר") from a free brief. Mirrors
+// the Simple Solutions quote layout (header, meta strip, summary, total box,
+// numbered component cards, included-checklist, technologies, payment terms,
+// terms & conditions, signature). CRITICAL: never invent prices — use ONLY the
+// amounts the brief/prompt supplies. Missing price → empty string / "לפי סיכום".
+export async function generateQuote(systemPrompt: string, brief: unknown, apiKey?: string) {
+  const { content, usage } = await chat(
+    [
+      { role: 'system', content: systemPrompt },
+      {
+        role: 'user',
+        content: `אתה כותב הצעת מחיר מקצועית בעברית RTL לפי הבריף. הרחב את התיאור לתוכן מלא, ברור ומשכנע — אך אל תמציא עובדות, היקפים, טכנולוגיות או תאריכים שלא נמסרו.
+חוק קריטי על מחירים: אל תמציא, אל תחשב ואל תוסיף מחירים. השתמש אך ורק במחירים/סכומים שמופיעים במפורש בבריף. אם לא נמסר מחיר לשדה כלשהו — החזר מחרוזת ריקה "" (לא 0, לא הערכה). אל תפרק מחיר כולל לרכיבים אלא אם הפירוק נמסר בבריף.
+החזר JSON תקין בלבד במבנה:
+{
+  "title": "כותרת ההצעה",
+  "subtitle": "שורת משנה קצרה או null",
+  "meta": { "doc": "הצעת מחיר", "date": "תאריך אם נמסר אחרת ''", "project_type": "סוג הפרויקט", "platform": "פלטפורמה/טכנולוגיה ראשית" },
+  "summary": "פסקת תקציר אחת על מה ההצעה כוללת",
+  "headline": { "label": "כותרת לתיבת הסיכום (למשל 'פיתוח מערכת — מחיר כולל')", "sub": "שורת תיאור קצרה", "price": "המחיר הכולל בדיוק כפי שנמסר בבריף או '' אם לא נמסר" },
+  "components": [ { "title": "שם רכיב", "desc": "תיאור קצר", "price": "מחיר הרכיב אם נמסר בבריף אחרת ''" } ],
+  "included": ["פריט שכלול בפיתוח 1", "פריט 2"],
+  "ownership_note": "משפט על בעלות/מסירה או null",
+  "technologies": ["טכנולוגיה 1", "טכנולוגיה 2"],
+  "payment_terms": [ { "title": "תנאי תשלום", "desc": "פירוט" } ],
+  "terms": ["תנאי או הגבלה 1", "תנאי 2"],
+  "disclaimer": "הערת 'לתשומת לבך' או null",
+  "signature": true
+}
+דרישות: עברית RTL, טון עסקי מקצועי. components בין 3 ל-8 פריטים לפי הבריף. included רשימת צ'ק-ליסט קצרה וברורה. אל תמציא מחירים — חזור על הכלל למעלה.
+אם הבריף כולל "previous_quote" ו-"revision_request": קח את previous_quote כבסיס, והחל עליו אך ורק את השינוי המבוקש ב-revision_request. שמור על כל שאר השדות כפי שהם, ואל תשנה מחירים אלא אם המשתמש ביקש זאת במפורש.
+בריף:\n${JSON.stringify(brief, null, 2)}`,
+      },
+    ],
+    { json: true, temperature: 0.5, apiKey }
+  );
+  let parsed: any = {};
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    parsed = {};
+  }
+  return { quote: parsed, usage, raw: content };
+}
+
 export async function generateText(systemPrompt: string, brief: unknown, note?: string) {
   const { content, usage } = await chat(
     [
@@ -253,7 +310,7 @@ export async function generatePresentationOutline(
   assetsNote?: string
 ) {
   const assetInstruction = assetsNote
-    ? `\n\nתמונות מהמיתוג של העיר (קישורים זמינים להורדה ישירה):\n${assetsNote}\nשבץ את התמונות הרלוונטיות בשקפים המתאימים: לכל שקף שבו משובצת תמונה, ציין במפורש את כותרת/תיאור התמונה ואת הקישור המלא שלה, כדי שניתן יהיה להוריד ולהכניס אותה למצגת ב-NotebookLM. אל תמציא קישורים — השתמש אך ורק בקישורים שסופקו.`
+    ? `\n\nנכסי מיתוג זמינים להורדה ישירה:\n${assetsNote}\nאם יש קישור של "לוגו רשמי", זהו הנכס המחייב של המותג. השתמש בו במקומות המתאימים למצגת, במיוחד בשקף פתיחה/סגירה או בכותרת/פוטר, וציין במפורש היכן הוא מופיע.\nלכל שקף שבו משובצת תמונה, ציין במפורש את כותרת/תיאור התמונה ואת הקישור המלא שלה, כדי שניתן יהיה להוריד ולהכניס אותה למצגת ב-NotebookLM. אל תמציא קישורים — השתמש אך ורק בקישורים שסופקו.`
     : '';
   const { content, usage } = await chat(
     [
@@ -293,6 +350,38 @@ export async function generateImage(
   const data = await res.json();
   const b64 = data.data?.[0]?.b64_json;
   if (!b64) throw new Error('OpenAI image returned no data');
+  return { base64: b64, mime: 'image/png', model };
+}
+
+export async function generateImageWithReferences(
+  prompt: string,
+  references: Array<{ base64: string; mime: string; name?: string }>,
+  opts: { model?: string; size?: string; quality?: string; systemMessage?: string } = {}
+): Promise<{ base64: string; mime: string; model: string }> {
+  if (!references.length) return generateImage(prompt, opts);
+  const model = opts.model || imageModel();
+  const finalPrompt = opts.systemMessage ? `${opts.systemMessage}\n\nבקשת המשתמש:\n${prompt}` : prompt;
+  const form = new FormData();
+  form.append('model', model);
+  form.append('prompt', finalPrompt);
+  if (opts.size) form.append('size', opts.size);
+  if (opts.quality) form.append('quality', opts.quality);
+  form.append('n', '1');
+  for (const [idx, ref] of references.entries()) {
+    const mime = ref.mime || 'image/png';
+    const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png';
+    const bytes = Uint8Array.from(atob(ref.base64), (c) => c.charCodeAt(0));
+    form.append('image[]', new Blob([bytes], { type: mime }), ref.name || `reference-${idx + 1}.${ext}`);
+  }
+  const res = await fetch(`${API}/images/edits`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key()}` },
+    body: form,
+  });
+  if (!res.ok) throw new Error(`OpenAI image reference edit ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error('OpenAI image reference edit returned no data');
   return { base64: b64, mime: 'image/png', model };
 }
 

@@ -14,6 +14,7 @@ interface BrandRow {
   id: string;
   name: string;
   is_active: boolean;
+  logo_path: string | null;
 }
 
 export default function PermissionsPage() {
@@ -21,6 +22,7 @@ export default function PermissionsPage() {
   const { profile: me } = useProfile();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [brands, setBrands] = useState<BrandRow[]>([]);
+  const [brandLogoUrls, setBrandLogoUrls] = useState<Record<string, string>>({});
   const [grants, setGrants] = useState<Record<string, Set<string>>>({});
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -34,15 +36,24 @@ export default function PermissionsPage() {
     (async () => {
       const [{ data: profs }, { data: brs }, { data: ub }] = await Promise.all([
         db.from('profiles').select('id, email, role, can_create_outputs, created_at').order('created_at'),
-        db.from('brands').select('id, name, is_active').order('name'),
+        db.from('brands').select('id, name, is_active, logo_path').order('name'),
         db.from('user_brands').select('user_id, brand_id'),
       ]);
       const map: Record<string, Set<string>> = {};
       ((ub as { user_id: string; brand_id: string }[]) ?? []).forEach((row) => {
         (map[row.user_id] ??= new Set()).add(row.brand_id);
       });
+      const nextBrands = (brs as unknown as BrandRow[]) ?? [];
+      const logoEntries = await Promise.all(
+        nextBrands.map(async (brand) => {
+          if (!brand.logo_path) return [brand.id, ''] as const;
+          const { data } = await db.storage.from('branding').createSignedUrl(brand.logo_path, 600);
+          return [brand.id, data?.signedUrl ?? ''] as const;
+        }),
+      );
       setProfiles((profs as unknown as ProfileRow[]) ?? []);
-      setBrands((brs as unknown as BrandRow[]) ?? []);
+      setBrands(nextBrands);
+      setBrandLogoUrls(Object.fromEntries(logoEntries.filter(([, url]) => !!url)));
       setGrants(map);
       setLoading(false);
     })();
@@ -226,18 +237,27 @@ export default function PermissionsPage() {
                   <div className="flex flex-wrap gap-1.5">
                     {brands.map((b) => {
                       const on = userBrands.has(b.id);
+                      const logoUrl = brandLogoUrls[b.id] ?? null;
                       return (
                         <button
                           key={b.id}
                           onClick={() => toggleBrand(p, b.id)}
                           disabled={savingId === p.id}
-                          className={`rounded-full px-2.5 py-1 text-xs font-medium border transition disabled:opacity-60 ${
+                          className={`inline-flex items-center gap-1.5 rounded-full border py-1 pe-2.5 ps-1.5 text-xs font-medium transition disabled:opacity-60 ${
                             on
                               ? 'border-brand bg-brand/10 text-brand'
                               : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'
                           }`}
                         >
-                          {on ? '✓ ' : ''}{b.name}
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-white">
+                            {logoUrl ? (
+                              <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
+                            ) : (
+                              <span className="text-[10px] font-bold text-brand">{b.name.slice(0, 2)}</span>
+                            )}
+                          </span>
+                          <span>{b.name}</span>
+                          {on && <span>✓</span>}
                         </button>
                       );
                     })}

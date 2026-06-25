@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, ChangeEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { OUTPUT_LABEL, senderLabel } from '@/lib/labels';
 import { formatHebrewDateTime } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -24,8 +24,23 @@ const TYPE_ICON: Record<OutputType, string> = {
   presentation: '📊',
 };
 
+const FILE_TYPE_FILTERS: Array<{ type: OutputType | null; label: string; icon: string }> = [
+  { type: null, label: 'הכל', icon: '▦' },
+  { type: 'image', label: 'תמונה/גרפיקה', icon: TYPE_ICON.image },
+  { type: 'presentation', label: 'מצגת', icon: TYPE_ICON.presentation },
+  { type: 'pdf', label: 'מסמך/PDF', icon: TYPE_ICON.pdf },
+  { type: 'text', label: 'טקסט', icon: TYPE_ICON.text },
+];
+
+function isOutputType(value: string | null): value is OutputType {
+  return value === 'image' || value === 'presentation' || value === 'pdf' || value === 'text';
+}
+
 export default function FilesPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const rawFilterType = searchParams.get('type');
+  const filterType = isOutputType(rawFilterType) ? rawFilterType : null;
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
   const [files, setFiles] = useState<FileRow[]>([]);
@@ -157,6 +172,11 @@ export default function FilesPage() {
     if (data?.signedUrl) window.open(data.signedUrl, '_blank');
   }
 
+  function setTypeFilter(type: OutputType | null) {
+    clearSelection();
+    navigate(type ? `/admin/files?type=${type}` : '/admin/files');
+  }
+
   function toggle(index: number, shiftKey: boolean) {
     if (!isAdmin) return;
     const file = files[index];
@@ -231,6 +251,30 @@ export default function FilesPage() {
         )}
       </div>
 
+      <div className="mb-5 overflow-x-auto pb-1">
+        <div className="inline-flex min-w-full gap-2 rounded-2xl border border-[#EAECF0] bg-white p-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:min-w-0">
+          {FILE_TYPE_FILTERS.map((item) => {
+            const active = filterType === item.type;
+            return (
+              <button
+                key={item.type ?? 'all'}
+                type="button"
+                onClick={() => setTypeFilter(item.type)}
+                aria-pressed={active}
+                className={`inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-bold transition ${
+                  active
+                    ? 'bg-[#2563EB] text-white shadow-sm'
+                    : 'text-[#64748B] hover:bg-[#F8FAFF] hover:text-[#2563EB]'
+                }`}
+              >
+                <span aria-hidden="true">{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {isAdmin && selected.size === 0 && !loading && files.length > 0 && (
         <p className="text-xs text-[var(--muted)] mb-4">
           לחיצה לבחירה. Shift+לחיצה לבחירת טווח. בחירה מרובה או יחידה ומחיקה.
@@ -242,106 +286,124 @@ export default function FilesPage() {
       ) : files.length === 0 ? (
         <div className="text-center text-[var(--muted)] p-10">אין תוצרים.</div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-          {files.map((file, index) => {
-            const isSelected = selected.has(file.id);
+        <div className="space-y-8">
+          {(['image', 'pdf', 'presentation', 'text'] as const).map((type) => {
+            let typeFiles = files.filter((f) => f.output_type === type);
+            if (filterType && filterType !== type) typeFiles = [];
+            if (typeFiles.length === 0) return null;
+
             return (
-              <div
-                key={file.id}
-                onClick={(e) => toggle(index, e.shiftKey)}
-                className={`group relative bg-white rounded-xl border overflow-hidden cursor-pointer transition select-none ${
-                  isSelected ? 'border-brand ring-2 ring-brand' : 'border-[var(--border)] hover:border-brand'
-                }`}
-              >
-                {isAdmin && <div className="absolute top-2 start-2 z-10">
-                  <span
-                    className={`flex items-center justify-center w-5 h-5 rounded border text-xs ${
-                      isSelected ? 'bg-brand border-brand text-white' : 'bg-white/80 border-[var(--border)]'
-                    }`}
-                  >
-                    {isSelected ? '✓' : ''}
-                  </span>
-                </div>}
+              <section key={type} className="space-y-4">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <span>{TYPE_ICON[type]}</span>
+                  <span>{OUTPUT_LABEL[type]}</span>
+                  <span className="text-sm text-[var(--muted)] font-normal">({typeFiles.length})</span>
+                </h2>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+                  {typeFiles.map((file, index) => {
+                    const isSelected = selected.has(file.id);
+                    const fileIndex = files.indexOf(file);
+                    return (
+                      <div
+                        key={file.id}
+                        onClick={(e) => toggle(fileIndex, e.shiftKey)}
+                        className={`group relative bg-white rounded-xl border overflow-hidden cursor-pointer transition select-none ${
+                          isSelected ? 'border-brand ring-2 ring-brand' : 'border-[var(--border)] hover:border-brand'
+                        }`}
+                      >
+                        {isAdmin && <div className="absolute top-2 start-2 z-10">
+                          <span
+                            className={`flex items-center justify-center w-5 h-5 rounded border text-xs ${
+                              isSelected ? 'bg-brand border-brand text-white' : 'bg-white/80 border-[var(--border)]'
+                            }`}
+                          >
+                            {isSelected ? '✓' : ''}
+                          </span>
+                        </div>}
 
-                <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
-                  {file.output_type === 'image' && previews[file.id] ? (
-                    <img src={previews[file.id]} alt="" className="w-full h-full object-cover" />
-                  ) : !file.storage_path && file.text_content ? (
-                    <div className="h-full w-full overflow-hidden p-2.5 text-[10px] leading-4 text-[var(--muted)] whitespace-pre-wrap break-words">
-                      {file.text_content.slice(0, 280)}
-                    </div>
-                  ) : (
-                    <span className="text-4xl">{TYPE_ICON[file.output_type]}</span>
-                  )}
-                </div>
+                        <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
+                          {file.output_type === 'image' && previews[file.id] ? (
+                            <img src={previews[file.id]} alt="" className="w-full h-full object-cover" />
+                          ) : !file.storage_path && file.text_content ? (
+                            <div className="h-full w-full overflow-hidden p-2.5 text-[10px] leading-4 text-[var(--muted)] whitespace-pre-wrap break-words">
+                              {file.text_content.slice(0, 280)}
+                            </div>
+                          ) : (
+                            <span className="text-4xl">{TYPE_ICON[file.output_type]}</span>
+                          )}
+                        </div>
 
-                <div className="p-2.5">
-                  <div className="text-xs font-medium mb-1">{OUTPUT_LABEL[file.output_type]}</div>
-                  {isAdmin && <div className="text-[10px] text-[var(--muted)] text-start truncate" title={file.creator}>
-                    נוצר ע״י: <span className="ltr">{file.creator}</span>
-                  </div>}
-                  <div className="text-[10px] text-[var(--muted)] ltr text-start mt-0.5">
-                    {formatHebrewDateTime(file.created_at)}
-                  </div>
-                  {file.storage_path ? (
-                    <div className="mt-2 flex gap-1.5">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          open(file.storage_path as string);
-                        }}
-                        className="min-h-11 flex-1 rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
-                      >
-                        צפייה
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          download(file.storage_path as string);
-                        }}
-                        className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
-                      >
-                        הורדה
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="mt-2 flex gap-1.5">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setTextPreview(file);
-                        }}
-                        className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
-                      >
-                        פתיחת הטקסט
-                      </button>
-                      {file.output_type === 'presentation' && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setTargetFileRow(file);
-                          }}
-                          disabled={uploadingId === file.id}
-                          className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
-                        >
-                          {uploadingId === file.id ? 'מעלה...' : 'העלאת קובץ'}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {(file.output_type === 'image' || file.output_type === 'presentation') && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/admin/files/${file.request_id}/revise`);
-                      }}
-                      className="mt-1.5 min-h-11 w-full rounded-lg border border-brand px-2 py-2 text-xs font-semibold text-brand hover:bg-brand/5"
-                    >
-                      שיפור / עריכה
-                    </button>
-                  )}
+                        <div className="p-2.5">
+                          <div className="text-xs font-medium mb-1">{OUTPUT_LABEL[file.output_type]}</div>
+                          {isAdmin && <div className="text-[10px] text-[var(--muted)] text-start truncate" title={file.creator}>
+                            נוצר ע״י: <span className="ltr">{file.creator}</span>
+                          </div>}
+                          <div className="text-[10px] text-[var(--muted)] ltr text-start mt-0.5">
+                            {formatHebrewDateTime(file.created_at)}
+                          </div>
+                          {file.storage_path ? (
+                            <div className="mt-2 flex gap-1.5">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  open(file.storage_path as string);
+                                }}
+                                className="min-h-11 flex-1 rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
+                              >
+                                צפייה
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  download(file.storage_path as string);
+                                }}
+                                className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                              >
+                                הורדה
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="mt-2 flex gap-1.5">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setTextPreview(file);
+                                }}
+                                className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                              >
+                                פתיחת הטקסט
+                              </button>
+                              {file.output_type === 'presentation' && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTargetFileRow(file);
+                                  }}
+                                  disabled={uploadingId === file.id}
+                                  className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                >
+                                  {uploadingId === file.id ? 'מעלה...' : 'העלאת קובץ'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {(file.output_type === 'image' || file.output_type === 'presentation') && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/admin/files/${file.request_id}/revise`);
+                              }}
+                              className="mt-1.5 min-h-11 w-full rounded-lg border border-brand px-2 py-2 text-xs font-semibold text-brand hover:bg-brand/5"
+                            >
+                              שיפור / עריכה
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              </div>
+              </section>
             );
           })}
         </div>

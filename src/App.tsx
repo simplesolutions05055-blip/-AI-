@@ -12,6 +12,7 @@ import SkillsPage from '@/pages/admin/SkillsPage';
 import ConversationsPage from '@/pages/admin/ConversationsPage';
 import BrandingPage from '@/pages/admin/BrandingPage';
 import ProductionPage from '@/pages/admin/ProductionPage';
+import QuotePage from '@/pages/admin/QuotePage';
 import RevisePage from '@/pages/admin/RevisePage';
 import ErrorsPage from '@/pages/admin/ErrorsPage';
 import PermissionsPage from '@/pages/admin/PermissionsPage';
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="conversations" element={<ConversationsPage />} />
           <Route path="production" element={<ProductionPage />} />
           <Route path="production/:type" element={<ProductionPage />} />
+          <Route path="quote" element={<QuotePage />} />
           <Route path="simulator" element={<SimulatorPage />} />
           <Route path="files" element={<FilesPage />} />
           <Route path="files/:requestId/revise" element={<RevisePage />} />

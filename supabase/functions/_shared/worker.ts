@@ -12,7 +12,7 @@ import {
   estimateImageCost,
   round4,
 } from './util.ts';
-import { analyzeBrief, generateText, generatePresentationOutline, generateImage, runQa, reviewImageQa } from './openai.ts';
+import { analyzeBrief, generateText, generatePresentationOutline, generateImage, generateImageWithReferences, runQa, reviewImageQa } from './openai.ts';
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
@@ -237,6 +237,28 @@ async function loadBusinessBrain(database: DB, brandId: string | null): Promise<
     .order('created_at', { ascending: false })
     .limit(12);
   return buildBusinessBrainContext(brand, textSources ?? []);
+}
+
+async function loadBrandLogoReference(
+  database: DB,
+  brandId: string | null
+): Promise<{ base64: string; mime: string; name: string } | null> {
+  if (!brandId) return null;
+  const { data: brand } = await database
+    .from('brands')
+    .select('name, logo_path')
+    .eq('id', brandId)
+    .maybeSingle();
+  if (!brand?.logo_path) return null;
+  const { data: file, error } = await database.storage.from('branding').download(brand.logo_path as string);
+  if (error || !file) return null;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const mime = file.type || (String(brand.logo_path).toLowerCase().endsWith('.jpg') ? 'image/jpeg' : 'image/png');
+  return {
+    base64: encodeBase64(bytes),
+    mime,
+    name: `${brand.name || 'brand'}-official-logo.${mime.includes('jpeg') ? 'jpg' : 'png'}`,
+  };
 }
 
 async function setStatus(database: DB, requestId: string, status: string, extra: Record<string, unknown> = {}) {
@@ -704,9 +726,13 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         'בכל שורת מידע / יחידת אייקון+תווית (כגון תאריך, שעה, מיקום, "בהשתתפות", פרטי קשר) ' +
         'האייקון נמצא בצד ימין והטקסט זורם משמאלו; כשיש כמה שורות, האייקונים יוצרים עמודה ישרה בצד ימין. ' +
         'אסור פריסה בלוגיקת LTR (אייקון משמאל לטקסט או יישור לשמאל). סלוגן ושורת סיום בצד ימין.';
+      const BRAND_LOGO_DIRECTIVE =
+        'אם מצורפת תמונת רפרנס של לוגו רשמי, השתמש אך ורק בה כלוגו המותג. ' +
+        'אל תמציא לוגו, אל תצייר מחדש סמל עירוני אחר, ואל תחליף טקסט או צורה של הלוגו. ' +
+        'שלב את הלוגו הרשמי בתוך התמונה כחלק אינטגרלי מהעיצוב, שקוף או חצי-שקוף, נקי וממוקם טבעית בקומפוזיציה.';
       const prompt = basePrompt
-        ? `${basePrompt}\n\n${RTL_IMAGE_DIRECTIVE}`
-        : RTL_IMAGE_DIRECTIVE;
+        ? `${basePrompt}\n\n${RTL_IMAGE_DIRECTIVE}\n\n${BRAND_LOGO_DIRECTIVE}`
+        : `${RTL_IMAGE_DIRECTIVE}\n\n${BRAND_LOGO_DIRECTIVE}`;
       // Map the requested dimensions to a supported image size (square / portrait /
       // landscape) so a "story 1080x1920" request actually changes the output ratio.
       const imageSize = dimensionsToImageSize(brief.dimensions as string | null | undefined);
@@ -726,7 +752,11 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
           return;
         }
       }
-      const { base64, mime: imgMime } = await generateImage(prompt || 'תמונה ריבועית', { size: imageSize });
+      const logoReference = await loadBrandLogoReference(database, request.brand_id as string | null);
+      const imageResult = logoReference
+        ? await generateImageWithReferences(prompt || 'תמונה ריבועית', [logoReference], { size: imageSize })
+        : await generateImage(prompt || 'תמונה ריבועית', { size: imageSize });
+      const { base64, mime: imgMime } = imageResult;
       imageBase64 = base64;
       await recordUsage(database, requestId, 'openai', 'image', 0, 1, estimateImageCost(1));
       storagePath = `${requestId}/v${version}.png`;
@@ -819,7 +849,11 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     await deliverOutput(database, requestId);
   } catch (e) {
     await logEvent(database, { requestId, severity: 'error', action: 'generation_failed', message: String(e) });
-    await setStatus(database, requestId, 'failed');
+    // Stash the reason on the brief so the producing UI (which can't read the logs
+    // table under RLS) can surface WHY it failed — e.g. an OpenAI billing limit.
+    await setStatus(database, requestId, 'failed', {
+      structured_brief: { ...brief, last_error: String(e) },
+    });
   }
 }
 

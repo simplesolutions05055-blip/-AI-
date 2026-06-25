@@ -4,6 +4,7 @@
 // the admin retry/regenerate actions.
 import { processRequest } from '../_shared/worker.ts';
 import { db } from '../_shared/db.ts';
+import { setOpenAiKeyOverride, clearOpenAiKeyOverride } from '../_shared/openai.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,7 +17,7 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
   try {
-    const { request_id } = await req.json();
+    const { request_id, openai_key } = await req.json();
     if (!request_id) return new Response(JSON.stringify({ error: 'request_id required' }), { status: 400, headers: corsHeaders });
 
     const database = db();
@@ -27,12 +28,18 @@ Deno.serve(async (req) => {
       .eq('job_type', 'process-request')
       .eq('status', 'pending');
 
+    // A caller-supplied one-off key (session-scoped on the client) overrides the
+    // project secret for THIS whole run — image + QA included. Cleared in finally.
+    const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : null;
+    if (overrideKey) setOpenAiKeyOverride(overrideKey);
     try {
       await processRequest(request_id);
       await database.from('jobs').update({ status: 'completed' }).eq('request_id', request_id).eq('job_type', 'process-request');
     } catch (e) {
       await database.from('jobs').update({ status: 'failed', last_error: String(e) }).eq('request_id', request_id).eq('job_type', 'process-request');
       throw e;
+    } finally {
+      if (overrideKey) clearOpenAiKeyOverride();
     }
 
     return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

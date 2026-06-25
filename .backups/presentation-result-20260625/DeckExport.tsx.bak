@@ -305,6 +305,142 @@ export default function DeckExport({
       </div>
 
       <div className="mt-5 border-t border-[var(--border)] pt-4">
+      <div className="text-sm font-semibold mb-1">יצירת קובץ מצגת אמיתי</div>
+      <p className="text-xs text-[var(--muted)] mb-3">
+        מצגת ממותגת בעברית RTL עם הלוגו, פלטת הצבעים והתמונות של המותג.
+      </p>
+
+      <div className="mb-3 flex items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-gray-50 p-3">
+        <div className="text-sm">
+          <div className="font-semibold">תמונות למצגת</div>
+          <div className="text-xs text-[var(--muted)]">
+            {pickedImages
+              ? `נבחרו ${pickedImages.length} תמונות ידנית`
+              : 'ברירת מחדל: כל תמונות המותג'}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {pickedImages && (
+            <button
+              type="button"
+              onClick={() => { setPickedImages(null); setPickedKeys([]); cacheRef.current = null; }}
+              disabled={busy !== null}
+              className="text-xs font-semibold text-[var(--muted)] hover:underline"
+            >
+              איפוס
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            disabled={busy !== null || !brandId}
+            className="rounded-lg border border-brand px-3 py-1.5 text-sm font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+          >
+            בחירת תמונות
+          </button>
+        </div>
+      </div>
+
+      {existing.length > 0 && (
+        <div className="mb-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3">
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input
+              type="checkbox"
+              checked={reuseExisting}
+              onChange={(e) => { setReuseExisting(e.target.checked); cacheRef.current = null; }}
+              disabled={busy !== null}
+              className="h-4 w-4"
+            />
+            להשתמש בתמונות ה-AI שכבר הופקו ({existing.length})
+          </label>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {existing.map((img) => (
+              <figure key={img.id} className="w-20">
+                <img
+                  src={img.previewUrl}
+                  alt={img.caption}
+                  className="h-20 w-20 rounded-md border border-[var(--border)] object-cover bg-white"
+                />
+                <figcaption className="mt-1 truncate text-[10px] text-[var(--muted)]" title={img.caption}>
+                  {img.caption}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            {reuseExisting
+              ? 'אותן תמונות ישובצו בהפקה הבאה בלי לייצר מחדש (בלי עלות נוספת).'
+              : 'בטל את הסימון כדי לייצר תמונות AI חדשות לפי הבריף.'}
+          </p>
+        </div>
+      )}
+
+      <div className={`mb-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3 ${willReuse ? 'opacity-50' : ''}`}>
+        <div className="flex items-center justify-between gap-3">
+          <label htmlFor="ai-count" className="text-sm font-semibold">
+            להוסיף תמונות AI למצגת?
+          </label>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => { setAiCount((c) => Math.max(0, c - 1)); cacheRef.current = null; }}
+              disabled={busy !== null || willReuse || aiCount <= 0}
+              className="h-8 w-8 rounded-md border border-[var(--border)] bg-white text-lg font-bold disabled:opacity-40"
+              aria-label="פחות"
+            >
+              −
+            </button>
+            <input
+              id="ai-count"
+              type="number"
+              min={0}
+              max={3}
+              value={aiCount}
+              onChange={(e) => {
+                const n = Math.max(0, Math.min(3, Math.floor(Number(e.target.value) || 0)));
+                setAiCount(n);
+                cacheRef.current = null;
+              }}
+              disabled={busy !== null || willReuse}
+              className="h-8 w-12 rounded-md border border-[var(--border)] bg-white text-center font-semibold"
+            />
+            <button
+              type="button"
+              onClick={() => { setAiCount((c) => Math.min(3, c + 1)); cacheRef.current = null; }}
+              disabled={busy !== null || willReuse || aiCount >= 3}
+              className="h-8 w-8 rounded-md border border-[var(--border)] bg-white text-lg font-bold disabled:opacity-40"
+              aria-label="עוד"
+            >
+              +
+            </button>
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          {aiCount > 0
+            ? `יופקו ${aiCount} תמונות AI לפי הבריף וישובצו בשקפים המתאימים (מקסימום 3). אותן תמונות יישמרו גם ל-PDF וגם ל-PPTX.`
+            : 'אפשר להוסיף עד 3 תמונות AI שייווצרו לפי הבריף וישובצו אוטומטית בשקפים.'}
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-3 min-[390px]:flex-row">
+        <button
+          onClick={() => build('pdf')}
+          disabled={busy !== null}
+          className="flex-1 bg-brand text-white rounded-lg px-4 py-2.5 font-semibold disabled:opacity-50"
+        >
+          {busy === 'pdf' ? 'בונה PDF…' : 'הורדת PDF'}
+        </button>
+        <button
+          onClick={() => build('pptx')}
+          disabled={busy !== null}
+          className="flex-1 border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
+        >
+          {busy === 'pptx' ? 'בונה PPTX…' : 'הורדת PPTX'}
+        </button>
+      </div>
+      </div>
+
+      <div className="mt-5 border-t border-[var(--border)] pt-4">
         <div className="text-sm font-semibold mb-1">העלאת קובץ מ-NotebookLM</div>
         <p className="text-xs text-[var(--muted)] mb-3">
           אם יצרתם את המצגת ב-NotebookLM, אפשר להעלות את ה-PDF או ה-PPTX שנוצר כאן.
