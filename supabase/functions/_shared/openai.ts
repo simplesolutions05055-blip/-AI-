@@ -304,6 +304,33 @@ export async function generateText(systemPrompt: string, brief: unknown, note?: 
   return { text: content, usage };
 }
 
+export async function generateDocumentText(systemPrompt: string, brief: unknown, note?: string) {
+  const { content, usage } = await chat(
+    [
+      { role: 'system', content: `${systemPrompt}
+
+אתה כותב מסמך סופי לעריכה ב-Word, לא בריף ולא הנחיות עיצוב.
+החזר רק את תוכן המסמך עצמו בעברית, בפורמט Markdown נקי:
+- כותרת ראשית אחת בתחילת המסמך.
+- פסקאות מלאות שאפשר להשתמש בהן כמו שהן.
+- כותרות משנה ורשימות רק כשזה טבעי למסמך.
+- בלי "הנחיות עיצוב", בלי "צבעי מותג", בלי "Footer", בלי הערות למעצב, בלי הסברים על איך לעצב.
+- בלי placeholders כמו "[נדרש קלט]" או "נדרש קלט". אם חסר תאריך/מקום/שם, כתוב ניסוח שלא תלוי בפרט החסר או השמט את הפרט.
+- אל תכתוב בסוף הערות בסוגריים על מה צריך להשלים לפני הפצה.
+- אל תמציא עובדות קונקרטיות שלא הופיעו בבריף.
+- הטקסט צריך להיות מסמך עבודה אמיתי, ברור, מקצועי ומוכן להורדה כ-DOCX.` },
+      {
+        role: 'user',
+        content: `הפק מסמך מלא וסופי בעברית לפי הבריף הבא:\n${JSON.stringify(brief, null, 2)}${
+          note ? `\n\nהערת תיקון מהמנהל: ${note}` : ''
+        }`,
+      },
+    ],
+    { temperature: 0.55 }
+  );
+  return { text: content, usage };
+}
+
 export async function generatePresentationOutline(
   systemPrompt: string,
   brief: unknown,
@@ -506,6 +533,7 @@ export async function runQa(systemPrompt: string, brief: unknown, outputDescript
 - business_content_context הוא מקור לתוכן בלבד: עובדות, מסרים, שירותים וניסוחים.
 - brand_guidelines / אזור העיצוב הם המקור היחיד לצבעים, סגנון, קומפוזיציה, לוגו והשראה ויזואלית.
 - אם נראה שהתוצר העתיק עיצוב, צבעים, מבנה עמוד או סגנון ממסמך תוכן בלבד — סמן ככישלון.
+אם output_type הוא pdf/מסמך: התוצר חייב להיות מסמך סופי לעבודה, לא בריף ולא הנחיות למעצב. סמן ככישלון אם יש בו placeholders כמו "[נדרש קלט]", "נדרש קלט", "Footer", "צבעי מותג", "הנחיות עיצוב", או הערות מטא על מה צריך להשלים לפני הפצה.
 בריף:\n${JSON.stringify(brief)}
 תיאור התוצר:\n${outputDescription}
 החזר JSON בלבד: {"passed": true|false, "issues": ["..."], "notes": "..."}`,

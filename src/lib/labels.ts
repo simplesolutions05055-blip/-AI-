@@ -37,7 +37,7 @@ export const STATUS_COLOR: Record<RequestStatus, string> = {
 export const OUTPUT_LABEL: Record<OutputType, string> = {
   text: 'טקסט',
   image: 'תמונה',
-  pdf: 'PDF',
+  pdf: 'מסמך',
   presentation: 'מצגת',
 };
 

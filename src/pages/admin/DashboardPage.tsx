@@ -25,6 +25,7 @@ type RecentFileRow = {
   text_content: string | null;
   storage_path: string | null;
   created_at: string;
+  requests: { structured_brief: { source?: string | null } | null } | null;
 };
 
 const PRODUCT_LINKS: Array<{ type: OutputType; description: string }> = [
@@ -87,7 +88,11 @@ export default function DashboardPage() {
       db.from('usage_events').select('estimated_cost').gte('created_at', todayIso),
       db.from('outputs').select('id', { count: 'exact', head: true }),
       fetchRecentOutputs(),
-      db.from('outputs').select('id, output_type, text_content, storage_path, created_at').order('created_at', { ascending: false }).limit(20),
+      db
+        .from('outputs')
+        .select('id, output_type, text_content, storage_path, created_at, requests(structured_brief)')
+        .order('created_at', { ascending: false })
+        .limit(30),
     ]).then(([statuses, today, costs, outputs, recentOutputs, recentFilesData]) => {
       setStatusRows((statuses.data ?? []) as Array<{ status: RequestStatus }>);
       setTodayCount(today.count ?? 0);
@@ -103,6 +108,7 @@ export default function DashboardPage() {
         text: [],
       };
       for (const file of (recentFilesData.data ?? []) as RecentFileRow[]) {
+        if (file.requests?.structured_brief?.source === 'quote') continue;
         if (grouped[file.output_type].length < 2) {
           grouped[file.output_type].push(file);
         }

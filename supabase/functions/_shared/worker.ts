@@ -12,7 +12,7 @@ import {
   estimateImageCost,
   round4,
 } from './util.ts';
-import { analyzeBrief, generateText, generatePresentationOutline, generateImage, generateImageWithReferences, runQa, reviewImageQa } from './openai.ts';
+import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, runQa, reviewImageQa } from './openai.ts';
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
@@ -771,6 +771,12 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     } else if (outputType === 'presentation') {
       const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'presentation', { outputType: 'presentation', clientType: genClientType })) + lockBlock + learnedBlock;
       const { text, usage } = await generatePresentationOutline(genPrompt, brief);
+      await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
+      textContent = text;
+      qaDescription = text.slice(0, 4000);
+    } else if (outputType === 'pdf') {
+      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'text', { outputType: 'pdf', clientType: genClientType })) + lockBlock + learnedBlock;
+      const { text, usage } = await generateDocumentText(genPrompt, brief, brief.admin_note as string | undefined);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;
       qaDescription = text.slice(0, 4000);

@@ -24,8 +24,9 @@ Deno.serve(async (req) => {
 
     const database = db();
     const createdBy = await resolveUserId(req);
-    const fileName = safeFileName(body.file_name || body.quote_title || 'הצעת-מחיר');
+    const fileName = safeStorageFileName(body.file_name || body.quote_title || 'quote');
     const fileBytes = decodeBase64(body.file_base64);
+    const brandId = nullableUuid(body.brand_id);
 
     const { data: conversation, error: convError } = await database
       .from('conversations')
@@ -39,7 +40,7 @@ Deno.serve(async (req) => {
       .insert({
         conversation_id: conversation.id,
         output_type: 'pdf',
-        brand_id: body.brand_id ?? null,
+        brand_id: brandId,
         created_by: createdBy,
         structured_brief: {
           output_type: 'pdf',
@@ -73,7 +74,8 @@ Deno.serve(async (req) => {
 
     return json({ ok: true, request_id: requestRow.id, storage_path: storagePath });
   } catch (e) {
-    return json({ error: String(e) }, 500);
+    console.error('save-quote-output failed', serializeError(e));
+    return json({ error: errorMessage(e) }, 500);
   }
 });
 
@@ -101,13 +103,24 @@ function decodeBase64(value: string): Uint8Array {
   return bytes;
 }
 
-function safeFileName(value: string): string {
-  return value
-    .slice(0, 48)
+function nullableUuid(value: string | null | undefined): string | null {
+  const clean = (value ?? '').trim();
+  return clean || null;
+}
+
+function safeStorageFileName(value: string): string {
+  const ascii = value
+    .normalize('NFKD')
+    .replace(/[^\w\s.-]/g, '')
     .replace(/[\\/:*?"<>|]/g, '')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '') || 'הצעת-מחיר';
+    .replace(/^-|-$/g, '')
+    .toLowerCase();
+
+  return ascii
+    .slice(0, 48)
+    .replace(/\.+$/g, '') || 'quote';
 }
 
 function json(payload: unknown, status = 200): Response {
@@ -115,4 +128,15 @@ function json(payload: unknown, status = 200): Response {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
+}
+
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === 'object' && 'message' in e) return String((e as { message?: unknown }).message);
+  return String(e);
+}
+
+function serializeError(e: unknown): Record<string, unknown> | string {
+  if (!e || typeof e !== 'object') return String(e);
+  return Object.fromEntries(Object.entries(e as Record<string, unknown>));
 }

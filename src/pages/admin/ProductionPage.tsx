@@ -1,4 +1,4 @@
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { OUTPUT_LABEL } from '@/lib/labels';
 import { formatHebrewDate } from '@/lib/format';
@@ -62,17 +62,19 @@ interface OutputRow {
 
 interface RecentOutputPreviewRow {
   id: string;
+  request_id: string;
   output_type: OutputType;
   text_content: string | null;
   storage_path: string | null;
   created_at: string;
+  request_source?: string | null;
 }
 
 const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: string; accent: string; iconBg: string; iconText: string }> = [
   { type: 'image', title: 'תמונה', description: 'פוסט, מודעה, הזמנה או גרפיקה לרשתות.', accent: 'hover:border-violet-300', iconBg: 'bg-violet-100', iconText: 'text-violet-600' },
   { type: 'presentation', title: 'מצגת', description: 'מבנה ותוכן שקפים למצגת עסקית או שיווקית.', accent: 'hover:border-blue-300', iconBg: 'bg-blue-100', iconText: 'text-blue-600' },
   { type: 'text', title: 'טקסט', description: 'פוסט, הודעה, מייל, נאום או תוכן שיווקי.', accent: 'hover:border-emerald-300', iconBg: 'bg-emerald-100', iconText: 'text-emerald-600' },
-  { type: 'pdf', title: 'PDF / מסמך', description: 'מסמך מסודר להורדה או שליחה.', accent: 'hover:border-rose-300', iconBg: 'bg-rose-100', iconText: 'text-rose-600' },
+  { type: 'pdf', title: 'מסמך', description: 'מסמך מסודר להורדה או שליחה.', accent: 'hover:border-rose-300', iconBg: 'bg-rose-100', iconText: 'text-rose-600' },
 ];
 
 const PANEL = 'rounded-2xl border border-[var(--border)] bg-white shadow-[0_20px_50px_rgba(15,23,42,0.06)]';
@@ -185,12 +187,15 @@ const FIELDS: Record<ProductionType, FieldConfig[]> = {
 
 export default function ProductionPage() {
   const { type } = useParams();
+  const [searchParams] = useSearchParams();
   // Quote is a production type with its own lightweight flow (no brief wizard):
   // the prompt goes straight to the quote builder, and the price is read from it.
   if (type === 'quote') return <QuoteFlow />;
   const selectedType = isProductionType(type) ? type : null;
+  const pickerType = searchParams.get('type');
+  const initialPickerType = pickerType === 'quote' ? 'quote' : pickerType && isProductionType(pickerType) ? pickerType : undefined;
 
-  if (!selectedType) return <ProductionPicker />;
+  if (!selectedType) return <ProductionPicker initialSelected={initialPickerType} />;
   return <ProductionFlow type={selectedType} />;
 }
 
@@ -278,18 +283,7 @@ function QuoteFlow() {
 
   // Missing prompt (e.g. direct URL) → send the user back to the picker.
   if (!freeText) {
-    return (
-      <div dir="rtl" className="min-h-full bg-[#F0F2F7] p-8">
-        <p className="text-[14px] text-[#64748B]">עדיין לא יצרת הצעות מחיר.</p>
-        <button
-          type="button"
-          onClick={() => navigate('/admin/production')}
-          className="mt-4 inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[13px] font-semibold text-[#374151] shadow-sm transition hover:border-[#93C5FD] hover:bg-[#F8FAFF] hover:text-[#2563EB]"
-        >
-          → חזרה לבחירת תוצר
-        </button>
-      </div>
-    );
+    return <ProductionPicker initialSelected="quote" />;
   }
 
   return (
@@ -496,9 +490,9 @@ function QuoteReview({ quote }: { quote: Quote }) {
   );
 }
 
-function ProductionPicker() {
+function ProductionPicker({ initialSelected = null }: { initialSelected?: ProductionType | 'quote' | null }) {
   const navigate = useNavigate();
-  const [selected, setSelected] = useState<ProductionType | 'quote' | null>(null);
+  const [selected, setSelected] = useState<ProductionType | 'quote' | null>(initialSelected);
   const [description, setDescription] = useState('');
   // Brand chosen here is passed to the brief builder so the brand's content +
   // official color palette are folded into the AI brief.
@@ -511,6 +505,7 @@ function ProductionPicker() {
     presentation: [],
     text: [],
   });
+  const [recentQuoteFiles, setRecentQuoteFiles] = useState<RecentOutputPreviewRow[]>([]);
   const [recentPreviews, setRecentPreviews] = useState<Record<string, string>>({});
   // For presentations we open the image picker before leaving this page, so the
   // chosen images ride into the flow (and onward into the deck).
@@ -520,6 +515,14 @@ function ProductionPicker() {
   const singleBrand = brands.length === 1 ? brands[0] : null;
   const selectedBrand = brands.find((brand) => brand.id === brandId) ?? singleBrand ?? null;
   const selectedBrandLogoUrl = selectedBrand ? brandLogoUrls[selectedBrand.id] ?? null : null;
+
+  useEffect(() => {
+    if (!initialSelected) return;
+    setSelected(initialSelected);
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }, [initialSelected]);
 
   useEffect(() => {
     const client = createSupabaseBrowserClient();
@@ -559,11 +562,27 @@ function ProductionPicker() {
 
     client
       .from('outputs')
-      .select('id, output_type, text_content, storage_path, created_at')
+      .select('id, request_id, output_type, text_content, storage_path, created_at')
       .order('created_at', { ascending: false })
-      .limit(20)
+      .limit(40)
       .then(async ({ data }) => {
         if (!active) return;
+        const rawFiles = ((data ?? []) as RecentOutputPreviewRow[]);
+        const requestIds = Array.from(new Set(rawFiles.map((file) => file.request_id).filter(Boolean)));
+        const sourceByRequest: Record<string, string | null> = {};
+        if (requestIds.length > 0) {
+          const { data: requests } = await client
+            .from('requests')
+            .select('id, structured_brief')
+            .in('id', requestIds);
+          for (const request of (requests ?? []) as Array<{ id: string; structured_brief: { source?: string | null } | null }>) {
+            sourceByRequest[request.id] = request.structured_brief?.source ?? null;
+          }
+        }
+        const files = rawFiles.map((file) => ({
+          ...file,
+          request_source: sourceByRequest[file.request_id] ?? null,
+        }));
         const grouped: Record<OutputType, RecentOutputPreviewRow[]> = {
           image: [],
           pdf: [],
@@ -571,12 +590,14 @@ function ProductionPicker() {
           text: [],
         };
 
-        for (const file of (data ?? []) as RecentOutputPreviewRow[]) {
+        for (const file of files) {
+          if (file.request_source === 'quote') continue;
           if (grouped[file.output_type].length < 2) {
             grouped[file.output_type].push(file);
           }
         }
         setRecentFiles(grouped);
+        setRecentQuoteFiles(files.filter((file) => file.output_type === 'pdf' && file.request_source === 'quote').slice(0, 2));
 
         const images = grouped.image.filter((file) => file.storage_path);
         const pairs = await Promise.all(
@@ -632,17 +653,22 @@ function ProductionPicker() {
     { key: 'image', label: 'תמונה / גרפיקה', icon: '🖼️', color: 'bg-[#FEE2E2]', to: 'image' },
     { key: 'text', label: 'פוסט / טקסט', icon: '📝', color: 'bg-[#D1FAE5]', to: 'text' },
     { key: 'presentation', label: 'מצגת', icon: '🖥️', color: 'bg-[#DBEAFE]', to: 'presentation' },
-    { key: 'pdf', label: 'מסמך / PDF', icon: '📄', color: 'bg-[#EDE9FE]', to: 'pdf' },
+    { key: 'pdf', label: 'מסמך', icon: '📄', color: 'bg-[#EDE9FE]', to: 'pdf' },
     // Quote is a real production type: same textarea + same "צור תוצר" button.
     // The price is taken from the prompt only (see QuoteFlow / generateQuote).
     { key: 'quote', label: 'הצעת מחיר', icon: '💰', color: 'bg-[#FEF3C7]', to: 'quote' },
   ];
   const selectedPickerLabel = pickerChips.find((item) => !item.disabled && item.to === selected)?.label ?? null;
-  const recentOutputCategories: Array<{ key: string; label: string; bg: string; icon: string; to: string; type?: OutputType }> = [
-    { key: 'image', type: 'image', label: 'תמונה/גרפיקה', bg: '#FEF3C7', icon: '🖼️', to: '/admin/files?type=image' },
-    { key: 'presentation', type: 'presentation', label: 'מצגת', bg: '#D1FAE5', icon: '📊', to: '/admin/files?type=presentation' },
-    { key: 'pdf', type: 'pdf', label: 'מסמך/PDF', bg: '#DBEAFE', icon: '📕', to: '/admin/files?type=pdf' },
-    { key: 'quote', label: 'הצעת מחיר', bg: '#EDE9FE', icon: '💰', to: '/admin/production/quote' },
+  const recentOutputCategories: Array<{ key: string; label: string; bg: string; icon: string; type?: OutputType }> = [
+    { key: 'image', type: 'image', label: 'תמונה/גרפיקה', bg: '#FEF3C7', icon: '🖼️' },
+    { key: 'presentation', type: 'presentation', label: 'מצגת', bg: '#D1FAE5', icon: '📊' },
+    { key: 'pdf', type: 'pdf', label: 'מסמך/PDF', bg: '#DBEAFE', icon: '📕' },
+    {
+      key: 'quote',
+      label: 'הצעת מחיר',
+      bg: '#EDE9FE',
+      icon: '💰',
+    },
   ];
 
   return (
@@ -661,7 +687,7 @@ function ProductionPicker() {
             <div className="space-y-2.5 text-right">
               <div className="flex items-start justify-between gap-3 lg:pe-44">
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-[22px] font-bold tracking-normal text-[#1A1A2E]">מה תרצו ליצור היום?</h1>
+                  <h1 className="text-[26px] font-bold leading-tight tracking-normal text-[#1A1A2E] sm:text-[22px]">מה תרצו ליצור היום?</h1>
                 </div>
                 {selectedBrand && (
                   <div className="absolute left-5 top-7 flex shrink-0 items-center justify-center sm:left-8 lg:left-8 lg:top-8">
@@ -670,7 +696,12 @@ function ProductionPicker() {
                 )}
               </div>
               <div className="space-y-2 sm:pl-44 lg:pl-48">
-                <p className="text-[14px] font-normal text-[#94A3B8]">בחרו סוג תוצר, הקלידו בריף — והמערכת תתחיל לעבוד</p>
+                <p className="text-[14px] font-normal leading-7 text-[#94A3B8]">
+                  <span>בחרו סוג תוצר, הקלידו בריף</span>
+                  <span className="hidden sm:inline"> — </span>
+                  <br className="sm:hidden" />
+                  <span>והמערכת תתחיל לעבוד</span>
+                </p>
                 <div className="min-w-0 flex-1 space-y-2">
                   <div className="flex flex-wrap justify-start gap-2">
                     {pickerChips.map((item) => {
@@ -800,12 +831,27 @@ function ProductionPicker() {
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {recentOutputCategories.map(({ key, type, label, bg, icon, to }) => {
-              const items = type ? recentFiles[type] : [];
+            {recentOutputCategories.map(({ key, type, label, bg, icon }) => {
+              const items = key === 'quote' ? recentQuoteFiles : type ? recentFiles[type] : [];
+              const createType = key === 'quote' ? 'quote' : type;
+              const to =
+                items.length > 0
+                  ? key === 'quote'
+                    ? '/admin/files?type=pdf&source=quote'
+                    : `/admin/files?type=${type}`
+                  : `/admin/production?type=${createType}`;
               return (
                 <Link
                   key={key}
                   to={to}
+                  onClick={() => {
+                    if (items.length === 0) {
+                      setSelected(createType ?? null);
+                      window.requestAnimationFrame(() => {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      });
+                    }
+                  }}
                   className="group flex min-h-[210px] flex-col overflow-hidden rounded-[12px] border border-[#EAECF0] bg-white text-right transition hover:-translate-y-0.5 hover:border-[#BFDBFE]"
                 >
                   <div className="flex items-center gap-2 px-3 py-2.5" style={{ backgroundColor: bg }}>
@@ -814,7 +860,7 @@ function ProductionPicker() {
                   </div>
 
                   <div className="flex flex-1 flex-col gap-2 p-3">
-                    {!type ? (
+                    {key === 'quote' && items.length === 0 ? (
                       <div className="flex flex-1 items-center justify-center py-6 text-center text-[11px] leading-5 text-[#94A3B8]">
                         יצירת הצעת מחיר מעוצבת כ-PDF מתוך בריף חופשי
                       </div>
@@ -849,7 +895,7 @@ function ProductionPicker() {
 
                   <div className="border-t border-[#F1F5F9] px-3 py-3">
                     <span className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-[9px] bg-[#2563EB] px-3 py-2 text-center text-[11px] font-bold text-white shadow-sm transition group-hover:bg-[#1D4ED8]">
-                      <span>{type ? `צפייה בכל ה${label}` : 'יצירת הצעת מחיר'}</span>
+                      <span>{items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}</span>
                       <span aria-hidden="true">←</span>
                     </span>
                   </div>
@@ -1978,7 +2024,7 @@ function ResultCard({
                 <button type="button" onClick={copyTextOutput} className={SECONDARY_BUTTON}>
                   {copied ? 'הועתק' : 'העתקה'}
                 </button>
-                <button type="button" onClick={() => exportRichTextDocx(textBlocks, 'text-output.docx')} className={SECONDARY_BUTTON}>
+                <button type="button" onClick={() => exportRichTextDocx(textBlocks)} className={SECONDARY_BUTTON}>
                   ייצוא DOCX
                 </button>
               </div>

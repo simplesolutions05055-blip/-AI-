@@ -2,6 +2,7 @@ import {
   AlignmentType,
   Document,
   HeadingLevel,
+  LevelFormat,
   Packer,
   Paragraph,
   TextRun,
@@ -128,14 +129,30 @@ export function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export async function exportRichTextDocx(blocks: RichTextBlock[], filename = 'text-output.docx') {
+export function docxFilenameFromBlocks(blocks: RichTextBlock[], fallback = 'מסמך'): string {
+  const heading = blocks.find((block) => block.type === 'heading' && inlinePlainText(block.text).trim());
+  const title = heading ?? blocks.find((block) => block.type !== 'code' && block.type !== 'list' && inlinePlainText(block.text).trim());
+  const raw = title && title.type !== 'code' && title.type !== 'list' ? inlinePlainText(title.text) : fallback;
+  const clean = raw
+    .replace(/[#*_`"'“”׳״]+/g, '')
+    .replace(/[\\/:*?<>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 70);
+  return `${clean || fallback}.docx`;
+}
+
+export async function exportRichTextDocx(blocks: RichTextBlock[], filename = docxFilenameFromBlocks(blocks)) {
   const doc = new Document({
     creator: 'AI Maor Atiya',
     styles: {
       default: {
         document: {
           run: { font: 'Arial', size: 24, rightToLeft: true },
-          paragraph: { alignment: AlignmentType.RIGHT, spacing: { after: 160, line: 320 } },
+          paragraph: {
+            alignment: AlignmentType.START,
+            spacing: { after: 160, line: 320 },
+          },
         },
       },
     },
@@ -143,7 +160,11 @@ export async function exportRichTextDocx(blocks: RichTextBlock[], filename = 'te
       config: [
         {
           reference: 'rtl-numbered',
-          levels: [{ level: 0, format: 'decimal', text: '%1.', alignment: AlignmentType.RIGHT, style: { paragraph: { indent: { right: 720, hanging: 360 } } } }],
+          levels: [{ level: 0, format: 'decimal', text: '%1.', alignment: AlignmentType.START, style: { paragraph: { indent: { right: 720, hanging: 360 } } } }],
+        },
+        {
+          reference: 'rtl-bullet',
+          levels: [{ level: 0, format: LevelFormat.BULLET, text: '•', alignment: AlignmentType.START, style: { paragraph: { indent: { right: 720, hanging: 360 } } } }],
         },
       ],
     },
@@ -163,8 +184,61 @@ export async function exportRichTextDocx(blocks: RichTextBlock[], filename = 'te
       },
     ],
   });
-  const blob = await Packer.toBlob(doc);
+  const blob = await forceDocxRtl(await Packer.toBlob(doc));
   downloadBlob(blob, filename);
+}
+
+async function forceDocxRtl(blob: Blob): Promise<Blob> {
+  const { default: JSZip } = await import('jszip');
+  const zip = await JSZip.loadAsync(blob);
+
+  await patchXml(zip, 'word/document.xml', (xml) =>
+    forceParagraphRtl(xml)
+      .replace(/<w:sectPr>/g, '<w:sectPr><w:bidi/>')
+      .replace(/<w:sectPr><w:bidi\/><w:bidi\/>/g, '<w:sectPr><w:bidi/>'),
+  );
+
+  await patchXml(zip, 'word/styles.xml', (xml) =>
+    forceParagraphRtl(xml)
+      .replace(/<w:pPrDefault><w:pPr>/g, '<w:pPrDefault><w:pPr><w:bidi/>')
+      .replace(/<w:pPrDefault><w:pPr><w:bidi\/><w:bidi\/>/g, '<w:pPrDefault><w:pPr><w:bidi/>')
+      .replace(/(<w:style w:type="paragraph"[^>]*>)(?![\s\S]*?<w:pPr>)/g, '$1<w:pPr><w:bidi/><w:jc w:val="start"/></w:pPr>'),
+  );
+
+  await patchXml(zip, 'word/settings.xml', (xml) => {
+    let next = xml.replace(/<w:settings([^>]*)>/, '<w:settings$1><w:bidi/>');
+    next = next.replace(/<w:settings([^>]*)><w:bidi\/><w:bidi\/>/, '<w:settings$1><w:bidi/>');
+    if (!/<w:themeFontLang\b/.test(next)) {
+      next = next.replace(/<\/w:settings>/, '<w:themeFontLang w:val="he-IL" w:eastAsia="he-IL" w:bidi="he-IL"/></w:settings>');
+    }
+    return next;
+  });
+
+  await patchXml(zip, 'word/numbering.xml', (xml) =>
+    xml
+      .replace(/<w:lvlJc w:val="left"\/>/g, '<w:lvlJc w:val="start"/>')
+      .replace(/w:left="/g, 'w:right="'),
+  );
+
+  return await zip.generateAsync({
+    type: 'blob',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
+}
+
+async function patchXml(zip: { file(path: string): { async(type: 'string'): Promise<string> } | null; file(path: string, data: string): unknown }, path: string, patch: (xml: string) => string): Promise<void> {
+  const file = zip.file(path);
+  if (!file) return;
+  zip.file(path, patch(await file.async('string')));
+}
+
+function forceParagraphRtl(xml: string): string {
+  return xml.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/g, (_match, inner: string) => {
+    let next = inner.replace(/<w:jc\b[^>]*\/>/g, '');
+    if (!/<w:bidi\/>/.test(next)) next = `<w:bidi/>${next}`;
+    next += '<w:jc w:val="start"/>';
+    return `<w:pPr>${next}</w:pPr>`;
+  });
 }
 
 function blockToDocxParagraphs(block: RichTextBlock): Paragraph[] {
@@ -174,7 +248,7 @@ function blockToDocxParagraphs(block: RichTextBlock): Paragraph[] {
       new Paragraph({
         heading,
         bidirectional: true,
-        alignment: AlignmentType.RIGHT,
+        alignment: AlignmentType.START,
         spacing: { before: 180, after: 120 },
         children: inlineToRuns(block.text, { bold: true, size: block.level === 1 ? 32 : block.level === 2 ? 28 : 26 }),
       }),
@@ -184,7 +258,7 @@ function blockToDocxParagraphs(block: RichTextBlock): Paragraph[] {
     return [
       new Paragraph({
         bidirectional: true,
-        alignment: AlignmentType.RIGHT,
+        alignment: AlignmentType.START,
         spacing: { before: 100, after: 100 },
         indent: { right: 360 },
         children: inlineToRuns(block.text, { italics: true, color: '475569' }),
@@ -196,7 +270,7 @@ function blockToDocxParagraphs(block: RichTextBlock): Paragraph[] {
       (line) =>
         new Paragraph({
           bidirectional: true,
-          alignment: AlignmentType.RIGHT,
+          alignment: AlignmentType.START,
           spacing: { after: 80 },
           children: [new TextRun({ text: line, font: 'Courier New', size: 20, rightToLeft: true })],
         }),
@@ -207,9 +281,8 @@ function blockToDocxParagraphs(block: RichTextBlock): Paragraph[] {
       (item) =>
         new Paragraph({
           bidirectional: true,
-          alignment: AlignmentType.RIGHT,
-          bullet: block.ordered ? undefined : { level: 0 },
-          numbering: block.ordered ? { reference: 'rtl-numbered', level: 0 } : undefined,
+          alignment: AlignmentType.START,
+          numbering: { reference: block.ordered ? 'rtl-numbered' : 'rtl-bullet', level: 0 },
           indent: { right: 720, hanging: 360 },
           spacing: { after: 100 },
           children: inlineToRuns(item),
@@ -219,7 +292,7 @@ function blockToDocxParagraphs(block: RichTextBlock): Paragraph[] {
   return [
     new Paragraph({
       bidirectional: true,
-      alignment: AlignmentType.RIGHT,
+      alignment: AlignmentType.START,
       spacing: { after: 160, line: 320 },
       children: inlineToRuns(block.text),
     }),

@@ -373,7 +373,7 @@ export default function RevisePage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => exportRichTextDocx(parseRichText(textContent ?? ''), 'text-output.docx')}
+                  onClick={() => exportRichTextDocx(parseRichText(textContent ?? ''))}
                   disabled={!textContent}
                   className="border border-[var(--border)] rounded-lg px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
                 >

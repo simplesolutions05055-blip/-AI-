@@ -15,6 +15,7 @@ interface FileRow {
   mime_type: string | null;
   created_at: string;
   creator: string;
+  request_source: string | null;
 }
 
 const TYPE_ICON: Record<OutputType, string> = {
@@ -24,12 +25,21 @@ const TYPE_ICON: Record<OutputType, string> = {
   presentation: '📊',
 };
 
-const FILE_TYPE_FILTERS: Array<{ type: OutputType | null; label: string; icon: string }> = [
-  { type: null, label: 'הכל', icon: '▦' },
-  { type: 'image', label: 'תמונה/גרפיקה', icon: TYPE_ICON.image },
-  { type: 'presentation', label: 'מצגת', icon: TYPE_ICON.presentation },
-  { type: 'pdf', label: 'מסמך/PDF', icon: TYPE_ICON.pdf },
-  { type: 'text', label: 'טקסט', icon: TYPE_ICON.text },
+type FileFilter = {
+  key: string;
+  type: OutputType | null;
+  source: 'quote' | null;
+  label: string;
+  icon: string;
+};
+
+const FILE_TYPE_FILTERS: FileFilter[] = [
+  { key: 'all', type: null, source: null, label: 'הכל', icon: '▦' },
+  { key: 'image', type: 'image', source: null, label: 'תמונה/גרפיקה', icon: TYPE_ICON.image },
+  { key: 'presentation', type: 'presentation', source: null, label: 'מצגת', icon: TYPE_ICON.presentation },
+  { key: 'pdf', type: 'pdf', source: null, label: 'מסמך/PDF', icon: TYPE_ICON.pdf },
+  { key: 'quote', type: 'pdf', source: 'quote', label: 'הצעות מחיר', icon: '💰' },
+  { key: 'text', type: 'text', source: null, label: 'טקסט', icon: TYPE_ICON.text },
 ];
 
 function isOutputType(value: string | null): value is OutputType {
@@ -41,6 +51,7 @@ export default function FilesPage() {
   const [searchParams] = useSearchParams();
   const rawFilterType = searchParams.get('type');
   const filterType = isOutputType(rawFilterType) ? rawFilterType : null;
+  const sourceFilter = searchParams.get('source') === 'quote' ? 'quote' : null;
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
   const [files, setFiles] = useState<FileRow[]>([]);
@@ -109,7 +120,7 @@ export default function FilesPage() {
         .select('id, request_id, output_type, storage_path, text_content, mime_type, created_at')
         .order('created_at', { ascending: false })
         .limit(100);
-      const rawRows = (data ?? []) as Omit<FileRow, 'creator'>[];
+      const rawRows = (data ?? []) as Omit<FileRow, 'creator' | 'request_source'>[];
 
       // The admin currently using the site — credited for simulator outputs.
       const { data: auth } = await client.auth.getUser();
@@ -119,14 +130,16 @@ export default function FilesPage() {
       // requests<->conversations has two FKs, so the embed must name the one we want.
       const requestIds = Array.from(new Set(rawRows.map((r) => r.request_id).filter(Boolean)));
       const creatorByRequest: Record<string, string> = {};
+      const sourceByRequest: Record<string, string | null> = {};
       if (requestIds.length > 0) {
         const { data: reqs } = await client
           .from('requests')
-          .select('id, customer_email, conversations!requests_conversation_id_fkey(whatsapp_from, simulated)')
+          .select('id, customer_email, structured_brief, conversations!requests_conversation_id_fkey(whatsapp_from, simulated)')
           .in('id', requestIds);
         for (const req of (reqs ?? []) as Array<{
           id: string;
           customer_email: string | null;
+          structured_brief: { source?: string | null } | null;
           conversations:
             | { whatsapp_from: string | null; simulated: boolean | null }
             | { whatsapp_from: string | null; simulated: boolean | null }[]
@@ -138,12 +151,14 @@ export default function FilesPage() {
           creatorByRequest[req.id] = isSimulator
             ? `${siteUser} (סימולטור)`
             : sender || req.customer_email || 'לא ידוע';
+          sourceByRequest[req.id] = req.structured_brief?.source ?? null;
         }
       }
 
       const rows: FileRow[] = rawRows.map((r) => ({
         ...r,
         creator: creatorByRequest[r.request_id] ?? 'לא ידוע',
+        request_source: sourceByRequest[r.request_id] ?? null,
       }));
       setFiles(rows);
       setLoading(false);
@@ -172,9 +187,13 @@ export default function FilesPage() {
     if (data?.signedUrl) window.open(data.signedUrl, '_blank');
   }
 
-  function setTypeFilter(type: OutputType | null) {
+  function setFileFilter(filter: FileFilter) {
     clearSelection();
-    navigate(type ? `/admin/files?type=${type}` : '/admin/files');
+    const params = new URLSearchParams();
+    if (filter.type) params.set('type', filter.type);
+    if (filter.source) params.set('source', filter.source);
+    const query = params.toString();
+    navigate(query ? `/admin/files?${query}` : '/admin/files');
   }
 
   function toggle(index: number, shiftKey: boolean) {
@@ -200,6 +219,10 @@ export default function FilesPage() {
     setSelected(new Set());
     setLastIndex(null);
   }
+
+  const visibleFiles = files.filter((file) =>
+    sourceFilter === 'quote' ? file.request_source === 'quote' : file.request_source !== 'quote'
+  );
 
   async function deleteSelected() {
     if (!isAdmin) return;
@@ -254,12 +277,12 @@ export default function FilesPage() {
       <div className="mb-5 overflow-x-auto pb-1">
         <div className="inline-flex min-w-full gap-2 rounded-2xl border border-[#EAECF0] bg-white p-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:min-w-0">
           {FILE_TYPE_FILTERS.map((item) => {
-            const active = filterType === item.type;
+            const active = filterType === item.type && sourceFilter === item.source;
             return (
               <button
-                key={item.type ?? 'all'}
+                key={item.key}
                 type="button"
-                onClick={() => setTypeFilter(item.type)}
+                onClick={() => setFileFilter(item)}
                 aria-pressed={active}
                 className={`inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-bold transition ${
                   active
@@ -275,7 +298,7 @@ export default function FilesPage() {
         </div>
       </div>
 
-      {isAdmin && selected.size === 0 && !loading && files.length > 0 && (
+      {isAdmin && selected.size === 0 && !loading && visibleFiles.length > 0 && (
         <p className="text-xs text-[var(--muted)] mb-4">
           לחיצה לבחירה. Shift+לחיצה לבחירת טווח. בחירה מרובה או יחידה ומחיקה.
         </p>
@@ -283,12 +306,12 @@ export default function FilesPage() {
 
       {loading ? (
         <div className="text-center text-[var(--muted)] p-10">טוען...</div>
-      ) : files.length === 0 ? (
+      ) : visibleFiles.length === 0 ? (
         <div className="text-center text-[var(--muted)] p-10">אין תוצרים.</div>
       ) : (
         <div className="space-y-8">
           {(['image', 'pdf', 'presentation', 'text'] as const).map((type) => {
-            let typeFiles = files.filter((f) => f.output_type === type);
+            let typeFiles = visibleFiles.filter((f) => f.output_type === type);
             if (filterType && filterType !== type) typeFiles = [];
             if (typeFiles.length === 0) return null;
 
