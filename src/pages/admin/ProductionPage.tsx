@@ -9,7 +9,7 @@ import ImagePickerModal from '@/components/ImagePickerModal';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
 import type { DeckImage } from '@/lib/deck';
-import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, themeFromBrandColors, type Quote } from '@/lib/quote';
+import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, themeFromQuoteBrand, tint, type Quote } from '@/lib/quote';
 import type { OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
 
 type ProductionType = OutputType;
@@ -439,59 +439,66 @@ function QuoteReview({ quote }: { quote: Quote }) {
   const pay = (quote.payment_terms ?? []).filter((p) => p?.title?.trim());
   const terms = (quote.terms ?? []).filter((x) => x?.trim());
 
-  // Theme the preview with the brand palette (when present) so the user sees the
-  // brand colors + logo before approving — matching the themed PDF output.
-  const bt = themeFromBrandColors(quote.brand?.colors ?? []);
-  const navy = bt.navy ?? '#1E3A8A';
-  const navy2 = bt.navy2 ?? '#2563EB';
-  const gold = bt.gold ?? '#c9a14a';
+  // Theme the preview with the brand's full design language (role-based palette +
+  // style notes) so the user sees the real brand look — colors, contrast and flat
+  // vs gradient — before approving. Mirrors renderQuoteToPdf exactly.
+  const DEF = {
+    navy: '#1E3A8A', navy2: '#2563EB', gold: '#C9A14A', lavender: '#EFF6FF',
+    ink: '#1F2233', muted: '#64748B', onNavy: '#FFFFFF',
+    onNavyMuted: 'rgba(255,255,255,0.82)', onGold: '#1E3A8A', onLavender: '#1E3A8A', flat: false,
+  };
+  const t = { ...DEF, ...themeFromQuoteBrand(quote.brand) };
+  const accentSoft = tint(t.gold, 0.86);
   const logoUrl = quote.brand?.logo_data_url || null;
-  const gradient = { backgroundImage: `linear-gradient(to left, ${navy2}, ${navy})` };
+  const navyBg = t.flat
+    ? { backgroundColor: t.navy }
+    : { backgroundImage: `linear-gradient(to left, ${t.navy2}, ${t.navy})` };
+  const headingStyle = { color: t.navy };
 
   return (
-    <div className="space-y-4 text-[#1f2233]">
-      <div className="rounded-xl p-5 text-white" style={gradient}>
+    <div className="space-y-4" style={{ color: t.ink }}>
+      <div className="rounded-xl p-5" style={{ ...navyBg, color: t.onNavy }}>
         {logoUrl && (
           <img src={logoUrl} alt="לוגו" className="mb-3 max-h-10 max-w-[160px] object-contain" />
         )}
         <div className="text-[20px] font-extrabold">{quote.title || 'הצעת מחיר'}</div>
-        {quote.subtitle && <div className="mt-1 text-[13px] text-[#d7d7ea]">{quote.subtitle}</div>}
+        {quote.subtitle && <div className="mt-1 text-[13px]" style={{ color: t.onNavyMuted }}>{quote.subtitle}</div>}
       </div>
 
       {metaCells.length > 0 && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {metaCells.map(([k, v]) => (
-            <div key={k} className="rounded-lg bg-[#EFF6FF] p-2.5 text-center">
-              <div className="text-[11px] text-[#6b6b80]">{k}</div>
-              <div className="text-[13px] font-bold text-[#1E3A8A]">{v}</div>
+            <div key={k} className="rounded-lg p-2.5 text-center" style={{ backgroundColor: t.lavender }}>
+              <div className="text-[11px]" style={{ color: t.muted }}>{k}</div>
+              <div className="text-[13px] font-bold" style={{ color: t.onLavender }}>{v}</div>
             </div>
           ))}
         </div>
       )}
 
-      {quote.summary && <div className="rounded-xl bg-[#EFF6FF] p-4 text-[13.5px] leading-relaxed">{quote.summary}</div>}
+      {quote.summary && <div className="rounded-xl p-4 text-[13.5px] leading-relaxed" style={{ backgroundColor: t.lavender }}>{quote.summary}</div>}
 
       {(quote.headline?.label || quote.headline?.price) && (
-        <div className="flex items-center justify-between gap-3 rounded-xl p-4 text-white" style={gradient}>
+        <div className="flex items-center justify-between gap-3 rounded-xl p-4" style={{ ...navyBg, color: t.onNavy }}>
           <div>
             <div className="text-[16px] font-extrabold">{quote.headline?.label || 'מחיר כולל'}</div>
-            {quote.headline?.sub && <div className="text-[12px] text-[#cfcfe6]">{quote.headline.sub}</div>}
+            {quote.headline?.sub && <div className="text-[12px]" style={{ color: t.onNavyMuted }}>{quote.headline.sub}</div>}
           </div>
-          {quote.headline?.price && <div className="text-[22px] font-extrabold" style={{ color: gold }}>{quote.headline.price}</div>}
+          {quote.headline?.price && <div className="text-[22px] font-extrabold" style={{ color: t.gold }}>{quote.headline.price}</div>}
         </div>
       )}
 
       {comps.length > 0 && (
         <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">היקף הפיתוח — רכיבי המערכת</div>
+          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>היקף הפיתוח — רכיבי המערכת</div>
           <div className="grid gap-2 sm:grid-cols-2">
             {comps.map((c, i) => (
-              <div key={i} className="flex items-start gap-2.5 rounded-xl bg-[#EFF6FF] p-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#c9a14a] text-[12px] font-extrabold text-[#1E3A8A]">{i + 1}</span>
+              <div key={i} className="flex items-start gap-2.5 rounded-xl p-3" style={{ backgroundColor: t.lavender }}>
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] font-extrabold" style={{ backgroundColor: t.gold, color: t.onGold }}>{i + 1}</span>
                 <div>
-                  <div className="text-[13px] font-extrabold text-[#1E3A8A]">{c.title}</div>
-                  {c.desc && <div className="text-[12px] text-[#6b6b80]">{c.desc}</div>}
-                  {c.price && <div className="mt-1 text-[12.5px] font-extrabold text-[#c9a14a]">{c.price}</div>}
+                  <div className="text-[13px] font-extrabold" style={{ color: t.onLavender }}>{c.title}</div>
+                  {c.desc && <div className="text-[12px]" style={{ color: t.muted }}>{c.desc}</div>}
+                  {c.price && <div className="mt-1 text-[12.5px] font-extrabold" style={{ color: t.gold }}>{c.price}</div>}
                 </div>
               </div>
             ))}
@@ -501,11 +508,11 @@ function QuoteReview({ quote }: { quote: Quote }) {
 
       {included.length > 0 && (
         <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">כלול בפיתוח</div>
+          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>כלול בפיתוח</div>
           <div className="grid gap-2 sm:grid-cols-2">
             {included.map((x, i) => (
-              <div key={i} className="flex items-start gap-2 rounded-lg bg-[#EFF6FF] p-2.5 text-[12.5px]">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#c9a14a] text-[10px] font-extrabold text-[#1E3A8A]">✓</span>
+              <div key={i} className="flex items-start gap-2 rounded-lg p-2.5 text-[12.5px]" style={{ backgroundColor: t.lavender }}>
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-extrabold" style={{ backgroundColor: t.gold, color: t.onGold }}>✓</span>
                 <span>{x}</span>
               </div>
             ))}
@@ -515,21 +522,21 @@ function QuoteReview({ quote }: { quote: Quote }) {
 
       {tech.length > 0 && (
         <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">טכנולוגיות וכלים</div>
+          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>טכנולוגיות וכלים</div>
           <div className="flex flex-wrap gap-2">
-            {tech.map((x, i) => <span key={i} className="rounded-full bg-[#EFF6FF] px-3 py-1.5 text-[12.5px] font-bold text-[#1E3A8A]">{x}</span>)}
+            {tech.map((x, i) => <span key={i} className="rounded-full px-3 py-1.5 text-[12.5px] font-bold" style={{ backgroundColor: t.lavender, color: t.onLavender }}>{x}</span>)}
           </div>
         </div>
       )}
 
       {pay.length > 0 && (
         <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">תנאי תשלום</div>
+          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>תנאי תשלום</div>
           <div className="grid gap-2 sm:grid-cols-2">
             {pay.map((p, i) => (
-              <div key={i} className="rounded-xl border border-[#c9a14a55] bg-[#fbf6ea] p-3">
-                <div className="text-[13px] font-extrabold text-[#1E3A8A]">{p.title}</div>
-                {p.desc && <div className="text-[12px] text-[#6b6b80]">{p.desc}</div>}
+              <div key={i} className="rounded-xl p-3" style={{ backgroundColor: accentSoft, border: `1px solid ${t.gold}55` }}>
+                <div className="text-[13px] font-extrabold" style={headingStyle}>{p.title}</div>
+                {p.desc && <div className="text-[12px]" style={{ color: t.muted }}>{p.desc}</div>}
               </div>
             ))}
           </div>
@@ -538,14 +545,14 @@ function QuoteReview({ quote }: { quote: Quote }) {
 
       {terms.length > 0 && (
         <div>
-          <div className="mb-2 text-[15px] font-extrabold text-[#1E3A8A]">תנאים והגבלות</div>
+          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>תנאים והגבלות</div>
           <ul className="list-disc pr-5 text-[13px] leading-relaxed">{terms.map((x, i) => <li key={i}>{x}</li>)}</ul>
         </div>
       )}
 
       {quote.disclaimer && (
-        <div className="rounded-xl border border-[#c9a14a66] bg-[#fbf6ea] p-4">
-          <div className="text-[13px] font-extrabold text-[#1E3A8A]">לתשומת לבך</div>
+        <div className="rounded-xl p-4" style={{ backgroundColor: accentSoft, border: `1px solid ${t.gold}66` }}>
+          <div className="text-[13px] font-extrabold" style={headingStyle}>לתשומת לבך</div>
           <div className="text-[12.5px] leading-relaxed">{quote.disclaimer}</div>
         </div>
       )}
@@ -766,7 +773,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
         <section className="relative rounded-[16px] border border-[#EAECF0] bg-white px-5 py-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8 lg:px-8 lg:py-8">
           <div className="flex flex-col gap-5">
             <div className="space-y-2.5 text-right">
-              <div className="flex items-start justify-between gap-3 lg:pe-44">
+              <div className="flex items-start justify-between gap-3 pe-28 sm:pe-32 lg:pe-44">
                 <div className="min-w-0 flex-1">
                   <h1 className="text-[26px] font-bold leading-tight tracking-normal text-[#1A1A2E] sm:text-[22px]">מה תרצו ליצור היום?</h1>
                 </div>
@@ -875,7 +882,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   }
                 }}
                 placeholder={'תארו מה אתם צריכים... לדוגמה: "גרפיקה לאירוע יזום, כיכר העירייה, כותרת: הצטרפו לחגיגה!"'}
-                className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 pb-9 text-right text-[15px] font-normal leading-7 text-[#1A1A2E] outline-none placeholder:text-[#CBD5E1]"
+                className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[#1A1A2E] outline-none placeholder:text-[#CBD5E1]"
               />
               <input
                 ref={fileInputRef}
@@ -884,7 +891,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                 className="hidden"
                 onChange={(e) => void handleTextFileUpload(e.target.files?.[0] ?? null)}
               />
-              <div className="absolute bottom-3.5 left-3.5 flex flex-wrap items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -907,8 +914,8 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   <SparkIcon className="h-4 w-4" />
                   {selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}
                 </button>
+                <div className="order-last w-full text-right text-[11px] font-normal text-[#CBD5E1] sm:order-none sm:ms-auto sm:w-auto">{DESCRIPTION_MAX_LENGTH.toLocaleString('he-IL')} / {description.length.toLocaleString('he-IL')}</div>
               </div>
-              <div className="absolute bottom-5 right-4 text-[11px] font-normal text-[#CBD5E1]">{DESCRIPTION_MAX_LENGTH.toLocaleString('he-IL')} / {description.length.toLocaleString('he-IL')}</div>
             </div>
 
             {uploadError && (
@@ -928,8 +935,14 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
         <section className="mt-5 rounded-[14px] border border-[#EAECF0] bg-white px-5 py-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8">
           <div className="flex items-center justify-between">
             <h2 className="text-[18px] font-bold text-[#1A1A2E]">תוצרים אחרונים</h2>
-            <Link to="/admin/files" className="text-[13px] font-semibold text-[#2563EB] hover:underline">
-              ← כל התוצרים
+            <Link
+              to="/admin/files"
+              className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#BFDBFE] bg-[#EFF6FF] px-3.5 py-2 text-[13px] font-bold text-[#2563EB] transition hover:bg-[#DBEAFE]"
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+              </svg>
+              כל התוצרים
             </Link>
           </div>
 
@@ -997,9 +1010,21 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   </div>
 
                   <div className="border-t border-[#F1F5F9] px-3 py-3">
-                    <span className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-[9px] bg-[#2563EB] px-3 py-2 text-center text-[11px] font-bold text-white shadow-sm transition group-hover:bg-[#1D4ED8]">
-                      <span>{items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}</span>
-                      <span aria-hidden="true">←</span>
+                    <span
+                      className="inline-flex min-h-9 w-full items-center justify-center rounded-[9px] bg-[#2563EB] px-3 py-2 text-white shadow-sm transition group-hover:bg-[#1D4ED8]"
+                      title={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}
+                      aria-label={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}
+                    >
+                      {items.length === 0 ? (
+                        <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px]" aria-hidden="true">
+                          <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px]" aria-hidden="true">
+                          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                          <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+                        </svg>
+                      )}
                     </span>
                   </div>
                 </Link>
@@ -1594,6 +1619,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           previewUrl={previewUrl}
           brief={brief}
           requestId={requestId}
+          brandLogoUrl={brandLogoUrl}
           email={form.customerEmail}
           setEmail={(value) => update('customerEmail', value)}
           sendEmail={sendEmail}
@@ -2118,6 +2144,7 @@ function ResultCard({
   previewUrl,
   brief,
   requestId,
+  brandLogoUrl,
   email,
   setEmail,
   sendEmail,
@@ -2131,6 +2158,7 @@ function ResultCard({
   previewUrl: string | null;
   brief: ProductionBrief | null;
   requestId: string | null;
+  brandLogoUrl?: string | null;
   email: string;
   setEmail: (value: string) => void;
   sendEmail: () => void;
@@ -2219,11 +2247,11 @@ function ResultCard({
             </a>
             {output.output_type === 'pdf' && output.text_content && (
               <>
-                <button type="button" onClick={() => exportRichTextDocx(textBlocks)} title="ייצוא Word" aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
+                <button type="button" onClick={() => exportRichTextDocx(textBlocks, undefined, brandLogoUrl)} title="ייצוא Word" aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
                   <WordIcon className="h-4 w-4" />
                   Word
                 </button>
-                <button type="button" onClick={() => exportRichTextPdf(textBlocks)} title="ייצוא PDF" aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
+                <button type="button" onClick={() => exportRichTextPdf(textBlocks, undefined, brandLogoUrl)} title="ייצוא PDF" aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
                   <PdfIcon className="h-4 w-4" />
                   PDF
                 </button>
@@ -2237,11 +2265,11 @@ function ResultCard({
                 <button type="button" onClick={copyTextOutput} className={SECONDARY_BUTTON}>
                   {copied ? 'הועתק' : 'העתקה'}
                 </button>
-                <button type="button" onClick={() => exportRichTextDocx(textBlocks)} title="ייצוא Word" aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
+                <button type="button" onClick={() => exportRichTextDocx(textBlocks, undefined, brandLogoUrl)} title="ייצוא Word" aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
                   <WordIcon className="h-4 w-4" />
                   Word
                 </button>
-                <button type="button" onClick={() => exportRichTextPdf(textBlocks)} title="ייצוא PDF" aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
+                <button type="button" onClick={() => exportRichTextPdf(textBlocks, undefined, brandLogoUrl)} title="ייצוא PDF" aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
                   <PdfIcon className="h-4 w-4" />
                   PDF
                 </button>

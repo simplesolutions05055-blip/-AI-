@@ -161,6 +161,10 @@ Deno.serve(async (req) => {
       const quoteBrandId = (brief as { brand_id?: string }).brand_id ?? null;
       let quoteBrandName: string | null = null;
       let quoteBrandColors: string[] = [];
+      // Full role-based palette + style notes so the renderer can apply the brand's
+      // whole design language (semantic role mapping, contrast, flat vs gradient).
+      let quoteBrandPalette: Array<{ hex: string; role: string | null }> = [];
+      let quoteBrandStyleNotes: string | null = null;
       if (quoteBrandId) {
         const [{ data: qBrand }, { data: qSources }] = await Promise.all([
           database.from('brands').select('name, color_palette, style_notes, is_active, client_type').eq('id', quoteBrandId).single(),
@@ -170,10 +174,16 @@ Deno.serve(async (req) => {
         if (qBrain.content) (brief as Record<string, unknown>).business_content_context = qBrain.content;
         if (qBrain.visual) (brief as Record<string, unknown>).brand_guidelines = qBrain.visual;
         quoteBrandName = (qBrand as { name?: string } | null)?.name ?? null;
-        quoteBrandColors = ((qBrand as { color_palette?: Array<{ hex?: string }> } | null)?.color_palette ?? [])
-          .map((c) => c?.hex)
-          .filter((hex): hex is string => typeof hex === 'string' && /^#?[0-9a-fA-F]{3,8}$/.test(hex.trim()))
-          .map((hex) => (hex.trim().startsWith('#') ? hex.trim() : `#${hex.trim()}`));
+        quoteBrandStyleNotes = (qBrand as { style_notes?: string | null } | null)?.style_notes ?? null;
+        const normHex = (hex?: string): string | null => {
+          if (typeof hex !== 'string' || !/^#?[0-9a-fA-F]{3,8}$/.test(hex.trim())) return null;
+          const h = hex.trim();
+          return h.startsWith('#') ? h : `#${h}`;
+        };
+        quoteBrandPalette = ((qBrand as { color_palette?: Array<{ hex?: string; role?: string }> } | null)?.color_palette ?? [])
+          .map((c) => ({ hex: normHex(c?.hex), role: c?.role ?? null }))
+          .filter((c): c is { hex: string; role: string | null } => !!c.hex);
+        quoteBrandColors = quoteBrandPalette.map((c) => c.hex);
       }
 
       const { quote, usage } = await generateQuote(fallbackSystemMessage, brief, overrideKey);
@@ -187,6 +197,8 @@ Deno.serve(async (req) => {
           name: quoteBrandName,
           logo_data_url: logoRef ? `data:${logoRef.mime};base64,${logoRef.base64}` : null,
           colors: quoteBrandColors,
+          palette: quoteBrandPalette,
+          style_notes: quoteBrandStyleNotes,
         };
       }
       await recordUsageAndCost(database, requestId ?? null, {

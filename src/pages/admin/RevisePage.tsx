@@ -686,9 +686,6 @@ export default function RevisePage() {
                     </button>
                   </>
                 )}
-                <Link to="/admin/files" className="bg-brand text-white rounded-lg px-4 py-2 text-sm font-semibold hover:opacity-90">
-                  לכל התוצרים
-                </Link>
               </div>
             </div>
 

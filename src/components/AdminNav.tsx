@@ -95,7 +95,9 @@ export default function AdminNav({
     // RTL playbook §17: primary navigation on the right
     <aside className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-[var(--border)] bg-white p-4 pb-[calc(var(--safe-bottom)+1rem)] pt-[calc(var(--safe-top)+1rem)] lg:w-60">
       <div className="mb-6 shrink-0">
-        <img src="/primeos-logo.png" alt="PrimeOS" className="h-10 w-auto object-contain" />
+        <Link to="/" onClick={onNavigate} className="flex justify-center">
+          <img src="/primeos-logo.png" alt="PrimeOS" className="h-10 w-auto object-contain" />
+        </Link>
         <div className="text-xs text-[var(--muted)] ltr">{email}</div>
       </div>
       <nav className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain pe-1">

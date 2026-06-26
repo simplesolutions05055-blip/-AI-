@@ -1,6 +1,7 @@
 import {
   AlignmentType,
   Document,
+  Header,
   HeadingLevel,
   ImageRun,
   LevelFormat,
@@ -149,8 +150,82 @@ export function pdfFilenameFromBlocks(blocks: RichTextBlock[], fallback = 'מס�
   return docxFilenameFromBlocks(blocks, fallback).replace(/\.docx$/i, '.pdf');
 }
 
-export async function exportRichTextDocx(blocks: RichTextBlock[], filename = docxFilenameFromBlocks(blocks)) {
+// Rasterize any image URL (PNG, JPG, and crucially SVG) to PNG bytes via a
+// browser canvas. Word's ImageRun can't reliably embed SVG/odd formats, so we
+// render through the same engine the browser uses for the PDF path — guaranteeing
+// the logo that shows in the PDF also lands in the DOCX. Returns null on failure.
+async function rasterizeToPng(
+  url: string,
+): Promise<{ data: Uint8Array; width: number; height: number } | null> {
+  try {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = url;
+    await (img.decode
+      ? img.decode().catch(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              img.onload = () => resolve();
+              img.onerror = () => reject(new Error('logo load failed'));
+            }),
+        )
+      : new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error('logo load failed'));
+        }));
+
+    // SVGs may report 0 natural size — fall back to a sane default box.
+    const w = img.naturalWidth || 300;
+    const h = img.naturalHeight || 96;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) return null;
+    const data = new Uint8Array(await blob.arrayBuffer());
+    return { data, width: w, height: h };
+  } catch {
+    return null;
+  }
+}
+
+// Build a DOCX page header carrying the brand logo, pinned to the top-left
+// corner (matching the reference quote layout). Returns undefined when no logo
+// is supplied or the image can't be loaded, so the doc simply renders without one.
+async function buildLogoHeader(logoUrl?: string | null): Promise<Header | undefined> {
+  if (!logoUrl) return undefined;
+  const raster = await rasterizeToPng(logoUrl);
+  if (!raster) return undefined;
+  const transformation = fitImage({ width: raster.width, height: raster.height }, { maxWidth: 150, maxHeight: 48 });
+  return new Header({
+    children: [
+      new Paragraph({
+        // Left-aligned even in an RTL document → logo sits at the top-left.
+        alignment: AlignmentType.LEFT,
+        spacing: { after: 80 },
+        children: [
+          new ImageRun({
+            type: 'png',
+            data: raster.data,
+            transformation,
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+export async function exportRichTextDocx(
+  blocks: RichTextBlock[],
+  filename = docxFilenameFromBlocks(blocks),
+  logoUrl?: string | null,
+) {
   const children = (await Promise.all(blocks.map(blockToDocxParagraphs))).flat();
+  const logoHeader = await buildLogoHeader(logoUrl);
   const doc = new Document({
     creator: 'AI Maor Atiya',
     styles: {
@@ -188,6 +263,7 @@ export async function exportRichTextDocx(blocks: RichTextBlock[], filename = doc
             },
           },
         },
+        ...(logoHeader ? { headers: { default: logoHeader } } : {}),
         children,
       },
     ],
@@ -196,7 +272,11 @@ export async function exportRichTextDocx(blocks: RichTextBlock[], filename = doc
   downloadBlob(blob, filename);
 }
 
-export async function exportRichTextPdf(blocks: RichTextBlock[], filename = pdfFilenameFromBlocks(blocks)) {
+export async function exportRichTextPdf(
+  blocks: RichTextBlock[],
+  filename = pdfFilenameFromBlocks(blocks),
+  logoUrl?: string | null,
+) {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import('html2canvas'),
     import('jspdf'),
@@ -224,7 +304,7 @@ export async function exportRichTextPdf(blocks: RichTextBlock[], filename = pdfF
   document.body.appendChild(container);
 
   try {
-    await buildPdfPages(container, blocks, { pageWidth, pageHeight, margin, pageContentHeight });
+    await buildPdfPages(container, blocks, { pageWidth, pageHeight, margin, pageContentHeight }, logoUrl);
     await (document as unknown as { fonts?: { ready?: Promise<void> } }).fonts?.ready?.catch(() => {});
     const canvas = await html2canvas(container, {
       backgroundColor: '#ffffff',
@@ -271,6 +351,7 @@ async function buildPdfPages(
   container: HTMLDivElement,
   blocks: RichTextBlock[],
   page: { pageWidth: number; pageHeight: number; margin: number; pageContentHeight: number },
+  logoUrl?: string | null,
 ) {
   const newPage = () => {
     const el = document.createElement('div');
@@ -289,6 +370,20 @@ async function buildPdfPages(
   };
 
   let current = newPage();
+
+  // Brand logo header, pinned to the top-left of the first page.
+  if (logoUrl) {
+    const header = document.createElement('div');
+    // In an RTL container flex-end maps to the physical left → logo top-left.
+    header.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:20px;';
+    const img = document.createElement('img');
+    img.src = logoUrl;
+    img.crossOrigin = 'anonymous';
+    img.style.cssText = 'max-height:48px;max-width:160px;object-fit:contain;display:block;';
+    header.appendChild(img);
+    current.appendChild(header);
+    await waitForHtmlImages(header);
+  }
   for (const block of blocks) {
     const wrapper = document.createElement('div');
     wrapper.innerHTML = blockToPdfHtml(block, page.pageContentHeight - 56);

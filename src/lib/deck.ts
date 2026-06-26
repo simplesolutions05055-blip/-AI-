@@ -631,11 +631,17 @@ export async function renderBriefToPdf(
   if (brief?.style) detailRows.push(['סגנון', brief.style]);
   if (brand?.name) detailRows.push(['מותג', brand.name]);
 
-  const keyMessages: string[] = Array.isArray(brief?.key_messages)
-    ? brief.key_messages
-    : Array.isArray(brief?.must_include)
-      ? brief.must_include
-      : [];
+  // Revision notes are pushed into must_include to STEER regeneration, but they
+  // are internal instructions ("תיקון משתמש: …") — never customer-facing content.
+  // Strip them so the AI-fix text can't leak onto a slide / into the brief output.
+  const isRevisionMarker = (s: string) => /^\s*תיקון(\s+משתמש)?\s*:/.test(s);
+  const keyMessages: string[] = (
+    Array.isArray(brief?.key_messages)
+      ? brief.key_messages
+      : Array.isArray(brief?.must_include)
+        ? brief.must_include
+        : []
+  ).filter((m: unknown): m is string => typeof m === 'string' && !isRevisionMarker(m));
 
   // Each entry is a self-contained block. Blocks are packed onto pages without
   // ever being split, so an image (or any section) is never cut across pages.

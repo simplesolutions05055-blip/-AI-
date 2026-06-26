@@ -23,9 +23,14 @@ export interface Quote {
   meta?: { doc?: string; date?: string; project_type?: string; platform?: string };
   summary?: string | null;
   headline?: { label?: string; sub?: string; price?: string };
+  // Section headings come from the model so they match the brief's domain
+  // (event / show / service) instead of fixed software-development wording.
+  components_title?: string | null;
   components?: QuoteComponent[];
+  included_title?: string | null;
   included?: string[];
   ownership_note?: string | null;
+  technologies_title?: string | null;
   technologies?: string[];
   payment_terms?: Array<{ title: string; desc?: string }>;
   terms?: string[];
@@ -33,19 +38,32 @@ export interface Quote {
   signature?: boolean;
   // Branding (optional). Defaults to the Simple Solutions palette.
   company?: { name?: string; site?: string; cta?: string };
-  // Brand kit pulled from the selected brand (logo + palette), filled by the Edge
-  // function. When present the renderer shows the logo and themes the doc with the
-  // brand colors instead of the default blue palette.
-  brand?: { name?: string | null; logo_data_url?: string | null; colors?: string[] } | null;
+  // Brand kit pulled from the selected brand, filled by the Edge function. When
+  // present the renderer shows the logo and themes the WHOLE doc with the brand's
+  // design language — the full role-based palette plus the style notes (which pick
+  // a flat vs. gradient treatment) — instead of the default blue palette.
+  // `palette` (role-aware) is preferred; `colors` is the legacy flat fallback.
+  brand?: {
+    name?: string | null;
+    logo_data_url?: string | null;
+    colors?: string[];
+    palette?: Array<{ hex: string; role?: string | null }> | null;
+    style_notes?: string | null;
+  } | null;
 }
 
 export interface QuoteTheme {
-  navy: string;     // header + total box
-  navy2: string;    // gradient end
-  gold: string;     // accent
-  lavender: string; // soft box fill
-  ink: string;      // body text
-  muted: string;
+  navy: string;       // header + total box (brand primary)
+  navy2: string;      // gradient end (brand secondary)
+  gold: string;       // accent (brand accent)
+  lavender: string;   // soft box fill (light surface)
+  ink: string;        // body text
+  muted: string;      // secondary text
+  onNavy: string;     // text drawn over the navy header/total (contrast-picked)
+  onNavyMuted: string;// muted text over navy
+  onGold: string;     // text drawn over the accent (contrast-picked)
+  onLavender: string; // strong text over the soft surface
+  flat: boolean;      // true → solid blocks instead of gradients (minimal brands)
 }
 
 // Blue palette matching the app (primary #2563EB), not purple.
@@ -56,6 +74,11 @@ const DEFAULT_THEME: QuoteTheme = {
   lavender: '#EFF6FF',
   ink: '#1F2233',
   muted: '#64748B',
+  onNavy: '#FFFFFF',
+  onNavyMuted: 'rgba(255,255,255,0.82)',
+  onGold: '#1E3A8A',
+  onLavender: '#1E3A8A',
+  flat: false,
 };
 
 // Parse a #rrggbb / #rgb hex into [r,g,b]; null if unparseable.
@@ -68,26 +91,101 @@ function hexToRgb(hex: string): [number, number, number] | null {
 
 // Mix a hex color toward white by `amount` (0..1) — used to derive the soft
 // "lavender" fill from a brand color so the boxes stay light and readable.
-function tint(hex: string, amount: number): string {
+export function tint(hex: string, amount: number): string {
   const rgb = hexToRgb(hex);
   if (!rgb) return hex;
   const mix = rgb.map((c) => Math.round(c + (255 - c) * amount));
   return `#${mix.map((c) => c.toString(16).padStart(2, '0')).join('')}`;
 }
 
-// Build a quote theme from a brand's palette. Darkest color drives the navy
-// header/total boxes, a brighter one the gradient end, and a distinct accent the
-// gold highlights. Falls back to defaults for anything the palette doesn't cover.
+// Perceived luminance (0..255) — drives contrast decisions.
+function lum([r, g, b]: [number, number, number]): number {
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+// Pick black or white body text for legible contrast over `hex`.
+function readableOn(hex: string, dark = '#1F2233', light = '#FFFFFF'): string {
+  const rgb = hexToRgb(hex);
+  return rgb && lum(rgb) > 150 ? dark : light;
+}
+
+// Rough saturation (0..1) of a hex — used to find the liveliest accent.
+function saturation([r, g, b]: [number, number, number]): number {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  return max === 0 ? 0 : (max - min) / max;
+}
+
+// Does the brand's style note ask for a flat / minimal treatment?
+function wantsFlat(notes?: string | null): boolean {
+  return !!notes && /\b(flat|minimal|clean)\b|שטוח|מינימ|נקי|פלאט/i.test(notes);
+}
+
+// Build the full quote theme from a brand's role-based palette + style notes.
+// This is the heart of "use the brand's whole design language": every role maps
+// to a semantic slot, contrast colors are derived so text stays legible on any
+// brand color (light brands included), and the style notes pick flat vs gradient.
+// Falls back to a luminance heuristic when roles are missing, and to defaults for
+// anything the palette doesn't cover.
+export function themeFromBrand(
+  palette: Array<{ hex: string; role?: string | null }>,
+  styleNotes?: string | null,
+): Partial<QuoteTheme> {
+  const valid = palette
+    .map((c) => ({ hex: c.hex, role: (c.role ?? '').toLowerCase(), rgb: hexToRgb(c.hex) }))
+    .filter((c) => c.rgb) as Array<{ hex: string; role: string; rgb: [number, number, number] }>;
+  if (!valid.length) return wantsFlat(styleNotes) ? { flat: true } : {};
+
+  const byRole = (r: string) => valid.find((c) => c.role === r)?.hex;
+  const sortedDark = [...valid].sort((a, b) => lum(a.rgb) - lum(b.rgb));
+  const sortedSat = [...valid].sort((a, b) => saturation(b.rgb) - saturation(a.rgb));
+
+  // primary → navy (header/total). Role first, else the darkest color.
+  const navy = byRole('primary') ?? sortedDark[0].hex;
+  // secondary → gradient end. Role first, else next-darkest distinct color.
+  const navy2 = byRole('secondary') ?? sortedDark.find((c) => c.hex !== navy)?.hex ?? navy;
+  // accent → gold highlights. Role first, else the most saturated color that
+  // isn't the navy pair (keeps badges/pills from blending into the header).
+  const accent =
+    byRole('accent') ??
+    sortedSat.find((c) => c.hex !== navy && c.hex !== navy2)?.hex ??
+    sortedSat[0].hex;
+  // text → body ink. Role first, else the app default.
+  const ink = byRole('text') ?? DEFAULT_THEME.ink;
+  // background → soft surface. Use the brand's light background if it's actually
+  // light; otherwise tint the secondary toward white so boxes stay readable.
+  const bgRole = byRole('background');
+  const bgRoleLight = bgRole && (hexToRgb(bgRole) ? lum(hexToRgb(bgRole)!) > 220 : false);
+  const lavender = bgRoleLight ? bgRole! : tint(navy2, 0.9);
+
+  return {
+    navy,
+    navy2,
+    gold: accent,
+    lavender,
+    ink,
+    onNavy: readableOn(navy),
+    onNavyMuted: readableOn(navy) === '#FFFFFF' ? 'rgba(255,255,255,0.82)' : 'rgba(0,0,0,0.6)',
+    onGold: readableOn(accent),
+    onLavender: readableOn(lavender, navy, '#FFFFFF'),
+    flat: wantsFlat(styleNotes),
+  };
+}
+
+// Legacy flat-list entry point (kept for callers that only have hex strings).
+// Treats the list as role-less so the heuristic ordering applies.
 export function themeFromBrandColors(colors: string[]): Partial<QuoteTheme> {
-  const valid = colors.map((c) => ({ hex: c, rgb: hexToRgb(c) })).filter((c) => c.rgb) as Array<{ hex: string; rgb: [number, number, number] }>;
-  if (!valid.length) return {};
-  const lum = ([r, g, b]: [number, number, number]) => 0.299 * r + 0.587 * g + 0.114 * b;
-  const sorted = [...valid].sort((a, b) => lum(a.rgb) - lum(b.rgb));
-  const navy = sorted[0].hex;
-  const navy2 = sorted[1]?.hex ?? navy;
-  // Accent: the most saturated/brightest color that isn't the navy pair.
-  const accent = sorted.slice(2).reverse()[0]?.hex ?? sorted[sorted.length - 1].hex;
-  return { navy, navy2, gold: accent, lavender: tint(navy2, 0.9) };
+  return themeFromBrand((colors ?? []).map((hex) => ({ hex })));
+}
+
+// Resolve the brand block on a quote into a full theme (palette preferred,
+// flat colors as fallback), folding in the style notes.
+export function themeFromQuoteBrand(brand: Quote['brand']): Partial<QuoteTheme> {
+  if (!brand) return {};
+  const palette =
+    brand.palette && brand.palette.length
+      ? brand.palette
+      : (brand.colors ?? []).map((hex) => ({ hex }));
+  return themeFromBrand(palette, brand.style_notes);
 }
 
 // The session-scoped one-off OpenAI key the user may have entered (shared key
@@ -135,8 +233,10 @@ export function downloadBlob(blob: Blob, filename: string) {
 // ── Quote → A4 PDF. Each section is a self-contained .q-block; blocks are packed
 // onto pages by measuring height, never split — so cards/boxes never get cut. ──
 export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<QuoteTheme>): Promise<Blob> {
-  const brandTheme = themeFromBrandColors(quote.brand?.colors ?? []);
+  const brandTheme = themeFromQuoteBrand(quote.brand);
   const t = { ...DEFAULT_THEME, ...brandTheme, ...(themeOverride ?? {}) };
+  // Flat brands get solid blocks; gradient brands keep the two-tone sweep.
+  const navyBg = t.flat ? t.navy : `linear-gradient(135deg,${t.navy},${t.navy2})`;
   const logoUrl = quote.brand?.logo_data_url || null;
   const esc = (s: unknown) =>
     String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -198,7 +298,7 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
     for (let i = 0; i < comps.length; i += 2) {
       const pair = comps.slice(i, i + 2);
       blocks.push(`<div class="q-block">
-        ${i === 0 ? '<h2 class="q-h2">היקף הפיתוח — רכיבי המערכת</h2>' : ''}
+        ${i === 0 ? `<h2 class="q-h2">${esc(quote.components_title || 'פירוט ההצעה')}</h2>` : ''}
         <div class="q-cards">
         ${pair.map((c, j) => `<div class="q-card">
           <div class="q-card-num">${i + j + 1}</div>
@@ -220,7 +320,7 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
     for (let i = 0; i < included.length; i += 6) {
       const chunk = included.slice(i, i + 6);
       blocks.push(`<div class="q-block">
-        ${i === 0 ? '<h2 class="q-h2">כלול בפיתוח</h2>' : ''}
+        ${i === 0 ? `<h2 class="q-h2">${esc(quote.included_title || 'מה כולל')}</h2>` : ''}
         <div class="q-checks">
           ${chunk.map((x) => `<div class="q-check"><span class="q-tick">✓</span><span>${esc(x)}</span></div>`).join('')}
         </div>
@@ -237,7 +337,7 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
   const tech = Array.isArray(quote.technologies) ? quote.technologies.filter(has) : [];
   if (tech.length) {
     blocks.push(`<div class="q-block">
-      <h2 class="q-h2">טכנולוגיות וכלים</h2>
+      <h2 class="q-h2">${esc(quote.technologies_title || 'טכנולוגיות וכלים')}</h2>
       <div class="q-tags">${tech.map((x) => `<span class="q-tag">${esc(x)}</span>`).join('')}</div>
     </div>`);
   }
@@ -305,64 +405,68 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
   const CONTENT_W = PAGE_W - MARGIN * 2;
   const GAP = 12;
   const font = `'Heebo','Assistant','Arial Hebrew',Arial,sans-serif`;
+  // Soft accent surface for the payment/note boxes, derived from the brand accent
+  // so they stay on-brand instead of the old fixed cream.
+  const accentSoft = tint(t.gold, 0.86);
 
   const css = `
     .q-block{width:${CONTENT_W}px;box-sizing:border-box;font-family:${font};direction:rtl;text-align:right;color:${t.ink}}
     .q-h2{font-size:18px;font-weight:800;color:${t.navy};margin:0 0 10px;position:relative;padding-right:14px}
     .q-h2::before{content:'';position:absolute;right:0;top:4px;width:6px;height:18px;background:${t.gold};border-radius:3px}
-    .q-header{background:linear-gradient(135deg,${t.navy},${t.navy2});border-radius:16px;padding:28px 32px;color:#fff}
+    .q-header{background:${navyBg};border-radius:16px;padding:28px 32px;color:${t.onNavy}}
     .q-head-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
-    .q-logo{font-size:16px;font-weight:800;letter-spacing:1px;color:#fff}
+    .q-logo{font-size:16px;font-weight:800;letter-spacing:1px;color:${t.onNavy}}
     .q-logo-img{max-height:40px;max-width:160px;object-fit:contain;display:block}
     .q-foot-logo{max-height:30px;max-width:140px;object-fit:contain;display:block;margin-bottom:2px}
-    .q-badge{background:${t.gold};color:${t.navy};font-size:12px;font-weight:800;padding:5px 14px;border-radius:20px}
-    .q-header h1{font-size:30px;font-weight:800;margin:0;line-height:1.2;color:#fff}
-    .q-sub{font-size:15px;margin:10px 0 0;color:#d7d7ea;line-height:1.5}
+    .q-badge{background:${t.gold};color:${t.onGold};font-size:12px;font-weight:800;padding:5px 14px;border-radius:20px;
+      display:inline-flex;align-items:center;justify-content:center;line-height:1}
+    .q-header h1{font-size:30px;font-weight:800;margin:0;line-height:1.2;color:${t.onNavy}}
+    .q-sub{font-size:15px;margin:10px 0 0;color:${t.onNavyMuted};line-height:1.5}
     .q-meta{display:flex;gap:10px}
     .q-meta-cell{flex:1;background:${t.lavender};border-radius:10px;padding:10px 12px;text-align:center}
     .q-meta-k{font-size:11px;color:${t.muted};margin-bottom:3px}
-    .q-meta-v{font-size:14px;font-weight:700;color:${t.navy}}
-    .q-soft{background:${t.lavender};border-radius:12px;padding:16px 18px;font-size:14px;line-height:1.65}
+    .q-meta-v{font-size:14px;font-weight:700;color:${t.onLavender}}
+    .q-soft{background:${t.lavender};border-radius:12px;padding:16px 18px;font-size:14px;line-height:1.65;color:${t.ink}}
     .q-soft-strong{font-weight:700;border-right:4px solid ${t.gold}}
-    .q-total{background:linear-gradient(135deg,${t.navy},${t.navy2});border-radius:14px;padding:20px 24px;color:#fff;
+    .q-total{background:${navyBg};border-radius:14px;padding:20px 24px;color:${t.onNavy};
       display:flex;align-items:center;justify-content:space-between;gap:16px}
-    .q-total-label{font-size:18px;font-weight:800;color:#fff}
-    .q-total-sub{font-size:13px;color:#cfcfe6;margin-top:4px;line-height:1.5}
+    .q-total-label{font-size:18px;font-weight:800;color:${t.onNavy}}
+    .q-total-sub{font-size:13px;color:${t.onNavyMuted};margin-top:4px;line-height:1.5}
     .q-total-price{font-size:28px;font-weight:800;color:${t.gold};white-space:nowrap}
     .q-cards{display:flex;gap:12px;flex-wrap:wrap}
     .q-card{flex:1 1 calc(50% - 6px);min-width:calc(50% - 6px);background:${t.lavender};border-radius:12px;padding:14px 16px;
       display:flex;gap:12px;align-items:flex-start;box-sizing:border-box}
     .q-card-ghost{background:transparent}
-    .q-card-num{flex:none;width:26px;height:26px;border-radius:50%;background:${t.gold};color:${t.navy};
-      font-size:13px;font-weight:800;text-align:center;line-height:23px}
-    .q-card-title{font-size:14px;font-weight:800;color:${t.navy};margin-bottom:3px}
+    .q-card-num{flex:none;width:26px;height:26px;border-radius:50%;background:${t.gold};color:${t.onGold};
+      font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;line-height:1}
+    .q-card-title{font-size:14px;font-weight:800;color:${t.onLavender};margin-bottom:3px}
     .q-card-desc{font-size:12.5px;color:${t.muted};line-height:1.5}
     .q-card-price{font-size:13px;font-weight:800;color:${t.gold};margin-top:6px}
     .q-checks{display:flex;flex-wrap:wrap;gap:8px 12px}
     .q-check{flex:1 1 calc(50% - 6px);min-width:calc(50% - 6px);background:${t.lavender};border-radius:9px;
-      padding:9px 12px;font-size:13px;display:flex;gap:8px;align-items:flex-start;line-height:1.45;box-sizing:border-box}
-    .q-tick{flex:none;width:18px;height:18px;border-radius:50%;background:${t.gold};color:${t.navy};
-      font-size:11px;font-weight:800;text-align:center;line-height:15px}
+      padding:9px 12px;font-size:13px;display:flex;gap:8px;align-items:flex-start;line-height:1.45;box-sizing:border-box;color:${t.ink}}
+    .q-tick{flex:none;width:18px;height:18px;border-radius:50%;background:${t.gold};color:${t.onGold};
+      font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;line-height:1}
     .q-tags{display:flex;flex-wrap:wrap;gap:8px}
-    .q-tag{background:${t.lavender};color:${t.navy};font-size:13px;font-weight:700;padding:6px 14px;border-radius:18px}
-    .q-pay{flex:1 1 calc(50% - 6px);min-width:calc(50% - 6px);background:#fbf6ea;border:1px solid ${t.gold}55;
+    .q-tag{background:${t.lavender};color:${t.onLavender};font-size:13px;font-weight:700;padding:6px 14px;border-radius:18px}
+    .q-pay{flex:1 1 calc(50% - 6px);min-width:calc(50% - 6px);background:${accentSoft};border:1px solid ${t.gold}55;
       border-radius:12px;padding:14px 16px;box-sizing:border-box}
     .q-pay-title{font-size:14px;font-weight:800;color:${t.navy};margin-bottom:4px}
     .q-pay-desc{font-size:12.5px;color:${t.muted};line-height:1.5}
     .q-bullets{margin:0;padding:0 18px 0 0;font-size:13.5px;line-height:1.7}
     .q-bullets li{margin:4px 0}
-    .q-note{background:#fbf6ea;border:1px solid ${t.gold}66;border-radius:12px;padding:14px 18px}
+    .q-note{background:${accentSoft};border:1px solid ${t.gold}66;border-radius:12px;padding:14px 18px}
     .q-note-title{font-size:14px;font-weight:800;color:${t.navy};margin-bottom:5px}
     .q-note-body{font-size:12.5px;color:${t.ink};line-height:1.6}
     .q-sign{display:flex;gap:18px;margin-top:8px}
     .q-sign-cell{flex:1;text-align:center}
     .q-sign-line{border-bottom:1.5px solid ${t.navy}66;height:34px;margin-bottom:6px}
     .q-sign-label{font-size:12px;color:${t.muted}}
-    .q-footer{background:linear-gradient(135deg,${t.navy},${t.navy2});border-radius:14px;padding:18px 24px;color:#fff;
+    .q-footer{background:${navyBg};border-radius:14px;padding:18px 24px;color:${t.onNavy};
       display:flex;align-items:center;justify-content:space-between;gap:16px}
     .q-foot-name{font-size:15px;font-weight:800}
-    .q-foot-site{font-size:12px;font-weight:500;color:#cfcfe6;margin-top:2px}
-    .q-cta{background:${t.gold};color:${t.navy};font-size:14px;font-weight:800;padding:9px 20px;border-radius:22px}
+    .q-foot-site{font-size:12px;font-weight:500;color:${t.onNavyMuted};margin-top:2px}
+    .q-cta{background:${t.gold};color:${t.onGold};font-size:14px;font-weight:800;padding:9px 20px;border-radius:22px}
   `;
 
   const container = document.createElement('div');

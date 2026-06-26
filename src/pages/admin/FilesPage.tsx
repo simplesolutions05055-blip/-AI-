@@ -5,6 +5,30 @@ import { formatHebrewDateTime } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import type { OutputType } from '@/types/db';
+import { parseRichText, exportRichTextPdf, exportRichTextDocx, RichTextPreview } from '@/lib/richText';
+
+const ico = 'h-4 w-4 shrink-0';
+const EyeIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" className={ico} aria-hidden="true">
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+  </svg>
+);
+const DownloadIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" className={ico} aria-hidden="true">
+    <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const UploadIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" className={ico} aria-hidden="true">
+    <path d="M12 21V9m0 0 4 4m-4-4-4 4M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const EditIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" className={ico} aria-hidden="true">
+    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+  </svg>
+);
 
 interface FileRow {
   id: string;
@@ -16,6 +40,7 @@ interface FileRow {
   created_at: string;
   creator: string;
   request_source: string | null;
+  brand_logo_url: string | null;
 }
 
 const TYPE_ICON: Record<OutputType, string> = {
@@ -61,6 +86,7 @@ export default function FilesPage() {
   const [lastIndex, setLastIndex] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [textPreview, setTextPreview] = useState<FileRow | null>(null);
+  const [viewerFile, setViewerFile] = useState<{ row: FileRow; url: string } | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [targetFileRow, setTargetFileRow] = useState<FileRow | null>(null);
@@ -102,13 +128,14 @@ export default function FilesPage() {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         setTextPreview(null);
+        setViewerFile(null);
       }
     }
-    if (textPreview) {
+    if (textPreview || viewerFile) {
       window.addEventListener('keydown', handleKeyDown);
     }
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [textPreview]);
+  }, [textPreview, viewerFile]);
 
   useEffect(() => {
     const client = createSupabaseBrowserClient();
@@ -120,7 +147,7 @@ export default function FilesPage() {
         .select('id, request_id, output_type, storage_path, text_content, mime_type, created_at')
         .order('created_at', { ascending: false })
         .limit(100);
-      const rawRows = (data ?? []) as Omit<FileRow, 'creator' | 'request_source'>[];
+      const rawRows = (data ?? []) as Omit<FileRow, 'creator' | 'request_source' | 'brand_logo_url'>[];
 
       // The admin currently using the site — credited for simulator outputs.
       const { data: auth } = await client.auth.getUser();
@@ -131,15 +158,20 @@ export default function FilesPage() {
       const requestIds = Array.from(new Set(rawRows.map((r) => r.request_id).filter(Boolean)));
       const creatorByRequest: Record<string, string> = {};
       const sourceByRequest: Record<string, string | null> = {};
+      // request -> brand logo path, so document exports carry the brand logo.
+      const brandPathByRequest: Record<string, string | null> = {};
       if (requestIds.length > 0) {
         const { data: reqs } = await client
           .from('requests')
-          .select('id, customer_email, structured_brief, conversations!requests_conversation_id_fkey(whatsapp_from, simulated)')
+          .select('id, customer_email, structured_brief, brand_id, conversations!requests_conversation_id_fkey(whatsapp_from, simulated)')
           .in('id', requestIds);
+        const brandIds = new Set<string>();
+        const brandIdByRequest: Record<string, string | null> = {};
         for (const req of (reqs ?? []) as Array<{
           id: string;
           customer_email: string | null;
           structured_brief: { source?: string | null } | null;
+          brand_id: string | null;
           conversations:
             | { whatsapp_from: string | null; simulated: boolean | null }
             | { whatsapp_from: string | null; simulated: boolean | null }[]
@@ -152,21 +184,56 @@ export default function FilesPage() {
             ? `${siteUser} (סימולטור)`
             : sender || req.customer_email || 'לא ידוע';
           sourceByRequest[req.id] = req.structured_brief?.source ?? null;
+          brandIdByRequest[req.id] = req.brand_id ?? null;
+          if (req.brand_id) brandIds.add(req.brand_id);
+        }
+
+        // Resolve each brand's logo path once, then map back per request.
+        if (brandIds.size > 0) {
+          const { data: brandRows } = await client
+            .from('brands')
+            .select('id, logo_path')
+            .in('id', Array.from(brandIds));
+          const logoPathByBrand: Record<string, string | null> = {};
+          for (const b of (brandRows ?? []) as Array<{ id: string; logo_path: string | null }>) {
+            logoPathByBrand[b.id] = b.logo_path ?? null;
+          }
+          for (const [reqId, brandId] of Object.entries(brandIdByRequest)) {
+            brandPathByRequest[reqId] = brandId ? logoPathByBrand[brandId] ?? null : null;
+          }
         }
       }
 
-      const rows: FileRow[] = rawRows.map((r) => ({
-        ...r,
-        creator: creatorByRequest[r.request_id] ?? 'לא ידוע',
-        request_source: sourceByRequest[r.request_id] ?? null,
-      }));
+      // Sign the distinct brand-logo paths so the export buttons can embed them.
+      const distinctLogoPaths = Array.from(
+        new Set(Object.values(brandPathByRequest).filter((p): p is string => !!p)),
+      );
+      const signedLogoByPath: Record<string, string> = {};
+      await Promise.all(
+        distinctLogoPaths.map(async (path) => {
+          const { data: s } = await client.storage.from('branding').createSignedUrl(path, 600);
+          if (s?.signedUrl) signedLogoByPath[path] = s.signedUrl;
+        }),
+      );
+
+      const rows: FileRow[] = rawRows.map((r) => {
+        const logoPath = brandPathByRequest[r.request_id] ?? null;
+        return {
+          ...r,
+          creator: creatorByRequest[r.request_id] ?? 'לא ידוע',
+          request_source: sourceByRequest[r.request_id] ?? null,
+          brand_logo_url: logoPath ? signedLogoByPath[logoPath] ?? null : null,
+        };
+      });
       setFiles(rows);
       setLoading(false);
 
-      // Generate signed preview URLs for image outputs.
-      const images = rows.filter((r) => r.output_type === 'image' && r.storage_path);
+      // Generate signed preview URLs for image and PDF outputs.
+      const previewable = rows.filter(
+        (r) => r.storage_path && (r.output_type === 'image' || r.output_type === 'pdf' || r.mime_type === 'application/pdf'),
+      );
       const pairs = await Promise.all(
-        images.map(async (r) => {
+        previewable.map(async (r) => {
           const { data: s } = await client.storage.from('outputs').createSignedUrl(r.storage_path as string, 600);
           return [r.id, s?.signedUrl] as const;
         }),
@@ -175,9 +242,15 @@ export default function FilesPage() {
     })();
   }, []);
 
-  async function open(path: string) {
-    const { data } = await createSupabaseBrowserClient().storage.from('outputs').createSignedUrl(path, 60);
-    if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+  async function openViewer(row: FileRow) {
+    if (!row.storage_path) return;
+    // Reuse the already-signed preview URL when present; otherwise sign on demand.
+    let url = previews[row.id];
+    if (!url) {
+      const { data } = await createSupabaseBrowserClient().storage.from('outputs').createSignedUrl(row.storage_path, 600);
+      url = data?.signedUrl ?? '';
+    }
+    if (url) setViewerFile({ row, url });
   }
 
   async function download(path: string) {
@@ -185,6 +258,11 @@ export default function FilesPage() {
       .storage.from('outputs')
       .createSignedUrl(path, 60, { download: true });
     if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+  }
+
+  function labelFor(type: OutputType) {
+    if (sourceFilter === 'quote' && type === 'pdf') return 'הצעת מחיר';
+    return OUTPUT_LABEL[type];
   }
 
   function setFileFilter(filter: FileFilter) {
@@ -217,6 +295,12 @@ export default function FilesPage() {
 
   function clearSelection() {
     setSelected(new Set());
+    setLastIndex(null);
+  }
+
+  function selectAllVisible() {
+    if (!isAdmin) return;
+    setSelected(new Set(visibleFiles.map((f) => f.id)));
     setLastIndex(null);
   }
 
@@ -260,11 +344,25 @@ export default function FilesPage() {
         className="hidden"
         onChange={handleUploadFinal}
       />
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
         <h1 className="text-2xl font-bold">תוצרים</h1>
+        {isAdmin && selected.size === 0 && !loading && visibleFiles.length > 0 && (
+          <button
+            onClick={selectAllVisible}
+            className="text-sm text-[var(--muted)] hover:underline"
+          >
+            בחר הכל ({visibleFiles.length})
+          </button>
+        )}
         {isAdmin && selected.size > 0 && (
           <div className="flex items-center gap-3">
             <span className="text-sm text-[var(--muted)]">{selected.size} נבחרו</span>
+            <button
+              onClick={selected.size === visibleFiles.length ? clearSelection : selectAllVisible}
+              className="text-sm text-[var(--muted)] hover:underline"
+            >
+              {selected.size === visibleFiles.length ? 'בטל הכל' : 'בחר הכל'}
+            </button>
             <button onClick={clearSelection} className="text-sm text-[var(--muted)] hover:underline">
               ביטול בחירה
             </button>
@@ -279,8 +377,8 @@ export default function FilesPage() {
         )}
       </div>
 
-      <div className="mb-5 overflow-x-auto pb-1">
-        <div className="inline-flex min-w-full gap-2 rounded-2xl border border-[#EAECF0] bg-white p-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:min-w-0">
+      <div className="mb-5 sm:overflow-x-auto sm:pb-1">
+        <div className="flex flex-wrap gap-2 rounded-2xl border border-[#EAECF0] bg-white p-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:inline-flex sm:flex-nowrap">
           {FILE_TYPE_FILTERS.map((item) => {
             const active =
               sourceFilter === item.source &&
@@ -327,7 +425,7 @@ export default function FilesPage() {
               <section key={type} className="space-y-4">
                 <h2 className="text-lg font-semibold flex items-center gap-2">
                   <span>{TYPE_ICON[type]}</span>
-                  <span>{OUTPUT_LABEL[type]}</span>
+                  <span>{labelFor(type)}</span>
                   <span className="text-sm text-[var(--muted)] font-normal">({typeFiles.length})</span>
                 </h2>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
@@ -355,9 +453,17 @@ export default function FilesPage() {
                         <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
                           {file.output_type === 'image' && previews[file.id] ? (
                             <img src={previews[file.id]} alt="" className="w-full h-full object-cover" />
+                          ) : (file.output_type === 'pdf' || file.mime_type === 'application/pdf') && previews[file.id] ? (
+                            <iframe
+                              src={`${previews[file.id]}#toolbar=0&navpanes=0&view=FitH`}
+                              title=""
+                              className="pointer-events-none h-full w-full border-0"
+                            />
                           ) : !file.storage_path && file.text_content ? (
-                            <div className="h-full w-full overflow-hidden p-2.5 text-[10px] leading-4 text-[var(--muted)] whitespace-pre-wrap break-words">
-                              {file.text_content.slice(0, 280)}
+                            <div className="pointer-events-none h-full w-full overflow-hidden bg-white">
+                              <div className="w-[250%] origin-top-right scale-[0.4] p-4">
+                                <RichTextPreview blocks={parseRichText(file.text_content)} />
+                              </div>
                             </div>
                           ) : (
                             <span className="text-4xl">{TYPE_ICON[file.output_type]}</span>
@@ -365,7 +471,7 @@ export default function FilesPage() {
                         </div>
 
                         <div className="p-2.5">
-                          <div className="text-xs font-medium mb-1">{OUTPUT_LABEL[file.output_type]}</div>
+                          <div className="text-xs font-medium mb-1">{labelFor(file.output_type)}</div>
                           {isAdmin && <div className="text-[10px] text-[var(--muted)] text-start truncate" title={file.creator}>
                             נוצר ע״י: <span className="ltr">{file.creator}</span>
                           </div>}
@@ -377,20 +483,24 @@ export default function FilesPage() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  open(file.storage_path as string);
+                                  void openViewer(file);
                                 }}
-                                className="min-h-11 flex-1 rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
+                                title="צפייה"
+                                aria-label="צפייה"
+                                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
                               >
-                                צפייה
+                                <EyeIcon />
                               </button>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   download(file.storage_path as string);
                                 }}
-                                className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                title="הורדה"
+                                aria-label="הורדה"
+                                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
                               >
-                                הורדה
+                                <DownloadIcon />
                               </button>
                             </div>
                           ) : (
@@ -400,9 +510,11 @@ export default function FilesPage() {
                                   e.stopPropagation();
                                   setTextPreview(file);
                                 }}
-                                className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                title="פתיחת הטקסט"
+                                aria-label="פתיחת הטקסט"
+                                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
                               >
-                                פתיחת הטקסט
+                                <EyeIcon />
                               </button>
                               {file.output_type === 'presentation' && (
                                 <button
@@ -411,10 +523,37 @@ export default function FilesPage() {
                                     setTargetFileRow(file);
                                   }}
                                   disabled={uploadingId === file.id}
-                                  className="min-h-11 flex-1 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                  className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
                                 >
+                                  <UploadIcon />
                                   {uploadingId === file.id ? 'מעלה...' : 'העלאת קובץ'}
                                 </button>
+                              )}
+                              {file.text_content && (
+                                <>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void exportRichTextPdf(parseRichText(file.text_content as string), undefined, file.brand_logo_url);
+                                    }}
+                                    title="הורדה כ-PDF"
+                                    aria-label="הורדה כ-PDF"
+                                    className="flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[10px] font-bold text-[#DC2626] hover:bg-[#FEE2E2]"
+                                  >
+                                    PDF
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void exportRichTextDocx(parseRichText(file.text_content as string), undefined, file.brand_logo_url);
+                                    }}
+                                    title="הורדה כ-Word"
+                                    aria-label="הורדה כ-Word"
+                                    className="flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[#BFDBFE] bg-[#EFF6FF] text-[10px] font-bold text-[#2563EB] hover:bg-[#DBEAFE]"
+                                  >
+                                    DOCX
+                                  </button>
+                                </>
                               )}
                             </div>
                           )}
@@ -424,8 +563,9 @@ export default function FilesPage() {
                                 e.stopPropagation();
                                 navigate(`/admin/files/${file.request_id}/revise`);
                               }}
-                              className="mt-1.5 min-h-11 w-full rounded-lg border border-brand px-2 py-2 text-xs font-semibold text-brand hover:bg-brand/5"
+                              className="mt-1.5 inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-brand px-2 py-2 text-xs font-semibold text-brand hover:bg-brand/5"
                             >
+                              <EditIcon />
                               שיפור / עריכה
                             </button>
                           )}
@@ -477,6 +617,46 @@ export default function FilesPage() {
             </header>
             <div className="overflow-auto p-4">
               <pre className="whitespace-pre-wrap break-words text-sm leading-6">{textPreview.text_content}</pre>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {viewerFile && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/50"
+          dir="rtl"
+          onClick={() => setViewerFile(null)}
+        >
+          <section
+            className="flex h-full w-full max-w-3xl flex-col bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] p-4">
+              <div>
+                <h2 className="font-bold">{labelFor(viewerFile.row.output_type)}</h2>
+                <p className="text-xs text-[var(--muted)] ltr">{formatHebrewDateTime(viewerFile.row.created_at)}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => download(viewerFile.row.storage_path as string)}
+                  title="הורדה"
+                  aria-label="הורדה"
+                  className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[var(--border)] px-3 text-sm font-semibold hover:bg-gray-50"
+                >
+                  <DownloadIcon />
+                </button>
+                <button onClick={() => setViewerFile(null)} className="rounded-lg px-2 text-2xl leading-none text-[var(--muted)]" aria-label="סגירה">
+                  ×
+                </button>
+              </div>
+            </header>
+            <div className="flex-1 overflow-auto bg-gray-100">
+              {viewerFile.row.output_type === 'image' ? (
+                <img src={viewerFile.url} alt="" className="mx-auto h-auto w-full object-contain" />
+              ) : (
+                <iframe src={viewerFile.url} title="" className="h-full w-full border-0 bg-white" />
+              )}
             </div>
           </section>
         </div>

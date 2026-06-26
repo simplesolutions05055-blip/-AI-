@@ -3,31 +3,12 @@ import { useLocation, useNavigate, Navigate } from 'react-router-dom';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
 import { useProfile } from '@/lib/useProfile';
+import { useBrandTheme } from '@/lib/useBrandTheme';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-
-const ROUTE_TITLES: Array<[string, string]> = [
-  ['/admin/requests', 'בקשות ועלויות'],
-  ['/admin/costs', 'בקשות ועלויות'],
-  ['/admin/conversations', 'שיחות'],
-  ['/admin/production', 'הפקת תוצרים'],
-  ['/admin/quote', 'הצעת מחיר'],
-  ['/admin/simulator', 'סימולטור צ׳אט'],
-  ['/admin/files', 'תוצרים'],
-  ['/admin/branding', 'מיתוג'],
-  ['/admin/models', 'מודלים'],
-  ['/admin/skills', 'סקילים'],
-  ['/admin/permissions', 'הרשאות'],
-  ['/admin/errors', 'שגיאות ואזהרות'],
-  ['/admin/settings', 'הגדרות'],
-];
 
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
 // further by can_create_outputs. Files is view-only for regular users.
 const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files'];
-
-function titleForPath(pathname: string) {
-  return ROUTE_TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'לוח בקרה';
-}
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile } = useProfile();
@@ -35,6 +16,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [navMounted, setNavMounted] = useState(false);
   const { pathname } = useLocation();
   const navigate = useNavigate();
+
+  // Theme the whole app with the user's brand color when exactly one brand is
+  // assigned to them; otherwise the default blue stays.
+  useBrandTheme(!!profile);
 
   async function logout() {
     await createSupabaseBrowserClient().auth.signOut();
@@ -110,8 +95,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <div className="flex min-h-[100dvh]">
       {/* desktop sidebar */}
-      <div className="hidden lg:block lg:sticky lg:top-0 lg:h-[100dvh]">
-        <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} />
+      <div className="hidden lg:flex lg:self-stretch lg:w-60 lg:shrink-0 lg:border-l lg:border-[var(--border)] lg:bg-white">
+        <div className="lg:sticky lg:top-0 lg:h-[100dvh] lg:w-full">
+          <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} />
+        </div>
       </div>
 
       {/* drawer */}
@@ -142,24 +129,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* mobile top bar */}
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-[var(--border)] bg-white px-4 pb-3 pt-[calc(var(--safe-top)+0.75rem)] lg:hidden">
-          <button
-            onClick={() => setNavOpen(true)}
-            aria-label="תפריט"
-            className="hidden p-2 -m-2 rounded-lg hover:bg-gray-100"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-          </button>
-          <div className="min-w-0">
-            <div className="truncate font-bold">{titleForPath(pathname)}</div>
-            <div className="truncate text-xs text-[var(--muted)] ltr">{email}</div>
-          </div>
-        </header>
-
         <main
           className={
             isProductionLanding
