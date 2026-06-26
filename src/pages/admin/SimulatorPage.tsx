@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 type AttachmentKind = 'image' | 'audio' | 'document';

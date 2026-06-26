@@ -3,7 +3,7 @@
 // perfectly because the browser draws it) or an editable PPTX (PptxGenJS with
 // rtlMode + Heebo). Both run fully client-side.
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export interface DeckSlide {

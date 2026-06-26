@@ -8,7 +8,10 @@
 // CRITICAL: prices are NEVER invented here. We render only the strings the quote
 // JSON supplies (which the Edge function fills from the prompt only).
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+// html2canvas-pro is the maintained fork; it fixes the text vertical-centering
+// bug in the original html2canvas (numbers sinking to the bottom of a circle)
+// and supports modern CSS color functions. Drop-in, same API.
+import html2canvas from 'html2canvas-pro';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export interface QuoteComponent {
