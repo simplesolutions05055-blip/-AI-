@@ -180,6 +180,19 @@ export function themeFromBrandColors(colors: string[]): Partial<QuoteTheme> {
   return themeFromBrand((colors ?? []).map((hex) => ({ hex })));
 }
 
+// Render a circular numbered/checked badge as inline SVG. html2canvas mis-renders
+// vertically-centered HTML text (the number sinks to the bottom of the circle),
+// but SVG centering is geometric — `dominant-baseline=central` + `text-anchor=middle`
+// place the glyph exactly at the circle's center, so it rasterizes perfectly.
+function circleBadge(label: string, size: number, fontSize: number, bg: string, fg: string): string {
+  const c = size / 2;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg" style="flex:none;display:block">
+    <circle cx="${c}" cy="${c}" r="${c}" fill="${bg}"/>
+    <text x="${c}" y="${c}" text-anchor="middle" dominant-baseline="central"
+      font-family="Heebo,Arial,sans-serif" font-size="${fontSize}" font-weight="800" fill="${fg}">${label}</text>
+  </svg>`;
+}
+
 // Resolve the brand block on a quote into a full theme (palette preferred,
 // flat colors as fallback), folding in the style notes.
 export function themeFromQuoteBrand(brand: Quote['brand']): Partial<QuoteTheme> {
@@ -335,7 +348,7 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
         ${i === 0 ? `<h2 class="q-h2">${esc(quote.components_title || 'פירוט ההצעה')}</h2>` : ''}
         <div class="q-cards">
         ${pair.map((c, j) => `<div class="q-card">
-          <div class="q-card-num">${i + j + 1}</div>
+          ${circleBadge(String(i + j + 1), 26, 13, t.gold, t.onGold)}
           <div class="q-card-body">
             <div class="q-card-title">${esc(c.title)}</div>
             ${has(c.desc) ? `<div class="q-card-desc">${esc(c.desc)}</div>` : ''}
@@ -356,7 +369,7 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
       blocks.push(`<div class="q-block">
         ${i === 0 ? `<h2 class="q-h2">${esc(quote.included_title || 'מה כולל')}</h2>` : ''}
         <div class="q-checks">
-          ${chunk.map((x) => `<div class="q-check"><span class="q-tick">✓</span><span>${esc(x)}</span></div>`).join('')}
+          ${chunk.map((x) => `<div class="q-check">${circleBadge('✓', 18, 11, t.gold, t.onGold)}<span>${esc(x)}</span></div>`).join('')}
         </div>
       </div>`);
     }
