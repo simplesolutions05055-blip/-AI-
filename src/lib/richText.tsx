@@ -291,15 +291,34 @@ async function buildPdfPages(
   let current = newPage();
   for (const block of blocks) {
     const wrapper = document.createElement('div');
-    wrapper.innerHTML = blockToPdfHtml(block, page.pageContentHeight);
+    wrapper.innerHTML = blockToPdfHtml(block, page.pageContentHeight - 56);
     current.appendChild(wrapper);
+    await waitForHtmlImages(wrapper);
 
     if (current.scrollHeight > page.pageHeight && current.children.length > 1) {
       current.removeChild(wrapper);
       current = newPage();
       current.appendChild(wrapper);
+      await waitForHtmlImages(wrapper);
     }
   }
+}
+
+async function waitForHtmlImages(root: HTMLElement): Promise<void> {
+  const images = Array.from(root.querySelectorAll('img'));
+  await Promise.all(
+    images.map(async (img) => {
+      if (img.complete && img.naturalWidth > 0) return;
+      try {
+        await img.decode();
+      } catch {
+        await new Promise<void>((resolve) => {
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+        });
+      }
+    }),
+  );
 }
 
 async function forceDocxRtl(blob: Blob): Promise<Blob> {
@@ -356,7 +375,7 @@ function blockToPdfHtml(block: RichTextBlock, maxImageHeight = 820): string {
     return `<pre style="margin:0 0 18px;padding:16px;background:#111827;color:#f9fafb;border-radius:8px;white-space:pre-wrap;direction:rtl;text-align:right;font-family:'Courier New',monospace;">${escapeHtml(block.text)}</pre>`;
   }
   if (block.type === 'image') {
-    const imageHeight = Math.max(240, Math.min(maxImageHeight, 820));
+    const imageHeight = Math.max(180, Math.min(maxImageHeight, 760));
     return `<figure style="margin:22px 0;text-align:center;break-inside:avoid;page-break-inside:avoid;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt ?? '')}" style="display:block;margin:0 auto;max-width:100%;max-height:${imageHeight}px;width:auto;height:auto;border-radius:10px;object-fit:contain;" /></figure>`;
   }
   if (block.type === 'list') {

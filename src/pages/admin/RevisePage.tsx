@@ -5,6 +5,7 @@ import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, 
 import { isValidEmail } from '@/lib/format';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
+import { fetchBrandImages, fetchBrandAiImages, loadPersistedDeckImage, type DeckImage, type PersistedDeckImage } from '@/lib/deck';
 
 interface SourceImage {
   request_id: string;
@@ -20,6 +21,10 @@ interface PdfOutput {
 }
 
 type Brief = Record<string, unknown>;
+
+type DocumentImageChoice =
+  | { key: string; kind: 'brand'; caption: string; previewUrl: string; image: DeckImage }
+  | { key: string; kind: 'ai'; caption: string; previewUrl: string; row: PersistedDeckImage };
 
 // The editable brief sections shown in the modal, in display order.
 const BRIEF_FIELDS: Array<{ key: string; label: string; multiline?: boolean; list?: boolean }> = [
@@ -874,7 +879,7 @@ function DocumentAiImageModal({
   documentText: string;
   brandId: string | null;
   onClose: () => void;
-  onInsert: (image: { requestId: string; previewUrl: string; prompt: string }) => void;
+  onInsert: (image: { requestId?: string; previewUrl: string; prompt: string }) => void;
 }) {
   const [prompt, setPrompt] = useState('');
   const [imageBrief, setImageBrief] = useState<Brief | null>(null);
@@ -883,6 +888,52 @@ function DocumentAiImageModal({
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ requestId: string; previewUrl: string } | null>(null);
+  const [existingLoading, setExistingLoading] = useState(false);
+  const [existingImages, setExistingImages] = useState<DocumentImageChoice[]>([]);
+
+  useEffect(() => {
+    if (!brandId) {
+      setExistingImages([]);
+      return;
+    }
+    let alive = true;
+    setExistingLoading(true);
+    Promise.allSettled([fetchBrandImages(brandId), fetchBrandAiImages(brandId)])
+      .then(([brandRes, aiRes]) => {
+        if (!alive) return;
+        const choices: DocumentImageChoice[] = [];
+        if (brandRes.status === 'fulfilled') {
+          choices.push(
+            ...brandRes.value.images.map((image, index) => ({
+              key: `brand:${index}:${image.caption}`,
+              kind: 'brand' as const,
+              caption: image.isLogo ? `לוגו - ${image.caption}` : image.caption,
+              previewUrl: image.dataUrl,
+              image,
+            })),
+          );
+        }
+        if (aiRes.status === 'fulfilled') {
+          choices.push(
+            ...aiRes.value.map((row) => ({
+              key: `ai:${row.id}`,
+              kind: 'ai' as const,
+              caption: row.caption,
+              previewUrl: row.previewUrl,
+              row,
+            })),
+          );
+        }
+        setExistingImages(choices);
+      })
+      .catch((e) => setError(String(e)))
+      .finally(() => {
+        if (alive) setExistingLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [brandId]);
 
   async function buildImageBrief() {
     if (!prompt.trim()) return;
@@ -988,6 +1039,20 @@ function DocumentAiImageModal({
     }
   }
 
+  async function insertExistingImage(choice: DocumentImageChoice) {
+    setError(null);
+    try {
+      if (choice.kind === 'brand') {
+        onInsert({ previewUrl: choice.image.dataUrl, prompt: choice.caption });
+        return;
+      }
+      const image = await loadPersistedDeckImage(choice.row);
+      onInsert({ previewUrl: image.dataUrl, prompt: image.caption || choice.caption });
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   const disabled = busy !== null;
 
   return (
@@ -995,16 +1060,47 @@ function DocumentAiImageModal({
       <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] p-5">
           <div>
-            <h2 className="text-xl font-bold">הוספת תמונה עם AI למסמך</h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">התמונה תישמר כתוצר תמונה ותתווסף למסמך הנוכחי.</p>
+            <h2 className="text-xl font-bold">הוספת תמונה למסמך</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">בחרו תמונה קיימת מהמותג או צרו תמונה חדשה עם AI.</p>
           </div>
           <button type="button" onClick={onClose} aria-label="סגירה" className="text-2xl leading-none text-[var(--muted)] hover:text-black">×</button>
         </div>
 
         <div className="grid gap-5 overflow-y-auto p-5 lg:grid-cols-[1fr_360px]">
           <div className="space-y-4">
+            <section className="rounded-lg border border-[var(--border)] bg-white p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="font-bold">בחירה מתמונות קיימות</h3>
+                {existingLoading && <span className="text-xs text-[var(--muted)]">טוען...</span>}
+              </div>
+              {!brandId ? (
+                <p className="text-sm text-[var(--muted)]">אין מותג מחובר למסמך הזה, לכן אין תמונות מותג זמינות.</p>
+              ) : existingImages.length === 0 && !existingLoading ? (
+                <p className="text-sm text-[var(--muted)]">אין תמונות מותג או תמונות AI קודמות זמינות למותג הזה.</p>
+              ) : (
+                <div className="grid max-h-[290px] grid-cols-2 gap-3 overflow-auto pr-1 sm:grid-cols-3">
+                  {existingImages.map((choice) => (
+                    <button
+                      key={choice.key}
+                      type="button"
+                      onClick={() => void insertExistingImage(choice)}
+                      disabled={disabled}
+                      className="rounded-lg border border-[var(--border)] bg-white p-1 text-right transition hover:border-brand hover:bg-brand/5 disabled:opacity-50"
+                    >
+                      <div className="h-24 overflow-hidden rounded-md bg-gray-50">
+                        <img src={choice.previewUrl} alt={choice.caption} className="h-full w-full object-contain" />
+                      </div>
+                      <div className="mt-1 truncate px-1 text-[11px]" title={choice.caption}>{choice.caption}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <div className="border-t border-[var(--border)] pt-4" />
+
             <label className="block">
-              <span className="mb-2 block text-sm font-semibold">פרומפט לתמונה</span>
+              <span className="mb-2 block text-sm font-semibold">יצירת תמונה חדשה עם AI</span>
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
