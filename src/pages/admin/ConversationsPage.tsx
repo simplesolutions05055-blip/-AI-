@@ -510,7 +510,7 @@ function buildPromptJson(
 
   return {
     note:
-      'המערכת לא שמרה היסטוריית prompt raw מלאה לכל קריאת מודל בעבר. זה מציג את JSON הבריף, prompt_snapshot של התוצרים, QA ולוגים זמינים עבור ההודעה/בקשה.',
+      'המערכת לא שמרה היסטוריית prompt raw מלאה לכל קריאת מודל בעבר. זה מציג את JSON הבריף, prompt_snapshot של התוצרים ולוגים זמינים עבור ההודעה/בקשה.',
     message: {
       id: message.id,
       direction: message.direction,
@@ -536,7 +536,6 @@ function buildPromptJson(
       output_type: output.output_type,
       model_name: output.model_name,
       prompt_snapshot: parsePromptSnapshot(output.prompt_snapshot),
-      qa_result: output.qa_result,
       created_at: output.created_at,
     })),
     logs: logs.map((log) => ({

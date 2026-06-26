@@ -162,6 +162,7 @@ function finalizeBrief(
   }
 
   const str = (v: unknown, fallback = '') => (typeof v === 'string' && v.trim() ? v.trim() : fallback);
+  const sourceMaterials = mergeSourceMaterials(str(raw.source_materials), freeText);
 
   return {
     output_type: outputType,
@@ -170,13 +171,25 @@ function finalizeBrief(
     language: str(raw.language, 'עברית'),
     must_include: mustInclude,
     style: str(raw.style, defaultStyle(outputType)),
-    source_materials: str(raw.source_materials) || undefined,
+    source_materials: sourceMaterials || undefined,
     dimensions: str(raw.dimensions, defaultDimensions(outputType)),
     color_override: str(raw.color_override) || undefined,
     ready: true,
     missing: [],
     source: 'ai',
   };
+}
+
+function mergeSourceMaterials(modelSource: string, freeText: string): string {
+  const source = modelSource.trim();
+  const original = freeText.trim();
+  if (!original) return source;
+
+  const parts = source ? [source] : [];
+  if (!source.includes(original)) {
+    parts.push(`טקסט המקור המלא שהוזן:\n${original}`);
+  }
+  return parts.join('\n\n');
 }
 
 function defaultStyle(type: string): string {

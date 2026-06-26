@@ -159,6 +159,8 @@ Deno.serve(async (req) => {
 
       // Ground the quote in the brand's Business Brain (facts/services), same as deck.
       const quoteBrandId = (brief as { brand_id?: string }).brand_id ?? null;
+      let quoteBrandName: string | null = null;
+      let quoteBrandColors: string[] = [];
       if (quoteBrandId) {
         const [{ data: qBrand }, { data: qSources }] = await Promise.all([
           database.from('brands').select('name, color_palette, style_notes, is_active, client_type').eq('id', quoteBrandId).single(),
@@ -167,9 +169,26 @@ Deno.serve(async (req) => {
         const qBrain = buildBusinessBrainContext(qBrand, qSources ?? []);
         if (qBrain.content) (brief as Record<string, unknown>).business_content_context = qBrain.content;
         if (qBrain.visual) (brief as Record<string, unknown>).brand_guidelines = qBrain.visual;
+        quoteBrandName = (qBrand as { name?: string } | null)?.name ?? null;
+        quoteBrandColors = ((qBrand as { color_palette?: Array<{ hex?: string }> } | null)?.color_palette ?? [])
+          .map((c) => c?.hex)
+          .filter((hex): hex is string => typeof hex === 'string' && /^#?[0-9a-fA-F]{3,8}$/.test(hex.trim()))
+          .map((hex) => (hex.trim().startsWith('#') ? hex.trim() : `#${hex.trim()}`));
       }
 
       const { quote, usage } = await generateQuote(fallbackSystemMessage, brief, overrideKey);
+
+      // Attach branding so the PDF renderer + on-screen preview can use the brand's
+      // logo and palette (logo is inlined as a data URL so html2canvas can rasterize
+      // it without a CORS round-trip).
+      if (quoteBrandId) {
+        const logoRef = await loadBrandLogoReference(database, quoteBrandId);
+        (quote as Record<string, unknown>).brand = {
+          name: quoteBrandName,
+          logo_data_url: logoRef ? `data:${logoRef.mime};base64,${logoRef.base64}` : null,
+          colors: quoteBrandColors,
+        };
+      }
       await recordUsageAndCost(database, requestId ?? null, {
         provider: 'openai',
         model: aiModelsQuote?.text_model || 'gpt-4o',

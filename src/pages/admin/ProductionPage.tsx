@@ -2,13 +2,14 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { OUTPUT_LABEL } from '@/lib/labels';
 import { formatHebrewDate } from '@/lib/format';
-import { RichTextPreview, exportRichTextDocx, parseRichText, plainTextFromBlocks } from '@/lib/richText';
+import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, plainTextFromBlocks } from '@/lib/richText';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import ImagePickerModal from '@/components/ImagePickerModal';
 import DeckExport from '@/components/DeckExport';
+import SocialScheduleSection from '@/components/SocialScheduleSection';
 import type { DeckImage } from '@/lib/deck';
-import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, type Quote } from '@/lib/quote';
+import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, themeFromBrandColors, type Quote } from '@/lib/quote';
 import type { OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
 
 type ProductionType = OutputType;
@@ -108,6 +109,9 @@ const OPENAI_QUOTA_MESSAGE =
 
 const IMAGE_QUOTA_MESSAGE =
   'יצירת התמונה נעצרה כי מפתח ה-OpenAI שבשימוש הגיע לתקרת ה-billing/מכסה שלו (billing hard limit / quota). אם הוגדר מפתח חד-פעמי — הוא זה שאזל; אחרת מדובר במפתח הפרויקט. יש להוסיף קרדיט / להעלות את תקרת ה-billing, או להזין מפתח חד-פעמי אחר עם קרדיט, ואז להפיק שוב.';
+
+const DESCRIPTION_MAX_LENGTH = 12000;
+const TEXT_UPLOAD_ACCEPT = '.txt,.md,.doc,.docx,.pdf,text/plain,text/markdown,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf';
 
 // Detect the function's openai_quota signal (402 with {error:'openai_quota'}) or
 // any raw quota/billing message leaking through the error body.
@@ -375,6 +379,53 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+async function extractTextFromUploadedFile(file: File): Promise<string> {
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const mime = file.type;
+
+  if (extension === 'txt' || extension === 'md' || mime.startsWith('text/')) {
+    return file.text();
+  }
+
+  if (extension === 'docx' || mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    const mammoth = await import('mammoth/mammoth.browser');
+    const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+    return result.value;
+  }
+
+  if (extension === 'pdf' || mime === 'application/pdf') {
+    const pdfjs = await import('pdfjs-dist');
+    const worker = await import('pdfjs-dist/build/pdf.worker.mjs?url');
+    pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+    const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pages: string[] = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map((item) => ('str' in item ? item.str : ''))
+        .join(' ')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+      if (text) pages.push(text);
+    }
+    return pages.join('\n\n');
+  }
+
+  if (extension === 'doc' || mime === 'application/msword') {
+    throw new Error('קובץ DOC ישן לא ניתן לחילוץ אמין בדפדפן. שמרו אותו כ-DOCX או PDF והעלו שוב.');
+  }
+
+  throw new Error('סוג הקובץ לא נתמך. אפשר להעלות TXT, MD, DOCX או PDF.');
+}
+
+function appendUploadedText(current: string, fileName: string, extractedText: string): string {
+  const cleanText = extractedText.replace(/\r\n/g, '\n').replace(/\n{4,}/g, '\n\n\n').trim();
+  if (!cleanText) throw new Error('לא נמצא טקסט קריא בקובץ.');
+  const block = `טקסט שחולץ מהקובץ "${fileName}":\n${cleanText}`;
+  return [current.trim(), block].filter(Boolean).join('\n\n');
+}
+
 // On-screen preview of the structured quote (not the PDF). Mirrors the PDF
 // sections so the user reviews exactly what they'll get.
 function QuoteReview({ quote }: { quote: Quote }) {
@@ -388,9 +439,21 @@ function QuoteReview({ quote }: { quote: Quote }) {
   const pay = (quote.payment_terms ?? []).filter((p) => p?.title?.trim());
   const terms = (quote.terms ?? []).filter((x) => x?.trim());
 
+  // Theme the preview with the brand palette (when present) so the user sees the
+  // brand colors + logo before approving — matching the themed PDF output.
+  const bt = themeFromBrandColors(quote.brand?.colors ?? []);
+  const navy = bt.navy ?? '#1E3A8A';
+  const navy2 = bt.navy2 ?? '#2563EB';
+  const gold = bt.gold ?? '#c9a14a';
+  const logoUrl = quote.brand?.logo_data_url || null;
+  const gradient = { backgroundImage: `linear-gradient(to left, ${navy2}, ${navy})` };
+
   return (
     <div className="space-y-4 text-[#1f2233]">
-      <div className="rounded-xl bg-gradient-to-l from-[#2563EB] to-[#1E3A8A] p-5 text-white">
+      <div className="rounded-xl p-5 text-white" style={gradient}>
+        {logoUrl && (
+          <img src={logoUrl} alt="לוגו" className="mb-3 max-h-10 max-w-[160px] object-contain" />
+        )}
         <div className="text-[20px] font-extrabold">{quote.title || 'הצעת מחיר'}</div>
         {quote.subtitle && <div className="mt-1 text-[13px] text-[#d7d7ea]">{quote.subtitle}</div>}
       </div>
@@ -409,12 +472,12 @@ function QuoteReview({ quote }: { quote: Quote }) {
       {quote.summary && <div className="rounded-xl bg-[#EFF6FF] p-4 text-[13.5px] leading-relaxed">{quote.summary}</div>}
 
       {(quote.headline?.label || quote.headline?.price) && (
-        <div className="flex items-center justify-between gap-3 rounded-xl bg-gradient-to-l from-[#2563EB] to-[#1E3A8A] p-4 text-white">
+        <div className="flex items-center justify-between gap-3 rounded-xl p-4 text-white" style={gradient}>
           <div>
             <div className="text-[16px] font-extrabold">{quote.headline?.label || 'מחיר כולל'}</div>
             {quote.headline?.sub && <div className="text-[12px] text-[#cfcfe6]">{quote.headline.sub}</div>}
           </div>
-          {quote.headline?.price && <div className="text-[22px] font-extrabold text-[#c9a14a]">{quote.headline.price}</div>}
+          {quote.headline?.price && <div className="text-[22px] font-extrabold" style={{ color: gold }}>{quote.headline.price}</div>}
         </div>
       )}
 
@@ -494,6 +557,9 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
   const navigate = useNavigate();
   const [selected, setSelected] = useState<ProductionType | 'quote' | null>(initialSelected);
   const [description, setDescription] = useState('');
+  const [uploadingText, setUploadingText] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Brand chosen here is passed to the brief builder so the brand's content +
   // official color palette are folded into the AI brief.
   const [brands, setBrands] = useState<BrandOption[]>([]);
@@ -649,6 +715,21 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
     goToFlow();
   }
 
+  async function handleTextFileUpload(file: File | null) {
+    if (!file) return;
+    setUploadingText(true);
+    setUploadError(null);
+    try {
+      const extracted = await extractTextFromUploadedFile(file);
+      setDescription((current) => appendUploadedText(current, file.name, extracted).slice(0, DESCRIPTION_MAX_LENGTH));
+    } catch (e) {
+      setUploadError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setUploadingText(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
   const pickerChips: Array<{ key: string; label: string; icon: string; color: string; to?: ProductionType | 'quote'; disabled?: boolean }> = [
     { key: 'image', label: 'תמונה / גרפיקה', icon: '🖼️', color: 'bg-[#FEE2E2]', to: 'image' },
     { key: 'text', label: 'פוסט / טקסט', icon: '📝', color: 'bg-[#D1FAE5]', to: 'text' },
@@ -662,7 +743,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
   const recentOutputCategories: Array<{ key: string; label: string; bg: string; icon: string; type?: OutputType }> = [
     { key: 'image', type: 'image', label: 'תמונה/גרפיקה', bg: '#FEF3C7', icon: '🖼️' },
     { key: 'presentation', type: 'presentation', label: 'מצגת', bg: '#D1FAE5', icon: '📊' },
-    { key: 'pdf', type: 'pdf', label: 'מסמך/PDF', bg: '#DBEAFE', icon: '📕' },
+    { key: 'pdf', type: 'pdf', label: 'מסמך', bg: '#DBEAFE', icon: '📕' },
     {
       key: 'quote',
       label: 'הצעת מחיר',
@@ -784,7 +865,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
               <textarea
                 dir="rtl"
                 rows={5}
-                maxLength={500}
+                maxLength={DESCRIPTION_MAX_LENGTH}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 onKeyDown={(e) => {
@@ -796,7 +877,23 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                 placeholder={'תארו מה אתם צריכים... לדוגמה: "גרפיקה לאירוע יזום, כיכר העירייה, כותרת: הצטרפו לחגיגה!"'}
                 className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 pb-9 text-right text-[15px] font-normal leading-7 text-[#1A1A2E] outline-none placeholder:text-[#CBD5E1]"
               />
-              <div className="absolute bottom-3.5 left-3.5">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={TEXT_UPLOAD_ACCEPT}
+                className="hidden"
+                onChange={(e) => void handleTextFileUpload(e.target.files?.[0] ?? null)}
+              />
+              <div className="absolute bottom-3.5 left-3.5 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingText}
+                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-[10px] border border-[#CBD5E1] bg-white px-4 py-2 text-[14px] font-bold text-[#334155] transition hover:border-[#93C5FD] hover:bg-[#EFF6FF] hover:text-[#2563EB] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="text-[16px]" aria-hidden="true">📎</span>
+                  {uploadingText ? 'מעלה…' : 'העלה קובץ'}
+                </button>
                 <button
                   type="button"
                   onClick={handleCreate}
@@ -811,8 +908,14 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   {selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}
                 </button>
               </div>
-              <div className="absolute bottom-5 right-4 text-[11px] font-normal text-[#CBD5E1]">500 / {description.length}</div>
+              <div className="absolute bottom-5 right-4 text-[11px] font-normal text-[#CBD5E1]">{DESCRIPTION_MAX_LENGTH.toLocaleString('he-IL')} / {description.length.toLocaleString('he-IL')}</div>
             </div>
+
+            {uploadError && (
+              <div className="rounded-[10px] border border-[#FECACA] bg-[#FEF2F2] px-3.5 py-2.5 text-right text-[13px] font-normal text-[#B91C1C]">
+                {uploadError}
+              </div>
+            )}
 
             {pickerError && (
               <div className="rounded-[10px] border border-[#FECACA] bg-[#FEF2F2] px-3.5 py-2.5 text-right text-[13px] font-normal text-[#B91C1C]">
@@ -936,6 +1039,7 @@ function chipColor(type: ProductionType) {
 
 function ProductionFlow({ type }: { type: ProductionType }) {
   // Free-text entry point: the picker hands a description + chosen brand here.
+  const navigate = useNavigate();
   const location = useLocation();
   const navState = (location.state as { freeText?: string; brandId?: string | null; pickedImages?: DeckImage[] | null; pickedKeys?: string[] } | null) ?? null;
   const freeText = navState?.freeText?.trim() ?? '';
@@ -1000,6 +1104,10 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       const built = (data as { brief?: ProductionBrief } | null)?.brief;
       if (built) {
         setBrief(built);
+        if (type === 'pdf') {
+          await generate(built);
+          return;
+        }
         setStep('brief');
         return;
       }
@@ -1013,10 +1121,20 @@ function ProductionFlow({ type }: { type: ProductionType }) {
         return;
       }
       // Any other hiccup → fall back to a local brief so the user isn't stuck.
-      setBrief(buildFreeTextBrief(type, freeText, selectedBrand));
+      const fallbackBrief = buildFreeTextBrief(type, freeText, selectedBrand);
+      setBrief(fallbackBrief);
+      if (type === 'pdf') {
+        await generate(fallbackBrief);
+        return;
+      }
       setStep('brief');
     } catch {
-      setBrief(buildFreeTextBrief(type, freeText, selectedBrand));
+      const fallbackBrief = buildFreeTextBrief(type, freeText, selectedBrand);
+      setBrief(fallbackBrief);
+      if (type === 'pdf') {
+        await generate(fallbackBrief);
+        return;
+      }
       setStep('brief');
     } finally {
       setBriefLoading(false);
@@ -1153,7 +1271,12 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     }
     if (!canSubmit) return;
     setError(null);
-    setBrief(buildBrief(type, form, revisionCount, selectedBrand));
+    const nextBrief = buildBrief(type, form, revisionCount, selectedBrand);
+    setBrief(nextBrief);
+    if (type === 'pdf') {
+      void generate(nextBrief);
+      return;
+    }
     setStep('brief');
     setError(null);
   }
@@ -1171,8 +1294,9 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     setRevisionCount(nextCount);
   }
 
-  async function generate() {
-    if (!brief) return;
+  async function generate(briefOverride?: ProductionBrief) {
+    const briefToGenerate = briefOverride ?? brief;
+    if (!briefToGenerate) return;
     setStep('generating');
     setError(null);
     try {
@@ -1180,7 +1304,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       const { data: created, error: createError } = await client.functions.invoke('create-production-request', {
         body: {
           output_type: type,
-          brief: { ...brief, revision_count: revisionCount },
+          brief: { ...briefToGenerate, revision_count: revisionCount },
           customer_email: null,
           // Pass the explicitly chosen brand so the request is reliably tied to
           // it (the result-page image picker + brand content depend on this).
@@ -1200,6 +1324,12 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       const result = await waitForOutput(id);
       setStatus(result.status);
       setOutput(result.output);
+      // Hand off to the revise screen — same UI for previewing, fixing, exporting,
+      // and adding AI images to fresh outputs.
+      if (type !== 'presentation') {
+        navigate(`/admin/files/${id}/revise`);
+        return;
+      }
       if (result.output.storage_path) {
         const { data: signed } = await client.storage.from('outputs').createSignedUrl(result.output.storage_path, 600);
         setPreviewUrl(signed?.signedUrl ?? null);
@@ -1217,7 +1347,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       setError(raw);
       // Otherwise a stalled production usually means the brief was ambiguous —
       // let the user clarify and rebuild.
-      if (/נעצרה ודורשת בדיקה|needs_attention|דורש בדיקה|נדרשת הבהרה/.test(raw)) {
+      if (/נעצרה|needs_attention|נדרשת הבהרה/.test(raw)) {
         setClarifyOpen(true);
       }
     }
@@ -1244,7 +1374,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
         const reason = requestRow?.structured_brief?.last_error;
         // Surface the real reason (e.g. OpenAI billing limit) so generate() can
         // route to the right action instead of always asking for a clarification.
-        throw new Error(reason || 'ההפקה נעצרה ודורשת בדיקה במסך הבקשות.');
+        throw new Error(reason || 'ההפקה נעצרה. אפשר לבדוק את הסטטוס במסך הבקשות.');
       }
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
@@ -1424,7 +1554,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
                 )}
               </div>
             )}
-            <button onClick={generate} className={`w-full ${PRIMARY_BUTTON}`}>
+            <button onClick={() => generate()} className={`w-full ${PRIMARY_BUTTON}`}>
               <SparkIcon className="h-4 w-4" />
               מאשר, תפיק
             </button>
@@ -1471,6 +1601,11 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           emailSent={emailSent}
           initialPickedImages={pickedImages}
           initialPickedKeys={pickedKeys}
+          onImageEdited={({ requestId: newId, previewUrl: newUrl }) => {
+            setRequestId(newId);
+            setPreviewUrl(newUrl);
+            setEmailSent(false);
+          }}
         />
       )}
 
@@ -1969,6 +2104,15 @@ function BriefCard({ type, brief, revisionCount }: { type: ProductionType; brief
   );
 }
 
+function BackIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="19" y1="12" x2="5" y2="12" />
+      <polyline points="12 19 5 12 12 5" />
+    </svg>
+  );
+}
+
 function ResultCard({
   output,
   previewUrl,
@@ -1981,6 +2125,7 @@ function ResultCard({
   emailSent,
   initialPickedImages,
   initialPickedKeys,
+  onImageEdited,
 }: {
   output: OutputRow;
   previewUrl: string | null;
@@ -1993,8 +2138,12 @@ function ResultCard({
   emailSent: boolean;
   initialPickedImages?: DeckImage[] | null;
   initialPickedKeys?: string[];
+  onImageEdited?: (data: { requestId: string; previewUrl: string }) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [editFeedback, setEditFeedback] = useState('');
+  const [applyingEdit, setApplyingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const textBlocks = useMemo(() => parseRichText(output.text_content ?? ''), [output.text_content]);
   const isTextOutput = !output.storage_path && output.output_type !== 'image' && output.output_type !== 'presentation';
 
@@ -2004,19 +2153,83 @@ function ResultCard({
     window.setTimeout(() => setCopied(false), 1600);
   }
 
+  async function downloadImage() {
+    if (!previewUrl) return;
+    const res = await fetch(previewUrl);
+    const blob = await res.blob();
+    const ext = (blob.type.split('/')[1] || 'png').split('+')[0];
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `image.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function applyEdit() {
+    const feedback = editFeedback.trim();
+    if (!feedback || !requestId || applyingEdit) return;
+    setApplyingEdit(true);
+    setEditError(null);
+    try {
+      const { data, error } = await createSupabaseBrowserClient().functions.invoke('edit-image', {
+        body: { request_id: requestId, feedback },
+      });
+      if (error) throw error;
+      const result = data as { request_id?: string; base64?: string; mime?: string } | null;
+      if (!result?.request_id || !result.base64) throw new Error('לא התקבלה גרסה מתוקנת');
+      const dataUrl = `data:${result.mime || 'image/png'};base64,${result.base64}`;
+      onImageEdited?.({ requestId: result.request_id, previewUrl: dataUrl });
+      setEditFeedback('');
+    } catch (e) {
+      setEditError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setApplyingEdit(false);
+    }
+  }
+
   return (
     <div className="grid lg:grid-cols-[1fr_360px] gap-5">
       <div className={`${PANEL} p-5`}>
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-xl font-bold">התוצר מוכן</h2>
+          <Link
+            to="/admin/files"
+            title="חזרה לתוצרים"
+            aria-label="חזרה לתוצרים"
+            className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
+          >
+            <BackIcon />
+          </Link>
         </div>
         {output.output_type === 'image' && previewUrl ? (
-          <img src={previewUrl} alt="תוצר תמונה" className="max-h-[560px] w-full object-contain rounded-lg bg-gray-50" />
+          <>
+            <img src={previewUrl} alt="תוצר תמונה" className="max-h-[560px] w-full object-contain rounded-lg bg-gray-50" />
+            <button type="button" onClick={downloadImage} className={`mt-4 ${SECONDARY_BUTTON} w-fit`}>
+              הורדה
+            </button>
+          </>
         ) : output.storage_path && previewUrl ? (
-          <a href={previewUrl} target="_blank" rel="noreferrer" className={PRIMARY_BUTTON + ' w-fit'}>
-            <SparkIcon className="h-4 w-4" />
-            פתיחת הקובץ
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <a href={previewUrl} target="_blank" rel="noreferrer" className={PRIMARY_BUTTON + ' w-fit'}>
+              <SparkIcon className="h-4 w-4" />
+              פתיחת הקובץ
+            </a>
+            {output.output_type === 'pdf' && output.text_content && (
+              <>
+                <button type="button" onClick={() => exportRichTextDocx(textBlocks)} title="ייצוא Word" aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
+                  <WordIcon className="h-4 w-4" />
+                  Word
+                </button>
+                <button type="button" onClick={() => exportRichTextPdf(textBlocks)} title="ייצוא PDF" aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
+                  <PdfIcon className="h-4 w-4" />
+                  PDF
+                </button>
+              </>
+            )}
+          </div>
         ) : output.output_type === 'presentation' ? null : (
           <div className="rounded-lg bg-gray-50 p-4">
             {isTextOutput && output.text_content && (
@@ -2024,8 +2237,13 @@ function ResultCard({
                 <button type="button" onClick={copyTextOutput} className={SECONDARY_BUTTON}>
                   {copied ? 'הועתק' : 'העתקה'}
                 </button>
-                <button type="button" onClick={() => exportRichTextDocx(textBlocks)} className={SECONDARY_BUTTON}>
-                  ייצוא DOCX
+                <button type="button" onClick={() => exportRichTextDocx(textBlocks)} title="ייצוא Word" aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
+                  <WordIcon className="h-4 w-4" />
+                  Word
+                </button>
+                <button type="button" onClick={() => exportRichTextPdf(textBlocks)} title="ייצוא PDF" aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
+                  <PdfIcon className="h-4 w-4" />
+                  PDF
                 </button>
               </div>
             )}
@@ -2057,12 +2275,34 @@ function ResultCard({
           <MailIcon className="h-4 w-4" />
           {emailSent ? 'נשלח' : sendingEmail ? 'שולח...' : 'שליחה במייל'}
         </button>
-        {output.qa_result && (
-          <div className="mt-5 text-sm">
-            <div className="font-semibold">בדיקת QA</div>
-            <div className={output.qa_result.passed ? 'text-green-700' : 'text-amber-700'}>
-              {output.qa_result.passed ? 'עבר בהצלחה' : 'דורש בדיקה'}
-            </div>
+        <div className="mt-5 border-t border-[var(--border)] pt-5">
+          <SocialScheduleSection />
+        </div>
+        {output.output_type === 'image' && requestId && (
+          <div className="mt-5 border-t border-[var(--border)] pt-5">
+            <h3 className="font-bold mb-1">תיקונים</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              עין אנושית: כתבו מה לתקן בפוסט ותקבלו גרסה מעודכנת.
+            </p>
+            <textarea
+              value={editFeedback}
+              onChange={(e) => setEditFeedback(e.target.value)}
+              placeholder="לדוגמה: לשנות את התאריך ל-22.5.2025, להגדיל את שם האמן"
+              rows={3}
+              className="w-full rounded-xl border border-[var(--border)] px-3 py-2 mb-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
+            />
+            <button
+              onClick={applyEdit}
+              disabled={!editFeedback.trim() || applyingEdit}
+              className={`w-full ${SECONDARY_BUTTON}`}
+            >
+              {applyingEdit ? 'מתקן...' : 'החל תיקון'}
+            </button>
+            {editError && <div className="mt-2 text-xs text-red-600">{editError}</div>}
+            <p className="mt-3 text-xs text-amber-700">
+              שימו לב: התיקון יוצר את התמונה מחדש דרך מודל התמונה. הוא משתדל לשמור על העיצוב המקורי,
+              אך לא ניתן להתחייב לשינוי הטקסט בלבד — ייתכנו שינויים קלים גם בעיצוב.
+            </p>
           </div>
         )}
       </div>
@@ -2268,6 +2508,26 @@ function SparkIcon({ className = 'h-4 w-4' }: { className?: string }) {
       />
       <path d="M18.6 13.2l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9.9-2.4Z" fill="currentColor" opacity="0.8" />
       <path d="M5.6 14.3l.8 2-2 0.8 2 0.8-.8 2-.8-2-2-.8 2-.8.8-2Z" fill="currentColor" opacity="0.7" />
+    </svg>
+  );
+}
+
+function WordIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M5 3.5h10l4 4v13H5v-17Z" fill="#2563eb" />
+      <path d="M15 3.5v4h4" fill="#93c5fd" />
+      <path d="M7.5 10h1.7l.8 4.2 1-4.2h1.5l1 4.2.8-4.2H16l-1.6 6h-1.6l-1-4-1 4H9.1l-1.6-6Z" fill="white" />
+    </svg>
+  );
+}
+
+function PdfIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M5 3.5h10l4 4v13H5v-17Z" fill="#dc2626" />
+      <path d="M15 3.5v4h4" fill="#fecaca" />
+      <path d="M7.2 16v-5.8h2.1c1.2 0 2 .7 2 1.8s-.8 1.8-2 1.8h-.7V16H7.2Zm1.4-3.3h.6c.4 0 .7-.2.7-.7s-.3-.7-.7-.7h-.6v1.4Zm3.4 3.3v-5.8h2c1.8 0 2.9 1.1 2.9 2.9S15.8 16 14 16h-2Zm1.4-1.2h.5c1 0 1.5-.5 1.5-1.7s-.5-1.7-1.5-1.7h-.5v3.4Z" fill="white" />
     </svg>
   );
 }

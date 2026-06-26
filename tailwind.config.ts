@@ -5,8 +5,8 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        // Hebrew-first stack per RTL playbook §11
-        sans: ['Assistant', 'Heebo', 'system-ui', 'sans-serif'],
+        // Heebo everywhere, no exceptions
+        sans: ['Heebo', 'system-ui', 'sans-serif'],
       },
       colors: {
         brand: {

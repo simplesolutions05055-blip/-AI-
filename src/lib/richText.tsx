@@ -2,6 +2,7 @@ import {
   AlignmentType,
   Document,
   HeadingLevel,
+  ImageRun,
   LevelFormat,
   Packer,
   Paragraph,
@@ -14,7 +15,8 @@ export type RichTextBlock =
   | { type: 'paragraph'; text: InlineNode[] }
   | { type: 'list'; ordered: boolean; items: InlineNode[][] }
   | { type: 'quote'; text: InlineNode[] }
-  | { type: 'code'; text: string };
+  | { type: 'code'; text: string }
+  | { type: 'image'; src: string; alt?: string };
 
 export type InlineNode = { type: 'text'; value: string } | { type: 'bold'; value: string } | { type: 'italic'; value: string };
 
@@ -108,6 +110,7 @@ export function plainTextFromBlocks(blocks: RichTextBlock[]): string {
   return blocks
     .flatMap((block) => {
       if (block.type === 'code') return [block.text];
+      if (block.type === 'image') return [];
       if (block.type === 'list') return block.items.map((item, idx) => `${block.ordered ? `${idx + 1}.` : '-'} ${inlinePlainText(item)}`);
       return [inlinePlainText(block.text)];
     })
@@ -131,8 +134,8 @@ export function downloadBlob(blob: Blob, filename: string) {
 
 export function docxFilenameFromBlocks(blocks: RichTextBlock[], fallback = 'מסמך'): string {
   const heading = blocks.find((block) => block.type === 'heading' && inlinePlainText(block.text).trim());
-  const title = heading ?? blocks.find((block) => block.type !== 'code' && block.type !== 'list' && inlinePlainText(block.text).trim());
-  const raw = title && title.type !== 'code' && title.type !== 'list' ? inlinePlainText(title.text) : fallback;
+  const title = heading ?? blocks.find((block) => (block.type === 'paragraph' || block.type === 'quote') && inlinePlainText(block.text).trim());
+  const raw = title && (title.type === 'heading' || title.type === 'paragraph' || title.type === 'quote') ? inlinePlainText(title.text) : fallback;
   const clean = raw
     .replace(/[#*_`"'“”׳״]+/g, '')
     .replace(/[\\/:*?<>|]/g, '')
@@ -142,7 +145,12 @@ export function docxFilenameFromBlocks(blocks: RichTextBlock[], fallback = 'מס
   return `${clean || fallback}.docx`;
 }
 
+export function pdfFilenameFromBlocks(blocks: RichTextBlock[], fallback = 'מסמך'): string {
+  return docxFilenameFromBlocks(blocks, fallback).replace(/\.docx$/i, '.pdf');
+}
+
 export async function exportRichTextDocx(blocks: RichTextBlock[], filename = docxFilenameFromBlocks(blocks)) {
+  const children = (await Promise.all(blocks.map(blockToDocxParagraphs))).flat();
   const doc = new Document({
     creator: 'AI Maor Atiya',
     styles: {
@@ -180,12 +188,118 @@ export async function exportRichTextDocx(blocks: RichTextBlock[], filename = doc
             },
           },
         },
-        children: blocks.flatMap(blockToDocxParagraphs),
+        children,
       },
     ],
   });
   const blob = await forceDocxRtl(await Packer.toBlob(doc));
   downloadBlob(blob, filename);
+}
+
+export async function exportRichTextPdf(blocks: RichTextBlock[], filename = pdfFilenameFromBlocks(blocks)) {
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf'),
+  ]);
+
+  const pageWidth = 794;
+  const pageHeight = 1123;
+  const margin = 64;
+  const pageContentHeight = pageHeight - margin * 2;
+  const container = document.createElement('div');
+  container.dir = 'rtl';
+  container.style.cssText = [
+    'position:fixed',
+    'inset:0 auto auto -10000px',
+    `width:${pageWidth}px`,
+    'background:#ffffff',
+    'color:#111827',
+    'font-family:Arial, sans-serif',
+    'font-size:18px',
+    'line-height:1.85',
+    'direction:rtl',
+    'text-align:right',
+    'box-sizing:border-box',
+  ].join(';');
+  document.body.appendChild(container);
+
+  try {
+    await buildPdfPages(container, blocks, { pageWidth, pageHeight, margin, pageContentHeight });
+    await (document as unknown as { fonts?: { ready?: Promise<void> } }).fonts?.ready?.catch(() => {});
+    const canvas = await html2canvas(container, {
+      backgroundColor: '#ffffff',
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      width: pageWidth,
+      height: container.scrollHeight,
+      windowWidth: pageWidth,
+      windowHeight: container.scrollHeight,
+    });
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: [pageWidth, pageHeight] });
+    const pageCount = Math.max(1, container.children.length);
+    const scale = canvas.width / pageWidth;
+
+    for (let i = 0; i < pageCount; i += 1) {
+      if (i > 0) pdf.addPage([pageWidth, pageHeight], 'portrait');
+      const pageCanvas = document.createElement('canvas');
+      pageCanvas.width = canvas.width;
+      pageCanvas.height = Math.round(pageHeight * scale);
+      const ctx = pageCanvas.getContext('2d');
+      if (!ctx) throw new Error('לא ניתן להכין עמוד PDF');
+      ctx.drawImage(
+        canvas,
+        0,
+        Math.round(i * pageHeight * scale),
+        canvas.width,
+        Math.round(pageHeight * scale),
+        0,
+        0,
+        pageCanvas.width,
+        pageCanvas.height,
+      );
+      pdf.addImage(pageCanvas.toDataURL('image/png'), 'PNG', 0, 0, pageWidth, pageHeight);
+    }
+
+    downloadBlob(pdf.output('blob'), filename);
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
+async function buildPdfPages(
+  container: HTMLDivElement,
+  blocks: RichTextBlock[],
+  page: { pageWidth: number; pageHeight: number; margin: number; pageContentHeight: number },
+) {
+  const newPage = () => {
+    const el = document.createElement('div');
+    el.dir = 'rtl';
+    el.style.cssText = [
+      `width:${page.pageWidth}px`,
+      `min-height:${page.pageHeight}px`,
+      `height:${page.pageHeight}px`,
+      `padding:${page.margin}px`,
+      'box-sizing:border-box',
+      'overflow:hidden',
+      'background:#ffffff',
+    ].join(';');
+    container.appendChild(el);
+    return el;
+  };
+
+  let current = newPage();
+  for (const block of blocks) {
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = blockToPdfHtml(block, page.pageContentHeight);
+    current.appendChild(wrapper);
+
+    if (current.scrollHeight > page.pageHeight && current.children.length > 1) {
+      current.removeChild(wrapper);
+      current = newPage();
+      current.appendChild(wrapper);
+    }
+  }
 }
 
 async function forceDocxRtl(blob: Blob): Promise<Blob> {
@@ -226,6 +340,50 @@ async function forceDocxRtl(blob: Blob): Promise<Blob> {
   });
 }
 
+function blocksToPdfHtml(blocks: RichTextBlock[]): string {
+  return blocks.map((block) => blockToPdfHtml(block)).join('');
+}
+
+function blockToPdfHtml(block: RichTextBlock, maxImageHeight = 820): string {
+  if (block.type === 'heading') {
+    const size = block.level === 1 ? 30 : block.level === 2 ? 24 : 20;
+    return `<h${Math.min(block.level, 6)} style="margin:0 0 18px;font-size:${size}px;line-height:1.35;font-weight:700;page-break-after:avoid;">${inlineToHtml(block.text)}</h${Math.min(block.level, 6)}>`;
+  }
+  if (block.type === 'quote') {
+    return `<blockquote style="margin:0 0 18px;padding:0 18px 0 0;border-right:5px solid #d1d5db;color:#475569;font-style:italic;">${inlineToHtml(block.text)}</blockquote>`;
+  }
+  if (block.type === 'code') {
+    return `<pre style="margin:0 0 18px;padding:16px;background:#111827;color:#f9fafb;border-radius:8px;white-space:pre-wrap;direction:rtl;text-align:right;font-family:'Courier New',monospace;">${escapeHtml(block.text)}</pre>`;
+  }
+  if (block.type === 'image') {
+    const imageHeight = Math.max(240, Math.min(maxImageHeight, 820));
+    return `<figure style="margin:22px 0;text-align:center;break-inside:avoid;page-break-inside:avoid;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt ?? '')}" style="display:block;margin:0 auto;max-width:100%;max-height:${imageHeight}px;width:auto;height:auto;border-radius:10px;object-fit:contain;" /></figure>`;
+  }
+  if (block.type === 'list') {
+    const tag = block.ordered ? 'ol' : 'ul';
+    return `<${tag} style="margin:0 0 18px;padding:0 30px 0 0;">${block.items.map((item) => `<li style="margin:0 0 8px;">${inlineToHtml(item)}</li>`).join('')}</${tag}>`;
+  }
+  return `<p style="margin:0 0 18px;white-space:pre-wrap;">${inlineToHtml(block.text)}</p>`;
+}
+
+function inlineToHtml(nodes: InlineNode[]): string {
+  return nodes.map((node) => {
+    const value = escapeHtml(node.value);
+    if (node.type === 'bold') return `<strong>${value}</strong>`;
+    if (node.type === 'italic') return `<em>${value}</em>`;
+    return value;
+  }).join('');
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 async function patchXml(zip: { file(path: string): { async(type: 'string'): Promise<string> } | null; file(path: string, data: string): unknown }, path: string, patch: (xml: string) => string): Promise<void> {
   const file = zip.file(path);
   if (!file) return;
@@ -241,7 +399,7 @@ function forceParagraphRtl(xml: string): string {
   });
 }
 
-function blockToDocxParagraphs(block: RichTextBlock): Paragraph[] {
+async function blockToDocxParagraphs(block: RichTextBlock): Promise<Paragraph[]> {
   if (block.type === 'heading') {
     const heading = block.level === 1 ? HeadingLevel.HEADING_1 : block.level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
     return [
@@ -289,6 +447,38 @@ function blockToDocxParagraphs(block: RichTextBlock): Paragraph[] {
         }),
     );
   }
+  if (block.type === 'image') {
+    try {
+      const res = await fetch(block.src);
+      if (!res.ok) throw new Error(`image fetch ${res.status}`);
+      const data = new Uint8Array(await res.arrayBuffer());
+      const dimensions = await getImageDimensions(data, res.headers.get('content-type') ?? 'image/png');
+      const transformation = fitImage(dimensions, { maxWidth: 560, maxHeight: 720 });
+      return [
+        new Paragraph({
+          bidirectional: true,
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 160, after: 160 },
+          children: [
+            new ImageRun({
+              type: imageRunType(res.headers.get('content-type'), block.src),
+              data,
+              transformation,
+            }),
+          ],
+        }),
+      ];
+    } catch {
+      return [
+        new Paragraph({
+          bidirectional: true,
+          alignment: AlignmentType.START,
+          spacing: { after: 120 },
+          children: inlineToRuns([{ type: 'text', value: block.alt ? `[תמונה: ${block.alt}]` : '[תמונה שנוצרה ב-AI]' }], { italics: true, color: '64748B' }),
+        }),
+      ];
+    }
+  }
   return [
     new Paragraph({
       bidirectional: true,
@@ -297,6 +487,54 @@ function blockToDocxParagraphs(block: RichTextBlock): Paragraph[] {
       children: inlineToRuns(block.text),
     }),
   ];
+}
+
+function imageRunType(contentType: string | null, src: string): 'png' | 'jpg' | 'gif' | 'bmp' {
+  const type = (contentType ?? '').toLowerCase();
+  const url = src.toLowerCase();
+  if (type.includes('jpeg') || type.includes('jpg') || /\.(jpe?g)(\?|$)/.test(url)) return 'jpg';
+  if (type.includes('gif') || /\.gif(\?|$)/.test(url)) return 'gif';
+  if (type.includes('bmp') || /\.bmp(\?|$)/.test(url)) return 'bmp';
+  return 'png';
+}
+
+async function getImageDimensions(data: Uint8Array, contentType: string): Promise<{ width: number; height: number }> {
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(data);
+  const blob = new Blob([buffer], { type: contentType || 'image/png' });
+  if ('createImageBitmap' in window) {
+    const bitmap = await createImageBitmap(blob);
+    const dimensions = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return dimensions;
+  }
+
+  return await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('image dimensions failed'));
+    };
+    img.src = url;
+  });
+}
+
+function fitImage(
+  dimensions: { width: number; height: number },
+  bounds: { maxWidth: number; maxHeight: number },
+): { width: number; height: number } {
+  const width = Math.max(1, dimensions.width);
+  const height = Math.max(1, dimensions.height);
+  const scale = Math.min(bounds.maxWidth / width, bounds.maxHeight / height, 1);
+  return {
+    width: Math.round(width * scale),
+    height: Math.round(height * scale),
+  };
 }
 
 type TextRunOptions = {
@@ -359,6 +597,13 @@ export function RichTextPreview({ blocks }: { blocks: RichTextBlock[] }) {
             <pre key={idx} className="overflow-x-auto rounded-xl bg-slate-900 p-4 text-sm leading-6 text-slate-100" dir="rtl">
               <code>{block.text}</code>
             </pre>
+          );
+        }
+        if (block.type === 'image') {
+          return (
+            <figure key={idx} className="my-5">
+              <img src={block.src} alt={block.alt ?? 'תמונה שנוצרה ב-AI'} className="mx-auto max-h-[520px] w-full max-w-2xl rounded-lg object-contain" />
+            </figure>
           );
         }
         return block.ordered ? (

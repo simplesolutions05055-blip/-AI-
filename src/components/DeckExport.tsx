@@ -10,6 +10,8 @@ import {
   renderDeckToPptx,
   renderBriefToPdf,
   buildNotebookLmPrompt,
+  buildGammaRequestBody,
+  generatePptxWithClaude,
   downloadBlob,
   type DeckSlide,
   type DeckBrand,
@@ -45,7 +47,7 @@ export default function DeckExport({
   initialPickedImages?: DeckImage[] | null;
   initialPickedKeys?: string[];
 }) {
-  const [busy, setBusy] = useState<null | 'pdf' | 'pptx' | 'brief'>(null);
+  const [busy, setBusy] = useState<null | 'pdf' | 'pptx' | 'brief' | 'gamma' | 'claude'>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -54,6 +56,9 @@ export default function DeckExport({
   const [promptText, setPromptText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [aiCount, setAiCount] = useState(0);
+  // The exact JSON body sent to Gamma's API, shown on demand for inspection.
+  const [gammaJson, setGammaJson] = useState<string | null>(null);
+  const [gammaJsonCopied, setGammaJsonCopied] = useState(false);
   // AI images already generated for this request (shown so they can be reused
   // in the next export instead of regenerating from scratch).
   const [existing, setExisting] = useState<PersistedDeckImage[]>([]);
@@ -224,6 +229,45 @@ export default function DeckExport({
     }
   }
 
+  // Build a real branded Hebrew RTL PPTX via Claude's pptx skill and download it.
+  async function buildPptxWithClaude() {
+    if (busy) return;
+    setBusy('claude');
+    setError(null);
+    try {
+      const { deckBrief, brand, images, slides } = await prepareDeck();
+      const safeName =
+        String((brief as any)?.topic || brief?.goal || 'מצגת')
+          .slice(0, 40)
+          .replace(/[\\/:*?"<>|]/g, '') || 'presentation';
+      const { pptx } = await generatePptxWithClaude(deckBrief, brand, images, slides);
+      downloadBlob(pptx, `${safeName}.pptx`);
+    } catch (e) {
+      setError(`יצירת המצגת נכשלה: ${String((e as { message?: string })?.message ?? e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Build (without sending) the exact JSON body that would go to Gamma's API, so
+  // the user can inspect / copy / download it. Uses the same prepareDeck() +
+  // buildGammaRequestBody() that the real generation uses.
+  async function previewGammaJson() {
+    if (busy) return;
+    setBusy('gamma');
+    setError(null);
+    try {
+      const { deckBrief, brand, images, slides } = await prepareDeck();
+      const body = buildGammaRequestBody(deckBrief, brand, images, slides, { numCards: slides.length });
+      setGammaJson(JSON.stringify(body, null, 2));
+      setGammaJsonCopied(false);
+    } catch (e) {
+      setError(`בניית ה-JSON נכשלה: ${String((e as { message?: string })?.message ?? e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="mt-5 border-t border-[var(--border)] pt-4">
       <input
@@ -233,6 +277,76 @@ export default function DeckExport({
         className="hidden"
         onChange={handleFileUpload}
       />
+      <div className="mb-5 border-b border-[var(--border)] pb-4">
+        <div className="text-sm font-semibold mb-1">יצירת מצגת PPTX עם AI</div>
+        <p className="text-xs text-[var(--muted)] mb-2">
+          בונה מצגת PowerPoint אמיתית בעברית מתוך תוכן השקפים שנכתב, כולל לוגו, תמונות המותג ופלטת הצבעים.
+          התהליך עשוי להימשך 6–8 דקות. בסיום הקובץ יורד אוטומטית.
+        </p>
+        <button
+          disabled
+          className="w-full rounded-lg bg-brand px-4 py-2.5 font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
+        >
+          יצירת מצגת PPTX והורדה
+        </button>
+      </div>
+
+      <div className="mb-5 border-b border-[var(--border)] pb-4">
+        <div className="text-sm font-semibold mb-1">תוכן המצגת ל-API (JSON)</div>
+        <p className="text-xs text-[var(--muted)] mb-2">
+          מכין קובץ טקסט מסודר עם תוכן השקפים. אפשר להעתיק אותו ולהדביק ב-Gemini או ב-Gamma כדי ליצור מצגת.
+          שימו לב: זה כולל תוכן בלבד, בלי תמונות.
+        </p>
+        <button
+          onClick={previewGammaJson}
+          disabled={busy !== null}
+          className="w-full rounded-lg border border-brand px-4 py-2.5 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+        >
+          {busy === 'gamma' ? 'בונה JSON…' : 'הצגת ה-JSON ל-API'}
+        </button>
+
+        {gammaJson && (
+          <div className="mt-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold">ה-JSON של תוכן המצגת</div>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(gammaJson);
+                      setGammaJsonCopied(true);
+                      setTimeout(() => setGammaJsonCopied(false), 2000);
+                    } catch {
+                      setError('העתקה ללוח נכשלה — סמנו והעתיקו ידנית.');
+                    }
+                  }}
+                  className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white"
+                >
+                  {gammaJsonCopied ? 'הועתק ✓' : 'העתקה'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadBlob(new Blob([gammaJson], { type: 'application/json' }), 'gamma-request.json')}
+                  className="rounded-md border border-brand px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5"
+                >
+                  הורדה
+                </button>
+              </div>
+            </div>
+            <p className="mb-2 text-xs text-[var(--muted)]">
+              זה הגוף המדויק של הבקשה. התוכן המלא של כל שקופית נמצא בתוך השדה <code>inputText</code>.
+            </p>
+            <pre
+              dir="ltr"
+              className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--border)] bg-white p-2 text-[11px] leading-relaxed text-gray-800"
+            >
+              {gammaJson}
+            </pre>
+          </div>
+        )}
+      </div>
+
       <div>
         <div className="text-sm font-semibold mb-1">בריף ל-NotebookLM (PDF)</div>
         <p className="text-xs text-[var(--muted)] mb-2">
@@ -319,7 +433,7 @@ export default function DeckExport({
       </div>
 
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      {busy && <DeckBuildingOverlay format={busy === 'brief' ? 'pdf' : busy} aiCount={willReuse || cacheRef.current ? 0 : aiCount} />}
+      {busy && <DeckBuildingOverlay format={busy === 'pptx' ? 'pptx' : 'pdf'} aiCount={willReuse || cacheRef.current ? 0 : aiCount} />}
 
       {guideImageOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm" dir="rtl">

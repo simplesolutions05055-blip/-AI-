@@ -11,11 +11,11 @@ const CATEGORIES: { key: SkillCategory; label: string }[] = [
 // Where the real logic lives, so a developer knows where to edit a code/mixed component.
 const CODE_REF: Record<string, string> = {
   'whatsapp-brief-parser': 'supabase/functions/_shared/skills.ts (applyBriefSkillGate) + generate-chat-response / worker.ts',
-  'brand-compliance-qa': 'supabase/functions/_shared/worker.ts (generateAndQa — QA #1)',
-  'independent-qa-reviewer': 'supabase/functions/_shared/worker.ts (generateAndQa — QA #2)',
+  'brand-compliance-qa': 'supabase/functions/_shared/worker.ts (generateAndQa)',
+  'independent-qa-reviewer': 'supabase/functions/_shared/worker.ts (generateAndQa)',
   'agent-brief-intake': 'supabase/functions/generate-chat-response + _shared/worker.ts',
-  'agent-qa1': 'supabase/functions/_shared/worker.ts (QA #1)',
-  'agent-qa2': 'supabase/functions/_shared/worker.ts (QA #2)',
+  'agent-qa1': 'supabase/functions/_shared/worker.ts',
+  'agent-qa2': 'supabase/functions/_shared/worker.ts',
   'rule-branding': 'supabase/functions/_shared/skills.ts (applyBriefSkillGate) + _shared/brand.ts',
   'rule-no-fabrication': 'supabase/functions/_shared/skills.ts (applyBriefSkillGate)',
   'rule-public-sector': 'supabase/functions/_shared/brand.ts (municipality block) + brands.client_type',

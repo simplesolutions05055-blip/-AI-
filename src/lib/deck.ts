@@ -911,6 +911,127 @@ export async function renderDeckToPptx(
   return blob;
 }
 
+// ── Gamma deck: send the assembled slide content to Gamma's Generate API (via
+// the generate-gamma edge function) and poll until the PPTX is ready. Reuses the
+// exact NotebookLM prompt as inputText so the deck carries the AI-written
+// per-slide copy. Returns the editable Gamma URL + the exported PPTX as a Blob. ──
+// The EXACT request body sent to Gamma's Generate API. Single source of truth —
+// used both to start a real generation and to preview/copy the JSON in the UI, so
+// what the user sees is byte-for-byte what we send. The per-slide content lives
+// inside `inputText` (built by buildNotebookLmPrompt: title + subtitle + bullets
+// + body for every slide).
+export function buildGammaRequestBody(
+  brief: any,
+  brand: DeckBrand | null,
+  images: DeckImage[],
+  slides: DeckSlide[],
+  opts: { numCards?: number } = {},
+): Record<string, unknown> {
+  const inputText = buildNotebookLmPrompt(brief, brand, images, slides);
+  const additionalInstructions =
+    'הצג את כל השקופיות בעברית, מיושר מימין לשמאל (RTL). שמור על התוכן שנכתב לכל שקופית.' +
+    (brand?.name ? ` התאם את הטון והסגנון למותג ${brand.name}.` : '');
+  return {
+    inputText,
+    format: 'presentation',
+    textMode: 'preserve',
+    exportAs: 'pptx',
+    textOptions: { language: 'he' },
+    numCards: opts.numCards ?? slides.length,
+    additionalInstructions,
+  };
+}
+
+// Build a real branded Hebrew PPTX via Claude's pptx skill (generate-pptx-claude
+// edge function). Reuses the exact slide content from buildNotebookLmPrompt and
+// passes the brand's images (logo first) + palette so Claude can embed them.
+export async function generatePptxWithClaude(
+  brief: any,
+  brand: DeckBrand | null,
+  images: DeckImage[],
+  slides: DeckSlide[],
+): Promise<{ pptx: Blob; fileName: string }> {
+  const client = createSupabaseBrowserClient();
+  const inputText = buildNotebookLmPrompt(brief, brand, images, slides);
+  // Logo first, then content images — keep payload bounded.
+  const ordered = [...images].sort((a, b) => Number(b.isLogo) - Number(a.isLogo)).slice(0, 8);
+  const palette = (brand?.color_palette ?? (brief?.brand_palette as any) ?? []) as Array<{ hex?: string; role?: string }>;
+
+  // The Claude run takes 1–3 minutes — longer than a synchronous request
+  // survives. Start it in the background, then poll for the result.
+  const jobId = crypto.randomUUID();
+  const { error: startErr } = await client.functions.invoke('generate-pptx-claude', {
+    body: {
+      action: 'start',
+      jobId,
+      inputText,
+      brandName: brand?.name ?? null,
+      palette,
+      images: ordered.map((i) => ({ dataUrl: i.dataUrl, caption: i.caption })),
+    },
+  });
+  if (startErr) throw startErr;
+
+  type PptxStatus = { status?: string; pptxBase64?: string; fileName?: string; error?: string | null };
+  const deadline = Date.now() + 6 * 60 * 1000;
+  let res: PptxStatus | null = null;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const { data, error } = await client.functions.invoke('generate-pptx-claude', {
+      body: { action: 'status', jobId },
+    });
+    if (error) throw error;
+    res = data as PptxStatus;
+    if (res?.status === 'done' && res.pptxBase64) break;
+    if (res?.status === 'error') throw new Error(res.error || 'יצירת המצגת נכשלה');
+  }
+  if (!res?.pptxBase64) throw new Error('יצירת המצגת נמשכה זמן רב מדי');
+  const bytes = Uint8Array.from(atob(res.pptxBase64), (c) => c.charCodeAt(0));
+  const pptx = new Blob([bytes], {
+    type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  });
+  return { pptx, fileName: res.fileName || 'presentation.pptx' };
+}
+
+export async function generateGammaDeck(
+  brief: any,
+  brand: DeckBrand | null,
+  images: DeckImage[],
+  slides: DeckSlide[],
+  opts: { numCards?: number; signal?: AbortSignal } = {},
+): Promise<{ gammaUrl: string | null; pptx: Blob }> {
+  const client = createSupabaseBrowserClient();
+  const gammaBody = buildGammaRequestBody(brief, brand, images, slides, { numCards: opts.numCards });
+
+  const { data: started, error: startErr } = await client.functions.invoke('generate-gamma', {
+    body: { action: 'start', gammaBody },
+  });
+  if (startErr) throw startErr;
+  const generationId = (started as { generationId?: string } | null)?.generationId;
+  if (!generationId) throw new Error('Gamma לא החזיר מזהה יצירה');
+
+  // Poll status — Gamma typically completes within ~30–60s.
+  const deadline = Date.now() + 5 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (opts.signal?.aborted) throw new Error('בוטל');
+    await new Promise((r) => setTimeout(r, 4000));
+    const { data: statusData, error: statusErr } = await client.functions.invoke('generate-gamma', {
+      body: { action: 'status', generationId },
+    });
+    if (statusErr) throw statusErr;
+    const s = statusData as { status?: string; gammaUrl?: string | null; pptxBase64?: string } | null;
+    if (s?.status === 'completed' && s.pptxBase64) {
+      const bytes = Uint8Array.from(atob(s.pptxBase64), (c) => c.charCodeAt(0));
+      const pptx = new Blob([bytes], {
+        type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      });
+      return { gammaUrl: s.gammaUrl ?? null, pptx };
+    }
+    if (s?.status === 'failed') throw new Error('יצירת המצגת ב-Gamma נכשלה');
+  }
+  throw new Error('יצירת המצגת ב-Gamma נמשכה זמן רב מדי');
+}
+
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

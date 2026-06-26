@@ -164,7 +164,7 @@ export default function SettingsPage() {
         <Field label="מצב כללי">
           <select className={input} value={approval.mode} onChange={(e) => update('approval_mode', { ...approval, mode: e.target.value })}>
             <option value="manual">ידני לכל התוצרים</option>
-            <option value="automatic">אוטומטי לאחר QA</option>
+            <option value="automatic">אוטומטי לאחר בדיקות מערכת</option>
             <option value="by_output_type">לפי סוג תוצר</option>
           </select>
         </Field>

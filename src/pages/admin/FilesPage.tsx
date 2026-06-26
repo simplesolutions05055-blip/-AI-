@@ -27,19 +27,19 @@ const TYPE_ICON: Record<OutputType, string> = {
 
 type FileFilter = {
   key: string;
-  type: OutputType | null;
+  types: OutputType[] | null;
+  queryType: OutputType | null;
   source: 'quote' | null;
   label: string;
   icon: string;
 };
 
 const FILE_TYPE_FILTERS: FileFilter[] = [
-  { key: 'all', type: null, source: null, label: 'הכל', icon: '▦' },
-  { key: 'image', type: 'image', source: null, label: 'תמונה/גרפיקה', icon: TYPE_ICON.image },
-  { key: 'presentation', type: 'presentation', source: null, label: 'מצגת', icon: TYPE_ICON.presentation },
-  { key: 'pdf', type: 'pdf', source: null, label: 'מסמך/PDF', icon: TYPE_ICON.pdf },
-  { key: 'quote', type: 'pdf', source: 'quote', label: 'הצעות מחיר', icon: '💰' },
-  { key: 'text', type: 'text', source: null, label: 'טקסט', icon: TYPE_ICON.text },
+  { key: 'all', types: null, queryType: null, source: null, label: 'הכל', icon: '▦' },
+  { key: 'image', types: ['image'], queryType: 'image', source: null, label: 'תמונה/גרפיקה', icon: TYPE_ICON.image },
+  { key: 'presentation', types: ['presentation'], queryType: 'presentation', source: null, label: 'מצגת', icon: TYPE_ICON.presentation },
+  { key: 'document', types: ['pdf', 'text'], queryType: 'pdf', source: null, label: 'מסמך', icon: TYPE_ICON.pdf },
+  { key: 'quote', types: ['pdf'], queryType: 'pdf', source: 'quote', label: 'הצעות מחיר', icon: '💰' },
 ];
 
 function isOutputType(value: string | null): value is OutputType {
@@ -190,7 +190,7 @@ export default function FilesPage() {
   function setFileFilter(filter: FileFilter) {
     clearSelection();
     const params = new URLSearchParams();
-    if (filter.type) params.set('type', filter.type);
+    if (filter.queryType) params.set('type', filter.queryType);
     if (filter.source) params.set('source', filter.source);
     const query = params.toString();
     navigate(query ? `/admin/files?${query}` : '/admin/files');
@@ -220,9 +220,14 @@ export default function FilesPage() {
     setLastIndex(null);
   }
 
-  const visibleFiles = files.filter((file) =>
-    sourceFilter === 'quote' ? file.request_source === 'quote' : file.request_source !== 'quote'
-  );
+  const visibleFiles = files.filter((file) => {
+    const matchesSource =
+      sourceFilter === 'quote' ? file.request_source === 'quote' : file.request_source !== 'quote';
+    if (!matchesSource) return false;
+    if (sourceFilter === 'quote') return file.output_type === 'pdf';
+    if (filterType === 'pdf' || filterType === 'text') return file.output_type === 'pdf' || file.output_type === 'text';
+    return filterType ? file.output_type === filterType : true;
+  });
 
   async function deleteSelected() {
     if (!isAdmin) return;
@@ -277,7 +282,11 @@ export default function FilesPage() {
       <div className="mb-5 overflow-x-auto pb-1">
         <div className="inline-flex min-w-full gap-2 rounded-2xl border border-[#EAECF0] bg-white p-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:min-w-0">
           {FILE_TYPE_FILTERS.map((item) => {
-            const active = filterType === item.type && sourceFilter === item.source;
+            const active =
+              sourceFilter === item.source &&
+              (item.types === null
+                ? filterType === null
+                : item.types.includes(filterType as OutputType));
             return (
               <button
                 key={item.key}
@@ -312,7 +321,6 @@ export default function FilesPage() {
         <div className="space-y-8">
           {(['image', 'pdf', 'presentation', 'text'] as const).map((type) => {
             let typeFiles = visibleFiles.filter((f) => f.output_type === type);
-            if (filterType && filterType !== type) typeFiles = [];
             if (typeFiles.length === 0) return null;
 
             return (
@@ -410,7 +418,7 @@ export default function FilesPage() {
                               )}
                             </div>
                           )}
-                          {(file.output_type === 'image' || file.output_type === 'presentation') && (
+                          {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

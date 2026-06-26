@@ -28,7 +28,7 @@ body {
     radial-gradient(circle at top left, rgba(16, 185, 129, 0.08), transparent 24%),
     linear-gradient(180deg, #f8fafc 0%, var(--bg) 55%, #eef2f7 100%);
   color: var(--text);
-  font-family: 'Assistant', 'Heebo', system-ui, sans-serif;
+  font-family: 'Heebo', system-ui, sans-serif;
   line-height: 1.55;
   min-height: 100%;
   overflow-x: hidden;
@@ -84,6 +84,67 @@ select {
 @keyframes image-loading-sheen {
   100% {
     transform: translateX(-100%);
+  }
+}
+
+.image-generation-progress {
+  background-size: 220% 100%;
+  animation: image-generation-progress 1.8s ease-in-out infinite;
+}
+
+.image-generation-float {
+  animation: image-generation-float 2.6s ease-in-out infinite;
+}
+
+.image-generation-pulse {
+  animation: image-generation-pulse 1.2s ease-in-out infinite;
+}
+
+.image-generation-orbit {
+  animation: image-generation-orbit 2.4s ease-in-out infinite;
+}
+
+@keyframes image-generation-progress {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes image-generation-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes image-generation-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scaleX(0.86);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes image-generation-orbit {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate3d(8px, -8px, 0) scale(1.08);
   }
 }
 

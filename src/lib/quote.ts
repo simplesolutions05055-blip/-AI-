@@ -33,6 +33,10 @@ export interface Quote {
   signature?: boolean;
   // Branding (optional). Defaults to the Simple Solutions palette.
   company?: { name?: string; site?: string; cta?: string };
+  // Brand kit pulled from the selected brand (logo + palette), filled by the Edge
+  // function. When present the renderer shows the logo and themes the doc with the
+  // brand colors instead of the default blue palette.
+  brand?: { name?: string | null; logo_data_url?: string | null; colors?: string[] } | null;
 }
 
 export interface QuoteTheme {
@@ -53,6 +57,38 @@ const DEFAULT_THEME: QuoteTheme = {
   ink: '#1F2233',
   muted: '#64748B',
 };
+
+// Parse a #rrggbb / #rgb hex into [r,g,b]; null if unparseable.
+function hexToRgb(hex: string): [number, number, number] | null {
+  let h = hex.trim().replace(/^#/, '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) return null;
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+// Mix a hex color toward white by `amount` (0..1) — used to derive the soft
+// "lavender" fill from a brand color so the boxes stay light and readable.
+function tint(hex: string, amount: number): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const mix = rgb.map((c) => Math.round(c + (255 - c) * amount));
+  return `#${mix.map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+}
+
+// Build a quote theme from a brand's palette. Darkest color drives the navy
+// header/total boxes, a brighter one the gradient end, and a distinct accent the
+// gold highlights. Falls back to defaults for anything the palette doesn't cover.
+export function themeFromBrandColors(colors: string[]): Partial<QuoteTheme> {
+  const valid = colors.map((c) => ({ hex: c, rgb: hexToRgb(c) })).filter((c) => c.rgb) as Array<{ hex: string; rgb: [number, number, number] }>;
+  if (!valid.length) return {};
+  const lum = ([r, g, b]: [number, number, number]) => 0.299 * r + 0.587 * g + 0.114 * b;
+  const sorted = [...valid].sort((a, b) => lum(a.rgb) - lum(b.rgb));
+  const navy = sorted[0].hex;
+  const navy2 = sorted[1]?.hex ?? navy;
+  // Accent: the most saturated/brightest color that isn't the navy pair.
+  const accent = sorted.slice(2).reverse()[0]?.hex ?? sorted[sorted.length - 1].hex;
+  return { navy, navy2, gold: accent, lavender: tint(navy2, 0.9) };
+}
 
 // The session-scoped one-off OpenAI key the user may have entered (shared key
 // name with ProductionPage). Read here so EVERY quote path forwards it — without
@@ -99,7 +135,9 @@ export function downloadBlob(blob: Blob, filename: string) {
 // ── Quote → A4 PDF. Each section is a self-contained .q-block; blocks are packed
 // onto pages by measuring height, never split — so cards/boxes never get cut. ──
 export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<QuoteTheme>): Promise<Blob> {
-  const t = { ...DEFAULT_THEME, ...(themeOverride ?? {}) };
+  const brandTheme = themeFromBrandColors(quote.brand?.colors ?? []);
+  const t = { ...DEFAULT_THEME, ...brandTheme, ...(themeOverride ?? {}) };
+  const logoUrl = quote.brand?.logo_data_url || null;
   const esc = (s: unknown) =>
     String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const has = (s: unknown) => typeof s === 'string' && s.trim().length > 0;
@@ -117,7 +155,7 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
   blocks.push(`<div class="q-block q-header">
     <div class="q-head-top">
       <div class="q-badge">${esc(meta.doc || 'הצעת מחיר')}</div>
-      <div class="q-logo">${esc(company.name)}</div>
+      ${logoUrl ? `<img class="q-logo-img" src="${logoUrl}" alt="${esc(company.name)}" />` : `<div class="q-logo">${esc(company.name)}</div>`}
     </div>
     <h1>${esc(quote.title || 'הצעת מחיר')}</h1>
     ${has(quote.subtitle) ? `<p class="q-sub">${esc(quote.subtitle)}</p>` : ''}
@@ -253,7 +291,10 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
 
   // ── Footer CTA bar ──
   blocks.push(`<div class="q-block q-footer">
-    <div class="q-foot-name">${esc(company.name)}<div class="q-foot-site">${esc(company.site)}</div></div>
+    <div class="q-foot-name">
+      ${logoUrl ? `<img class="q-foot-logo" src="${logoUrl}" alt="${esc(company.name)}" />` : esc(company.name)}
+      <div class="q-foot-site">${esc(company.site)}</div>
+    </div>
     <div class="q-cta">${esc(company.cta)}</div>
   </div>`);
 
@@ -272,6 +313,8 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
     .q-header{background:linear-gradient(135deg,${t.navy},${t.navy2});border-radius:16px;padding:28px 32px;color:#fff}
     .q-head-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
     .q-logo{font-size:16px;font-weight:800;letter-spacing:1px;color:#fff}
+    .q-logo-img{max-height:40px;max-width:160px;object-fit:contain;display:block}
+    .q-foot-logo{max-height:30px;max-width:140px;object-fit:contain;display:block;margin-bottom:2px}
     .q-badge{background:${t.gold};color:${t.navy};font-size:12px;font-weight:800;padding:5px 14px;border-radius:20px}
     .q-header h1{font-size:30px;font-weight:800;margin:0;line-height:1.2;color:#fff}
     .q-sub{font-size:15px;margin:10px 0 0;color:#d7d7ea;line-height:1.5}
@@ -329,6 +372,17 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
 
   try {
     await (document as any).fonts?.ready?.catch?.(() => {});
+    // Wait for any logo images to decode so html2canvas captures them.
+    await Promise.all(
+      Array.from(container.querySelectorAll('img')).map((img) =>
+        (img as HTMLImageElement).complete
+          ? Promise.resolve()
+          : new Promise<void>((res) => {
+              img.addEventListener('load', () => res(), { once: true });
+              img.addEventListener('error', () => res(), { once: true });
+            })
+      )
+    );
     await new Promise((r) => setTimeout(r, 120));
 
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: [PAGE_W, PAGE_H] });
