@@ -9,7 +9,7 @@ import ImagePickerModal from '@/components/ImagePickerModal';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
 import type { DeckImage } from '@/lib/deck';
-import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, themeFromQuoteBrand, tint, type Quote } from '@/lib/quote';
+import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, themeFromQuoteBrand, attachBrandToQuote, tint, type Quote } from '@/lib/quote';
 import type { OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
 
 type ProductionType = OutputType;
@@ -239,7 +239,7 @@ function QuoteFlow() {
         brief.previous_quote = quote;
       }
       const q = await fetchQuote(brief, null, getSessionOpenAiKey());
-      setQuote(q);
+      setQuote(await attachBrandToQuote(q, brandId));
       setRevision('');
     } catch (e) {
       const msg = String((e as { message?: string })?.message ?? e);
@@ -490,7 +490,7 @@ function QuoteReview({ quote }: { quote: Quote }) {
 
       {comps.length > 0 && (
         <div>
-          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>היקף הפיתוח — רכיבי המערכת</div>
+          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>{quote.components_title || 'פירוט ההצעה'}</div>
           <div className="grid gap-2 sm:grid-cols-2">
             {comps.map((c, i) => (
               <div key={i} className="flex items-start gap-2.5 rounded-xl p-3" style={{ backgroundColor: t.lavender }}>
@@ -508,7 +508,7 @@ function QuoteReview({ quote }: { quote: Quote }) {
 
       {included.length > 0 && (
         <div>
-          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>כלול בפיתוח</div>
+          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>{quote.included_title || 'מה כולל'}</div>
           <div className="grid gap-2 sm:grid-cols-2">
             {included.map((x, i) => (
               <div key={i} className="flex items-start gap-2 rounded-lg p-2.5 text-[12.5px]" style={{ backgroundColor: t.lavender }}>
@@ -522,7 +522,7 @@ function QuoteReview({ quote }: { quote: Quote }) {
 
       {tech.length > 0 && (
         <div>
-          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>טכנולוגיות וכלים</div>
+          <div className="mb-2 text-[15px] font-extrabold" style={headingStyle}>{quote.technologies_title || 'טכנולוגיות וכלים'}</div>
           <div className="flex flex-wrap gap-2">
             {tech.map((x, i) => <span key={i} className="rounded-full px-3 py-1.5 text-[12.5px] font-bold" style={{ backgroundColor: t.lavender, color: t.onLavender }}>{x}</span>)}
           </div>

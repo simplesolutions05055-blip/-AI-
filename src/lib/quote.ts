@@ -219,6 +219,37 @@ export async function fetchQuote(
   return quote;
 }
 
+// Merge the selected brand's palette + style notes into a generated quote, client
+// side. The Edge function also attaches these (and inlines the logo), but reading
+// them here means the brand's colors theme the quote even before that function is
+// redeployed — and never overwrites a logo the Edge function already inlined.
+export async function attachBrandToQuote(quote: Quote, brandId: string | null): Promise<Quote> {
+  if (!brandId) return quote;
+  try {
+    const db = createSupabaseBrowserClient();
+    const { data } = await db
+      .from('brands')
+      .select('name, color_palette, style_notes')
+      .eq('id', brandId)
+      .maybeSingle();
+    if (!data) return quote;
+    const b = data as { name?: string | null; color_palette?: Array<{ hex?: string; role?: string }> | null; style_notes?: string | null };
+    const palette = (b.color_palette ?? []).filter((c) => typeof c?.hex === 'string') as Array<{ hex: string; role?: string }>;
+    return {
+      ...quote,
+      brand: {
+        ...(quote.brand ?? {}),
+        name: quote.brand?.name ?? b.name ?? null,
+        palette,
+        colors: palette.map((c) => c.hex),
+        style_notes: b.style_notes ?? null,
+      },
+    };
+  } catch {
+    return quote;
+  }
+}
+
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

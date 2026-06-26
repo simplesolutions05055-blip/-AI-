@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchQuote, renderQuoteToPdf, downloadBlob, type Quote } from '@/lib/quote';
+import { fetchQuote, renderQuoteToPdf, downloadBlob, attachBrandToQuote, type Quote } from '@/lib/quote';
 
 // End-to-end Hebrew price-quote ("הצעת מחיר") generator. The user pastes a free
 // brief — including the price they want — and gets a branded PDF laid out like
@@ -40,7 +40,7 @@ export default function QuoteExport({
       // Pass the raw prompt through as the brief. generateQuote reads the full
       // text — including any price — verbatim; brand_id grounds it in the brand.
       const brief = { goal: prompt.trim(), raw_prompt: prompt.trim(), brand_id: brandId };
-      const q = await fetchQuote(brief, requestId);
+      const q = await attachBrandToQuote(await fetchQuote(brief, requestId), brandId);
       setQuote(q);
       const blob = await renderQuoteToPdf(q);
       const safeName =
