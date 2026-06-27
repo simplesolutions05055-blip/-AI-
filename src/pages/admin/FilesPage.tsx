@@ -160,7 +160,8 @@ export default function FilesPage() {
         // (text/presentation delivered as WhatsApp text) alike.
         .select('id, request_id, output_type, storage_path, text_content, mime_type, created_at')
         .order('created_at', { ascending: false })
-        .limit(100);
+        // Admins must see every תוצר; cap at Supabase's default max-rows ceiling.
+        .limit(1000);
       const rawRows = (data ?? []) as Omit<FileRow, 'creator' | 'request_source' | 'brand_logo_url'>[];
 
       // The admin currently using the site — credited for simulator outputs.

@@ -132,7 +132,7 @@ interface BrandKit {
 const OUTPUT_LABEL: Record<string, string> = {
   image: 'תמונה',
   presentation: 'מצגת',
-  text: 'טקסט',
+  text: 'פוסט / טקסט קצר',
   pdf: 'PDF / מסמך',
 };
 

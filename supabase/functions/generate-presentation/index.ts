@@ -1,5 +1,5 @@
 import { db } from '../_shared/db.ts';
-import { generatePresentationOutline, generateDeckSlides, generateQuote, generateImage, generateImageWithReferences } from '../_shared/openai.ts';
+import { generatePresentationOutline, generateDeckSlides, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost } from '../_shared/util.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 
@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { brief, requestId, format, prompts, slideIndexes, captions, openai_key } = await req.json();
+    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
 
     // 'images' mode: generate up to 3 AI images from explicit prompts (built by
@@ -213,6 +213,40 @@ Deno.serve(async (req) => {
         metadata: { request_id: requestId ?? null },
       });
       return new Response(JSON.stringify({ ok: true, quote }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 'social_caption' mode: a ready-to-publish Facebook/Instagram caption written
+    // from the brief — used to pre-fill the post text when scheduling an image.
+    if (format === 'social_caption') {
+      const aiModelsCaption = await getSetting<{ text_model?: string }>(database, 'ai_models');
+
+      // Ground the caption in the brand's Business Brain (facts/messaging/tone),
+      // same as deck/quote, so the post sounds on-brand and not generic.
+      const captionBrandId = (brief as { brand_id?: string }).brand_id ?? null;
+      if (captionBrandId) {
+        const [{ data: cBrand }, { data: cSources }] = await Promise.all([
+          database.from('brands').select('name, color_palette, style_notes, is_active, client_type').eq('id', captionBrandId).single(),
+          database.from('business_text_sources').select('title, content, source_kind').eq('brand_id', captionBrandId).order('created_at', { ascending: false }).limit(12),
+        ]);
+        const cBrain = buildBusinessBrainContext(cBrand, cSources ?? []);
+        if (cBrain.content) (brief as Record<string, unknown>).business_content_context = cBrain.content;
+      }
+
+      const { text: caption, usage } = await generateSocialCaption(brief, typeof platform === 'string' ? platform : 'facebook', overrideKey);
+      await recordUsageAndCost(database, requestId ?? null, {
+        provider: 'openai',
+        model: aiModelsCaption?.text_model || 'gpt-4o',
+        input: usage?.prompt_tokens ?? 0,
+        output: usage?.completion_tokens ?? 0,
+        cost: estimateTextCost(usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0),
+      });
+      await logEvent(database, {
+        action: 'social_caption_generated',
+        metadata: { request_id: requestId ?? null, platform: platform ?? null },
+      });
+      return new Response(JSON.stringify({ ok: true, caption }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }

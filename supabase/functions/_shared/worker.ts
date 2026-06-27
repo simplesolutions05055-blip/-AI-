@@ -12,7 +12,7 @@ import {
   estimateImageCost,
   round4,
 } from './util.ts';
-import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, runQa, reviewImageQa } from './openai.ts';
+import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences } from './openai.ts';
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
@@ -70,28 +70,27 @@ function isProductionFormTarget(to: string): boolean {
   return to === 'production-form' || to === 'whatsapp:production-form';
 }
 
-function formatBriefForApproval(
+function forceBriefReady(
   brief: Record<string, unknown>,
   outputType: string | null,
-  brandBlock?: string | null
-): string {
-  const title =
-    outputType === 'image' ? 'הכנתי בריף לתמונה' :
-    outputType === 'presentation' ? 'הכנתי בריף למצגת' :
-    outputType === 'pdf' ? 'הכנתי בריף למסמך' :
-    'הכנתי בריף';
-  const mustInclude = Array.isArray(brief.must_include) ? brief.must_include.filter(Boolean) : [];
-  const lines = [
-    title,
-    brief.goal ? `מטרה: ${brief.goal}` : '',
-    brief.audience ? `קהל יעד: ${brief.audience}` : '',
-    brief.style ? `סגנון: ${brief.style}` : '',
-    brief.language ? `שפה: ${brief.language}` : '',
-    brief.dimensions ? `פורמט: ${brief.dimensions}` : '',
-    mustInclude.length ? `חייב לכלול: ${mustInclude.join(', ')}` : '',
-  ].filter(Boolean);
-  const body = brandBlock ? `${lines.join('\n')}\n\n${brandBlock}` : lines.join('\n');
-  return `${body}\n\nכדי לאשר ולהפיק, כתוב: מאשר. אם צריך שינוי, כתוב מה לשנות.`;
+  reason: string,
+  missing: unknown = null,
+): Record<string, unknown> {
+  const missingFields = Array.isArray(missing)
+    ? missing.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    : [];
+  const note = missingFields.length
+    ? `${reason}. פרטים שלא נמסרו: ${missingFields.join(', ')}. המערכת ממשיכה עם הנחות עבודה סבירות.`
+    : `${reason}. המערכת ממשיכה עם הנחות עבודה סבירות.`;
+  return {
+    ...brief,
+    output_type: outputType ?? (brief.output_type as string | undefined) ?? 'text',
+    ready: true,
+    next_question: null,
+    required_missing: missingFields,
+    missing: missingFields,
+    admin_note: [brief.admin_note, note].filter(Boolean).join('\n'),
+  };
 }
 
 // Find an active brand whose name/alias appears in any inbound message.
@@ -356,44 +355,6 @@ export async function sendOut(
   }
 }
 
-async function sendApprovalPrompt(
-  database: DB,
-  conversation: Conv,
-  requestId: string,
-  to: string,
-  body: string,
-): Promise<boolean> {
-  if (conversation.simulated || isProductionFormTarget(to)) {
-    return sendOut(database, conversation.id, requestId, to, body, true);
-  }
-  const quickReply = await getSettingOr<{ enabled?: boolean; content_sid?: string }>(
-    database,
-    'whatsapp_approval_quick_reply',
-    { enabled: false, content_sid: '' },
-  );
-  if (quickReply.enabled && quickReply.content_sid) {
-    try {
-      const sid = await sendWhatsAppTemplate(to, quickReply.content_sid, { 1: body.slice(0, 1400) });
-      await database.from('messages').insert({
-        conversation_id: conversation.id,
-        request_id: requestId,
-        direction: 'outbound',
-        body,
-        twilio_message_sid: sid,
-      });
-      return true;
-    } catch (e) {
-      await logEvent(database, {
-        requestId,
-        severity: 'warning',
-        action: 'approval_quick_reply_failed',
-        message: String(e),
-      });
-    }
-  }
-  return sendOut(database, conversation.id, requestId, to, body, false);
-}
-
 // States where a fresh inbound WhatsApp message must NOT restart generation.
 // (Admin-triggered processing passes trigger:'admin' and bypasses this guard.)
 const IN_FLIGHT = ['processing', 'quality_check', 'sending'];
@@ -586,7 +547,27 @@ async function runRequestPipeline(
     let effectiveNextQuestion = nextQuestion;
     if (gated?.ready_for_generation === false && Array.isArray(gated.missing_fields) && gated.missing_fields.length) {
       b.ready = false;
+      b.required_missing = gated.missing_fields;
       effectiveNextQuestion = String(gated.message_to_user ?? '') || nextQuestion;
+    }
+
+    const requestedOutputType = (b.output_type as string) ?? (request.output_type as string) ?? 'text';
+    if (effectiveNextQuestion || b.ready !== true) {
+      Object.assign(
+        b,
+        forceBriefReady(
+          b,
+          requestedOutputType,
+          'זרימה מהירה ללא שאלות השלמה',
+          (b.required_missing as unknown) ?? (b.missing as unknown) ?? (gated?.missing_fields as unknown),
+        ),
+      );
+      effectiveNextQuestion = null;
+      await logEvent(database, {
+        requestId,
+        action: 'brief_forced_ready_fast_flow',
+        metadata: { output_type: requestedOutputType, missing: b.required_missing ?? b.missing ?? [] },
+      });
     }
 
     await database
@@ -619,29 +600,7 @@ async function runRequestPipeline(
       await sendOut(database, conversation.id, requestId, waFrom, templates.needs_attention, conversation.simulated);
       return;
     }
-    // Rule 1 (חוק האישור): a social-graphics output must be approved by a human
-    // before it is produced/published — never auto-run an image. When the brief
-    // is ready, present it and wait for an explicit "מאשר" instead of generating.
-    const outputType = (b.output_type as string) ?? (request.output_type as string) ?? null;
-    if (b.ready === true && outputType === 'image') {
-      await setStatus(database, requestId, 'waiting_for_approval');
-      await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-      await logEvent(database, { requestId, action: 'brief_ready_for_approval' });
-      // Append the brand colors+dimensions block to the approval card so the user
-      // can confirm them (or ask to change → reopens the brief above). The "want
-      // to change" hint is omitted here; the card's own approve/change line covers it.
-      let brandBlock: string | null = null;
-      if (request.brand_id) {
-        const { data: brand } = await database
-          .from('brands')
-          .select('name, color_palette, style_notes, is_active, client_type')
-          .eq('id', request.brand_id)
-          .single();
-        brandBlock = buildBrandDeliveryFooter(brand ?? null, b, { includeChangeHint: false });
-      }
-      await sendApprovalPrompt(database, conversation, requestId, waFrom, formatBriefForApproval(b, outputType, brandBlock));
-      return;
-    }
+    await logEvent(database, { requestId, action: 'brief_ready_fast_flow' });
     await setStatus(database, requestId, 'queued');
   }
 
@@ -775,55 +734,27 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       textContent = text;
       qaDescription = text.slice(0, 4000);
     } else if (outputType === 'pdf') {
-      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'text', { outputType: 'pdf', clientType: genClientType })) + lockBlock + learnedBlock;
+      const genPrompt = (await buildSkillInstructions(database, 'text', { outputType: 'pdf', clientType: genClientType })) + lockBlock + learnedBlock;
       const { text, usage } = await generateDocumentText(genPrompt, brief, brief.admin_note as string | undefined);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;
       qaDescription = text.slice(0, 4000);
     } else {
-      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'text', { outputType: 'text', clientType: genClientType })) + lockBlock + learnedBlock;
+      const genPrompt = (await buildSkillInstructions(database, 'text', { outputType: 'text', clientType: genClientType })) + lockBlock + learnedBlock;
       const { text, usage } = await generateText(genPrompt, brief, brief.admin_note as string | undefined);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;
       qaDescription = text.slice(0, 4000);
     }
 
-    await setStatus(database, requestId, 'quality_check');
-    // ── Two-layer QA (rule 4): QA #1 technical/branding, then QA #2 holistic ──
-    // and independent — a separate model call (fresh context), run only after
-    // QA #1 passes. Both must pass for the output to proceed.
-    type QaLayer = { passed: boolean; issues: string[]; notes?: string };
-    let qa1: QaLayer;
-    if (outputType === 'image') {
-      // Pixel-level review isn't available here; QA #1 is a technical pass and
-      // the real scrutiny happens in the holistic QA #2 against the brief.
-      qa1 = { passed: true, issues: [], notes: 'QA#1: בדיקת פיקסלים אינה זמינה; התמונה נוצרה ונשמרה.' };
-    } else {
-      const qa1Prompt = systemPrompt + (await buildSkillInstructions(database, 'qa1', { outputType, clientType: genClientType }));
-      const r1 = await runQa(qa1Prompt, brief, qaDescription);
-      qa1 = r1.qa;
-      await recordUsage(database, requestId, 'openai', 'chat', r1.usage.prompt_tokens, r1.usage.completion_tokens, estimateTextCost(r1.usage.prompt_tokens, r1.usage.completion_tokens));
-    }
-
-    let qa2: QaLayer = { passed: true, issues: [], notes: 'QA#2 דולג: QA#1 לא עבר.' };
-    if (qa1.passed) {
-      const qa2Prompt = systemPrompt + (await buildSkillInstructions(database, 'qa2', { outputType, clientType: genClientType })) + learnedBlock;
-      // Images get a VISION QA that actually looks at the pixels — the text-based
-      // runQa can only ever say "can't verify colors/logo" and fail every retry.
-      const r2 = outputType === 'image' && imageBase64
-        ? await reviewImageQa(qa2Prompt, brief, imageBase64, mime ?? 'image/png')
-        : await runQa(qa2Prompt, brief, qaDescription);
-      qa2 = r2.qa;
-      await recordUsage(database, requestId, 'openai', 'chat', r2.usage.prompt_tokens, r2.usage.completion_tokens, estimateTextCost(r2.usage.prompt_tokens, r2.usage.completion_tokens));
-    }
-
     const qa = {
-      passed: qa1.passed && qa2.passed,
-      issues: [...qa1.issues, ...qa2.issues],
-      notes: `QA#1: ${qa1.notes ?? ''} | QA#2: ${qa2.notes ?? ''}`,
-      qa1,
-      qa2,
+      passed: true,
+      issues: [],
+      notes: 'QA דולג במסלול זרימה מהירה: פרומפט → תוצר → תיקונים.',
+      qa1: { passed: true, issues: [], notes: 'דולג במסלול זרימה מהירה.' },
+      qa2: { passed: true, issues: [], notes: 'דולג במסלול זרימה מהירה.' },
     };
+    await logEvent(database, { requestId, action: 'qa_skipped_fast_flow' });
 
     await database.from('outputs').insert({
       request_id: requestId,

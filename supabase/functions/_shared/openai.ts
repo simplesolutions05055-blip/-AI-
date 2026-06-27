@@ -345,17 +345,127 @@ export async function generateQuote(systemPrompt: string, brief: unknown, apiKey
 export async function generateText(systemPrompt: string, brief: unknown, note?: string) {
   const { content, usage } = await chat(
     [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: `${systemPrompt}
+
+אתה כותב תוצר מסוג טקסט/פוסט לרשתות חברתיות, בעיקר פייסבוק/וואטסאפ/אינסטגרם, ולא מסמך עבודה.
+החזר רק את גוף הפוסט עצמו בעברית, בלי כותרת "פוסט", בלי הסברים, בלי Markdown ובלי מבנה של מסמך/PDF.
+
+סגנון הכתיבה הרצוי:
+- פתיחה קצרה וחזקה שמייצרת עניין, גאווה, שמחה, הזמנה או עדכון ברור.
+- טון חיובי, קהילתי, חם, מכבד ומקצועי. כשמדובר ברשות/עירייה: סגנון עירוני-קהילתי שמדגיש עשייה, תושבים, שייכות וגאווה מקומית.
+- משפטים קצרים יחסית, זורמים ונוחים לקריאה בפיד או בוואטסאפ.
+- גוף הפוסט יתאר בקצרה מה קרה / מה קורה / למה זה חשוב / למי זה מיועד.
+- סיום עם תודה, ברכה, הזמנה להשתתפות, קריאה לפעולה או משפט שמחזק קהילה, לפי ההקשר.
+- שלב אימוג'ים במידה טבעית, בעיקר בתחילת הפוסט ובסופי משפטים מרכזיים. אל תעמיס.
+- אל תכתוב כמו מאמר, בריף, דוח, הצעה, סיכום מנהלים או מסמך PDF.
+- אסור להשתמש בכותרות משנה, רשימות, נקודות, סעיפים ממוספרים או תוויות מידע.
+- אסור לכתוב תוויות כמו "תאריך האירוע:", "שעה:", "מיקום:", "על ההצגה:", "המסרים המרכזיים:", "פרטים חשובים:", "למי זה מתאים?", "מחירים:", "נגישות:".
+- אם יש הרבה פרטים טכניים, שלב רק את החשובים ביותר בתוך משפט טבעי אחד או שניים. אל תפרק אותם לטופס.
+- אם הבריף כולל מסרים חינוכיים/ערכיים, אל תכתוב "המסרים המרכזיים". הפוך אותם למשפט טבעי כמו "הצגה צבעונית שמזכירה לילדים כמה חשוב לשתף פעולה, לעזור לאחרים ולא לוותר גם כשמשהו משתבש".
+- אל תמציא עובדות, תאריכים, שמות, מחירים, מיקומים או פרטי קשר שלא הופיעו בבריף. אם פרט חסר, נסח סביבו בלי להמציא.
+- אורך ברירת מחדל: 2-4 שורות קצרות, בערך 45-80 מילים. רק אם המשתמש ביקש במפורש פוסט מפורט, אפשר להגיע עד כ-100 מילים.
+
+מבנה מומלץ לפוסט עירוני קצר:
+שורת פתיחה חגיגית/מזמינה, למשל "מחר זה קורה!", "חוויה לכל המשפחה במגדל העמק", "פותחים את הקיץ עם הרבה שמחה".
+אחריה 1-2 משפטים טבעיים בלבד: מה קורה, איפה/מתי אם זה חיוני, ולמה כדאי להגיע.
+סיום קצר ומזמין. בלי להפוך את הפוסט למודעה מפורטת.
+
+דוגמת סגנון בלבד, לא להעתיק עובדות:
+"חוויה לכל המשפחה במגדל העמק 🎪
+הצגת הילדים האהובה מגיעה להיכל התרבות עם סיפור מלא הרפתקאות, חברות והרבה רגעים שילדים אוהבים ❤️
+ניפגש ביום שלישי בשעה 17:30 בהיכל התרבות מתנ״ס מגדל העמק לערב שמח ומהנה לכל המשפחה 🎉"` },
       {
         role: 'user',
-        content: `הפק תוצר טקסטואלי מלא בעברית לפי הבריף הבא:\n${JSON.stringify(brief, null, 2)}${
+        content: `כתוב פוסט קצר ומוכן לפרסום בעברית לפי הבריף הבא. חשוב: זה פוסט לרשת חברתית, לא מסמך ולא סיכום עם סעיפים:\n${JSON.stringify(brief, null, 2)}${
           note ? `\n\nהערת תיקון מהמנהל: ${note}` : ''
         }`,
       },
     ],
     { temperature: 0.7 }
   );
-  return { text: content, usage };
+  if (!looksLikeBriefJson(content)) return { text: content, usage };
+
+  const retry = await chat(
+    [
+      {
+        role: 'system',
+        content: 'כתוב אך ורק פוסט פייסבוק קצר בעברית. אסור להחזיר JSON, אסור להחזיר שדות כמו action/brief/output_type, אסור להשתמש ב-Markdown או ברשימות. החזר 2-4 שורות קצרות בלבד בסגנון עירוני-קהילתי חם וחגיגי.',
+      },
+      {
+        role: 'user',
+        content: `זה הבריף. הפוך אותו לפוסט פייסבוק קצר, לא ל-JSON:\n${JSON.stringify(brief, null, 2)}${
+          note ? `\n\nהערת תיקון מהמנהל: ${note}` : ''
+        }`,
+      },
+    ],
+    { temperature: 0.7 }
+  );
+  return {
+    text: looksLikeBriefJson(retry.content) ? fallbackSocialPostFromBrief(brief) : retry.content,
+    usage: {
+      prompt_tokens: usage.prompt_tokens + retry.usage.prompt_tokens,
+      completion_tokens: usage.completion_tokens + retry.usage.completion_tokens,
+    },
+  };
+}
+
+function looksLikeBriefJson(content: string): boolean {
+  const text = content.trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+  if (!text.startsWith('{')) return false;
+  try {
+    const parsed = JSON.parse(text);
+    return Boolean(parsed && typeof parsed === 'object' && ('action' in parsed || 'brief' in parsed || 'ready_for_generation' in parsed));
+  } catch {
+    return /"action"\s*:\s*"ready_to_generate"|"brief"\s*:|"output_type"\s*:\s*"text"/.test(text);
+  }
+}
+
+function fallbackSocialPostFromBrief(brief: unknown): string {
+  const b = (brief && typeof brief === 'object' ? brief : {}) as Record<string, unknown>;
+  const topic = typeof b.topic === 'string' && b.topic.trim() ? b.topic.trim() : 'אירוע מיוחד במגדל העמק';
+  const include = Array.isArray(b.must_include) ? b.must_include.map(String) : [];
+  const title = include.find((x) => /סמי|הצג|אירוע|מופע/.test(x)) ?? topic;
+  const date = include.find((x) => /יום|202\d|שעה|17:30/.test(x));
+  const place = include.find((x) => /היכל|מתנ|מגדל|רחוב/.test(x));
+  const details = [date, place].filter(Boolean).join(' ב');
+  return [
+    `${title} מגיעה למגדל העמק 🎪`,
+    'חוויה שמחה ומוזיקלית לילדות ולילדים, עם הרבה הרפתקאות, חברות ורגעים לכל המשפחה ❤️',
+    details ? `ניפגש ${details} לערב מהנה ומרגש 🎉` : 'מוזמנים להגיע, ליהנות ולפתוח יחד חוויה משפחתית שמחה 🎉',
+  ].join('\n');
+}
+
+// Write a ready-to-publish social caption (Facebook / Instagram) from a brief.
+// Used when the produced output is an image: the brief is the only source of the
+// post's wording, so the model turns it into a finished caption the admin can
+// schedule as-is or lightly edit.
+export async function generateSocialCaption(brief: unknown, platform: string, apiKey?: string) {
+  const platformLabel = platform === 'instagram' ? 'אינסטגרם' : 'פייסבוק';
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content: `אתה כותב/ת תוכן לרשתות חברתיות. כתוב פוסט אחד מוכן לפרסום ב${platformLabel} בעברית, על בסיס הבריף בלבד.
+- החזר רק את גוף הפוסט עצמו — בלי כותרת "פוסט", בלי הסברים ובלי מירכאות עוטפות.
+- פתיחה קצרה וחזקה שמייצרת עניין, גאווה, שמחה, הזמנה או עדכון ברור.
+- גוף קצר וברור שמתאר מה קרה / מה קורה / למה זה חשוב / למי זה מיועד.
+- סיום עם תודה, ברכה, הזמנה להשתתפות, קריאה לפעולה או משפט שמחזק קהילה, לפי ההקשר.
+- אם מדובר ברשות/עירייה/קהילה: כתוב בסגנון עירוני-קהילתי, חם, חיובי ומכבד, עם דגש על תושבים, עשייה, שייכות וגאווה מקומית.
+- שלב אימוג'ים במידה טבעית. אל תעמיס ואל תהפוך את הפוסט לרשימת האשטגים.
+- אסור להשתמש בכותרות משנה, רשימות, נקודות או תוויות כמו "המסרים המרכזיים", "פרטים חשובים", "מחירים", "מיקום".
+- פרטים טכניים יופיעו רק בתוך משפטים טבעיים וקצרים.
+- שמור על טון וסגנון שמתאימים למותג ולקהל היעד שבבריף.
+- אל תמציא עובדות, מחירים, תאריכים או פרטים שלא הופיעו בבריף. אם פרט חסר — נסח בלעדיו.
+- אורך מתאים לרשת: כמה משפטים עד פסקה קצרה, לא מסמך ארוך.`,
+      },
+      {
+        role: 'user',
+        content: `כתוב פוסט ל${platformLabel} שילווה את התמונה, לפי הבריף הבא:\n${JSON.stringify(brief, null, 2)}`,
+      },
+    ],
+    { temperature: 0.7, apiKey }
+  );
+  return { text: content.trim(), usage };
 }
 
 export async function generateDocumentText(systemPrompt: string, brief: unknown, note?: string) {

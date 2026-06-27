@@ -31,10 +31,6 @@ interface ChatMessage {
 const SIMULATOR_STORAGE_KEY = 'admin-simulator-conversations';
 // Match the WhatsApp inbound media ceiling used by the shared server path.
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-// When the brief is ready, the user confirms by typing one of these instead of
-// clicking a button — a more chat-like, WhatsApp-style flow.
-const CONFIRM_RE = /^(מאשר(?:ת|ים)?|אשר|לאשר|אישור|כן|אוקיי?|yes|ok|go)\s*$/i;
-
 export default function SimulatorPage() {
   const [searchParams] = useSearchParams();
   const requestedConversationId = searchParams.get('conversation');
@@ -59,26 +55,6 @@ export default function SimulatorPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // The generation pending the user's typed confirmation ("מאשר").
-  const [pendingConfirm, setPendingConfirm] = useState<{
-    outputType: string | null;
-    briefPrompt?: string;
-    brief?: any;
-  } | null>(null);
-  const [presentationMode, setPresentationMode] = useState<'auto' | 'gemini'>('auto');
-
-  useEffect(() => {
-    createSupabaseBrowserClient()
-      .from('settings')
-      .select('value_json')
-      .eq('key', 'ai_models')
-      .maybeSingle()
-      .then(({ data }) => {
-        const row = data as { value_json?: { presentation_mode?: string } } | null;
-        const mode = row?.value_json?.presentation_mode;
-        if (mode === 'gemini' || mode === 'auto') setPresentationMode(mode);
-      });
-  }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const busy = generating || presenting || processing;
@@ -372,16 +348,6 @@ export default function SimulatorPage() {
                   הורדת המצגת
                 </a>
               )}
-              {!message.mine && isApprovalPrompt(message.body) && (
-                <button
-                  type="button"
-                  onClick={() => sendBody('מאשר', false)}
-                  disabled={busy}
-                  className="mt-2 rounded-full bg-[#075E54] px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                >
-                  מאשר
-                </button>
-              )}
               {message.meta && (
                 <div className="mt-2 border-t border-black/5 pt-1 text-[10px] text-[#667781] ltr">
                   {message.meta.action}
@@ -511,23 +477,6 @@ function formatDuration(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-function isApprovalPrompt(body: string): boolean {
-  return body.includes('כדי לאשר ולהפיק') && body.includes('מאשר');
-}
-
-// The chat-style line that tells the user to type "מאשר" to trigger generation.
-function confirmInstruction(outputType: string | null, presentationMode: 'auto' | 'gemini'): string {
-  if (outputType === 'image') {
-    return 'כדי לאשר ולהפיק את התמונה מהבריף, כתבו: *מאשר* ✅';
-  }
-  if (outputType === 'presentation_kit') {
-    return presentationMode === 'gemini'
-      ? 'כדי לאשר ולהפיק פרומפט ל-Gemini / NotebookLM, כתבו: *מאשר* ✅'
-      : 'כדי לאשר ולהכין את המצגת הממותגת להורדה, כתבו: *מאשר* ✅';
-  }
-  return 'כדי לאשר ולהמשיך, כתבו: *מאשר* ✅';
 }
 
 function detectAttachmentKind(file: File): AttachmentKind | null {

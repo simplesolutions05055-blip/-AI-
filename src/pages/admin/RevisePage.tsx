@@ -515,10 +515,6 @@ export default function RevisePage() {
 
             <div className="my-4 border-t border-[var(--border)]" />
 
-            <SocialScheduleSection />
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-[var(--muted)]">רוצים מצגת אחרת לגמרי?</p>
               <button
@@ -621,7 +617,10 @@ export default function RevisePage() {
 
             <div className="my-4 border-t border-[var(--border)]" />
 
-            <SocialScheduleSection />
+            <SocialScheduleSection
+              requestId={textRequestId}
+              captionSource={{ kind: 'text', text: plainTextFromBlocks(textBlocks) }}
+            />
 
             <div className="my-4 border-t border-[var(--border)]" />
 
@@ -734,10 +733,6 @@ export default function RevisePage() {
 
             <div className="my-4 border-t border-[var(--border)]" />
 
-            <SocialScheduleSection />
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-[var(--muted)]">רוצים מסמך אחר לגמרי?</p>
               <button
@@ -811,7 +806,10 @@ export default function RevisePage() {
 
             <div className="my-4 border-t border-[var(--border)]" />
 
-            <SocialScheduleSection />
+            <SocialScheduleSection
+              requestId={result?.request_id || source?.request_id || null}
+              captionSource={{ kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }}
+            />
 
             <div className="my-4 border-t border-[var(--border)]" />
 

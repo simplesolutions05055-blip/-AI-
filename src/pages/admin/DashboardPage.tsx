@@ -284,20 +284,24 @@ function DailyOutputsChart({ data }: { data: Array<{ key: string; label: string;
       {total === 0 ? (
         <p className="text-sm text-[var(--muted)]">אין תוצרים בטווח הזה.</p>
       ) : (
-        <div className="flex h-44 gap-1.5">
-          {data.map((d) => (
-            <div key={d.key} className="flex h-full flex-1 flex-col items-center gap-1.5" title={`${d.label}: ${d.count}`}>
-              <span className="text-[10px] font-semibold text-[var(--muted)]">{d.count || ''}</span>
-              {/* flex-1 track has a definite height so the bar's % resolves correctly */}
-              <div className="flex w-full flex-1 flex-col justify-end">
-                <div
-                  className="w-full rounded-t bg-brand/80 transition-all hover:bg-brand"
-                  style={{ height: `${Math.max(d.count ? 6 : 2, (d.count / max) * 100)}%` }}
-                />
+        // On phones 14 bars get too thin to read, so the bar row scrolls
+        // horizontally with a sensible min width; from sm up it fills the card.
+        <div className="-mx-1 overflow-x-auto px-1">
+          <div className="flex h-44 min-w-[460px] gap-1.5 sm:min-w-0">
+            {data.map((d) => (
+              <div key={d.key} className="flex h-full flex-1 flex-col items-center gap-1.5" title={`${d.label}: ${d.count}`}>
+                <span className="text-[10px] font-semibold text-[var(--muted)]">{d.count || ''}</span>
+                {/* flex-1 track has a definite height so the bar's % resolves correctly */}
+                <div className="flex w-full flex-1 flex-col justify-end">
+                  <div
+                    className="w-full rounded-t bg-brand/80 transition-all hover:bg-brand"
+                    style={{ height: `${Math.max(d.count ? 6 : 2, (d.count / max) * 100)}%` }}
+                  />
+                </div>
+                <span className="whitespace-nowrap text-[10px] text-[var(--muted)] ltr">{d.label}</span>
               </div>
-              <span className="text-[10px] text-[var(--muted)] ltr">{d.label}</span>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
     </section>
@@ -337,7 +341,7 @@ function PerUserOutputsChart({ data }: { data: Array<{ label: string; count: num
         <div className="flex flex-col gap-3">
           {data.map((d) => (
             <div key={d.label} className="flex items-center gap-3">
-              <span className="w-28 shrink-0 truncate text-sm text-[var(--text)]" title={d.label}>{d.label}</span>
+              <span className="w-20 shrink-0 truncate text-sm text-[var(--text)] sm:w-28" title={d.label}>{d.label}</span>
               <div className="h-5 flex-1 overflow-hidden rounded bg-gray-100">
                 <div
                   className="h-full rounded bg-brand/80"

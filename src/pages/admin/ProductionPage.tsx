@@ -203,11 +203,8 @@ export default function ProductionPage() {
   return <ProductionFlow type={selectedType} />;
 }
 
-// In-flow price-quote REVIEW screen — mirrors the brief-approval step of other
-// products. On entry it generates the quote content from the prompt, shows it for
-// review, lets the user revise it with AI (free-text instruction → regenerate),
-// and only on "אישור" builds + downloads the PDF. Price is read from the prompt
-// only; the PDF renderer never splits a section across pages.
+// Price quote flow: prompt → quote PDF immediately. Corrections happen after the
+// saved output exists, through the regular revise screen.
 function QuoteFlow() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -222,9 +219,8 @@ function QuoteFlow() {
   const [savedRequestId, setSavedRequestId] = useState<string | null>(null);
   const [revision, setRevision] = useState('');
   const ran = useRef(false);
+  const savingRef = useRef(false);
 
-  // Generate (or regenerate with a revision note). The previous quote + the note
-  // are passed so the model edits in place rather than starting from scratch.
   async function generate(revisionNote?: string) {
     setGenerating(true);
     setError(null);
@@ -238,9 +234,10 @@ function QuoteFlow() {
         brief.revision_request = revisionNote;
         brief.previous_quote = quote;
       }
-      const q = await fetchQuote(brief, null, getSessionOpenAiKey());
-      setQuote(await attachBrandToQuote(q, brandId));
+      const q = await attachBrandToQuote(await fetchQuote(brief, null, getSessionOpenAiKey()), brandId);
+      setQuote(q);
       setRevision('');
+      await buildAndSave(q);
     } catch (e) {
       const msg = String((e as { message?: string })?.message ?? e);
       setError(/402|quota|insufficient/i.test(msg) ? OPENAI_QUOTA_MESSAGE : `יצירת ההצעה נכשלה: ${msg}`);
@@ -257,31 +254,37 @@ function QuoteFlow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freeText]);
 
-  async function approveAndBuild() {
-    if (!quote || building) return;
+  async function buildAndSave(quoteToSave: Quote) {
+    if (building || savingRef.current) return;
+    savingRef.current = true;
     setBuilding(true);
     setError(null);
     try {
-      const blob = await renderQuoteToPdf(quote);
-      const safeName = String(quote.title || 'הצעת מחיר').slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'הצעת-מחיר';
+      const blob = await renderQuoteToPdf(quoteToSave);
+      const safeName = String(quoteToSave.title || 'הצעת מחיר').slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'הצעת-מחיר';
       const fileBase64 = await blobToBase64(blob);
       const { data, error: saveError } = await createSupabaseBrowserClient().functions.invoke('save-quote-output', {
         body: {
           file_base64: fileBase64,
           file_name: safeName,
           prompt: freeText,
-          quote_title: quote.title || 'הצעת מחיר',
+          quote_title: quoteToSave.title || 'הצעת מחיר',
           brand_id: brandId,
         },
       });
       if (saveError) throw saveError;
       const requestId = (data as { request_id?: string } | null)?.request_id;
       if (requestId) setSavedRequestId(requestId);
+      if (requestId) {
+        navigate(`/admin/files/${requestId}/revise`);
+        return;
+      }
       downloadQuoteBlob(blob, `${safeName}.pdf`);
     } catch (e) {
       setError(`בניית/שמירת ה-PDF נכשלה: ${String((e as { message?: string })?.message ?? e)}`);
     } finally {
       setBuilding(false);
+      savingRef.current = false;
     }
   }
 
@@ -302,15 +305,16 @@ function QuoteFlow() {
         </button>
 
         <section className="rounded-[16px] border border-[#EAECF0] bg-white px-5 py-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8">
-          <h1 className="text-[22px] font-bold text-[#1A1A2E]">הצעת מחיר — סקירה ואישור</h1>
+          <h1 className="text-[22px] font-bold text-[#1A1A2E]">הצעת מחיר</h1>
           <p className="mt-1 text-[14px] text-[#94A3B8]">
-            עברו על התוכן, תקנו עם AI אם צריך, ורק אז אשרו לבניית ה-PDF. המחיר מוצג בדיוק כפי שכתבתם.
+            בונים הצעת מחיר ומייצרים PDF מיד. תיקונים עושים אחרי שהתוצר נשמר.
           </p>
 
           {generating && !quote && <QuoteReviewLoader />}
+          {building && <QuoteReviewLoader label="בונה ושומר PDF..." />}
           {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-          {quote && (
+          {quote && error && (
             <>
               <div className={`mt-5 ${generating ? 'pointer-events-none opacity-50' : ''}`}>
                 <QuoteReview quote={quote} />
@@ -336,14 +340,6 @@ function QuoteFlow() {
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={approveAndBuild}
-                disabled={building || generating}
-                className="mt-6 w-full rounded-xl bg-brand px-5 py-3 text-[15px] font-bold text-white shadow-sm hover:bg-brand/85 disabled:opacity-60"
-              >
-                {building ? 'בונה ושומר PDF…' : 'אישור ובניית הצעת המחיר (PDF)'}
-              </button>
               {savedRequestId && (
                 <button
                   type="button"
@@ -361,11 +357,11 @@ function QuoteFlow() {
   );
 }
 
-function QuoteReviewLoader() {
+function QuoteReviewLoader({ label = 'בונה את תוכן ההצעה...' }: { label?: string }) {
   return (
     <div className="mt-6 flex items-center gap-3 text-[#64748B]">
       <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-      <span className="text-sm">בונה את תוכן ההצעה…</span>
+      <span className="text-sm">{label}</span>
     </div>
   );
 }
@@ -1164,11 +1160,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       const built = (data as { brief?: ProductionBrief } | null)?.brief;
       if (built) {
         setBrief(built);
-        if (type === 'pdf') {
-          await generate(built);
-          return;
-        }
-        setStep('brief');
+        await generate(built);
         return;
       }
       // OpenAI out of credit → raise a clear alert, don't leave a stale brief.
@@ -1183,19 +1175,11 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       // Any other hiccup → fall back to a local brief so the user isn't stuck.
       const fallbackBrief = buildFreeTextBrief(type, freeText, selectedBrand);
       setBrief(fallbackBrief);
-      if (type === 'pdf') {
-        await generate(fallbackBrief);
-        return;
-      }
-      setStep('brief');
+      await generate(fallbackBrief);
     } catch {
       const fallbackBrief = buildFreeTextBrief(type, freeText, selectedBrand);
       setBrief(fallbackBrief);
-      if (type === 'pdf') {
-        await generate(fallbackBrief);
-        return;
-      }
-      setStep('brief');
+      await generate(fallbackBrief);
     } finally {
       setBriefLoading(false);
     }
@@ -1209,7 +1193,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     setError(null);
     // If the brief already exists (key was set after a generation/billing stop),
     // just re-run production with the new key. Otherwise (build-time) rebuild it.
-    if (brief && step === 'brief') {
+    if (brief) {
       generate();
     } else {
       invokeBuild({ keyOverride: k });
@@ -1333,11 +1317,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     setError(null);
     const nextBrief = buildBrief(type, form, revisionCount, selectedBrand);
     setBrief(nextBrief);
-    if (type === 'pdf') {
-      void generate(nextBrief);
-      return;
-    }
-    setStep('brief');
+    void generate(nextBrief);
     setError(null);
   }
 
@@ -1397,7 +1377,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       setStep('result');
     } catch (e) {
       const raw = String(e);
-      setStep('brief');
+      setStep('form');
       // OpenAI billing/quota limit on the production key → this is NOT a brief
       // problem. Show the credit message and offer the one-off key, not a clarify.
       if (/billing|quota|hard_limit|insufficient_quota|exceeded your current quota|\b429\b/i.test(raw)) {
@@ -1616,7 +1596,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
             )}
             <button onClick={() => generate()} className={`w-full ${PRIMARY_BUTTON}`}>
               <SparkIcon className="h-4 w-4" />
-              מאשר, תפיק
+              הפקת תוצר
             </button>
             <div className="mt-5">
               <label className="block text-sm font-semibold mb-2">צריך תיקון לבריף?</label>
@@ -1969,7 +1949,7 @@ function ClassicForm({
       )}
       <button onClick={onComplete} disabled={!canSubmit} className={`mt-5 ${PRIMARY_BUTTON}`}>
         <SparkIcon className="h-4 w-4" />
-        יצירת בריף לאישור
+        יצירת תוצר
       </button>
     </div>
   );
@@ -2147,7 +2127,7 @@ function FormWizard({
           disabled={!stepValid}
           className="bg-brand text-white rounded-lg px-4 py-2 sm:px-8 sm:py-3 text-sm sm:text-base font-semibold disabled:opacity-50 flex-1 sm:flex-none sm:min-w-[140px]"
         >
-          {isLast ? 'יצירת בריף' : isOptionalEmpty ? 'דילוג' : 'אישור והמשך'}
+          {isLast ? 'יצירת תוצר' : isOptionalEmpty ? 'דילוג' : 'המשך'}
         </button>
       </div>
     </div>
@@ -2248,7 +2228,7 @@ function BriefCard({ type, brief, revisionCount }: { type: ProductionType; brief
     <div className={`${PANEL} p-5`}>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold">בריף לאישור</h2>
+          <h2 className="text-xl font-bold">בריף פנימי</h2>
           {brief.source === 'ai' ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
               <SparkIcon className="h-3.5 w-3.5" />
@@ -2447,9 +2427,19 @@ function ResultCard({
           <MailIcon className="h-4 w-4" />
           {emailSent ? 'נשלח' : sendingEmail ? 'שולח...' : 'שליחה במייל'}
         </button>
-        <div className="mt-5 border-t border-[var(--border)] pt-5">
-          <SocialScheduleSection />
-        </div>
+        {(output.output_type === 'image' || isTextOutput) && (
+          <div className="mt-5 border-t border-[var(--border)] pt-5">
+            <SocialScheduleSection
+              requestId={requestId}
+              outputId={output.id}
+              captionSource={
+                output.output_type === 'image'
+                  ? { kind: 'image', brief, requestId }
+                  : { kind: 'text', text: plainTextFromBlocks(textBlocks) }
+              }
+            />
+          </div>
+        )}
         {output.output_type === 'image' && requestId && (
           <div className="mt-5 border-t border-[var(--border)] pt-5">
             <h3 className="font-bold mb-1">תיקונים</h3>
