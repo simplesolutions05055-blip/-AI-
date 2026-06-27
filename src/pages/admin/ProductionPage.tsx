@@ -296,7 +296,7 @@ function QuoteFlow() {
         <button
           type="button"
           onClick={() => navigate('/admin/production')}
-          className="mb-4 inline-flex items-center gap-1.5 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[13px] font-semibold text-[#374151] shadow-sm transition hover:border-[#93C5FD] hover:bg-[#F8FAFF] hover:text-[#2563EB]"
+          className="mb-4 inline-flex items-center gap-1.5 rounded-[10px] border border-[#E5E7EB] bg-white px-4 py-2 text-[13px] font-semibold text-[#374151] shadow-sm transition hover:border-brand/30 hover:bg-brand/5 hover:text-brand"
         >
           → חזרה לבחירת תוצר
         </button>
@@ -330,7 +330,7 @@ function QuoteFlow() {
                   type="button"
                   onClick={() => revision.trim() && generate(revision.trim())}
                   disabled={generating || building || !revision.trim()}
-                  className="mt-2 rounded-lg border border-[#2563EB] px-4 py-2 text-sm font-semibold text-[#2563EB] hover:bg-[#EFF6FF] disabled:opacity-50"
+                  className="mt-2 rounded-lg border border-brand px-4 py-2 text-sm font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
                 >
                   {generating ? 'מעדכן…' : 'תקן עם AI'}
                 </button>
@@ -340,7 +340,7 @@ function QuoteFlow() {
                 type="button"
                 onClick={approveAndBuild}
                 disabled={building || generating}
-                className="mt-6 w-full rounded-xl bg-[#2563EB] px-5 py-3 text-[15px] font-bold text-white shadow-sm hover:bg-[#1D4ED8] disabled:opacity-60"
+                className="mt-6 w-full rounded-xl bg-brand px-5 py-3 text-[15px] font-bold text-white shadow-sm hover:bg-brand/85 disabled:opacity-60"
               >
                 {building ? 'בונה ושומר PDF…' : 'אישור ובניית הצעת המחיר (PDF)'}
               </button>
@@ -348,7 +348,7 @@ function QuoteFlow() {
                 <button
                   type="button"
                   onClick={() => navigate('/admin/files?type=pdf')}
-                  className="mt-3 w-full rounded-xl border border-[#2563EB] bg-white px-5 py-3 text-[14px] font-bold text-[#2563EB] shadow-sm hover:bg-[#EFF6FF]"
+                  className="mt-3 w-full rounded-xl border border-brand bg-white px-5 py-3 text-[14px] font-bold text-brand shadow-sm hover:bg-brand/5"
                 >
                   הצעת המחיר נשמרה — צפייה בתוצרים
                 </button>
@@ -364,7 +364,7 @@ function QuoteFlow() {
 function QuoteReviewLoader() {
   return (
     <div className="mt-6 flex items-center gap-3 text-[#64748B]">
-      <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#2563EB] border-t-transparent" />
+      <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
       <span className="text-sm">בונה את תוכן ההצעה…</span>
     </div>
   );
@@ -584,6 +584,13 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
   // chosen images ride into the flow (and onward into the deck).
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
+  // Hint to choose a product type — held back for a moment so it doesn't flash
+  // the instant the page loads, and dropped the moment a type is chosen.
+  const [showTypeHint, setShowTypeHint] = useState(false);
+  // The glow nudge on the type chips appears after a short beat (until a type is
+  // chosen) — separate from the explicit hint message, which only shows on a
+  // create attempt without a chosen type.
+  const [glowTypeChips, setGlowTypeChips] = useState(false);
   const canCreate = !!selected && description.trim().length > 0;
   const singleBrand = brands.length === 1 ? brands[0] : null;
   const selectedBrand = brands.find((brand) => brand.id === brandId) ?? singleBrand ?? null;
@@ -596,6 +603,24 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }, [initialSelected]);
+
+  // The "pick a type" hint is surfaced only when the user tries to create a
+  // product without choosing a type (see handleCreate). Clear it the moment a
+  // type is chosen.
+  useEffect(() => {
+    if (selected) setShowTypeHint(false);
+  }, [selected]);
+
+  // Glow the type chips after a short beat to nudge a choice — never once a type
+  // is chosen, so it nudges rather than greets.
+  useEffect(() => {
+    if (selected) {
+      setGlowTypeChips(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setGlowTypeChips(true), 1500);
+    return () => window.clearTimeout(timer);
+  }, [selected]);
 
   useEffect(() => {
     const client = createSupabaseBrowserClient();
@@ -702,7 +727,11 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
   }
 
   function handleCreate() {
-    if (!canCreate || !selected) return;
+    if (!selected) {
+      setShowTypeHint(true);
+      return;
+    }
+    if (!canCreate) return;
     // Quote: go to the in-flow review screen (show content → revise with AI →
     // approve → build PDF). Same production chrome, not a foreign page.
     if (selected === 'quote') {
@@ -765,7 +794,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
         <div className="text-[15px] font-semibold text-[#1A1A2E]">הפקה</div>
         <div className="flex items-center gap-2 text-[13px] text-[#64748B]">
           <span className="ltr">itayk93@yahoo.com</span>
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EFF6FF] text-[12px] font-bold text-[#2563EB]">IT</span>
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand/10 text-[12px] font-bold text-brand">IT</span>
         </div>
       </header>
 
@@ -805,8 +834,8 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                             item.disabled
                               ? 'border-[#E5E7EB] opacity-50 cursor-not-allowed bg-gray-50 text-[#374151]'
                               : active
-                                ? 'border-[#2563EB] bg-[#EFF6FF] text-[#2563EB] shadow-sm'
-                                : 'border-[#E5E7EB] bg-white text-[#374151] hover:border-[#93C5FD] hover:bg-[#F8FAFF] hover:text-[#2563EB]'
+                                ? 'border-brand bg-brand/10 text-brand shadow-sm'
+                                : `border-[#E5E7EB] bg-white text-[#374151] hover:border-brand/30 hover:bg-brand/5 hover:text-brand ${glowTypeChips ? 'pick-me-glow' : ''}`
                           }`}
                         >
                           <span className={`flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[13px] ${item.color}`}>{item.icon}</span>
@@ -816,15 +845,15 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                     })}
                   </div>
                   {selectedPickerLabel && (
-                    <div className="inline-flex w-fit items-center rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-3.5 py-2 text-right shadow-sm sm:hidden">
-                      <span className="text-[16px] font-bold leading-none text-[#2563EB]">{selectedPickerLabel}</span>
+                    <div className="inline-flex w-fit items-center rounded-xl border border-brand/30 bg-brand/10 px-3.5 py-2 text-right shadow-sm sm:hidden">
+                      <span className="text-[16px] font-bold leading-none text-brand">{selectedPickerLabel}</span>
                     </div>
                   )}
                 </div>
               </div>
             </div>
 
-            {!selected && (
+            {showTypeHint && (
               <div className="rounded-[10px] border border-[#FDE68A] bg-[#FFFBEB] px-3.5 py-2.5 text-right text-[13px] font-normal text-[#92400E]">
                 <span className="inline-flex items-center gap-2">
                   <span className="text-base">💡</span>
@@ -847,11 +876,11 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                         onClick={() => setBrandId(brand.id)}
                         className={`inline-flex min-h-[48px] items-center gap-2 rounded-full border-[1.5px] px-3.5 py-2 text-[13px] font-medium transition ${
                           active
-                            ? 'border-[#2563EB] bg-[#EFF6FF] text-[#2563EB] shadow-sm'
-                            : 'border-[#E5E7EB] bg-white text-[#374151] hover:border-[#93C5FD] hover:bg-[#F8FAFF] hover:text-[#2563EB]'
+                            ? 'border-brand bg-brand/10 text-brand shadow-sm'
+                            : 'border-[#E5E7EB] bg-white text-[#374151] hover:border-brand/30 hover:bg-brand/5 hover:text-brand'
                         }`}
                       >
-                        <span className={`flex h-[28px] w-[28px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#E5E7EB] bg-white ${active ? 'ring-1 ring-[#2563EB]/15' : ''}`}>
+                        <span className={`flex h-[28px] w-[28px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#E5E7EB] bg-white ${active ? 'ring-1 ring-brand/15' : ''}`}>
                           {logoUrl ? (
                             <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
                           ) : (
@@ -896,25 +925,31 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploadingText}
-                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-[10px] border border-[#CBD5E1] bg-white px-4 py-2 text-[14px] font-bold text-[#334155] transition hover:border-[#93C5FD] hover:bg-[#EFF6FF] hover:text-[#2563EB] disabled:cursor-not-allowed disabled:opacity-60"
+                  title={uploadingText ? 'מעלה…' : 'העלה קובץ'}
+                  aria-label={uploadingText ? 'מעלה…' : 'העלה קובץ'}
+                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] border border-[#CBD5E1] bg-white px-3 py-2 text-[14px] font-bold text-[#334155] transition hover:border-brand/30 hover:bg-brand/5 hover:text-brand disabled:cursor-not-allowed disabled:opacity-60 lg:px-4"
                 >
                   <span className="text-[16px]" aria-hidden="true">📎</span>
-                  {uploadingText ? 'מעלה…' : 'העלה קובץ'}
+                  <span className="hidden lg:inline">{uploadingText ? 'מעלה…' : 'העלה קובץ'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleCreate}
-                  disabled={!canCreate}
-                  className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-[10px] px-5 py-2 text-[14px] font-bold text-white transition ${
-                    canCreate
-                      ? 'bg-[#2563EB] shadow-sm hover:bg-[#1D4ED8]'
-                      : 'cursor-not-allowed bg-[#93C5FD] opacity-70'
+                  disabled={description.trim().length === 0}
+                  title={selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}
+                  aria-label={selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}
+                  className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] px-3 py-2 text-[14px] font-bold text-white transition lg:px-5 ${
+                    description.trim().length > 0
+                      ? 'bg-brand shadow-sm hover:bg-brand/85'
+                      : 'cursor-not-allowed bg-brand/50 opacity-70'
                   }`}
                 >
                   <SparkIcon className="h-4 w-4" />
-                  {selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}
+                  <span className="hidden lg:inline">{selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}</span>
                 </button>
-                <div className="order-last w-full text-right text-[11px] font-normal text-[#CBD5E1] sm:order-none sm:ms-auto sm:w-auto">{DESCRIPTION_MAX_LENGTH.toLocaleString('he-IL')} / {description.length.toLocaleString('he-IL')}</div>
+              </div>
+              <div className="absolute bottom-4 left-4 text-left text-[11px] font-normal text-[#CBD5E1]">
+                {DESCRIPTION_MAX_LENGTH.toLocaleString('he-IL')} / {description.length.toLocaleString('he-IL')}
               </div>
             </div>
 
@@ -937,7 +972,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
             <h2 className="text-[18px] font-bold text-[#1A1A2E]">תוצרים אחרונים</h2>
             <Link
               to="/admin/files"
-              className="inline-flex items-center gap-1.5 rounded-[10px] border border-[#BFDBFE] bg-[#EFF6FF] px-3.5 py-2 text-[13px] font-bold text-[#2563EB] transition hover:bg-[#DBEAFE]"
+              className="inline-flex items-center gap-1.5 rounded-[10px] border border-brand/30 bg-brand/10 px-3.5 py-2 text-[13px] font-bold text-brand transition hover:bg-brand/15"
             >
               <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                 <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
@@ -1011,7 +1046,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
 
                   <div className="border-t border-[#F1F5F9] px-3 py-3">
                     <span
-                      className="inline-flex min-h-9 w-full items-center justify-center rounded-[9px] bg-[#2563EB] px-3 py-2 text-white shadow-sm transition group-hover:bg-[#1D4ED8]"
+                      className="inline-flex min-h-9 w-full items-center justify-center rounded-[9px] bg-brand px-3 py-2 text-white shadow-sm transition group-hover:bg-brand/85"
                       title={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}
                       aria-label={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}
                     >
@@ -1708,6 +1743,8 @@ function BrandProductionHeader({
   onChange: (brandId: string) => void;
 }) {
   const hasSingleBrand = brands.length === 1;
+  const hasMany = brands.length > 2;
+  const [modalOpen, setModalOpen] = useState(false);
   const effectiveBrand = selectedBrand ?? brands[0] ?? null;
   const title = effectiveBrand ? `מפיקים תוצר ל${effectiveBrand.name}` : 'בחרו מותג להפקה';
 
@@ -1726,37 +1763,144 @@ function BrandProductionHeader({
         </div>
 
         {!hasSingleBrand && (
-          <div className="flex flex-wrap gap-2 sm:justify-end" role="group" aria-label="בחירת מותג">
-            {!brandRequired && (
+          <>
+            {/* Mobile: modal for many brands */}
+            {hasMany ? (
               <button
                 type="button"
-                onClick={() => onChange('')}
-                className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-                  !brandId ? 'border-brand bg-brand text-white' : 'border-[var(--border)] bg-white text-[var(--muted)] hover:bg-gray-50'
-                }`}
+                onClick={() => setModalOpen(true)}
+                className="lg:hidden rounded-xl border border-brand bg-white px-4 py-2 text-sm font-semibold text-brand hover:bg-brand/5 transition"
               >
-                ללא מותג
+                בחרו מותג
               </button>
-            )}
-            {brands.map((brand) => {
-              const active = brand.id === brandId;
-              return (
+            ) : null}
+
+            {/* Desktop: button grid (visible only on lg+) */}
+            <div className="hidden lg:flex flex-wrap gap-2 sm:justify-end" role="group" aria-label="בחירת מותג">
+              {!brandRequired && (
                 <button
-                  key={brand.id}
                   type="button"
-                  onClick={() => onChange(brand.id)}
+                  onClick={() => onChange('')}
                   className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-                    active ? 'border-brand bg-brand text-white shadow-sm' : 'border-[var(--border)] bg-white text-[var(--text)] hover:border-brand/30 hover:bg-brand/5'
+                    !brandId ? 'border-brand bg-brand text-white' : 'border-[var(--border)] bg-white text-[var(--muted)] hover:bg-gray-50'
                   }`}
                 >
-                  {brand.name}
+                  ללא מותג
                 </button>
-              );
-            })}
-          </div>
+              )}
+              {brands.map((brand) => {
+                const active = brand.id === brandId;
+                return (
+                  <button
+                    key={brand.id}
+                    type="button"
+                    onClick={() => onChange(brand.id)}
+                    className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                      active ? 'border-brand bg-brand text-white shadow-sm' : 'border-[var(--border)] bg-white text-[var(--text)] hover:border-brand/30 hover:bg-brand/5'
+                    }`}
+                  >
+                    {brand.name}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Modal for mobile brand selection */}
+            {modalOpen && (
+              <BrandModal
+                brands={brands}
+                selectedId={brandId}
+                brandRequired={brandRequired}
+                onSelect={(id) => {
+                  onChange(id);
+                  setModalOpen(false);
+                }}
+                onClose={() => setModalOpen(false)}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+function BrandModal({
+  brands,
+  selectedId,
+  brandRequired,
+  onSelect,
+  onClose,
+}: {
+  brands: BrandOption[];
+  selectedId: string;
+  brandRequired: boolean;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-40 bg-black/40 transition-opacity"
+        onClick={onClose}
+        role="presentation"
+      />
+
+      {/* Modal — RTL, slide from bottom on mobile */}
+      <div
+        className="fixed bottom-0 left-0 right-0 z-50 max-h-[70vh] overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200"
+        dir="rtl"
+      >
+        <div className="sticky top-0 border-b border-[var(--border)] bg-white px-4 py-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold">בחרו מותג להפקה</h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1 text-[var(--muted)] hover:bg-gray-100 rounded-lg transition"
+              aria-label="סגרו את הדיאלוג"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-1 p-4">
+          {!brandRequired && (
+            <button
+              type="button"
+              onClick={() => onSelect('')}
+              className={`w-full text-right px-4 py-3 rounded-lg font-semibold text-sm transition ${
+                !selectedId
+                  ? 'bg-brand text-white'
+                  : 'bg-gray-50 text-[var(--text)] hover:bg-gray-100'
+              }`}
+            >
+              ללא מותג
+            </button>
+          )}
+
+          {brands.map((brand) => (
+            <button
+              key={brand.id}
+              type="button"
+              onClick={() => onSelect(brand.id)}
+              className={`w-full text-right px-4 py-3 rounded-lg font-semibold text-sm transition ${
+                brand.id === selectedId
+                  ? 'bg-brand text-white'
+                  : 'bg-gray-50 text-[var(--text)] hover:bg-gray-100'
+              }`}
+            >
+              {brand.name}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 

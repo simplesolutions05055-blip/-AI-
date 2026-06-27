@@ -14,7 +14,19 @@ interface Row {
   estimated_cost: number;
   created_at: string;
   conversation_id: string | null;
+  structured_brief: Record<string, unknown> | null;
   conversations: { whatsapp_from: string } | null;
+}
+
+// A short human description of what the user actually tried to produce, beyond
+// the generic type (מסמך/תמונה/...). Prefers the detected subtype, then the
+// stated goal; falls back to the source materials so the row is never empty.
+function briefDetail(brief: Record<string, unknown> | null): string | null {
+  if (!brief) return null;
+  const pick = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const detail = pick(brief.subtype) ?? pick(brief.goal) ?? pick(brief.source_materials);
+  if (!detail) return null;
+  return detail.length > 80 ? `${detail.slice(0, 80)}…` : detail;
 }
 
 export default function RequestsPage({ embedded = false }: { embedded?: boolean } = {}) {
@@ -32,7 +44,7 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
     let cancelled = false;
     let query = db
       .from('requests')
-      .select('id, customer_email, output_type, status, estimated_cost, created_at, conversation_id, conversations!requests_conversation_id_fkey(whatsapp_from)')
+      .select('id, customer_email, output_type, status, estimated_cost, created_at, conversation_id, structured_brief, conversations!requests_conversation_id_fkey(whatsapp_from)')
       .order('created_at', { ascending: false })
       .limit(100);
 
@@ -62,6 +74,14 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
   }, [filters]);
 
   const ratesReady = rates.size > 0;
+
+  // Totals across the displayed rows. USD always sums; ILS sums only the rows
+  // whose daily rate is available (missing rates are skipped, not zeroed).
+  const totalUsd = rows.reduce((sum, r) => sum + Number(r.estimated_cost ?? 0), 0);
+  const totalIls = rows.reduce((sum, r) => {
+    const rate = rateForDate(rates, r.created_at);
+    return rate != null ? sum + Number(r.estimated_cost ?? 0) * rate : sum;
+  }, 0);
 
   return (
     <div>
@@ -117,6 +137,16 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
         )}
       </div>
 
+      {!loading && rows.length > 0 && (
+        <div className="mb-3 flex items-baseline justify-between rounded-xl border border-[var(--border)] bg-white p-4 md:hidden">
+          <span className="text-sm font-semibold">סה"כ ({rows.length})</span>
+          <span className="flex items-baseline gap-2 text-sm">
+            <span className="font-semibold ltr">{formatUsd(totalUsd)}</span>
+            <span className="ltr text-[var(--muted)]">{ratesReady ? formatIls(totalIls) : '…'}</span>
+          </span>
+        </div>
+      )}
+
       <div className="space-y-3 md:hidden">
         {loading ? (
           <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">טוען...</div>
@@ -138,6 +168,9 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
               <div className="mt-2 font-semibold">
                 {row.output_type ? OUTPUT_LABEL[row.output_type] : 'בקשה'}
               </div>
+              {briefDetail(row.structured_brief) && (
+                <div className="mt-0.5 text-sm text-[var(--muted)]">{briefDetail(row.structured_brief)}</div>
+              )}
               <div className="mt-1 truncate text-sm ltr text-[var(--muted)]">
                 {row.conversation_id ? (
                   <Link to={`/admin/conversations?id=${encodeURIComponent(row.conversation_id)}`} className="text-blue-600" onClick={(e) => e.stopPropagation()}>
@@ -159,9 +192,8 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
           <thead>
             <tr className="text-[var(--muted)] border-b border-[var(--border)]">
               <th className="text-start p-3">תאריך</th>
-              <th className="text-start p-3">מספר</th>
               <th className="text-start p-3">מייל</th>
-              <th className="text-start p-3">סוג</th>
+              <th className="text-start p-3">סוג תוצר</th>
               <th className="text-start p-3">סטטוס</th>
               <th className="text-start p-3">עלות ($)</th>
               <th className="text-start p-3">עלות (₪)</th>
@@ -169,9 +201,9 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="p-6 text-center text-[var(--muted)]">טוען...</td></tr>
+              <tr><td colSpan={6} className="p-6 text-center text-[var(--muted)]">טוען...</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={7} className="p-6 text-center text-[var(--muted)]">אין בקשות להצגה.</td></tr>
+              <tr><td colSpan={6} className="p-6 text-center text-[var(--muted)]">אין בקשות להצגה.</td></tr>
             ) : rows.map((row) => {
               const rate = rateForDate(rates, row.created_at);
               const cost = Number(row.estimated_cost ?? 0);
@@ -182,20 +214,13 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
                   className="border-b border-[var(--border)] hover:bg-gray-50 cursor-pointer"
                 >
                   <td className="p-3"><span className="ltr">{formatHebrewDateTime(row.created_at)}</span></td>
+                  <td className="p-3"><span className="ltr">{row.customer_email ?? '-'}</span></td>
                   <td className="p-3">
-                    {row.conversation_id ? (
-                      <Link
-                        to={`/admin/conversations?id=${encodeURIComponent(row.conversation_id)}`}
-                        className="ltr text-blue-600 hover:underline"
-                      >
-                        {senderLabel(row.conversations?.whatsapp_from)}
-                      </Link>
-                    ) : (
-                      <span className="ltr">{senderLabel(row.conversations?.whatsapp_from)}</span>
+                    <div className="font-medium">{row.output_type ? OUTPUT_LABEL[row.output_type] : '-'}</div>
+                    {briefDetail(row.structured_brief) && (
+                      <div className="text-xs text-[var(--muted)]">{briefDetail(row.structured_brief)}</div>
                     )}
                   </td>
-                  <td className="p-3"><span className="ltr">{row.customer_email ?? '-'}</span></td>
-                  <td className="p-3">{row.output_type ? OUTPUT_LABEL[row.output_type] : '-'}</td>
                   <td className="p-3"><span className={`rounded-full px-2 py-1 text-xs ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</span></td>
                   <td className="p-3"><span className="ltr">{formatUsd(cost)}</span></td>
                   <td className="p-3"><span className="ltr">{ratesReady ? (rate != null ? formatIls(cost * rate) : '—') : '…'}</span></td>
@@ -203,6 +228,16 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
               );
             })}
           </tbody>
+          {!loading && rows.length > 0 && (
+            <tfoot>
+              <tr className="border-t-2 border-[var(--border)] font-semibold">
+                <td className="p-3" colSpan={3}>סה"כ ({rows.length} בקשות)</td>
+                <td className="p-3" />
+                <td className="p-3"><span className="ltr">{formatUsd(totalUsd)}</span></td>
+                <td className="p-3"><span className="ltr">{ratesReady ? formatIls(totalIls) : '…'}</span></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 
@@ -223,7 +258,7 @@ interface RequestDetail {
   status: RequestStatus;
   estimated_cost: number;
   created_at: string;
-  brief: Record<string, unknown> | null;
+  structured_brief: Record<string, unknown> | null;
   admin_note: string | null;
   conversation_id: string | null;
   conversations: { whatsapp_from: string } | null;
@@ -236,7 +271,7 @@ function RequestModal({ requestId, onClose }: { requestId: string; onClose: () =
   useEffect(() => {
     const db = createSupabaseBrowserClient();
     db.from('requests')
-      .select('id, customer_email, output_type, status, estimated_cost, created_at, brief, admin_note, conversation_id, conversations!requests_conversation_id_fkey(whatsapp_from)')
+      .select('id, customer_email, output_type, status, estimated_cost, created_at, structured_brief, admin_note, conversation_id, conversations!requests_conversation_id_fkey(whatsapp_from)')
       .eq('id', requestId)
       .maybeSingle()
       .then(({ data, error }) => {
@@ -312,11 +347,11 @@ function RequestModal({ requestId, onClose }: { requestId: string; onClose: () =
                 </div>
               )}
 
-              {detail.brief && (
+              {detail.structured_brief && (
                 <div>
                   <div className="text-xs font-bold text-[var(--muted)] mb-2">בריף</div>
                   <div className="bg-gray-50 rounded-lg p-3 text-xs space-y-1 max-h-48 overflow-y-auto">
-                    {Object.entries(detail.brief).map(([key, value]) => (
+                    {Object.entries(detail.structured_brief).map(([key, value]) => (
                       <div key={key} className="leading-relaxed">
                         <span className="font-semibold">{key}:</span> {String(value)}
                       </div>

@@ -25,6 +25,53 @@ export interface ChatUsage {
   completion_tokens: number;
 }
 
+// OpenAI's per-minute token quota (TPM) is easily exceeded because a single
+// generation fires several large gpt-4o calls back-to-back (analyze → generate
+// → QA#1 → QA#2). When that happens OpenAI returns HTTP 429 and tells us how
+// long to wait ("try again in 5.3s"). Previously we threw immediately, turning
+// a transient, self-healing limit into a hard `generation_failed`. This wrapper
+// retries 429 (and 500/502/503/529 transient server errors) a few times,
+// honoring the wait OpenAI suggests, before giving up.
+const MAX_RETRIES = 4;
+
+// Parse the suggested wait (seconds) out of OpenAI's 429 body, e.g.
+// "Please try again in 5.372s". Falls back to exponential backoff.
+function retryWaitMs(status: number, body: string, attempt: number): number {
+  const m = body.match(/try again in ([\d.]+)\s*(ms|s)/i);
+  if (m) {
+    const n = parseFloat(m[1]);
+    const ms = m[2].toLowerCase() === 'ms' ? n : n * 1000;
+    // Add a small cushion so we don't land exactly on the reset boundary.
+    return Math.min(ms + 300, 30_000);
+  }
+  // No hint (e.g. 5xx): exponential backoff 1s, 2s, 4s, 8s (cap 10s).
+  return Math.min(1000 * 2 ** attempt, 10_000);
+}
+
+// fetch() wrapper that retries transient OpenAI failures. The body is produced
+// by a thunk so multipart FormData bodies can be rebuilt on each attempt.
+async function openAiFetch(
+  url: string,
+  init: () => RequestInit,
+  label: string,
+): Promise<Response> {
+  let lastBody = '';
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(url, init());
+    if (res.ok) return res;
+    const transient = res.status === 429 || res.status === 500 || res.status === 502 || res.status === 503 || res.status === 529;
+    lastBody = await res.text();
+    if (!transient || attempt === MAX_RETRIES) {
+      throw new Error(`OpenAI ${label} ${res.status}: ${lastBody}`);
+    }
+    const wait = retryWaitMs(res.status, lastBody, attempt);
+    console.warn(`OpenAI ${label} ${res.status} (attempt ${attempt + 1}/${MAX_RETRIES}); retrying in ${wait}ms`);
+    await new Promise((r) => setTimeout(r, wait));
+  }
+  // Unreachable, but keeps the type checker happy.
+  throw new Error(`OpenAI ${label}: exhausted retries: ${lastBody}`);
+}
+
 // Learning Agent (skill 10): turn a client correction into one concrete,
 // auto-checkable rule. Returns null when the comment is too vague to be a rule.
 export async function extractRuleLLM(
@@ -90,17 +137,20 @@ async function chat(
   messages: { role: string; content: string }[],
   opts: { json?: boolean; temperature?: number; model?: string; apiKey?: string } = {}
 ): Promise<{ content: string; usage: ChatUsage }> {
-  const res = await fetch(`${API}/chat/completions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${opts.apiKey || key()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: opts.model || textModel(),
-      messages,
-      temperature: opts.temperature ?? 0.5,
-      ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
+  const res = await openAiFetch(
+    `${API}/chat/completions`,
+    () => ({
+      method: 'POST',
+      headers: { Authorization: `Bearer ${opts.apiKey || key()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: opts.model || textModel(),
+        messages,
+        temperature: opts.temperature ?? 0.5,
+        ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
+      }),
     }),
-  });
-  if (!res.ok) throw new Error(`OpenAI chat ${res.status}: ${await res.text()}`);
+    'chat',
+  );
   const data = await res.json();
   return {
     content: data.choices?.[0]?.message?.content ?? '',
@@ -369,18 +419,21 @@ export async function generateImage(
 ): Promise<{ base64: string; mime: string; model: string }> {
   const model = opts.model || imageModel();
   const finalPrompt = opts.systemMessage ? `${opts.systemMessage}\n\nבקשת המשתמש:\n${prompt}` : prompt;
-  const res = await fetch(`${API}/images/generations`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      prompt: finalPrompt,
-      size: opts.size || '1024x1024',
-      quality: opts.quality || 'auto',
-      n: 1,
+  const res = await openAiFetch(
+    `${API}/images/generations`,
+    () => ({
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        prompt: finalPrompt,
+        size: opts.size || '1024x1024',
+        quality: opts.quality || 'auto',
+        n: 1,
+      }),
     }),
-  });
-  if (!res.ok) throw new Error(`OpenAI image ${res.status}: ${await res.text()}`);
+    'image',
+  );
   const data = await res.json();
   const b64 = data.data?.[0]?.b64_json;
   if (!b64) throw new Error('OpenAI image returned no data');
@@ -395,24 +448,26 @@ export async function generateImageWithReferences(
   if (!references.length) return generateImage(prompt, opts);
   const model = opts.model || imageModel();
   const finalPrompt = opts.systemMessage ? `${opts.systemMessage}\n\nבקשת המשתמש:\n${prompt}` : prompt;
-  const form = new FormData();
-  form.append('model', model);
-  form.append('prompt', finalPrompt);
-  if (opts.size) form.append('size', opts.size);
-  if (opts.quality) form.append('quality', opts.quality);
-  form.append('n', '1');
-  for (const [idx, ref] of references.entries()) {
-    const mime = ref.mime || 'image/png';
-    const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png';
-    const bytes = Uint8Array.from(atob(ref.base64), (c) => c.charCodeAt(0));
-    form.append('image[]', new Blob([bytes], { type: mime }), ref.name || `reference-${idx + 1}.${ext}`);
-  }
-  const res = await fetch(`${API}/images/edits`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key()}` },
-    body: form,
-  });
-  if (!res.ok) throw new Error(`OpenAI image reference edit ${res.status}: ${await res.text()}`);
+  const buildForm = () => {
+    const form = new FormData();
+    form.append('model', model);
+    form.append('prompt', finalPrompt);
+    if (opts.size) form.append('size', opts.size);
+    if (opts.quality) form.append('quality', opts.quality);
+    form.append('n', '1');
+    for (const [idx, ref] of references.entries()) {
+      const mime = ref.mime || 'image/png';
+      const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png';
+      const bytes = Uint8Array.from(atob(ref.base64), (c) => c.charCodeAt(0));
+      form.append('image[]', new Blob([bytes], { type: mime }), ref.name || `reference-${idx + 1}.${ext}`);
+    }
+    return form;
+  };
+  const res = await openAiFetch(
+    `${API}/images/edits`,
+    () => ({ method: 'POST', headers: { Authorization: `Bearer ${key()}` }, body: buildForm() }),
+    'image reference edit',
+  );
   const data = await res.json();
   const b64 = data.data?.[0]?.b64_json;
   if (!b64) throw new Error('OpenAI image reference edit returned no data');
@@ -433,18 +488,20 @@ export async function editImage(
   const finalPrompt = opts.systemMessage ? `${opts.systemMessage}\n\nבקשת המשתמש:\n${prompt}` : prompt;
   const bytes = Uint8Array.from(atob(sourceBase64), (c) => c.charCodeAt(0));
   const ext = (sourceMime || 'image/png').includes('jpeg') ? 'jpg' : 'png';
-  const form = new FormData();
-  form.append('model', model);
-  form.append('prompt', finalPrompt);
-  form.append('image', new Blob([bytes], { type: sourceMime || 'image/png' }), `source.${ext}`);
-  if (opts.size) form.append('size', opts.size);
-  form.append('n', '1');
-  const res = await fetch(`${API}/images/edits`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key()}` },
-    body: form,
-  });
-  if (!res.ok) throw new Error(`OpenAI image edit ${res.status}: ${await res.text()}`);
+  const buildForm = () => {
+    const form = new FormData();
+    form.append('model', model);
+    form.append('prompt', finalPrompt);
+    form.append('image', new Blob([bytes], { type: sourceMime || 'image/png' }), `source.${ext}`);
+    if (opts.size) form.append('size', opts.size);
+    form.append('n', '1');
+    return form;
+  };
+  const res = await openAiFetch(
+    `${API}/images/edits`,
+    () => ({ method: 'POST', headers: { Authorization: `Bearer ${key()}` }, body: buildForm() }),
+    'image edit',
+  );
   const data = await res.json();
   const b64 = data.data?.[0]?.b64_json;
   if (!b64) throw new Error('OpenAI image edit returned no data');
@@ -481,15 +538,17 @@ export async function transcribeAudio(
   const ext = transcriptionExt(mime, filename);
   // OpenAI rejects an empty/opus mime; normalize the ogg family to audio/ogg.
   const safeMime = ext === 'ogg' ? 'audio/ogg' : mime || 'audio/mpeg';
-  const form = new FormData();
-  form.append('file', new Blob([bytes], { type: safeMime }), `audio.${ext}`);
-  form.append('model', opts.model || 'gpt-4o-transcribe');
-  const res = await fetch(`${API}/audio/transcriptions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key()}` },
-    body: form,
-  });
-  if (!res.ok) throw new Error(`OpenAI transcription ${res.status}: ${await res.text()}`);
+  const buildForm = () => {
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: safeMime }), `audio.${ext}`);
+    form.append('model', opts.model || 'gpt-4o-transcribe');
+    return form;
+  };
+  const res = await openAiFetch(
+    `${API}/audio/transcriptions`,
+    () => ({ method: 'POST', headers: { Authorization: `Bearer ${key()}` }, body: buildForm() }),
+    'transcription',
+  );
   const data = await res.json();
   return { text: (data.text as string) ?? '' };
 }
@@ -501,27 +560,30 @@ export async function describeImage(
   mime: string,
   opts: { model?: string } = {}
 ): Promise<{ text: string; usage: ChatUsage }> {
-  const res = await fetch(`${API}/chat/completions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: opts.model || 'gpt-4o',
-      temperature: 0.2,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'תאר בעברית ובפירוט מה רואים בתמונה: טקסט שמופיע בה, אובייקטים, אנשים, צבעים, סגנון עיצובי וכל פרט שעשוי לעזור להבין את כוונת המשתמש. אם יש טקסט בתמונה — שכתב אותו במדויק.',
-            },
-            { type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } },
-          ],
-        },
-      ],
+  const res = await openAiFetch(
+    `${API}/chat/completions`,
+    () => ({
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: opts.model || 'gpt-4o',
+        temperature: 0.2,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'תאר בעברית ובפירוט מה רואים בתמונה: טקסט שמופיע בה, אובייקטים, אנשים, צבעים, סגנון עיצובי וכל פרט שעשוי לעזור להבין את כוונת המשתמש. אם יש טקסט בתמונה — שכתב אותו במדויק.',
+              },
+              { type: 'image_url', image_url: { url: `data:${mime || 'image/png'};base64,${base64}` } },
+            ],
+          },
+        ],
+      }),
     }),
-  });
-  if (!res.ok) throw new Error(`OpenAI vision ${res.status}: ${await res.text()}`);
+    'vision',
+  );
   const data = await res.json();
   return {
     text: (data.choices?.[0]?.message?.content as string) ?? '',
@@ -568,7 +630,9 @@ export async function reviewImageQa(
   base64: string,
   mime: string
 ): Promise<{ qa: { passed: boolean; issues: string[]; notes?: string }; usage: ChatUsage }> {
-  const res = await fetch(`${API}/chat/completions`, {
+  const res = await openAiFetch(
+    `${API}/chat/completions`,
+    () => ({
     method: 'POST',
     headers: { Authorization: `Bearer ${key()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -592,8 +656,9 @@ export async function reviewImageQa(
         },
       ],
     }),
-  });
-  if (!res.ok) throw new Error(`OpenAI vision QA ${res.status}: ${await res.text()}`);
+    }),
+    'vision QA',
+  );
   const data = await res.json();
   const usage = data.usage ?? { prompt_tokens: 0, completion_tokens: 0 };
   let qa: { passed: boolean; issues: string[]; notes?: string } = { passed: true, issues: [] };

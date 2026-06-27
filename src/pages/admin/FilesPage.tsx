@@ -29,6 +29,20 @@ const EditIcon = () => (
     <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
   </svg>
 );
+// File-type badges from Font Awesome Free (CC BY 4.0): file-pdf spells "PDF",
+// file-word carries the document "W" mark. Solid single paths filled via
+// currentColor, so they inherit each button's text color.
+const fileBadge = 'h-5 w-5 shrink-0';
+const PdfIcon = () => (
+  <svg viewBox="0 0 512 512" fill="currentColor" className={fileBadge} aria-hidden="true">
+    <path d="M64 464l48 0 0 48-48 0c-35.3 0-64-28.7-64-64L0 64C0 28.7 28.7 0 64 0L229.5 0c17 0 33.3 6.7 45.3 18.7l90.5 90.5c12 12 18.7 28.3 18.7 45.3L384 304l-48 0 0-144-80 0c-17.7 0-32-14.3-32-32l0-80L64 48c-8.8 0-16 7.2-16 16l0 384c0 8.8 7.2 16 16 16zM176 352l32 0c30.9 0 56 25.1 56 56s-25.1 56-56 56l-16 0 0 32c0 8.8-7.2 16-16 16s-16-7.2-16-16l0-48 0-80c0-8.8 7.2-16 16-16zm32 80c13.3 0 24-10.7 24-24s-10.7-24-24-24l-16 0 0 48 16 0zm96-80l32 0c26.5 0 48 21.5 48 48l0 64c0 26.5-21.5 48-48 48l-32 0c-8.8 0-16-7.2-16-16l0-128c0-8.8 7.2-16 16-16zm32 128c8.8 0 16-7.2 16-16l0-64c0-8.8-7.2-16-16-16l-16 0 0 96 16 0zm80-112c0-8.8 7.2-16 16-16l48 0c8.8 0 16 7.2 16 16s-7.2 16-16 16l-32 0 0 32 32 0c8.8 0 16 7.2 16 16s-7.2 16-16 16l-32 0 0 48c0 8.8-7.2 16-16 16s-16-7.2-16-16l0-64 0-64z" />
+  </svg>
+);
+const DocxIcon = () => (
+  <svg viewBox="0 0 384 512" fill="currentColor" className={fileBadge} aria-hidden="true">
+    <path d="M48 448L48 64c0-8.8 7.2-16 16-16l160 0 0 80c0 17.7 14.3 32 32 32l80 0 0 288c0 8.8-7.2 16-16 16L64 464c-8.8 0-16-7.2-16-16zM64 0C28.7 0 0 28.7 0 64L0 448c0 35.3 28.7 64 64 64l256 0c35.3 0 64-28.7 64-64l0-293.5c0-17-6.7-33.3-18.7-45.3L274.7 18.7C262.7 6.7 246.5 0 229.5 0L64 0zm55 241.1c-3.8-12.7-17.2-19.9-29.9-16.1s-19.9 17.2-16.1 29.9l48 160c3 10.2 12.4 17.1 23 17.1s19.9-7 23-17.1l25-83.4 25 83.4c3 10.2 12.4 17.1 23 17.1s19.9-7 23-17.1l48-160c3.8-12.7-3.4-26.1-16.1-29.9s-26.1 3.4-29.9 16.1l-25 83.4-25-83.4c-3-10.2-12.4-17.1-23-17.1s-19.9 7-23 17.1l-25 83.4-25-83.4z" />
+  </svg>
+);
 
 interface FileRow {
   id: string;
@@ -393,8 +407,8 @@ export default function FilesPage() {
                 aria-pressed={active}
                 className={`inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-bold transition ${
                   active
-                    ? 'bg-[#2563EB] text-white shadow-sm'
-                    : 'text-[#64748B] hover:bg-[#F8FAFF] hover:text-[#2563EB]'
+                    ? 'bg-brand text-white shadow-sm'
+                    : 'text-[#64748B] hover:bg-brand/5 hover:text-brand'
                 }`}
               >
                 <span aria-hidden="true">{item.icon}</span>
@@ -479,7 +493,7 @@ export default function FilesPage() {
                             {formatHebrewDateTime(file.created_at)}
                           </div>
                           {file.storage_path ? (
-                            <div className="mt-2 flex gap-1.5">
+                            <div className="mt-2 grid grid-cols-3 gap-1.5">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -487,7 +501,7 @@ export default function FilesPage() {
                                 }}
                                 title="צפייה"
                                 aria-label="צפייה"
-                                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
+                                className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
                               >
                                 <EyeIcon />
                               </button>
@@ -498,39 +512,54 @@ export default function FilesPage() {
                                 }}
                                 title="הורדה"
                                 aria-label="הורדה"
-                                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
                               >
                                 <DownloadIcon />
                               </button>
-                            </div>
-                          ) : (
-                            <div className="mt-2 flex gap-1.5">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setTextPreview(file);
-                                }}
-                                title="פתיחת הטקסט"
-                                aria-label="פתיחת הטקסט"
-                                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
-                              >
-                                <EyeIcon />
-                              </button>
-                              {file.output_type === 'presentation' && (
+                              {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf' || file.output_type === 'document') && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setTargetFileRow(file);
+                                    navigate(`/admin/files/${file.request_id}/revise`);
                                   }}
-                                  disabled={uploadingId === file.id}
-                                  className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                  title="שיפור / עריכה"
+                                  aria-label="שיפור / עריכה"
+                                  className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-brand text-brand hover:bg-brand/5"
                                 >
-                                  <UploadIcon />
-                                  {uploadingId === file.id ? 'מעלה...' : 'העלאת קובץ'}
+                                  <EditIcon />
                                 </button>
                               )}
+                            </div>
+                          ) : (
+                            <div className="mt-2 space-y-1.5">
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTextPreview(file);
+                                  }}
+                                  title="פתיחת הטקסט"
+                                  aria-label="פתיחת הטקסט"
+                                  className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                >
+                                  <EyeIcon />
+                                </button>
+                                {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf' || file.output_type === 'document') && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigate(`/admin/files/${file.request_id}/revise`);
+                                    }}
+                                    title="שיפור / עריכה"
+                                    aria-label="שיפור / עריכה"
+                                    className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-brand text-brand hover:bg-brand/5"
+                                  >
+                                    <EditIcon />
+                                  </button>
+                                )}
+                              </div>
                               {file.text_content && (
-                                <>
+                                <div className="grid grid-cols-2 gap-1.5">
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -538,9 +567,9 @@ export default function FilesPage() {
                                     }}
                                     title="הורדה כ-PDF"
                                     aria-label="הורדה כ-PDF"
-                                    className="flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[10px] font-bold text-[#DC2626] hover:bg-[#FEE2E2]"
+                                    className="flex min-h-11 w-full items-center justify-center rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#DC2626] hover:bg-[#FEE2E2]"
                                   >
-                                    PDF
+                                    <PdfIcon />
                                   </button>
                                   <button
                                     onClick={(e) => {
@@ -549,25 +578,13 @@ export default function FilesPage() {
                                     }}
                                     title="הורדה כ-Word"
                                     aria-label="הורדה כ-Word"
-                                    className="flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[#BFDBFE] bg-[#EFF6FF] text-[10px] font-bold text-[#2563EB] hover:bg-[#DBEAFE]"
+                                    className="flex min-h-11 w-full items-center justify-center rounded-lg border border-brand/30 bg-brand/10 text-brand hover:bg-brand/15"
                                   >
-                                    DOCX
+                                    <DocxIcon />
                                   </button>
-                                </>
+                                </div>
                               )}
                             </div>
-                          )}
-                          {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigate(`/admin/files/${file.request_id}/revise`);
-                              }}
-                              className="mt-1.5 inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border border-brand px-2 py-2 text-xs font-semibold text-brand hover:bg-brand/5"
-                            >
-                              <EditIcon />
-                              שיפור / עריכה
-                            </button>
                           )}
                         </div>
                       </div>

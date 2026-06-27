@@ -232,42 +232,149 @@ export default function PermissionsPage() {
 
               {/* brands for regular users */}
               {!isAdmin && brands.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-[var(--border)]">
-                  <div className="text-xs font-medium mb-2">מותגים:</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {brands.map((b) => {
-                      const on = userBrands.has(b.id);
-                      const logoUrl = brandLogoUrls[b.id] ?? null;
-                      return (
-                        <button
-                          key={b.id}
-                          onClick={() => toggleBrand(p, b.id)}
-                          disabled={savingId === p.id}
-                          className={`inline-flex items-center gap-1.5 rounded-full border py-1 pe-2.5 ps-1.5 text-xs font-medium transition disabled:opacity-60 ${
-                            on
-                              ? 'border-brand bg-brand/10 text-brand'
-                              : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'
-                          }`}
-                        >
-                          <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-white">
-                            {logoUrl ? (
-                              <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
-                            ) : (
-                              <span className="text-[10px] font-bold text-brand">{b.name.slice(0, 2)}</span>
-                            )}
-                          </span>
-                          <span>{b.name}</span>
-                          {on && <span>✓</span>}
-                        </button>
-                      );
-                    })}
+                <>
+                  {/* Mobile: modal for many brands */}
+                  {brands.length > 2 ? (
+                    <div className="mt-3 pt-3 border-t border-[var(--border)] lg:hidden">
+                      <div className="text-xs font-medium mb-2">מותגים:</div>
+                      <BrandSelectionModal
+                        userBrands={userBrands}
+                        brands={brands}
+                        brandLogoUrls={brandLogoUrls}
+                        onToggle={(brandId) => toggleBrand(p, brandId)}
+                        disabled={savingId === p.id}
+                      />
+                    </div>
+                  ) : null}
+
+                  {/* Desktop: buttons grid */}
+                  <div className="mt-3 pt-3 border-t border-[var(--border)] hidden lg:block">
+                    <div className="text-xs font-medium mb-2">מותגים:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {brands.map((b) => {
+                        const on = userBrands.has(b.id);
+                        const logoUrl = brandLogoUrls[b.id] ?? null;
+                        return (
+                          <button
+                            key={b.id}
+                            onClick={() => toggleBrand(p, b.id)}
+                            disabled={savingId === p.id}
+                            className={`inline-flex items-center gap-1.5 rounded-full border py-1 pe-2.5 ps-1.5 text-xs font-medium transition disabled:opacity-60 ${
+                              on
+                                ? 'border-brand bg-brand/10 text-brand'
+                                : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'
+                            }`}
+                          >
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-white">
+                              {logoUrl ? (
+                                <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
+                              ) : (
+                                <span className="text-[10px] font-bold text-brand">{b.name.slice(0, 2)}</span>
+                              )}
+                            </span>
+                            <span>{b.name}</span>
+                            {on && <span>✓</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                </>
               )}
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+function BrandSelectionModal({
+  userBrands,
+  brands,
+  brandLogoUrls,
+  onToggle,
+  disabled,
+}: {
+  userBrands: Set<string>;
+  brands: BrandRow[];
+  brandLogoUrls: Record<string, string>;
+  onToggle: (brandId: string) => void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={disabled}
+        className="w-full rounded-lg border border-brand bg-white px-4 py-2.5 text-sm font-semibold text-brand hover:bg-brand/5 transition disabled:opacity-50"
+      >
+        בחרו מותגים
+      </button>
+
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40 transition-opacity"
+            onClick={() => setOpen(false)}
+            role="presentation"
+          />
+
+          <div
+            className="fixed bottom-0 left-0 right-0 z-50 max-h-[70vh] overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200"
+            dir="rtl"
+          >
+            <div className="sticky top-0 border-b border-[var(--border)] bg-white px-4 py-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold">בחרו מותגים</h2>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="p-1 text-[var(--muted)] hover:bg-gray-100 rounded-lg transition"
+                  aria-label="סגרו את הדיאלוג"
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2 p-4">
+              {brands.map((b) => {
+                const on = userBrands.has(b.id);
+                const logoUrl = brandLogoUrls[b.id] ?? null;
+                return (
+                  <button
+                    key={b.id}
+                    onClick={() => onToggle(b.id)}
+                    disabled={disabled}
+                    className={`w-full flex items-center gap-2.5 px-4 py-3 rounded-lg font-semibold text-sm transition disabled:opacity-50 ${
+                      on
+                        ? 'bg-brand text-white'
+                        : 'bg-gray-50 text-[var(--text)] hover:bg-gray-100'
+                    }`}
+                  >
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-white">
+                      {logoUrl ? (
+                        <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
+                      ) : (
+                        <span className="text-[10px] font-bold text-brand">{b.name.slice(0, 2)}</span>
+                      )}
+                    </span>
+                    <span className="flex-1 text-right">{b.name}</span>
+                    {on && <span>✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </>
   );
 }

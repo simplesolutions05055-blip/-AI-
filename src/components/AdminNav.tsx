@@ -129,7 +129,7 @@ export default function AdminNav({
       </nav>
       <button
         onClick={logout}
-        className="mt-4 flex shrink-0 items-center gap-2 px-3 py-2 text-start text-sm text-[var(--muted)] hover:text-red-600"
+        className="mt-auto flex shrink-0 items-center gap-2 px-3 py-2 text-start text-sm text-[var(--muted)] hover:text-red-600"
       >
         <NavIcon name="logout" className="h-4 w-4 shrink-0" />
         יציאה
@@ -149,10 +149,19 @@ export function AdminBottomNav({
 }) {
   const { pathname } = useLocation();
   const allLinks = visibleSections(isAdmin, canCreateOutputs).flatMap((sec) => sec.links);
+  // Desktop: dashboard, production, files, requests
+  // Mobile: dashboard, production, files, branding (for easy brand access)
   const primaryHrefs = isAdmin
     ? ['/admin', '/admin/production', '/admin/files', '/admin/requests']
     : ['/admin/production', '/admin/files'];
-  const items = primaryHrefs
+  // Mobile version: show branding instead of requests
+  const mobileHrefs = isAdmin
+    ? ['/admin', '/admin/production', '/admin/files', '/admin/branding']
+    : ['/admin/production', '/admin/files'];
+
+  // Use mobile version which swaps requests for branding for better mobile UX
+  const itemHrefs = mobileHrefs;
+  const items = itemHrefs
     .map((href) => allLinks.find((link) => link.href === href))
     .filter(Boolean) as NavLink[];
   const activeInPrimary = items.some((item) => isActivePath(pathname, item.href));

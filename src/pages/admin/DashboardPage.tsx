@@ -28,13 +28,6 @@ type RecentFileRow = {
   requests: { structured_brief: { source?: string | null } | null } | null;
 };
 
-const PRODUCT_LINKS: Array<{ type: OutputType; description: string }> = [
-  { type: 'image', description: 'פוסט, מודעה או גרפיקה לרשתות.' },
-  { type: 'presentation', description: 'מבנה ותוכן שקפים למצגת.' },
-  { type: 'text', description: 'פוסט, מייל, נאום או תוכן שיווקי.' },
-  { type: 'pdf', description: 'מסמך מסודר להורדה או שליחה.' },
-];
-
 export default function DashboardPage() {
   const [statusRows, setStatusRows] = useState<Array<{ status: RequestStatus }>>([]);
   const [todayCount, setTodayCount] = useState(0);
@@ -150,26 +143,6 @@ export default function DashboardPage() {
     <div dir="rtl">
       <h1 className="text-2xl font-bold mb-6">לוח בקרה</h1>
 
-      <section className="mb-8">
-        <h2 className="font-semibold mb-3">הפקת תוצרים</h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {PRODUCT_LINKS.map((item) => (
-            <Link
-              key={item.type}
-              to={`/admin/production/${item.type}`}
-              className="group flex h-full flex-col rounded-xl border border-[var(--border)] bg-white p-4 transition hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[0_16px_40px_rgba(59,130,246,0.12)]"
-            >
-              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand/10 text-brand transition group-hover:scale-105">
-                <ProductIcon type={item.type} className="h-6 w-6" />
-              </div>
-              <div className="text-lg font-bold mb-1 group-hover:text-brand">{OUTPUT_LABEL[item.type]}</div>
-              <p className="text-sm text-[var(--muted)] leading-6">{item.description}</p>
-              <span className="mt-3 text-sm font-semibold text-brand">התחלה ←</span>
-            </Link>
-          ))}
-        </div>
-      </section>
-
       <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         {cards.map((card) => (
           <div key={card.label} className="bg-white rounded-xl border border-[var(--border)] p-4">
@@ -270,43 +243,6 @@ export default function DashboardPage() {
         </div>
       </section>
     </div>
-  );
-}
-
-// Product type icons — kept in sync with the production picker (ProductionPage).
-function ProductIcon({ type, className = 'h-6 w-6' }: { type: OutputType; className?: string }) {
-  if (type === 'presentation') {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-        <rect x="4" y="5" width="16" height="10" rx="2" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M8 19h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        <path d="M12 15v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  if (type === 'text') {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-        <path d="M6 5.5h12M6 10h12M6 14.5h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        <path d="M6 19h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" opacity="0.65" />
-      </svg>
-    );
-  }
-  if (type === 'pdf') {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-        <path d="M7 4.75h6.5L17 8.25V19a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5.75a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M13.5 4.75v3.5H17" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M8.5 15h7M8.5 12h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-      <path d="M6 9.5a6 6 0 0 1 12 0v5a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-5Z" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M9 9.5h6M9 12h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path d="m15.5 16.5 2 2 2-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }
 

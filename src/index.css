@@ -148,6 +148,31 @@ select {
   }
 }
 
+/* Brand-tinted pulse to nudge an unchosen control — used on the production
+   type chips until the user picks one. Honors the runtime brand color. */
+.pick-me-glow {
+  animation: pick-me-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes pick-me-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--brand-rgb, 31 111 235) / 0.45);
+    border-color: rgb(var(--brand-rgb, 31 111 235) / 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgb(var(--brand-rgb, 31 111 235) / 0);
+    border-color: rgb(var(--brand-rgb, 31 111 235) / 0.9);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pick-me-glow {
+    animation: none;
+    border-color: rgb(var(--brand-rgb, 31 111 235) / 0.6);
+  }
+}
+
 @media (max-width: 767px) {
   input,
   textarea,
