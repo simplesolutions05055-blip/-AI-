@@ -3,6 +3,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { genderCopy } from '@/lib/genderCopy';
 import { useProfile } from '@/lib/useProfile';
 import type { Skill, SkillVersion, SkillCategory, SkillEnforcement } from '@/types/db';
+import { Spinner } from '@/components/ui/Spinner';
 
 const CATEGORIES: { key: SkillCategory; label: string }[] = [
   { key: 'skill', label: 'סקילים' },
@@ -159,7 +160,7 @@ export default function SkillsPage() {
     setSkills((prev) => prev.map((s) => (s.key === skill.key ? { ...s, enabled: !s.enabled } : s)));
   }
 
-  if (loading) return <p className="text-[var(--muted)]">טוען...</p>;
+  if (loading) return <p className="text-[var(--muted)]"><Spinner /></p>;
 
   const list = skills.filter((s) => s.category === activeCat);
 

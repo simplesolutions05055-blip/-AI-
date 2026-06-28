@@ -23,7 +23,7 @@ export function formatHebrewDateTime(d: Date | string): string {
 }
 
 export function formatUsd(n: number): string {
-  return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
 }
 
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;

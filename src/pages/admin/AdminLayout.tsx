@@ -8,6 +8,7 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { needsOnboardingGate, shouldShowOnboardingBanner } from '@/lib/onboarding';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { genderCopy } from '@/lib/genderCopy';
+import { Spinner } from '@/components/ui/Spinner';
 
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
 // further by can_create_outputs. Files is view-only for regular users.
@@ -17,11 +18,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { loading, profile, hasBrand, requireUploads } = useProfile();
   const [navOpen, setNavOpen] = useState(false);
   const [navMounted, setNavMounted] = useState(false);
+  const [navVisible, setNavVisible] = useState(false);
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
   // Theme the whole app with the user's brand color when exactly one brand is
-  // assigned to them; otherwise the default blue stays.
+  // assigned to them; otherwise the PrimeOS default stays.
   useBrandTheme(!!profile);
 
   async function logout() {
@@ -44,9 +46,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (navOpen) {
       setNavMounted(true);
-      return;
+      const frame = window.requestAnimationFrame(() => setNavVisible(true));
+      return () => window.cancelAnimationFrame(frame);
     }
-    const timeout = window.setTimeout(() => setNavMounted(false), 220);
+    setNavVisible(false);
+    const timeout = window.setTimeout(() => setNavMounted(false), 320);
     return () => window.clearTimeout(timeout);
   }, [navOpen]);
 
@@ -59,7 +63,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [navOpen]);
 
-  if (loading) return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]">טוען...</main>;
+  if (loading) return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]"><Spinner /></main>;
   if (!profile) return <Navigate to="/login" replace />;
 
   // Force onboarding before the app: user details always, plus the upload steps
@@ -97,7 +101,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <div className="text-xs text-[var(--muted)] ltr">{profile.email}</div>
               <button
                 onClick={logout}
-                className="rounded-lg border border-[var(--border)] px-5 py-2 text-sm font-semibold text-[var(--muted)] hover:bg-gray-50 hover:text-red-600"
+                className="rounded-lg border border-[#d7e3e0] bg-white px-5 py-2 text-sm font-semibold text-[#526372] hover:bg-[#fdebec] hover:text-[#9f2840]"
               >
                 התנתקות
               </button>
@@ -109,9 +113,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex min-h-[100dvh]">
+    <div className="flex min-h-[100dvh] bg-[#f6f9f8] text-[#071a33]">
       {/* desktop sidebar */}
-      <div className="hidden lg:flex lg:self-stretch lg:w-60 lg:shrink-0 lg:border-l lg:border-[var(--border)] lg:bg-white">
+      <div className="hidden lg:flex lg:self-stretch lg:w-60 lg:shrink-0 lg:border-l lg:border-[#d7e3e0] lg:bg-white">
         <div className="lg:sticky lg:top-0 lg:h-[100dvh] lg:w-full">
           <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} />
         </div>
@@ -120,8 +124,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* drawer */}
       {navMounted && (
         <div
-          className={`fixed inset-0 z-40 transition-opacity duration-200 ease-out ${
-            navOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+          className={`fixed inset-0 z-40 transition-opacity duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
+            navVisible ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
           }`}
           role="dialog"
           aria-modal="true"
@@ -134,8 +138,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             onClick={() => setNavOpen(false)}
           />
           <div
-            className={`absolute bottom-0 right-0 top-0 w-[min(84vw,320px)] overflow-hidden shadow-xl transition-transform duration-200 ease-out ${
-              navOpen ? 'translate-x-0' : 'translate-x-full'
+            className={`absolute bottom-0 right-0 top-0 w-[min(84vw,320px)] origin-right overflow-hidden shadow-xl transition duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
+              navVisible ? 'translate-x-0 opacity-100 scale-100' : 'translate-x-full opacity-0 scale-[0.985]'
             }`}
           >
             <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} onNavigate={() => setNavOpen(false)} />

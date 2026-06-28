@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { applyBrandPalette, resetBrandTheme, type PaletteEntry } from '@/lib/useBrandTheme';
+import { Spinner } from '@/components/ui/Spinner';
 
 interface InviteBrand {
   name: string;
@@ -83,7 +84,7 @@ export default function SignupPage() {
   }
 
   if (resolvingInvite) {
-    return <main className="min-h-screen grid place-items-center text-[var(--muted)]">טוען...</main>;
+    return <main className="min-h-screen grid place-items-center text-[var(--muted)]"><Spinner /></main>;
   }
 
   return (

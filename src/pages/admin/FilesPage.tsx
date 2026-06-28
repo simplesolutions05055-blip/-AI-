@@ -4,8 +4,10 @@ import { OUTPUT_LABEL, senderLabel } from '@/lib/labels';
 import { formatHebrewDateTime } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
+import { Tooltip } from '@/components/ui/Tooltip';
 import type { OutputType } from '@/types/db';
 import { parseRichText, exportRichTextPdf, exportRichTextDocx, RichTextPreview } from '@/lib/richText';
+import { Spinner } from '@/components/ui/Spinner';
 
 const ico = 'h-4 w-4 shrink-0';
 const EyeIcon = () => (
@@ -427,7 +429,7 @@ export default function FilesPage() {
       )}
 
       {loading ? (
-        <div className="text-center text-[var(--muted)] p-10">טוען...</div>
+        <div className="text-center text-[var(--muted)] p-10"><Spinner /></div>
       ) : visibleFiles.length === 0 ? (
         <div className="text-center text-[var(--muted)] p-10">אין תוצרים.</div>
       ) : (
@@ -471,7 +473,6 @@ export default function FilesPage() {
                           ) : (file.output_type === 'pdf' || file.mime_type === 'application/pdf') && previews[file.id] ? (
                             <iframe
                               src={`${previews[file.id]}#toolbar=0&navpanes=0&view=FitH`}
-                              title=""
                               className="pointer-events-none h-full w-full border-0"
                             />
                           ) : !file.storage_path && file.text_content ? (
@@ -487,102 +488,113 @@ export default function FilesPage() {
 
                         <div className="p-2.5">
                           <div className="text-xs font-medium mb-1">{labelFor(file.output_type)}</div>
-                          {isAdmin && <div className="text-[10px] text-[var(--muted)] text-start truncate" title={file.creator}>
-                            נוצר ע״י: <span className="ltr">{file.creator}</span>
-                          </div>}
+                          {isAdmin && (
+                            <Tooltip content={<span className="ltr">{file.creator}</span>}>
+                              <div className="text-[10px] text-[var(--muted)] text-start truncate cursor-help">
+                                נוצר ע״י: <span className="ltr">{file.creator}</span>
+                              </div>
+                            </Tooltip>
+                          )}
                           <div className="text-[10px] text-[var(--muted)] ltr text-start mt-0.5">
                             {formatHebrewDateTime(file.created_at)}
                           </div>
                           {file.storage_path ? (
                             <div className="mt-2 grid grid-cols-3 gap-1.5">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void openViewer(file);
-                                }}
-                                title="צפייה"
-                                aria-label="צפייה"
-                                className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
-                              >
-                                <EyeIcon />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  download(file.storage_path as string);
-                                }}
-                                title="הורדה"
-                                aria-label="הורדה"
-                                className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
-                              >
-                                <DownloadIcon />
-                              </button>
-                              {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
+                              <Tooltip content="צפייה">
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    navigate(`/admin/files/${file.request_id}/revise`);
+                                    void openViewer(file);
                                   }}
-                                  title="שיפור / עריכה"
-                                  aria-label="שיפור / עריכה"
-                                  className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-brand text-brand hover:bg-brand/5"
-                                >
-                                  <EditIcon />
-                                </button>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="mt-2 space-y-1.5">
-                              <div className="grid grid-cols-2 gap-1.5">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setTextPreview(file);
-                                  }}
-                                  title="פתיחת הטקסט"
-                                  aria-label="פתיחת הטקסט"
-                                  className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                  aria-label="צפייה"
+                                  className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
                                 >
                                   <EyeIcon />
                                 </button>
-                                {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
+                              </Tooltip>
+                              <Tooltip content="הורדה">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    download(file.storage_path as string);
+                                  }}
+                                  aria-label="הורדה"
+                                  className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                >
+                                  <DownloadIcon />
+                                </button>
+                              </Tooltip>
+                              {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
+                                <Tooltip content="שיפור / עריכה">
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       navigate(`/admin/files/${file.request_id}/revise`);
                                     }}
-                                    title="שיפור / עריכה"
                                     aria-label="שיפור / עריכה"
                                     className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-brand text-brand hover:bg-brand/5"
                                   >
                                     <EditIcon />
                                   </button>
+                                </Tooltip>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="mt-2 space-y-1.5">
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <Tooltip content="פתיחת הטקסט">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setTextPreview(file);
+                                    }}
+                                    aria-label="פתיחת הטקסט"
+                                    className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                  >
+                                    <EyeIcon />
+                                  </button>
+                                </Tooltip>
+                                {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
+                                  <Tooltip content="שיפור / עריכה">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigate(`/admin/files/${file.request_id}/revise`);
+                                      }}
+                                      aria-label="שיפור / עריכה"
+                                      className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-brand text-brand hover:bg-brand/5"
+                                    >
+                                      <EditIcon />
+                                    </button>
+                                  </Tooltip>
                                 )}
                               </div>
                               {file.text_content && (
                                 <div className="grid grid-cols-2 gap-1.5">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void exportRichTextPdf(parseRichText(file.text_content as string), undefined, file.brand_logo_url);
-                                    }}
-                                    title="הורדה כ-PDF"
-                                    aria-label="הורדה כ-PDF"
-                                    className="flex min-h-11 w-full items-center justify-center rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#DC2626] hover:bg-[#FEE2E2]"
-                                  >
-                                    <PdfIcon />
-                                  </button>
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void exportRichTextDocx(parseRichText(file.text_content as string), undefined, file.brand_logo_url);
-                                    }}
-                                    title="הורדה כ-Word"
-                                    aria-label="הורדה כ-Word"
-                                    className="flex min-h-11 w-full items-center justify-center rounded-lg border border-brand/30 bg-brand/10 text-brand hover:bg-brand/15"
-                                  >
-                                    <DocxIcon />
-                                  </button>
+                                  <Tooltip content="הורדה כ-PDF">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void exportRichTextPdf(parseRichText(file.text_content as string), undefined, file.brand_logo_url);
+                                      }}
+                                      aria-label="הורדה כ-PDF"
+                                      className="flex min-h-11 w-full items-center justify-center rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#DC2626] hover:bg-[#FEE2E2]"
+                                    >
+                                      <PdfIcon />
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip content="הורדה כ-Word">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void exportRichTextDocx(parseRichText(file.text_content as string), undefined, file.brand_logo_url);
+                                      }}
+                                      aria-label="הורדה כ-Word"
+                                      className="flex min-h-11 w-full items-center justify-center rounded-lg border border-brand/30 bg-brand/10 text-brand hover:bg-brand/15"
+                                    >
+                                      <DocxIcon />
+                                    </button>
+                                  </Tooltip>
                                 </div>
                               )}
                             </div>
@@ -656,14 +668,15 @@ export default function FilesPage() {
                 <p className="text-xs text-[var(--muted)] ltr">{formatHebrewDateTime(viewerFile.row.created_at)}</p>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => download(viewerFile.row.storage_path as string)}
-                  title="הורדה"
-                  aria-label="הורדה"
-                  className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[var(--border)] px-3 text-sm font-semibold hover:bg-gray-50"
-                >
-                  <DownloadIcon />
-                </button>
+                <Tooltip content="הורדה">
+                  <button
+                    onClick={() => download(viewerFile.row.storage_path as string)}
+                    aria-label="הורדה"
+                    className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[var(--border)] px-3 text-sm font-semibold hover:bg-gray-50"
+                  >
+                    <DownloadIcon />
+                  </button>
+                </Tooltip>
                 <button onClick={() => setViewerFile(null)} className="rounded-lg px-2 text-2xl leading-none text-[var(--muted)]" aria-label="סגירה">
                   ×
                 </button>
@@ -673,7 +686,7 @@ export default function FilesPage() {
               {viewerFile.row.output_type === 'image' ? (
                 <img src={viewerFile.url} alt="" className="mx-auto h-auto w-full object-contain" />
               ) : (
-                <iframe src={viewerFile.url} title="" className="h-full w-full border-0 bg-white" />
+                <iframe src={viewerFile.url} className="h-full w-full border-0 bg-white" />
               )}
             </div>
           </section>

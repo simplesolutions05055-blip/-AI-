@@ -6,6 +6,8 @@ import { isValidEmail } from '@/lib/format';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
 import { fetchBrandImages, fetchBrandAiImages, loadPersistedDeckImage, type DeckImage, type PersistedDeckImage } from '@/lib/deck';
+import { Tooltip } from '@/components/ui/Tooltip';
+import { Spinner } from '@/components/ui/Spinner';
 
 interface SourceImage {
   request_id: string;
@@ -472,7 +474,7 @@ export default function RevisePage() {
       {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 p-3 text-sm">{error}</div>}
 
       {loading ? (
-        <div className="text-center text-[var(--muted)] p-10">טוען...</div>
+        <div className="text-center text-[var(--muted)] p-10"><Spinner /></div>
       ) : outputType === 'presentation' ? (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
           <div className="bg-white border border-[var(--border)] rounded-lg p-5 min-w-0">
@@ -1086,7 +1088,7 @@ function DocumentAiImageModal({
             <section className="rounded-lg border border-[var(--border)] bg-white p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="font-bold">בחירה מתמונות קיימות</h3>
-                {existingLoading && <span className="text-xs text-[var(--muted)]">טוען...</span>}
+                {existingLoading && <span className="text-xs text-[var(--muted)]"><Spinner className="h-3 w-3" /></span>}
               </div>
               {!brandId ? (
                 <p className="text-sm text-[var(--muted)]">אין מותג מחובר למסמך הזה, לכן אין תמונות מותג זמינות.</p>

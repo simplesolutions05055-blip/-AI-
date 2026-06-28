@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchSocialCaption, type SocialPlatform } from '@/lib/social';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 const PLATFORM_LABEL: Record<SocialPlatform, string> = {
   facebook: 'פייסבוק',
@@ -294,15 +295,16 @@ function ScheduleModal({
             <h2 className="text-lg font-bold">תזמון פרסום ב{PLATFORM_LABEL[platform]}</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">בחרו מועד לפרסום התוצר בערוץ.</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            title="סגירה"
-            aria-label="סגירה"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-          >
-            <CloseIcon />
-          </button>
+          <Tooltip content="סגירה">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="סגירה"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
+            >
+              <CloseIcon />
+            </button>
+          </Tooltip>
         </div>
 
         <label className="mb-2 block text-sm font-semibold">תאריך ושעה</label>
@@ -370,15 +372,16 @@ function ScheduleModal({
                 ) : (
                   <img src={m.url} alt={m.name} className="h-full w-full object-cover" />
                 )}
-                <button
-                  type="button"
-                  onClick={() => onRemoveMedia(m.id)}
-                  title="הסרה"
-                  aria-label="הסרה"
-                  className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
-                >
-                  <CloseIcon size={12} />
-                </button>
+                <Tooltip content="הסרה">
+                  <button
+                    type="button"
+                    onClick={() => onRemoveMedia(m.id)}
+                    aria-label="הסרה"
+                    className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+                  >
+                    <CloseIcon size={12} />
+                  </button>
+                </Tooltip>
                 {m.kind === 'video' && (
                   <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">וידאו</span>
                 )}
@@ -500,15 +503,16 @@ function OutputsPickerModal({
             <h2 className="text-lg font-bold">בחירת תמונות מהתוצרים</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">בחרו תמונה אחת או יותר לצירוף לפרסום.</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            title="סגירה"
-            aria-label="סגירה"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-          >
-            <CloseIcon />
-          </button>
+          <Tooltip content="סגירה">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="סגירה"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
+            >
+              <CloseIcon />
+            </button>
+          </Tooltip>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">

@@ -3,6 +3,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatHebrewDateTime, formatUsd } from '@/lib/format';
 import { OUTPUT_LABEL, STATUS_LABEL as REQUEST_STATUS_LABEL, senderLabel } from '@/lib/labels';
 import type { ConversationStatus, MessageDirection, OutputType, RequestStatus } from '@/types/db';
+import { Spinner } from '@/components/ui/Spinner';
 
 interface ConversationRow {
   id: string;
@@ -267,7 +268,7 @@ export default function ConversationsPage() {
       <div className="grid min-h-[calc(100dvh-11rem)] grid-cols-1 gap-4 lg:min-h-[70vh] lg:grid-cols-[340px_1fr]">
         <aside className={`${selected ? 'hidden lg:block' : 'block'} overflow-hidden rounded-xl border border-[var(--border)] bg-white`}>
           <div className="border-b border-[var(--border)] px-4 py-3 text-sm font-semibold">
-            {loading ? 'טוען...' : `${filtered.length} שיחות`}
+            {loading ? <Spinner /> : `${filtered.length} שיחות`}
           </div>
           <div className="max-h-[calc(100dvh-15rem)] overflow-y-auto lg:max-h-[70vh]">
             {filtered.map((conversation) => {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatHebrewDateTime } from '@/lib/format';
+import { Spinner } from '@/components/ui/Spinner';
 
 interface Log {
   id: string;
@@ -103,7 +104,7 @@ export default function ErrorsPage() {
 
       {loading ? (
         <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">
-          טוען...
+          <Spinner />
         </div>
       ) : logs.length === 0 ? (
         <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">

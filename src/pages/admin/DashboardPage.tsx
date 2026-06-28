@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom';
 import { OUTPUT_LABEL, STATUS_COLOR, STATUS_LABEL, senderLabel } from '@/lib/labels';
 import { formatUsd, formatHebrewDate } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { Tooltip } from '@/components/ui/Tooltip';
 import type { OutputType, RequestStatus } from '@/types/db';
+import { Spinner } from '@/components/ui/Spinner';
+import { Image as ImageIcon, FileText, Presentation, File } from 'lucide-react';
 
-// How many recent days the daily-outputs chart covers, and how many users the
+// How many users the
 // per-user chart shows before collapsing the rest into "אחרים".
-const DAILY_WINDOW_DAYS = 14;
 const TOP_USERS = 8;
 
 type OutputRow = {
@@ -30,9 +32,10 @@ type RecentFileRow = {
 
 export default function DashboardPage() {
   const [statusRows, setStatusRows] = useState<Array<{ status: RequestStatus }>>([]);
-  const [todayCount, setTodayCount] = useState(0);
-  const [outputsCount, setOutputsCount] = useState(0);
-  const [todayCost, setTodayCost] = useState(0);
+  const [periodReqsCount, setPeriodReqsCount] = useState(0);
+  const [periodOutputsCount, setPeriodOutputsCount] = useState(0);
+  const [periodCost, setPeriodCost] = useState(0);
+  const [totals, setTotals] = useState({ requests: 0, cost: 0, outputs: 0, waiting: 0 });
   const [outputRows, setOutputRows] = useState<OutputRow[]>([]);
   const [recentFiles, setRecentFiles] = useState<Record<OutputType, RecentFileRow[]>>({
     image: [],
@@ -41,17 +44,17 @@ export default function DashboardPage() {
     text: [],
   });
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [timeFilter, setTimeFilter] = useState<number>(14);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setLoading(true);
     const db = createSupabaseBrowserClient();
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const todayIso = startOfDay.toISOString();
+    // Removed todayIso since it's no longer used for the top metrics.
 
     const windowStart = new Date();
     windowStart.setHours(0, 0, 0, 0);
-    windowStart.setDate(windowStart.getDate() - (DAILY_WINDOW_DAYS - 1));
+    windowStart.setDate(windowStart.getDate() - (timeFilter - 1));
     const windowIso = windowStart.toISOString();
 
     // Rich select needs the created_by column + profiles relationship. Until the
@@ -76,22 +79,33 @@ export default function DashboardPage() {
     }
 
     Promise.all([
-      db.from('requests').select('status'),
-      db.from('requests').select('id', { count: 'exact', head: true }).gte('created_at', todayIso),
-      db.from('usage_events').select('estimated_cost').gte('created_at', todayIso),
-      db.from('outputs').select('id', { count: 'exact', head: true }),
+      db.from('requests').select('status').gte('created_at', windowIso),
+      db.from('requests').select('id', { count: 'exact', head: true }).gte('created_at', windowIso),
+      db.from('usage_events').select('estimated_cost').gte('created_at', windowIso),
+      db.from('outputs').select('id', { count: 'exact', head: true }).gte('created_at', windowIso),
       fetchRecentOutputs(),
+      db.from('requests').select('id', { count: 'exact', head: true }),
+      db.from('usage_events').select('estimated_cost'),
+      db.from('outputs').select('id', { count: 'exact', head: true }),
+      db.from('requests').select('id', { count: 'exact', head: true }).eq('status', 'waiting_for_approval'),
       db
         .from('outputs')
         .select('id, output_type, text_content, storage_path, created_at, requests(structured_brief)')
         .order('created_at', { ascending: false })
         .limit(30),
-    ]).then(([statuses, today, costs, outputs, recentOutputs, recentFilesData]) => {
+    ]).then(([statuses, pReq, pCost, pOut, recentOutputs, tReq, tCost, tOut, tWait, recentFilesData]) => {
       setStatusRows((statuses.data ?? []) as Array<{ status: RequestStatus }>);
-      setTodayCount(today.count ?? 0);
-      setTodayCost((costs.data ?? []).reduce((sum, row: any) => sum + Number(row.estimated_cost ?? 0), 0));
-      setOutputsCount(outputs.count ?? 0);
+      setPeriodReqsCount(pReq.count ?? 0);
+      setPeriodCost((pCost.data ?? []).reduce((sum, row: any) => sum + Number(row.estimated_cost ?? 0), 0));
+      setPeriodOutputsCount(pOut.count ?? 0);
       setOutputRows((recentOutputs ?? []) as unknown as OutputRow[]);
+
+      setTotals({
+        requests: tReq.count ?? 0,
+        cost: (tCost.data ?? []).reduce((sum, row: any) => sum + Number(row.estimated_cost ?? 0), 0),
+        outputs: tOut.count ?? 0,
+        waiting: tWait.count ?? 0,
+      });
 
       // Group recent files by type, taking 2 per type
       const grouped: Record<OutputType, RecentFileRow[]> = {
@@ -120,48 +134,62 @@ export default function DashboardPage() {
         setPreviews(Object.fromEntries(pairs.filter(([, url]) => url)) as Record<string, string>);
       });
     });
-  }, []);
+  }, [timeFilter]);
 
   const byStatus: Record<string, number> = {};
   statusRows.forEach((r) => {
     byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
   });
 
-  const daily = buildDailySeries(outputRows);
+  const daily = buildDailySeries(outputRows, timeFilter);
   const perUser = buildPerUserSeries(outputRows);
 
   const cards = [
-    { label: 'בקשות היום', value: todayCount },
-    { label: 'עלות היום', value: formatUsd(todayCost), ltr: true },
-    { label: 'סך תוצרים', value: outputsCount },
-    { label: 'ממתינות לאישור', value: byStatus.waiting_for_approval ?? 0 },
+    { label: 'בקשות בתקופה', value: periodReqsCount, subtext: `סה״כ: ${totals.requests}` },
+    { label: 'עלות בתקופה', value: formatUsd(periodCost), ltr: true, subtext: `סה״כ: ${formatUsd(totals.cost)}` },
+    { label: 'תוצרים בתקופה', value: periodOutputsCount, subtext: `סה״כ: ${totals.outputs}` },
+    { label: 'ממתינות (נוצרו בתקופה)', value: byStatus.waiting_for_approval ?? 0, subtext: `סה״כ ממתינות: ${totals.waiting}` },
   ];
 
-  if (loading) return <p className="text-[var(--muted)]">טוען...</p>;
+  if (loading) return <p className="text-[var(--muted)]"><Spinner /></p>;
 
   return (
-    <div dir="rtl">
-      <h1 className="text-2xl font-bold mb-6">לוח בקרה</h1>
+    <div dir="rtl" className="min-w-0">
+      <div className="mb-5 flex items-center justify-between sm:mb-6">
+        <h1 className="text-[28px] font-bold leading-tight sm:text-2xl">לוח בקרה</h1>
+        <select
+          value={timeFilter}
+          onChange={(e) => setTimeFilter(Number(e.target.value))}
+          className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-sm font-semibold shadow-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+        >
+          <option value={1}>היום האחרון</option>
+          <option value={7}>השבוע האחרון</option>
+          <option value={14}>14 ימים אחרונים</option>
+          <option value={30}>החודש האחרון</option>
+          <option value={365}>השנה האחרונה</option>
+        </select>
+      </div>
 
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <section className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4 lg:mb-8">
         {cards.map((card) => (
-          <div key={card.label} className="bg-white rounded-xl border border-[var(--border)] p-4">
-            <div className="text-sm text-[var(--muted)] mb-1">{card.label}</div>
-            <div className={`text-2xl font-bold ${card.ltr ? 'ltr' : ''}`}>{card.value}</div>
+          <div key={card.label} className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-3 sm:p-4 flex flex-col">
+            <div className="mb-1 truncate text-sm text-[var(--muted)]">{card.label}</div>
+            <div className={`truncate text-[26px] font-bold leading-tight sm:text-2xl ${card.ltr ? 'ltr max-w-full' : ''}`}>{card.value}</div>
+            <div className="mt-1 text-[11px] text-[var(--muted)] font-medium ltr text-right">{card.subtext}</div>
           </div>
         ))}
       </section>
 
-      <div className="grid gap-8 lg:grid-cols-2 mb-8">
-        <DailyOutputsChart data={daily} />
-        <PerUserOutputsChart data={perUser} />
+      <div className="mb-6 grid min-w-0 gap-4 lg:mb-8 lg:grid-cols-2 lg:gap-8">
+        <DailyOutputsChart data={daily} windowDays={timeFilter} />
+        <PerUserOutputsChart data={perUser} windowDays={timeFilter} />
       </div>
 
       <section className="mt-5 rounded-[14px] border border-[#EAECF0] bg-white px-5 py-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8 mb-8">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-[18px] font-bold text-[#1A1A2E]">תוצרים אחרונים</h2>
-          <Link to="/admin/files" className="text-[13px] font-semibold text-[#2563EB] hover:underline">
-            ← כל התוצרים
+          <Link to="/admin/files" className="rounded-lg border border-[#EAECF0] px-4 py-1.5 text-[13px] font-semibold text-[#1A1A2E] hover:bg-[#F8FAFC] transition-colors">
+            כל התוצרים
           </Link>
         </div>
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -172,22 +200,22 @@ export default function DashboardPage() {
               presentation: '#D1FAE5',
               text: '#EDE9FE',
             };
-            const typeIcon: Record<OutputType, string> = {
-              image: '🖼️',
-              pdf: '📕',
-              presentation: '📊',
-              text: '📄',
+            const typeIcon: Record<OutputType, React.ReactNode> = {
+              image: <ImageIcon className="h-5 w-5 text-[#1A1A2E]" />,
+              pdf: <FileText className="h-5 w-5 text-[#1A1A2E]" />,
+              presentation: <Presentation className="h-5 w-5 text-[#1A1A2E]" />,
+              text: <File className="h-5 w-5 text-[#1A1A2E]" />,
             };
             const items = recentFiles[type];
             return (
               <Link
                 key={type}
                 to={`/admin/files?type=${type}`}
-                className="group flex flex-col overflow-hidden rounded-[12px] border border-[#EAECF0] bg-white text-right transition hover:-translate-y-0.5 hover:border-[#BFDBFE]"
+                className="group flex flex-col overflow-hidden rounded-[12px] border border-[#EAECF0] bg-white text-right transition hover:-translate-y-0.5 hover:border-[#BFDBFE] hover:shadow-sm"
               >
                 {/* Header band — category color + icon + name */}
                 <div className="flex items-center gap-2 px-3 py-2.5" style={{ backgroundColor: bgColors[type] }}>
-                  <span className="text-[20px]">{typeIcon[type]}</span>
+                  {typeIcon[type]}
                   <span className="text-[13px] font-bold text-[#1A1A2E]">{OUTPUT_LABEL[type]}</span>
                 </div>
 
@@ -208,7 +236,9 @@ export default function DashboardPage() {
                               {file.text_content.slice(0, 60)}
                             </span>
                           ) : (
-                            <span className="text-[16px]">{typeIcon[file.output_type]}</span>
+                            <div className="flex h-full w-full items-center justify-center opacity-70">
+                              {typeIcon[file.output_type]}
+                            </div>
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -222,8 +252,10 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                <div className="border-t border-[#F1F5F9] px-3 py-2 text-[11px] font-semibold text-[#2563EB] group-hover:underline">
-                  צפייה בכל ה{OUTPUT_LABEL[type]} ←
+                <div className="p-3 pt-0">
+                  <div className="flex w-full items-center justify-center rounded-[8px] bg-[#F8FAFC] py-2 text-[12px] font-semibold text-[#1E293B] transition-colors group-hover:bg-[#F1F5F9] border border-[#F1F5F9] group-hover:border-[#E2E8F0]">
+                    צפייה בכל ה{OUTPUT_LABEL[type]}
+                  </div>
                 </div>
               </Link>
             );
@@ -231,30 +263,20 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="bg-white rounded-xl border border-[var(--border)] p-4 mb-8">
-        <h2 className="font-semibold mb-3">בקשות לפי סטטוס</h2>
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(byStatus).map(([status, count]) => (
-            <span key={status} className={`rounded-full px-3 py-1 text-sm ${STATUS_COLOR[status as RequestStatus] ?? 'bg-gray-100'}`}>
-              {STATUS_LABEL[status as RequestStatus] ?? status}: {count}
-            </span>
-          ))}
-          {Object.keys(byStatus).length === 0 && <span className="text-[var(--muted)] text-sm">אין בקשות עדיין.</span>}
-        </div>
-      </section>
+
     </div>
   );
 }
 
 // ─── daily outputs ──────────────────────────────────────────────────────────
 
-function buildDailySeries(rows: OutputRow[]): Array<{ key: string; label: string; count: number }> {
+function buildDailySeries(rows: OutputRow[], windowDays: number): Array<{ key: string; label: string; count: number }> {
   // Seed every day in the window with 0 so gaps render as empty bars, not holes.
   const days: Array<{ key: string; label: string; count: number }> = [];
   const cursor = new Date();
   cursor.setHours(0, 0, 0, 0);
-  cursor.setDate(cursor.getDate() - (DAILY_WINDOW_DAYS - 1));
-  for (let i = 0; i < DAILY_WINDOW_DAYS; i++) {
+  cursor.setDate(cursor.getDate() - (windowDays - 1));
+  for (let i = 0; i < windowDays; i++) {
     const key = localDayKey(cursor);
     days.push({ key, label: `${cursor.getDate()}/${cursor.getMonth() + 1}`, count: 0 });
     cursor.setDate(cursor.getDate() + 1);
@@ -271,35 +293,35 @@ function localDayKey(date: Date): string {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
-function DailyOutputsChart({ data }: { data: Array<{ key: string; label: string; count: number }> }) {
+function DailyOutputsChart({ data, windowDays }: { data: Array<{ key: string; label: string; count: number }>; windowDays: number }) {
   const max = Math.max(1, ...data.map((d) => d.count));
   const total = data.reduce((sum, d) => sum + d.count, 0);
 
   return (
-    <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h2 className="font-semibold">תוצרים לפי יום</h2>
-        <span className="text-xs text-[var(--muted)]">{DAILY_WINDOW_DAYS} ימים אחרונים · סה״כ {total}</span>
+    <section className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-3 sm:p-4">
+      <div className="mb-4 flex items-start justify-between gap-3 sm:items-baseline">
+        <h2 className="shrink-0 font-semibold">תוצרים לפי יום</h2>
+        <span className="text-start text-xs text-[var(--muted)]">{windowDays === 1 ? 'היום האחרון' : `${windowDays} ימים אחרונים`} · סה״כ {total}</span>
       </div>
       {total === 0 ? (
         <p className="text-sm text-[var(--muted)]">אין תוצרים בטווח הזה.</p>
       ) : (
-        // On phones 14 bars get too thin to read, so the bar row scrolls
-        // horizontally with a sensible min width; from sm up it fills the card.
-        <div className="-mx-1 overflow-x-auto px-1">
-          <div className="flex h-44 min-w-[460px] gap-1.5 sm:min-w-0">
+        <div className="min-w-0 overflow-x-auto pb-2 custom-scrollbar">
+          <div className="flex h-40 min-w-min gap-1 sm:h-44 sm:gap-1.5" style={{ minWidth: `${data.length * 28}px` }}>
             {data.map((d) => (
-              <div key={d.key} className="flex h-full flex-1 flex-col items-center gap-1.5" title={`${d.label}: ${d.count}`}>
-                <span className="text-[10px] font-semibold text-[var(--muted)]">{d.count || ''}</span>
-                {/* flex-1 track has a definite height so the bar's % resolves correctly */}
-                <div className="flex w-full flex-1 flex-col justify-end">
-                  <div
-                    className="w-full rounded-t bg-brand/80 transition-all hover:bg-brand"
-                    style={{ height: `${Math.max(d.count ? 6 : 2, (d.count / max) * 100)}%` }}
-                  />
+              <Tooltip key={d.key} content={`${d.label}: ${d.count}`}>
+                <div className="flex h-full min-w-0 flex-1 flex-col items-center gap-1.5 cursor-pointer">
+                  <span className="text-[10px] font-semibold text-[var(--muted)]">{d.count || ''}</span>
+                  {/* flex-1 track has a definite height so the bar's % resolves correctly */}
+                  <div className="flex w-full flex-1 flex-col justify-end">
+                    <div
+                      className="mx-auto w-full max-w-8 rounded-t bg-brand/80 transition-all hover:bg-brand"
+                      style={{ height: `${Math.max(d.count ? 6 : 2, (d.count / max) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="whitespace-nowrap text-[9px] text-[var(--muted)] ltr sm:text-[10px]">{d.label}</span>
                 </div>
-                <span className="whitespace-nowrap text-[10px] text-[var(--muted)] ltr">{d.label}</span>
-              </div>
+              </Tooltip>
             ))}
           </div>
         </div>
@@ -326,30 +348,41 @@ function buildPerUserSeries(rows: OutputRow[]): Array<{ label: string; count: nu
   return [...top, { label: 'אחרים', count: rest }];
 }
 
-function PerUserOutputsChart({ data }: { data: Array<{ label: string; count: number }> }) {
+function PerUserOutputsChart({ data, windowDays }: { data: Array<{ label: string; count: number }>; windowDays: number }) {
   const max = Math.max(1, ...data.map((d) => d.count));
 
   return (
-    <section className="bg-white rounded-xl border border-[var(--border)] p-4">
+    <section className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-3 sm:p-4">
       <div className="mb-4 flex items-baseline justify-between gap-3">
         <h2 className="font-semibold">תוצרים לפי משתמש</h2>
-        <span className="text-xs text-[var(--muted)]">{DAILY_WINDOW_DAYS} ימים אחרונים</span>
+        <span className="text-xs text-[var(--muted)]">{windowDays === 1 ? 'היום האחרון' : `${windowDays} ימים אחרונים`}</span>
       </div>
       {data.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">אין תוצרים בטווח הזה.</p>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex min-w-0 flex-col gap-3">
           {data.map((d) => (
-            <div key={d.label} className="flex items-center gap-3">
-              <span className="w-20 shrink-0 truncate text-sm text-[var(--text)] sm:w-28" title={d.label}>{d.label}</span>
-              <div className="h-5 flex-1 overflow-hidden rounded bg-gray-100">
-                <div
-                  className="h-full rounded bg-brand/80"
-                  style={{ width: `${Math.max(4, (d.count / max) * 100)}%` }}
-                />
+            <Tooltip
+              key={d.label}
+              content={
+                <div className="flex items-center gap-1">
+                  <span dir="ltr" className="text-right break-all">{d.label}</span>
+                  <span>:</span>
+                  <span className="font-semibold">{d.count}</span>
+                </div>
+              }
+            >
+              <div className="flex min-w-0 items-center gap-2 sm:gap-3 cursor-pointer group">
+                <span className="w-16 shrink-0 truncate text-sm text-[var(--text)] sm:w-28 text-right" dir="ltr">{d.label}</span>
+                <div className="h-5 flex-1 overflow-hidden rounded bg-gray-100">
+                  <div
+                    className="h-full rounded bg-brand/80 transition-all group-hover:bg-brand"
+                    style={{ width: `${Math.max(4, (d.count / max) * 100)}%` }}
+                  />
+                </div>
+                <span className="w-8 shrink-0 text-left text-sm font-semibold tabular-nums">{d.count}</span>
               </div>
-              <span className="w-8 shrink-0 text-left text-sm font-semibold tabular-nums">{d.count}</span>
-            </div>
+            </Tooltip>
           ))}
         </div>
       )}

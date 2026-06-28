@@ -1,5 +1,14 @@
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  Check as CheckIcon,
+  File as FileIcon,
+  FileText as FileTextIcon,
+  Image as ImageIcon,
+  Presentation as PresentationIcon,
+  ReceiptText as ReceiptTextIcon,
+  Upload as UploadIcon,
+} from 'lucide-react';
 import { OUTPUT_LABEL } from '@/lib/labels';
 import { formatHebrewDate } from '@/lib/format';
 import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, plainTextFromBlocks } from '@/lib/richText';
@@ -9,6 +18,7 @@ import { genderCopy } from '@/lib/genderCopy';
 import ImagePickerModal from '@/components/ImagePickerModal';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
+import { Tooltip } from '@/components/ui/Tooltip';
 import type { DeckImage } from '@/lib/deck';
 import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, themeFromQuoteBrand, attachBrandToQuote, tint, type Quote } from '@/lib/quote';
 import type { OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
@@ -73,19 +83,23 @@ interface RecentOutputPreviewRow {
 }
 
 const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: string; accent: string; iconBg: string; iconText: string }> = [
-  { type: 'image', title: 'תמונה', description: 'פוסט, מודעה, הזמנה או גרפיקה לרשתות.', accent: 'hover:border-violet-300', iconBg: 'bg-violet-100', iconText: 'text-violet-600' },
-  { type: 'presentation', title: 'מצגת', description: 'מבנה ותוכן שקפים למצגת עסקית או שיווקית.', accent: 'hover:border-blue-300', iconBg: 'bg-blue-100', iconText: 'text-blue-600' },
-  { type: 'text', title: 'טקסט', description: 'פוסט, הודעה, מייל, נאום או תוכן שיווקי.', accent: 'hover:border-emerald-300', iconBg: 'bg-emerald-100', iconText: 'text-emerald-600' },
-  { type: 'pdf', title: 'מסמך', description: 'מסמך מסודר להורדה או שליחה.', accent: 'hover:border-rose-300', iconBg: 'bg-rose-100', iconText: 'text-rose-600' },
+  { type: 'image', title: 'תמונה', description: 'פוסט, מודעה, הזמנה או גרפיקה לרשתות.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-clay)]', iconText: 'text-[var(--text-strong)]' },
+  { type: 'presentation', title: 'מצגת', description: 'מבנה ותוכן שקפים למצגת עסקית או שיווקית.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-sand)]', iconText: 'text-[var(--text-strong)]' },
+  { type: 'text', title: 'טקסט', description: 'פוסט, הודעה, מייל, נאום או תוכן שיווקי.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-olive)]', iconText: 'text-[var(--text-strong)]' },
+  { type: 'pdf', title: 'מסמך', description: 'מסמך מסודר להורדה או שליחה.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-ochre)]', iconText: 'text-[var(--text-strong)]' },
 ];
 
-const PANEL = 'rounded-2xl border border-[var(--border)] bg-white shadow-[0_20px_50px_rgba(15,23,42,0.06)]';
+// Mature, restrained surface + controls. We deliberately drop the big soft "AI
+// SaaS" drop-shadow, the bouncy hover-lift, and the hardcoded blue glow (which
+// ignored the brand color) in favor of a flat-ish card and a brand-tinted, calm
+// primary. Radii are pulled in from pill/2xl toward enterprise-ish corners.
+const PANEL = 'rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] shadow-[var(--warm-shadow-card)]';
 const PRIMARY_BUTTON =
-  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-5 py-3 text-sm font-semibold text-white shadow-[0_14px_28px_rgba(59,130,246,0.24)] transition duration-200 hover:-translate-y-0.5 hover:bg-brand/95 hover:shadow-[0_18px_36px_rgba(59,130,246,0.32)] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0';
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] bg-brand px-5 py-3 text-sm font-semibold text-white shadow-none transition duration-150 hover:bg-brand-dark active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] disabled:cursor-not-allowed disabled:border disabled:border-[var(--border-warm)] disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)] disabled:shadow-none';
 const SECONDARY_BUTTON =
-  'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-white px-5 py-3 text-sm font-semibold text-[var(--text)] shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:bg-brand/5 hover:text-brand active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0';
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-3 text-sm font-semibold text-[var(--text-strong)] shadow-none transition duration-150 hover:border-brand/40 hover:bg-[var(--surface-2)] hover:text-brand active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] disabled:cursor-not-allowed disabled:opacity-50';
 const CHIP_BUTTON =
-  'rounded-full border px-3 py-1.5 text-sm transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2';
+  'rounded-[9px] border px-3 py-1.5 text-sm transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)]';
 
 // One-off OpenAI key, scoped to the browser session (sessionStorage clears when
 // the tab/session ends, so the next visit falls back to the project's key).
@@ -764,14 +778,14 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
     }
   }
 
-  const pickerChips: Array<{ key: string; label: string; icon: string; color: string; to?: ProductionType | 'quote'; disabled?: boolean }> = [
-    { key: 'image', label: 'תמונה / גרפיקה', icon: '🖼️', color: 'bg-[#FEE2E2]', to: 'image' },
-    { key: 'text', label: 'פוסט / טקסט', icon: '📝', color: 'bg-[#D1FAE5]', to: 'text' },
-    { key: 'presentation', label: 'מצגת', icon: '🖥️', color: 'bg-[#DBEAFE]', to: 'presentation' },
-    { key: 'pdf', label: 'מסמך', icon: '📄', color: 'bg-[#EDE9FE]', to: 'pdf' },
+  const pickerChips: Array<{ key: string; label: string; tone: string; to?: ProductionType | 'quote'; disabled?: boolean }> = [
+    { key: 'image', label: 'תמונה / גרפיקה', tone: 'bg-[var(--tint-clay)]', to: 'image' },
+    { key: 'text', label: 'פוסט / טקסט', tone: 'bg-[var(--tint-olive)]', to: 'text' },
+    { key: 'presentation', label: 'מצגת', tone: 'bg-[var(--tint-sand)]', to: 'presentation' },
+    { key: 'pdf', label: 'מסמך', tone: 'bg-[var(--bg-subtle)]', to: 'pdf' },
     // Quote is a real production type: same textarea + same "צור תוצר" button.
     // The price is taken from the prompt only (see QuoteFlow / generateQuote).
-    { key: 'quote', label: 'הצעת מחיר', icon: '💰', color: 'bg-[#FEF3C7]', to: 'quote' },
+    { key: 'quote', label: 'הצעת מחיר', tone: 'bg-[var(--tint-ochre)]', to: 'quote' },
   ];
   const selectedPickerLabel = pickerChips.find((item) => !item.disabled && item.to === selected)?.label ?? null;
   const uploadText = genderCopy(profile?.gender, {
@@ -784,35 +798,34 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
     female: 'צרי תוצר',
     neutral: 'יצירת תוצר',
   });
-  const recentOutputCategories: Array<{ key: string; label: string; bg: string; icon: string; type?: OutputType }> = [
-    { key: 'image', type: 'image', label: 'תמונה/גרפיקה', bg: '#FEF3C7', icon: '🖼️' },
-    { key: 'presentation', type: 'presentation', label: 'מצגת', bg: '#D1FAE5', icon: '📊' },
-    { key: 'pdf', type: 'pdf', label: 'מסמך', bg: '#DBEAFE', icon: '📕' },
+  const recentOutputCategories: Array<{ key: string; label: string; bg: string; type?: OutputType }> = [
+    { key: 'image', type: 'image', label: 'תמונה/גרפיקה', bg: 'var(--tint-clay)' },
+    { key: 'presentation', type: 'presentation', label: 'מצגת', bg: 'var(--tint-olive)' },
+    { key: 'pdf', type: 'pdf', label: 'מסמך', bg: 'var(--tint-sand)' },
     {
       key: 'quote',
       label: 'הצעת מחיר',
-      bg: '#EDE9FE',
-      icon: '💰',
+      bg: 'var(--tint-ochre)',
     },
   ];
 
   return (
-    <div dir="rtl" className="min-h-full bg-[#F0F2F7]">
-      <header className="hidden h-[60px] items-center justify-between border-b border-[#EAECF0] bg-white px-7 lg:flex">
-        <div className="text-[15px] font-semibold text-[#1A1A2E]">הפקה</div>
-        <div className="flex items-center gap-2 text-[13px] text-[#64748B]">
+    <div dir="rtl" className="theme-warm min-h-full bg-[var(--bg-page)]">
+      <header className="hidden h-[60px] items-center justify-between border-b border-[var(--border-warm)] bg-[var(--bg-surface)] px-7 lg:flex">
+        <div className="text-[15px] font-semibold text-[var(--text-strong)]">הפקה</div>
+        <div className="flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
           <span className="ltr">itayk93@yahoo.com</span>
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand/10 text-[12px] font-bold text-brand">IT</span>
         </div>
       </header>
 
       <div className="px-5 py-6 sm:px-8 lg:px-10">
-        <section className="relative rounded-[16px] border border-[#EAECF0] bg-white px-5 py-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8 lg:px-8 lg:py-8">
+        <section className="relative rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-7 shadow-[var(--warm-shadow-card)] sm:px-8 lg:px-8 lg:py-8">
           <div className="flex flex-col gap-5">
             <div className="space-y-2.5 text-right">
               <div className="flex items-start justify-between gap-3 pe-28 sm:pe-32 lg:pe-44">
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-[26px] font-bold leading-tight tracking-normal text-[#1A1A2E] sm:text-[22px]">מה תרצו ליצור היום?</h1>
+                  <h1 className="text-[30px] font-extrabold leading-[1.12] tracking-tight text-[var(--text-strong)] sm:text-[24px]">מה תרצו ליצור היום?</h1>
                 </div>
                 {selectedBrand && (
                   <div className="absolute left-5 top-7 flex shrink-0 items-center justify-center sm:left-8 lg:left-8 lg:top-8">
@@ -820,49 +833,59 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   </div>
                 )}
               </div>
-              <div className="space-y-2 sm:pl-44 lg:pl-48">
-                <p className="text-[14px] font-normal leading-7 text-[#94A3B8]">
+              <div className="space-y-2">
+                <p className="text-[14px] font-normal leading-7 text-[var(--text-muted)]">
                   <span>בחרו סוג תוצר, הקלידו בריף</span>
                   <span className="hidden sm:inline"> — </span>
                   <br className="sm:hidden" />
                   <span>והמערכת תתחיל לעבוד</span>
                 </p>
-                <div className="min-w-0 flex-1 space-y-2">
-                  <div className="flex flex-wrap justify-start gap-2">
-                    {pickerChips.map((item) => {
-                      const active = !item.disabled && item.to === selected;
-                      return (
-                        <button
-                          key={item.key}
-                          type="button"
-                          aria-label={item.label}
-                          disabled={item.disabled}
-                          onClick={() => item.to && !item.disabled && setSelected(item.to)}
-                          className={`inline-flex h-11 w-11 items-center justify-center rounded-full border-[1.5px] p-1 text-[12px] font-medium transition sm:h-auto sm:w-auto sm:min-h-[40px] sm:gap-1.5 sm:px-3 sm:py-1.5 ${
-                            item.disabled
-                              ? 'border-[#E5E7EB] opacity-50 cursor-not-allowed bg-gray-50 text-[#374151]'
-                              : active
-                                ? 'border-brand bg-brand/10 text-brand shadow-sm'
-                                : `border-[#E5E7EB] bg-white text-[#374151] hover:border-brand/30 hover:bg-brand/5 hover:text-brand ${glowTypeChips ? 'pick-me-glow' : ''}`
-                          }`}
-                        >
-                          <span className={`flex h-[28px] w-[28px] items-center justify-center rounded-[8px] text-[13px] ${item.color}`}>{item.icon}</span>
-                          <span className="hidden sm:inline">{item.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {selectedPickerLabel && (
-                    <div className="inline-flex w-fit items-center rounded-xl border border-brand/30 bg-brand/10 px-3.5 py-2 text-right shadow-sm sm:hidden">
-                      <span className="text-[16px] font-bold leading-none text-brand">{selectedPickerLabel}</span>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
 
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="grid w-full grid-cols-5 gap-2">
+                {pickerChips.map((item) => {
+                  const active = !item.disabled && item.to === selected;
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      aria-label={item.label}
+                      disabled={item.disabled}
+                      onClick={() => item.to && !item.disabled && setSelected(item.to)}
+                      className={`group relative flex h-14 min-w-0 items-center justify-center rounded-[10px] border p-1.5 text-center transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:h-[86px] sm:flex-col sm:gap-1.5 sm:px-2 sm:py-2 ${
+                        item.disabled
+                          ? 'cursor-not-allowed border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-muted)] opacity-50'
+                          : active
+                            ? 'border-[var(--border-warm)] border-r-4 border-r-[var(--warm-accent)] bg-[var(--warm-accent-soft)] text-[var(--warm-accent-dark)]'
+                            : `border-[var(--border-warm)] bg-[var(--bg-surface)] text-[var(--text-strong)] hover:border-[var(--warm-accent)] hover:bg-[var(--surface-2)] ${glowTypeChips ? 'pick-me-glow' : ''}`
+                      }`}
+                    >
+                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[9px] border border-[var(--border-soft)] sm:h-11 sm:w-11 ${item.tone} ${active ? 'text-[var(--warm-accent-dark)]' : 'text-[var(--text-strong)] group-hover:text-[var(--warm-accent-dark)]'}`}>
+                        <PickerIcon type={item.to ?? 'text'} className="h-6 w-6 stroke-[1.75]" />
+                      </span>
+                      <span className="hidden min-w-0 max-w-full sm:block">
+                        <span className="block whitespace-normal text-[13px] font-bold leading-5">{item.label}</span>
+                      </span>
+                      {active && (
+                        <span className="absolute left-1 top-1 flex h-4 w-4 items-center justify-center rounded-[5px] bg-[var(--warm-accent)] text-white sm:left-2 sm:top-2 sm:h-5 sm:w-5 sm:rounded-[6px]">
+                          <CheckIcon className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedPickerLabel && (
+                <div className="inline-flex w-fit items-center rounded-xl border border-[var(--warm-accent)] bg-[var(--warm-accent-soft)] px-3.5 py-2 text-right shadow-sm sm:hidden">
+                  <span className="text-[16px] font-bold leading-none text-[var(--warm-accent-dark)]">{selectedPickerLabel}</span>
+                </div>
+              )}
+            </div>
+
             {showTypeHint && (
-              <div className="rounded-[10px] border border-[#FDE68A] bg-[#FFFBEB] px-3.5 py-2.5 text-right text-[13px] font-normal text-[#92400E]">
+              <div className="rounded-[10px] border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--warn-fg)]">
                 <span className="inline-flex items-center gap-2">
                   <span className="text-base">💡</span>
                   בחרו קודם סוג תוצר מהאפשרויות למעלה
@@ -872,7 +895,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
 
             {brands.length > 1 ? (
               <div className="flex flex-col gap-3 text-right">
-                <div className="text-[13px] font-semibold text-[#374151]">מותגים:</div>
+                <div className="text-[13px] font-semibold text-[var(--text-strong)]">מותגים:</div>
                 <div className="flex flex-wrap justify-start gap-2">
                   {brands.map((brand) => {
                     const active = brand.id === brandId;
@@ -882,13 +905,13 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                         key={brand.id}
                         type="button"
                         onClick={() => setBrandId(brand.id)}
-                        className={`inline-flex min-h-[48px] items-center gap-2 rounded-full border-[1.5px] px-3.5 py-2 text-[13px] font-medium transition ${
+                        className={`inline-flex min-h-[48px] items-center gap-2 rounded-[10px] border-[1.5px] px-3.5 py-2 text-[13px] font-medium transition ${
                           active
                             ? 'border-brand bg-brand/10 text-brand shadow-sm'
-                            : 'border-[#E5E7EB] bg-white text-[#374151] hover:border-brand/30 hover:bg-brand/5 hover:text-brand'
+                            : 'border-[var(--border-warm)] bg-[var(--bg-surface)] text-[var(--text-strong)] hover:border-brand/30 hover:bg-brand/5 hover:text-brand'
                         }`}
                       >
-                        <span className={`flex h-[28px] w-[28px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#E5E7EB] bg-white ${active ? 'ring-1 ring-brand/15' : ''}`}>
+                        <span className={`flex h-[28px] w-[28px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border-warm)] bg-[var(--bg-surface)] ${active ? 'ring-1 ring-brand/15' : ''}`}>
                           {logoUrl ? (
                             <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
                           ) : (
@@ -905,7 +928,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
               </div>
             ) : null}
 
-            <div className="relative min-h-[130px] rounded-[12px] border-[1.5px] border-[#E5E7EB] bg-[#FAFBFC] px-4 pb-4 pt-4">
+            <div className="relative min-h-[130px] rounded-[10px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 pb-4 pt-4">
               <textarea
                 dir="rtl"
                 rows={5}
@@ -919,7 +942,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   }
                 }}
                 placeholder={'תארו מה אתם צריכים... לדוגמה: "גרפיקה לאירוע יזום, כיכר העירייה, כותרת: הצטרפו לחגיגה!"'}
-                className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[#1A1A2E] outline-none placeholder:text-[#CBD5E1]"
+                className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)]"
               />
               <input
                 ref={fileInputRef}
@@ -929,55 +952,57 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                 onChange={(e) => void handleTextFileUpload(e.target.files?.[0] ?? null)}
               />
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadingText}
-                  title={uploadingText ? 'מעלה…' : uploadText}
-                  aria-label={uploadingText ? 'מעלה…' : uploadText}
-                  className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] border border-[#CBD5E1] bg-white px-3 py-2 text-[14px] font-bold text-[#334155] transition hover:border-brand/30 hover:bg-brand/5 hover:text-brand disabled:cursor-not-allowed disabled:opacity-60 lg:px-4"
-                >
-                  <span className="text-[16px]" aria-hidden="true">📎</span>
-                  <span className="hidden lg:inline">{uploadingText ? 'מעלה…' : uploadText}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCreate}
-                  disabled={description.trim().length === 0}
-                  title={selected === 'quote' ? 'הכנת הצעת מחיר' : createText}
+                <Tooltip content={uploadingText ? 'מעלה…' : uploadText}>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingText}
+                    aria-label={uploadingText ? 'מעלה…' : uploadText}
+                    className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-3 py-2 text-[14px] font-bold text-[var(--text-muted)] transition hover:border-brand/30 hover:bg-brand/5 hover:text-brand disabled:cursor-not-allowed disabled:opacity-60 lg:px-4"
+                  >
+                    <UploadIcon className="h-4 w-4" />
+                    <span className="hidden lg:inline">{uploadingText ? 'מעלה…' : uploadText}</span>
+                  </button>
+                </Tooltip>
+                <Tooltip content={selected === 'quote' ? 'הכנת הצעת מחיר' : createText}>
+                  <button
+                    type="button"
+                    onClick={handleCreate}
+                    disabled={description.trim().length === 0}
                   aria-label={selected === 'quote' ? 'הכנת הצעת מחיר' : createText}
-                  className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] px-3 py-2 text-[14px] font-bold text-white transition lg:px-5 ${
+                  className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] px-3 py-2 text-[14px] font-bold transition lg:px-5 ${
                     description.trim().length > 0
-                      ? 'bg-brand shadow-sm hover:bg-brand/85'
-                      : 'cursor-not-allowed bg-brand/50 opacity-70'
+                      ? 'bg-brand text-white shadow-sm hover:bg-brand-dark'
+                      : 'cursor-not-allowed border border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-faint)]'
                   }`}
                 >
                   <SparkIcon className="h-4 w-4" />
                   <span className="hidden lg:inline">{selected === 'quote' ? 'הכנת הצעת מחיר' : createText}</span>
                 </button>
+                </Tooltip>
               </div>
-              <div className="absolute bottom-4 left-4 text-left text-[11px] font-normal text-[#CBD5E1]">
+              <div className="absolute bottom-4 left-4 text-left text-[11px] font-normal text-[var(--text-faint)]">
                 {DESCRIPTION_MAX_LENGTH.toLocaleString('he-IL')} / {description.length.toLocaleString('he-IL')}
               </div>
             </div>
 
             {uploadError && (
-              <div className="rounded-[10px] border border-[#FECACA] bg-[#FEF2F2] px-3.5 py-2.5 text-right text-[13px] font-normal text-[#B91C1C]">
+              <div className="rounded-[10px] border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--danger-fg)]">
                 {uploadError}
               </div>
             )}
 
             {pickerError && (
-              <div className="rounded-[10px] border border-[#FECACA] bg-[#FEF2F2] px-3.5 py-2.5 text-right text-[13px] font-normal text-[#B91C1C]">
+              <div className="rounded-[10px] border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--danger-fg)]">
                 {pickerError}
               </div>
             )}
           </div>
         </section>
 
-        <section className="mt-5 rounded-[14px] border border-[#EAECF0] bg-white px-5 py-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8">
+        <section className="mt-5 rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-6 shadow-[var(--warm-shadow-card)] sm:px-8">
           <div className="flex items-center justify-between">
-            <h2 className="text-[18px] font-bold text-[#1A1A2E]">תוצרים אחרונים</h2>
+            <h2 className="text-[18px] font-bold text-[var(--text-strong)]">תוצרים אחרונים</h2>
             <Link
               to="/admin/files"
               className="inline-flex items-center gap-1.5 rounded-[10px] border border-brand/30 bg-brand/10 px-3.5 py-2 text-[13px] font-bold text-brand transition hover:bg-brand/15"
@@ -990,7 +1015,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {recentOutputCategories.map(({ key, type, label, bg, icon }) => {
+            {recentOutputCategories.map(({ key, type, label, bg }) => {
               const items = key === 'quote' ? recentQuoteFiles : type ? recentFiles[type] : [];
               const createType = key === 'quote' ? 'quote' : type;
               const to =
@@ -1011,64 +1036,73 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                       });
                     }
                   }}
-                  className="group flex min-h-[210px] flex-col overflow-hidden rounded-[12px] border border-[#EAECF0] bg-white text-right transition hover:-translate-y-0.5 hover:border-[#BFDBFE]"
+                  className="group flex min-h-[210px] flex-col overflow-hidden rounded-[12px] border border-[var(--border-warm)] bg-[var(--bg-surface)] text-right transition hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)]"
                 >
                   <div className="flex items-center gap-2 px-3 py-2.5" style={{ backgroundColor: bg }}>
-                    <span className="text-[20px]">{icon}</span>
-                    <span className="text-[13px] font-bold text-[#1A1A2E]">{label}</span>
+                    <span className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--border-soft)] bg-[var(--bg-surface)] text-[var(--text-strong)]">
+                      <PickerIcon type={key === 'quote' ? 'quote' : type ?? 'text'} className="h-5 w-5 stroke-[1.75]" />
+                    </span>
+                    <span className="text-[13px] font-bold text-[var(--text-strong)]">{label}</span>
                   </div>
 
                   <div className="flex flex-1 flex-col gap-2 p-3">
                     {key === 'quote' && items.length === 0 ? (
-                      <div className="flex flex-1 items-center justify-center py-6 text-center text-[11px] leading-5 text-[#94A3B8]">
+                      <div className="flex flex-1 items-center justify-center py-6 text-center text-[11px] leading-5 text-[var(--text-muted)]">
                         יצירת הצעת מחיר מעוצבת כ-PDF מתוך בריף חופשי
                       </div>
                     ) : items.length === 0 ? (
-                      <div className="flex flex-1 items-center justify-center py-6 text-center text-[11px] text-[#94A3B8]">
+                      <div className="flex flex-1 items-center justify-center py-6 text-center text-[11px] text-[var(--text-muted)]">
                         אין תוצרים עדיין
                       </div>
                     ) : (
                       items.map((file) => (
-                        <div key={file.id} className="flex items-center gap-2 rounded-[8px] border border-[#F1F5F9] p-1.5">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-[#F8FAFC]">
+                        <div key={file.id} className="flex items-center gap-2 rounded-[8px] border border-[var(--border-soft)] p-1.5">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-[var(--surface-2)]">
                             {file.output_type === 'image' && recentPreviews[file.id] ? (
                               <img src={recentPreviews[file.id]} alt="" className="h-full w-full object-cover" />
                             ) : file.text_content ? (
-                              <span className="line-clamp-3 break-all px-0.5 text-[6px] leading-[7px] text-[#94A3B8]">
+                              <span className="line-clamp-3 break-all px-0.5 text-[6px] leading-[7px] text-[var(--text-muted)]">
                                 {file.text_content.slice(0, 60)}
                               </span>
                             ) : (
-                              <span className="text-[16px]">{icon}</span>
+                              <PickerIcon type={key === 'quote' ? 'quote' : file.output_type} className="h-5 w-5 stroke-[1.75] text-[var(--text-muted)]" />
                             )}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-[11px] font-medium text-[#1A1A2E]">
+                            <div className="truncate text-[11px] font-medium text-[var(--text-strong)]">
                               {file.text_content ? file.text_content.slice(0, 30) : OUTPUT_LABEL[file.output_type]}
                             </div>
-                            <div className="ltr text-start text-[10px] text-[#94A3B8]">{formatHebrewDate(file.created_at)}</div>
+                            <div className="ltr text-start text-[10px] text-[var(--text-muted)]">{formatHebrewDate(file.created_at)}</div>
                           </div>
                         </div>
                       ))
                     )}
                   </div>
 
-                  <div className="border-t border-[#F1F5F9] px-3 py-3">
-                    <span
-                      className="inline-flex min-h-9 w-full items-center justify-center rounded-[9px] bg-brand px-3 py-2 text-white shadow-sm transition group-hover:bg-brand/85"
-                      title={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}
-                      aria-label={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}
-                    >
-                      {items.length === 0 ? (
-                        <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px]" aria-hidden="true">
-                          <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                        </svg>
-                      ) : (
-                        <svg viewBox="0 0 24 24" fill="none" className="h-[18px] w-[18px]" aria-hidden="true">
-                          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                          <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
-                        </svg>
-                      )}
-                    </span>
+                  <div className="border-t border-[var(--border-soft)] px-3 py-3">
+                    <Tooltip content={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}>
+                      <span
+                        className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-[9px] border border-brand/35 bg-transparent px-3 py-2 text-[13px] font-semibold text-brand transition group-hover:border-brand group-hover:bg-brand/10 cursor-pointer"
+                        aria-label={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}
+                      >
+                        {items.length === 0 ? (
+                          <>
+                            <svg viewBox="0 0 24 24" fill="none" className="h-[16px] w-[16px]" aria-hidden="true">
+                              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                            </svg>
+                            <span>יצירה</span>
+                          </>
+                        ) : (
+                          <>
+                            <svg viewBox="0 0 24 24" fill="none" className="h-[16px] w-[16px]" aria-hidden="true">
+                              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+                            </svg>
+                            <span>צפייה</span>
+                          </>
+                        )}
+                      </span>
+                    </Tooltip>
                   </div>
                 </Link>
               );
@@ -1089,20 +1123,6 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
       />
     </div>
   );
-}
-
-function chipEmoji(type: ProductionType) {
-  if (type === 'image') return '🖼️';
-  if (type === 'text') return '📝';
-  if (type === 'presentation') return '🖥️';
-  return '📄';
-}
-
-function chipColor(type: ProductionType) {
-  if (type === 'image') return 'bg-[#FEE2E2]';
-  if (type === 'text') return 'bg-[#D1FAE5]';
-  if (type === 'presentation') return 'bg-[#DBEAFE]';
-  return 'bg-[#EDE9FE]';
 }
 
 function ProductionFlow({ type }: { type: ProductionType }) {
@@ -1471,18 +1491,18 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   const freeTextError = !!freeText && step === 'form' && !brief && !!error;
 
   return (
-    <div dir="rtl">
+    <div dir="rtl" className="theme-warm min-h-full bg-[var(--bg-page)] px-4 py-5 text-[var(--text-strong)] sm:px-6 lg:px-8 lg:py-7">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">הפקת {OUTPUT_LABEL[type]}</h1>
+          <h1 className="text-[26px] font-extrabold leading-tight text-[var(--text-strong)]">הפקת {OUTPUT_LABEL[type]}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {step === 'form' && !showBriefLoader && (
-            <div className="inline-flex rounded-2xl border border-[var(--border)] bg-white p-1.5 text-sm shadow-sm">
+            <div className="inline-flex rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-1.5 text-sm shadow-[var(--warm-shadow-card)]">
               <button
                 onClick={() => setFormMode('wizard')}
                 className={`rounded-xl px-4 py-2 font-semibold transition duration-200 ${
-                  formMode === 'wizard' ? 'bg-brand text-white shadow-sm' : 'text-[var(--muted)] hover:bg-gray-50 hover:text-[var(--text)]'
+                  formMode === 'wizard' ? 'bg-brand text-white shadow-sm' : 'text-[var(--text-muted)] hover:bg-brand/5 hover:text-brand'
                 }`}
               >
                 שאלה אחר שאלה
@@ -1490,7 +1510,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
               <button
                 onClick={() => setFormMode('classic')}
                 className={`rounded-xl px-4 py-2 font-semibold transition duration-200 ${
-                  formMode === 'classic' ? 'bg-brand text-white shadow-sm' : 'text-[var(--muted)] hover:bg-gray-50 hover:text-[var(--text)]'
+                  formMode === 'classic' ? 'bg-brand text-white shadow-sm' : 'text-[var(--text-muted)] hover:bg-brand/5 hover:text-brand'
                 }`}
               >
                 טופס מלא
@@ -1501,13 +1521,13 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       </div>
 
       {error && !freeTextError && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="mb-4 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]">
           <p>{error}</p>
           {(error === IMAGE_QUOTA_MESSAGE || error === OPENAI_QUOTA_MESSAGE) && (
             <button
               type="button"
               onClick={() => setKeyModalOpen(true)}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[var(--danger-fg)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
             >
               <SparkIcon className="h-3.5 w-3.5" />
               {getSessionOpenAiKey() ? 'החלפת המפתח החד-פעמי' : setOpenAiKeyText}
@@ -1533,7 +1553,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
         <div className={`${PANEL} p-8 text-center`}>
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-3xl">⚠️</div>
           <h2 className="mb-2 text-xl font-bold">לא הצלחנו לבנות את הבריף</h2>
-          <p className="mx-auto mb-6 max-w-md text-sm text-[var(--muted)]">{error}</p>
+          <p className="mx-auto mb-6 max-w-md text-sm text-[var(--text-muted)]">{error}</p>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <button type="button" onClick={() => setKeyModalOpen(true)} className={`${PRIMARY_BUTTON} w-fit`}>
               <SparkIcon className="h-4 w-4" />
@@ -1544,7 +1564,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
             </Link>
           </div>
           {getSessionOpenAiKey() && (
-            <p className="mt-4 text-xs text-[var(--muted)]">מוגדר מפתח חד-פעמי לסשן הזה. אפשר לעדכן אותו שוב בכפתור למעלה.</p>
+            <p className="mt-4 text-xs text-[var(--text-muted)]">מוגדר מפתח חד-פעמי לסשן הזה. אפשר לעדכן אותו שוב בכפתור למעלה.</p>
           )}
         </div>
       )}
@@ -1595,17 +1615,17 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       {step === 'brief' && brief && (
         <div className="grid lg:grid-cols-[1fr_360px] gap-5">
           <BriefCard type={type} brief={brief} revisionCount={revisionCount} />
-          <div className={`${PANEL} sticky bottom-[calc(var(--safe-bottom)+0.75rem)] p-5 h-fit lg:static`}>
+          <div className={`${PANEL} sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit p-5 lg:static`}>
             {type === 'presentation' && (
-              <div className="mb-4 flex items-center justify-between rounded-2xl border border-[var(--border)] bg-gray-50 p-3">
-                <span className="text-xs text-[var(--muted)]">
+              <div className="mb-4 flex items-center justify-between rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] p-3">
+                <span className="text-xs text-[var(--text-muted)]">
                   {pickedImages ? `נבחרו ${pickedImages.length} תמונות למצגת.` : 'לא נבחרו תמונות — אפשר לבחור בעמוד התוצר.'}
                 </span>
                 {pickedImages && pickedImages.length > 0 && (
                   <button
                     type="button"
                     onClick={openImagePicker}
-                    className="ms-3 shrink-0 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-semibold text-brand hover:bg-brand/5"
+                    className="ms-3 shrink-0 rounded-lg border border-[var(--border-warm)] bg-[var(--bg-surface)] px-2.5 py-1 text-xs font-semibold text-brand hover:bg-brand/5"
                   >
                     עריכה
                   </button>
@@ -1623,7 +1643,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
                 onChange={(e) => setRevision(e.target.value)}
                 disabled={revisionCount >= 3}
                 rows={5}
-                className="w-full rounded-xl border border-[var(--border)] px-3 py-3 shadow-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
+                className="w-full rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] px-3 py-3 text-[var(--text-strong)] shadow-sm placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
                 placeholder="כתבו מה לשנות בבריף"
               />
               <button
@@ -1633,11 +1653,11 @@ function ProductionFlow({ type }: { type: ProductionType }) {
               >
                 עדכון בריף
               </button>
-              <p className="mt-2 text-xs text-[var(--muted)]">
+              <p className="mt-2 text-xs text-[var(--text-muted)]">
                 נוצלו {revisionCount} מתוך 3 תיקוני בריף.
               </p>
               {revisionCount >= 3 && (
-                <p className="mt-2 text-sm text-amber-700">הגענו למקסימום תיקוני בריף. אפשר להפיק עכשיו או להתחיל מחדש.</p>
+                <p className="mt-2 text-sm text-[var(--warn-fg)]">הגענו למקסימום תיקוני בריף. אפשר להפיק עכשיו או להתחיל מחדש.</p>
               )}
             </div>
           </div>
@@ -1695,8 +1715,8 @@ function PresentationImagePickerPanel({
   onResetPicked?: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-gray-50 p-4">
-      <p className="text-sm text-[var(--muted)] mb-3">
+    <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] p-4">
+      <p className="mb-3 text-sm text-[var(--text-muted)]">
         {pickedCount
           ? `נבחרו ${pickedCount} תמונות שייכנסו למצגת.`
           : 'עדיין לא נבחרו תמונות. אפשר לבחור עכשיו, או להמשיך ולבחור בעמוד התוצר.'}
@@ -1714,13 +1734,13 @@ function PresentationImagePickerPanel({
           <button
             type="button"
             onClick={onResetPicked}
-            className="text-xs font-semibold text-[var(--muted)] hover:underline"
+            className="text-xs font-semibold text-[var(--text-muted)] hover:text-brand hover:underline"
           >
             איפוס
           </button>
         ) : null}
       </div>
-      {needsBrand && <p className="mt-2 text-xs text-amber-700">יש לבחור מותג כדי לטעון תמונות.</p>}
+      {needsBrand && <p className="mt-2 text-xs text-[var(--warn-fg)]">יש לבחור מותג כדי לטעון תמונות.</p>}
     </div>
   );
 }
@@ -1752,9 +1772,9 @@ function BrandProductionHeader({
         <div className="flex min-w-0 items-center gap-3">
           <BrandLogo name={effectiveBrand?.name ?? 'מותג'} url={selectedLogoUrl} />
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--muted)]">מותג ההפקה</div>
-            <div className="truncate text-xl font-bold text-[var(--text)]">{title}</div>
-            <p className="mt-1 text-xs text-[var(--muted)]">
+            <div className="text-sm font-semibold text-[var(--text-muted)]">מותג ההפקה</div>
+            <div className="truncate text-xl font-bold text-[var(--text-strong)]">{title}</div>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
               צבעי המותג והנחיות הסגנון שלו ישולבו אוטומטית בתוצר.
             </p>
           </div>
@@ -1767,7 +1787,7 @@ function BrandProductionHeader({
               <button
                 type="button"
                 onClick={() => setModalOpen(true)}
-                className="lg:hidden rounded-xl border border-brand bg-white px-4 py-2 text-sm font-semibold text-brand hover:bg-brand/5 transition"
+                className="rounded-xl border border-brand bg-[var(--bg-surface)] px-4 py-2 text-sm font-semibold text-brand transition hover:bg-brand/5 lg:hidden"
               >
                 בחרו מותג
               </button>
@@ -1780,7 +1800,7 @@ function BrandProductionHeader({
                   type="button"
                   onClick={() => onChange('')}
                   className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-                    !brandId ? 'border-brand bg-brand text-white' : 'border-[var(--border)] bg-white text-[var(--muted)] hover:bg-gray-50'
+                    !brandId ? 'border-brand bg-brand text-white' : 'border-[var(--border-warm)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:bg-brand/5 hover:text-brand'
                   }`}
                 >
                   ללא מותג
@@ -1794,7 +1814,7 @@ function BrandProductionHeader({
                     type="button"
                     onClick={() => onChange(brand.id)}
                     className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-                      active ? 'border-brand bg-brand text-white shadow-sm' : 'border-[var(--border)] bg-white text-[var(--text)] hover:border-brand/30 hover:bg-brand/5'
+                      active ? 'border-brand bg-brand text-white shadow-sm' : 'border-[var(--border-warm)] bg-[var(--bg-surface)] text-[var(--text-strong)] hover:border-brand/30 hover:bg-brand/5'
                     }`}
                   >
                     {brand.name}
@@ -1847,16 +1867,16 @@ function BrandModal({
 
       {/* Modal — RTL, slide from bottom on mobile */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-50 max-h-[70vh] overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200"
+        className="fixed bottom-0 left-0 right-0 z-50 max-h-[70vh] overflow-auto rounded-t-2xl border-t border-[var(--border-warm)] bg-[var(--bg-surface)] shadow-lg animate-in slide-in-from-bottom duration-200"
         dir="rtl"
       >
-        <div className="sticky top-0 border-b border-[var(--border)] bg-white px-4 py-3">
+        <div className="sticky top-0 border-b border-[var(--border-warm)] bg-[var(--bg-surface)] px-4 py-3">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold">בחרו מותג להפקה</h2>
             <button
               type="button"
               onClick={onClose}
-              className="p-1 text-[var(--muted)] hover:bg-gray-100 rounded-lg transition"
+              className="rounded-lg p-1 text-[var(--text-muted)] transition hover:bg-[var(--bg-subtle)]"
               aria-label="סגרו את הדיאלוג"
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1875,7 +1895,7 @@ function BrandModal({
               className={`w-full text-right px-4 py-3 rounded-lg font-semibold text-sm transition ${
                 !selectedId
                   ? 'bg-brand text-white'
-                  : 'bg-gray-50 text-[var(--text)] hover:bg-gray-100'
+                  : 'bg-[var(--surface-2)] text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]'
               }`}
             >
               ללא מותג
@@ -1890,7 +1910,7 @@ function BrandModal({
               className={`w-full text-right px-4 py-3 rounded-lg font-semibold text-sm transition ${
                 brand.id === selectedId
                   ? 'bg-brand text-white'
-                  : 'bg-gray-50 text-[var(--text)] hover:bg-gray-100'
+                  : 'bg-[var(--surface-2)] text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]'
               }`}
             >
               {brand.name}
@@ -1910,7 +1930,7 @@ function BrandLogo({ name, url, size = 'default' }: { name: string; url: string 
       ? 'h-16 w-16 rounded-xl sm:h-[72px] sm:w-[72px]'
       : 'h-20 w-20 rounded-2xl sm:h-24 sm:w-24';
   return (
-    <div className={`flex shrink-0 items-center justify-center overflow-hidden border border-[var(--border)] bg-white shadow-sm ${boxClass}`}>
+    <div className={`flex shrink-0 items-center justify-center overflow-hidden border border-[var(--border-warm)] bg-[var(--bg-surface)] shadow-sm ${boxClass}`}>
       {url ? (
         <img src={url} alt={`לוגו ${name}`} className="h-full w-full object-contain p-1.5" />
       ) : (
@@ -1963,7 +1983,7 @@ function ClassicForm({
         </div>
       )}
       {missingRequired.length > 0 && (
-        <div className="mt-4 text-sm text-[var(--muted)]">חסרים שדות חובה: {missingRequired.join(', ')}</div>
+        <div className="mt-4 text-sm text-[var(--text-muted)]">חסרים שדות חובה: {missingRequired.join(', ')}</div>
       )}
       <button onClick={onComplete} disabled={!canSubmit} className={`mt-5 ${PRIMARY_BUTTON}`}>
         <SparkIcon className="h-4 w-4" />
@@ -1982,7 +2002,7 @@ function Field({
   value: string | boolean;
   onChange: <K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) => void;
 }) {
-  const common = 'w-full rounded-xl border border-[var(--border)] px-3 py-3 shadow-sm transition focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15';
+  const common = 'w-full rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] px-3 py-3 text-[var(--text-strong)] shadow-sm transition placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15';
   return (
     <label className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
       <span className="block text-sm font-semibold mb-1">
@@ -2096,15 +2116,15 @@ function FormWizard({
   const heading = onImageStep ? 'בחירת תמונות למצגת' : current!.label;
 
   return (
-    <div className="bg-white border border-[var(--border)] rounded-lg p-5 sm:p-8">
+    <div className={`${PANEL} p-5 sm:p-8`}>
       <style>{wizardKeyframes}</style>
 
       {/* Progress: fills from the right (inline-start) leftward, per RTL time model. */}
-      <div className="flex items-center justify-between gap-3 mb-1 text-sm text-[var(--muted)]">
+      <div className="mb-1 flex items-center justify-between gap-3 text-sm text-[var(--text-muted)]">
         <span>שאלה {index + 1} מתוך {total}</span>
         <span>{OUTPUT_LABEL[type]}</span>
       </div>
-      <div className="h-2 rounded-full bg-gray-100 overflow-hidden mb-8">
+      <div className="mb-8 h-2 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
         <div className="h-full bg-brand rounded-full transition-[width] duration-500 ease-out" style={{ width: `${progressPct}%` }} />
       </div>
 
@@ -2114,7 +2134,7 @@ function FormWizard({
         style={{ animation: `${dir === 'fwd' ? 'wizSlideFwd' : 'wizSlideBack'} 320ms cubic-bezier(0.22,1,0.36,1)` }}
       >
         <h2 className="text-2xl sm:text-3xl font-bold mb-2 leading-snug">{heading}</h2>
-        <p className="text-sm text-[var(--muted)] mb-5">
+        <p className="mb-5 text-sm text-[var(--text-muted)]">
           {onImageStep ? 'לא חובה — בחרו תמונות מותג / AI שייכנסו למצגת ולבריף' : current!.required ? 'שדה חובה' : 'לא חובה — אפשר להמשיך גם בלי למלא'}
         </p>
         {onImageStep ? (
@@ -2130,12 +2150,12 @@ function FormWizard({
       </div>
 
       {/* Thumb-zone action row: primary forward action on the left (RTL progression). */}
-      <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] -mx-2 mt-8 flex items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-white/95 p-2 shadow-lg backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0 sm:gap-3 sm:shadow-none">
+      <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] -mx-2 mt-8 flex items-center justify-between gap-2 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)]/95 p-2 shadow-lg backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0 sm:gap-3 sm:shadow-none">
         <button
           type="button"
           onClick={goBack}
           disabled={index === 0}
-          className="rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-xs sm:text-sm font-semibold text-[var(--muted)] hover:bg-gray-50 disabled:opacity-40 shrink-0"
+          className="shrink-0 rounded-lg px-3 py-2 text-xs font-semibold text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 sm:px-4 sm:py-3 sm:text-sm"
         >
           → חזרה
         </button>
@@ -2174,7 +2194,7 @@ function WizardInput({
   onChange: <K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) => void;
   autoFocus?: boolean;
 }) {
-  const common = 'w-full rounded-lg border border-[var(--border)] px-4 py-3 text-lg';
+  const common = 'w-full rounded-lg border border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 text-lg text-[var(--text-strong)] placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15';
   if (field.type === 'textarea') {
     return (
       <textarea
@@ -2216,7 +2236,7 @@ function WizardInput({
                 type="button"
                 onClick={toggle}
                 className={`${CHIP_BUTTON} ${
-                  active ? 'border-brand bg-brand/10 text-brand font-semibold shadow-sm' : 'border-[var(--border)] hover:bg-gray-50 hover:text-[var(--text)]'
+                  active ? 'border-brand bg-brand/10 text-brand font-semibold shadow-sm' : 'border-[var(--border-warm)] text-[var(--text-strong)] hover:bg-brand/5 hover:text-brand'
                 }`}
               >
                 {option}
@@ -2248,22 +2268,22 @@ function BriefCard({ type, brief, revisionCount }: { type: ProductionType; brief
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-bold">בריף פנימי</h2>
           {brief.source === 'ai' ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+            <span className="inline-flex items-center gap-1 rounded-lg border border-[var(--border-warm)] bg-[var(--tint-olive)] px-2.5 py-1 text-xs font-semibold text-[var(--text-strong)]">
               <SparkIcon className="h-3.5 w-3.5" />
               נבנה ע״י AI
             </span>
           ) : brief.source === 'fallback' ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+            <span className="inline-flex items-center gap-1 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-bg)] px-2.5 py-1 text-xs font-semibold text-[var(--warn-fg)]">
               בריף בסיסי (ללא AI)
             </span>
           ) : null}
         </div>
-        <span className="text-xs bg-gray-100 rounded-full px-3 py-1 font-semibold text-[var(--muted)]">גרסה {revisionCount + 1}</span>
+        <span className="rounded-lg bg-[var(--bg-subtle)] px-3 py-1 text-xs font-semibold text-[var(--text-muted)]">גרסה {revisionCount + 1}</span>
       </div>
-      <div className="divide-y divide-[var(--border)]">
+      <div className="divide-y divide-[var(--border-soft)]">
         {rows.map(([label, value]) => (
           <div key={label} className="py-3 grid md:grid-cols-[150px_1fr] gap-2">
-            <div className="text-sm font-semibold text-[var(--muted)]">{label}</div>
+            <div className="text-sm font-semibold text-[var(--text-muted)]">{label}</div>
             <div className="whitespace-pre-wrap">{String(value)}</div>
           </div>
         ))}
@@ -2365,18 +2385,19 @@ function ResultCard({
       <div className={`${PANEL} p-5`}>
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-xl font-bold">התוצר מוכן</h2>
-          <Link
-            to="/admin/files"
-            title="חזרה לתוצרים"
-            aria-label="חזרה לתוצרים"
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-          >
-            <BackIcon />
-          </Link>
+          <Tooltip content="חזרה לתוצרים">
+            <Link
+              to="/admin/files"
+              aria-label="חזרה לתוצרים"
+              className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border-warm)] text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-strong)]"
+            >
+              <BackIcon />
+            </Link>
+          </Tooltip>
         </div>
         {output.output_type === 'image' && previewUrl ? (
           <>
-            <img src={previewUrl} alt="תוצר תמונה" className="max-h-[560px] w-full object-contain rounded-lg bg-gray-50" />
+            <img src={previewUrl} alt="תוצר תמונה" className="max-h-[560px] w-full rounded-lg bg-[var(--surface-2)] object-contain" />
             <button type="button" onClick={downloadImage} className={`mt-4 ${SECONDARY_BUTTON} w-fit`}>
               הורדה
             </button>
@@ -2389,32 +2410,40 @@ function ResultCard({
             </a>
             {output.output_type === 'pdf' && output.text_content && (
               <>
-                <button type="button" onClick={() => exportRichTextDocx(textBlocks, undefined, brandLogoUrl)} title="ייצוא Word" aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
-                  <WordIcon className="h-4 w-4" />
-                  Word
-                </button>
-                <button type="button" onClick={() => exportRichTextPdf(textBlocks, undefined, brandLogoUrl)} title="ייצוא PDF" aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
-                  <PdfIcon className="h-4 w-4" />
-                  PDF
-                </button>
+                <Tooltip content="ייצוא Word">
+                  <button type="button" onClick={() => exportRichTextDocx(textBlocks, undefined, brandLogoUrl)} aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
+                    <WordIcon className="h-4 w-4" />
+                    Word
+                  </button>
+                </Tooltip>
+                <Tooltip content="ייצוא PDF">
+                  <button type="button" onClick={() => exportRichTextPdf(textBlocks, undefined, brandLogoUrl)} aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
+                    <PdfIcon className="h-4 w-4" />
+                    PDF
+                  </button>
+                </Tooltip>
               </>
             )}
           </div>
         ) : output.output_type === 'presentation' ? null : (
-          <div className="rounded-lg bg-gray-50 p-4">
+          <div className="rounded-lg bg-[var(--surface-2)] p-4">
             {isTextOutput && output.text_content && (
               <div className="mb-4 flex flex-wrap justify-end gap-2">
                 <button type="button" onClick={copyTextOutput} className={SECONDARY_BUTTON}>
                   {copied ? 'הועתק' : 'העתקה'}
                 </button>
-                <button type="button" onClick={() => exportRichTextDocx(textBlocks, undefined, brandLogoUrl)} title="ייצוא Word" aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
-                  <WordIcon className="h-4 w-4" />
-                  Word
-                </button>
-                <button type="button" onClick={() => exportRichTextPdf(textBlocks, undefined, brandLogoUrl)} title="ייצוא PDF" aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
-                  <PdfIcon className="h-4 w-4" />
-                  PDF
-                </button>
+                <Tooltip content="ייצוא Word">
+                  <button type="button" onClick={() => exportRichTextDocx(textBlocks, undefined, brandLogoUrl)} aria-label="ייצוא Word" className={SECONDARY_BUTTON}>
+                    <WordIcon className="h-4 w-4" />
+                    Word
+                  </button>
+                </Tooltip>
+                <Tooltip content="ייצוא PDF">
+                  <button type="button" onClick={() => exportRichTextPdf(textBlocks, undefined, brandLogoUrl)} aria-label="ייצוא PDF" className={SECONDARY_BUTTON}>
+                    <PdfIcon className="h-4 w-4" />
+                    PDF
+                  </button>
+                </Tooltip>
               </div>
             )}
             <div className="max-h-[560px] overflow-auto">
@@ -2439,14 +2468,14 @@ function ResultCard({
           onChange={(e) => setEmail(e.target.value)}
           placeholder="name@example.com"
           dir="ltr"
-          className="w-full rounded-xl border border-[var(--border)] px-3 py-3 mb-3 shadow-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
+          className="mb-3 w-full rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] px-3 py-3 text-[var(--text-strong)] shadow-sm placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
         />
         <button onClick={sendEmail} disabled={!isValidEmail(email) || sendingEmail || emailSent} className={`w-full ${PRIMARY_BUTTON}`}>
           <MailIcon className="h-4 w-4" />
           {emailSent ? 'נשלח' : sendingEmail ? 'שולח...' : 'שליחה במייל'}
         </button>
         {(output.output_type === 'image' || isTextOutput) && (
-          <div className="mt-5 border-t border-[var(--border)] pt-5">
+          <div className="mt-5 border-t border-[var(--border-soft)] pt-5">
             <SocialScheduleSection
               requestId={requestId}
               outputId={output.id}
@@ -2459,9 +2488,9 @@ function ResultCard({
           </div>
         )}
         {output.output_type === 'image' && requestId && (
-          <div className="mt-5 border-t border-[var(--border)] pt-5">
+          <div className="mt-5 border-t border-[var(--border-soft)] pt-5">
             <h3 className="font-bold mb-1">תיקונים</h3>
-            <p className="text-xs text-gray-500 mb-3">
+            <p className="mb-3 text-xs text-[var(--text-muted)]">
               עין אנושית: כתבו מה לתקן בפוסט ותקבלו גרסה מעודכנת.
             </p>
             <textarea
@@ -2469,7 +2498,7 @@ function ResultCard({
               onChange={(e) => setEditFeedback(e.target.value)}
               placeholder="לדוגמה: לשנות את התאריך ל-22.5.2025, להגדיל את שם האמן"
               rows={3}
-              className="w-full rounded-xl border border-[var(--border)] px-3 py-2 mb-2 text-sm shadow-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
+              className="mb-2 w-full rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text-strong)] shadow-sm placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
             />
             <button
               onClick={applyEdit}
@@ -2638,7 +2667,7 @@ function BriefBuildingView({ type }: { type: ProductionType }) {
           {messages[msgIndex]}…
         </p>
       </div>
-      <p className="mt-6 text-xs text-[var(--muted)]">עוד רגע ויהיה מוכן לאישור.</p>
+      <p className="mt-6 text-xs text-[var(--text-muted)]">עוד רגע ויהיה מוכן לאישור.</p>
     </div>
   );
 }
@@ -2670,18 +2699,18 @@ function GeneratingView({ type, status }: { type: ProductionType; status: Reques
       <div className="text-xl font-bold mb-3">מפיקים את ה{OUTPUT_LABEL[type]}</div>
 
       <div className="h-6 relative">
-        <p key={msgIndex} className="text-[var(--muted)]" style={{ animation: 'genFade 2.6s ease-in-out' }}>
+        <p key={msgIndex} className="text-[var(--text-muted)]" style={{ animation: 'genFade 2.6s ease-in-out' }}>
           {messages[msgIndex]}…
         </p>
       </div>
 
       {/* Indeterminate progress sweep — direction-neutral, loops continuously. */}
-      <div className="mt-8 mx-auto max-w-sm h-1.5 rounded-full bg-gray-100 overflow-hidden">
+      <div className="mx-auto mt-8 h-1.5 max-w-sm overflow-hidden rounded-full bg-[var(--bg-subtle)]">
         <div className="h-full w-1/3 rounded-full bg-brand" style={{ animation: 'genSweep 1.6s ease-in-out infinite' }} />
       </div>
 
-      <p className="mt-5 text-xs text-[var(--muted)]">זה יכול לקחת עד דקה. אפשר להישאר במסך.</p>
-      {status && <p className="mt-1 text-xs text-[var(--muted)]">סטטוס: {status}</p>}
+      <p className="mt-5 text-xs text-[var(--text-muted)]">זה יכול לקחת עד דקה. אפשר להישאר במסך.</p>
+      {status && <p className="mt-1 text-xs text-[var(--text-muted)]">סטטוס: {status}</p>}
     </div>
   );
 }
@@ -2736,40 +2765,16 @@ function ChevronIcon({ className = 'h-4 w-4' }: { className?: string }) {
   );
 }
 
+function PickerIcon({ type, className = 'h-6 w-6' }: { type: ProductionType | 'quote'; className?: string }) {
+  if (type === 'quote') return <ReceiptTextIcon className={className} />;
+  return <ProductIcon type={type} className={className} />;
+}
+
 function ProductIcon({ type, className = 'h-6 w-6' }: { type: ProductionType; className?: string }) {
-  if (type === 'presentation') {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-        <rect x="4" y="5" width="16" height="10" rx="2" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M8 19h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        <path d="M12 15v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  if (type === 'text') {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-        <path d="M6 5.5h12M6 10h12M6 14.5h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        <path d="M6 19h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" opacity="0.65" />
-      </svg>
-    );
-  }
-  if (type === 'pdf') {
-    return (
-      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-        <path d="M7 4.75h6.5L17 8.25V19a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5.75a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M13.5 4.75v3.5H17" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M8.5 15h7M8.5 12h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-      <path d="M6 9.5a6 6 0 0 1 12 0v5a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-5Z" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M9 9.5h6M9 12h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path d="m15.5 16.5 2 2 2-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+  if (type === 'presentation') return <PresentationIcon className={className} />;
+  if (type === 'text') return <FileTextIcon className={className} />;
+  if (type === 'pdf') return <FileIcon className={className} />;
+  return <ImageIcon className={className} />;
 }
 
 const generatingKeyframes = `

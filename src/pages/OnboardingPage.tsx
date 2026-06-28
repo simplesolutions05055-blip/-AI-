@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { OnboardingState, ProfileGender } from '@/lib/useProfile';
+import { Spinner } from '@/components/ui/Spinner';
 
 type StepKey = 'details' | 'docs' | 'files';
 
@@ -204,7 +205,7 @@ export default function OnboardingPage() {
     step === 'details' ? true : step === 'docs' ? !requireUploads || docsUploaded : !requireUploads || assetsUploaded;
 
   if (loading) {
-    return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]">טוען...</main>;
+    return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]"><Spinner /></main>;
   }
 
   return (

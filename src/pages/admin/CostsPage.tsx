@@ -4,6 +4,7 @@ import { formatHebrewDateTime, formatUsd } from '@/lib/format';
 import { senderLabel } from '@/lib/labels';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatIls, getUsdToIlsRates, rateForDate } from '@/lib/fx';
+import { Spinner } from '@/components/ui/Spinner';
 
 interface RequestRow {
   id: string;
@@ -155,7 +156,7 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
 
       <div className="space-y-3 md:hidden">
         {loading ? (
-          <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">טוען...</div>
+          <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]"><Spinner /></div>
         ) : error ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-600">לא ניתן לטעון עלויות: {error}</div>
         ) : conversations.length === 0 ? (
@@ -200,7 +201,7 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} className="p-6 text-center text-[var(--muted)]">טוען...</td></tr>
+              <tr><td colSpan={5} className="p-6 text-center text-[var(--muted)]"><div className="flex justify-center"><Spinner /></div></td></tr>
             ) : error ? (
               <tr><td colSpan={5} className="p-6 text-center text-red-600">לא ניתן לטעון עלויות: {error}</td></tr>
             ) : conversations.length === 0 ? (

@@ -6,6 +6,7 @@ import {
   type DeckImage,
   type PersistedDeckImage,
 } from '@/lib/deck';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 // A selectable thumbnail: either an already-inlined brand image, or an AI image
 // referenced by its persisted row (inlined to base64 only on confirm).
@@ -77,9 +78,11 @@ function SelectableImageCard({
         <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px] text-white ${selected ? 'border-brand bg-brand' : 'border-gray-300 bg-white'}`}>
           {selected ? '✓' : ''}
         </span>
-        <span className="truncate text-[11px]" title={item.caption}>
-          {item.isLogo ? '🏷️ ' : ''}{item.caption}
-        </span>
+        <Tooltip content={item.caption}>
+          <span className="truncate text-[11px] cursor-help">
+            {item.isLogo ? '🏷️ ' : ''}{item.caption}
+          </span>
+        </Tooltip>
       </div>
     </button>
   );

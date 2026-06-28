@@ -5,6 +5,7 @@ import { formatHebrewDateTime, formatUsd } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatIls, getUsdToIlsRates, rateForDate } from '@/lib/fx';
 import type { OutputType, RequestStatus } from '@/types/db';
+import { Spinner } from '@/components/ui/Spinner';
 
 interface Row {
   id: string;
@@ -34,7 +35,7 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
   const [rates, setRates] = useState<Map<string, number | null>>(new Map());
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ status: '', output_type: '', email: '', phone: '', from: '', to: '' });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<Row | null>(null);
   const [showFilters, setShowFilters] = useState(false);
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
@@ -149,7 +150,7 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
 
       <div className="space-y-3 md:hidden">
         {loading ? (
-          <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">טוען...</div>
+          <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]"><Spinner /></div>
         ) : rows.length === 0 ? (
           <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">אין בקשות להצגה.</div>
         ) : rows.map((row) => {
@@ -158,7 +159,7 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
           return (
             <article
               key={row.id}
-              onClick={() => setSelectedId(row.id)}
+              onClick={() => setSelectedRequest(row)}
               className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm cursor-pointer hover:shadow-md transition"
             >
               <div className="flex items-center justify-between gap-3">
@@ -201,7 +202,7 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="p-6 text-center text-[var(--muted)]">טוען...</td></tr>
+              <tr><td colSpan={6} className="p-6 text-center text-[var(--muted)]"><div className="flex justify-center"><Spinner /></div></td></tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={6} className="p-6 text-center text-[var(--muted)]">אין בקשות להצגה.</td></tr>
             ) : rows.map((row) => {
@@ -210,7 +211,7 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
               return (
                 <tr
                   key={row.id}
-                  onClick={() => setSelectedId(row.id)}
+                  onClick={() => setSelectedRequest(row)}
                   className="border-b border-[var(--border)] hover:bg-gray-50 cursor-pointer"
                 >
                   <td className="p-3"><span className="ltr">{formatHebrewDateTime(row.created_at)}</span></td>
@@ -241,10 +242,10 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
         </table>
       </div>
 
-      {selectedId && (
+      {selectedRequest && (
         <RequestModal
-          requestId={selectedId}
-          onClose={() => setSelectedId(null)}
+          request={selectedRequest}
+          onClose={() => setSelectedRequest(null)}
         />
       )}
     </div>
@@ -264,22 +265,25 @@ interface RequestDetail {
   conversations: { whatsapp_from: string } | null;
 }
 
-function RequestModal({ requestId, onClose }: { requestId: string; onClose: () => void }) {
-  const [detail, setDetail] = useState<RequestDetail | null>(null);
+function RequestModal({ request, onClose }: { request: Row; onClose: () => void }) {
+  const [detail, setDetail] = useState<RequestDetail | null>({
+    ...request,
+    admin_note: null,
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const db = createSupabaseBrowserClient();
     db.from('requests')
       .select('id, customer_email, output_type, status, estimated_cost, created_at, structured_brief, admin_note, conversation_id, conversations!requests_conversation_id_fkey(whatsapp_from)')
-      .eq('id', requestId)
+      .eq('id', request.id)
       .maybeSingle()
       .then(({ data, error }) => {
         if (error) console.error('Error fetching request:', error);
-        setDetail((data as unknown as RequestDetail | null) ?? null);
+        if (data) setDetail(data as unknown as RequestDetail);
         setLoading(false);
       });
-  }, [requestId]);
+  }, [request.id]);
 
   useEffect(() => {
     function handleEscape(e: KeyboardEvent) {
@@ -310,7 +314,7 @@ function RequestModal({ requestId, onClose }: { requestId: string; onClose: () =
 
         <div className="p-4 space-y-4">
           {loading ? (
-            <div className="text-center text-[var(--muted)]">טוען...</div>
+            <div className="text-center text-[var(--muted)]"><Spinner /></div>
           ) : detail ? (
             <>
               <div className="grid grid-cols-2 gap-4">

@@ -10,6 +10,7 @@ import {
   slugForFilename,
 } from '@/lib/brandCsv';
 import type { Brand, BrandAsset, BrandColor, BrandColorRole, BusinessTextSource } from '@/types/db';
+import { Spinner } from '@/components/ui/Spinner';
 
 const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
@@ -54,6 +55,7 @@ export default function BrandingPage() {
   const textSourceRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+  const [csvModalOpen, setCsvModalOpen] = useState(false);
 
   const db = createSupabaseBrowserClient();
 
@@ -83,6 +85,20 @@ export default function BrandingPage() {
     };
   }, [logoPreviewOpen]);
 
+  useEffect(() => {
+    if (!csvModalOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCsvModalOpen(false);
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [csvModalOpen]);
+
   async function signedUrl(path: string) {
     const { data } = await db.storage.from('branding').createSignedUrl(path, 600);
     return data?.signedUrl ?? '';
@@ -107,6 +123,14 @@ export default function BrandingPage() {
     setNewSourceContent('');
     setPreviews({});
     setLogoFile(null);
+
+    // Scroll to editor on mobile
+    setTimeout(() => {
+      if (window.innerWidth < 1024) {
+        document.getElementById('brand-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 50);
+
     if (b?.id) {
       const { data } = await db
         .from('brand_assets')
@@ -515,50 +539,42 @@ export default function BrandingPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold">מיתוג</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-[28px] font-bold leading-tight sm:text-2xl">מיתוג</h1>
+          <p className="mt-1 max-w-xl text-sm leading-6 text-[var(--muted)]">
+            ניהול המקומות, הלוגו, פלטת הצבעים ומקורות התוכן שמהם המערכת מפיקה תוצרים.
+            {!loading && brands.length > 0 && (
+              <span className="font-medium text-[var(--text)]"> · {brands.length} מקומות</span>
+            )}
+          </p>
+        </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           <input
             ref={csvRef}
             type="file"
             accept=".csv,text/csv"
             className="hidden"
-            onChange={(e) => e.target.files?.[0] && importCsv(e.target.files[0])}
+            onChange={(e) => {
+              setCsvModalOpen(false);
+              e.target.files?.[0] && importCsv(e.target.files[0]);
+            }}
           />
           <button
-            onClick={() => downloadCsv('branding-template', brandCsvTemplate())}
+            onClick={() => setCsvModalOpen(true)}
             className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium hover:bg-gray-50"
           >
-            CSV לדוגמה
-          </button>
-          <button
-            onClick={exportAll}
-            disabled={!brands.length}
-            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
-          >
-            {selectedIds.size > 0 ? `ייצוא נבחרים (${selectedIds.size})` : 'ייצוא הכל'}
-          </button>
-          <button
-            onClick={() => csvRef.current?.click()}
-            disabled={importing}
-            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
-          >
-            {importing ? 'מייבא...' : 'ייבוא CSV'}
+            הוספה מרובה
           </button>
           <button onClick={() => openBrand(null)} className="rounded-lg bg-brand text-white px-4 py-2 text-sm font-semibold">
             הוספת מקום
           </button>
         </div>
       </div>
-      <p className="text-xs text-[var(--muted)] -mt-3 leading-5">
-        ייצוא/ייבוא כולל שם, שמות נרדפים, סטטוס, הנחיות סגנון, צבעי הפלטה ומקורות תוכן
-        (עמודות source_1_title / source_1_content וכן הלאה — אפשר להוסיף כמה שרוצים). לוגו ותמונות אינם נכללים ב-CSV.
-        בייבוא, מקום עם שם קיים יעודכן, ושם חדש יתווסף.
-      </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* list */}
-        <section className="max-h-[45dvh] min-w-0 overflow-auto rounded-xl border border-[var(--border)] bg-white lg:col-span-1 lg:max-h-none">
+        <section className="max-h-[45dvh] min-w-0 overflow-auto rounded-xl border border-[var(--border)] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:col-span-1 lg:max-h-none">
           {/* bulk action bar */}
           {selectedIds.size > 0 && (
             <div className="flex items-center justify-between gap-2 bg-gray-50 border-b border-[var(--border)] px-3 py-2 text-sm">
@@ -571,7 +587,7 @@ export default function BrandingPage() {
             </div>
           )}
           {loading ? (
-            <p className="p-4 text-[var(--muted)]">טוען...</p>
+            <p className="p-4 text-[var(--muted)]"><Spinner /></p>
           ) : brands.length === 0 ? (
             <p className="p-4 text-[var(--muted)] text-sm">אין מקומות עדיין.</p>
           ) : (
@@ -627,7 +643,14 @@ export default function BrandingPage() {
                         </div>
                       </td>
                       <td className="p-2" onClick={() => openBrand(b)}>
-                        <span className={`text-xs ${b.is_active ? 'text-green-600' : 'text-[var(--muted)]'}`}>
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
+                            b.is_active
+                              ? 'bg-green-50 text-green-700'
+                              : 'bg-gray-100 text-[var(--muted)]'
+                          }`}
+                        >
+                          <span className={`h-1.5 w-1.5 rounded-full ${b.is_active ? 'bg-green-500' : 'bg-gray-400'}`} />
                           {b.is_active ? 'פעיל' : 'כבוי'}
                         </span>
                       </td>
@@ -641,7 +664,7 @@ export default function BrandingPage() {
 
         {/* editor */}
         {selected && (
-          <section className="min-w-0 space-y-4 rounded-xl border border-[var(--border)] bg-white p-4 lg:col-span-2">
+          <section id="brand-editor" className="min-w-0 space-y-4 rounded-xl border border-[var(--border)] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:col-span-2">
             <div className="sticky top-[calc(var(--safe-top)+3.75rem)] z-20 -mx-4 -mt-4 flex flex-col gap-2 border-b border-[var(--border)] bg-white p-4 sm:static sm:mx-0 sm:mt-0 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:bg-transparent sm:p-0">
               <h2 className="font-semibold">{selected.id ? 'עריכת מקום' : 'מקום חדש'}</h2>
               <div className="flex flex-wrap gap-2">
@@ -888,7 +911,96 @@ export default function BrandingPage() {
             </div>
           </section>
         )}
+
+        {/* empty state — keeps the two-thirds column inviting instead of blank */}
+        {!selected && (
+          <section className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-white p-8 text-center shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:col-span-2">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand/5 text-brand">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" />
+                <path d="M12 2C6.5 2 2 6 2 11c0 4.4 3.6 8 8 8 1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.2 0-1.1.9-2 2-2h2.4c3.1 0 5.6-2.5 5.6-5.6C21 5.2 17 2 12 2Z" />
+              </svg>
+            </div>
+            <h2 className="text-lg font-semibold">בחרו מקום כדי לערוך</h2>
+            <p className="mt-1.5 max-w-sm text-sm leading-6 text-[var(--muted)]">
+              לחצו על מקום מהרשימה כדי לערוך את הלוגו, פלטת הצבעים, הנחיות הסגנון ומקורות התוכן — או צרו מקום חדש.
+            </p>
+            <button
+              onClick={() => openBrand(null)}
+              className="mt-5 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark"
+            >
+              + הוספת מקום
+            </button>
+          </section>
+        )}
       </div>
+
+      {csvModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-3 backdrop-blur-sm" dir="rtl" onPointerDown={() => setCsvModalOpen(false)}>
+          <div
+            className="flex w-full max-w-lg flex-col rounded-2xl bg-white shadow-2xl"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--border)] p-4">
+              <h2 className="text-lg font-bold">ניהול מקומות מרובים ב-CSV</h2>
+              <button type="button" onClick={() => setCsvModalOpen(false)} aria-label="סגירה" className="rounded-full p-1.5 hover:bg-gray-100 text-xl leading-none">×</button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-sm text-[var(--muted)] leading-relaxed">
+                ייצוא וייבוא ב-CSV מאפשרים לעדכן כמה מקומות בו-זמנית או ליצור גיבוי של הנתונים שלכם מחוץ למערכת.
+              </p>
+
+              <div className="space-y-3">
+                <div className="rounded-lg border border-[var(--border)] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-semibold text-sm">ייצוא נתונים</span>
+                    <button
+                      onClick={() => { exportAll(); setCsvModalOpen(false); }}
+                      disabled={!brands.length}
+                      className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold hover:bg-gray-200 disabled:opacity-50"
+                    >
+                      {selectedIds.size > 0 ? `ייצוא נבחרים (${selectedIds.size})` : 'ייצוא הכל'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-[var(--muted)]">הורדת המקומות הקיימים לקובץ. ניתן לערוך את הקובץ באקסל ולהעלות חזרה לעדכון מרוכז.</p>
+                </div>
+
+                <div className="rounded-lg border border-[var(--border)] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-semibold text-sm">ייבוא מ-CSV</span>
+                    <button
+                      onClick={() => csvRef.current?.click()}
+                      disabled={importing}
+                      className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
+                    >
+                      {importing ? 'מייבא...' : 'ייבוא CSV'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-[var(--muted)]">העלאת קובץ חדש או מעודכן. מקום עם שם שקיים במערכת יעודכן, ושם חדש יתווסף.</p>
+                </div>
+
+                <div className="rounded-lg border border-[var(--border)] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-semibold text-sm">קובץ לדוגמה</span>
+                    <button
+                      onClick={() => { downloadCsv('branding-template', brandCsvTemplate()); setCsvModalOpen(false); }}
+                      className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold hover:bg-gray-200"
+                    >
+                      הורדת תבנית
+                    </button>
+                  </div>
+                  <p className="text-xs text-[var(--muted)]">הורדת קובץ ריק עם העמודות הנדרשות כדי להתחיל להזין מקומות חדשים בקלות.</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-blue-50 p-3 text-xs text-blue-800 leading-5">
+                <strong>שימו לב:</strong> ייצוא/ייבוא כולל שם, שמות נרדפים, סטטוס, הנחיות סגנון, צבעי הפלטה ומקורות תוכן (עמודות source_1_title / source_1_content וכו'). לוגו ותמונות אינם נכללים ב-CSV.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {logoPreviewOpen && previews['__logo'] && (
         <div

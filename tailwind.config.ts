@@ -12,10 +12,11 @@ const config: Config = {
         // Brand color is driven by a runtime CSS variable so the whole app can be
         // themed to the user's single assigned brand (see useBrandTheme). The RGB
         // triplet + <alpha-value> form keeps opacity modifiers like `bg-brand/5`
-        // working. Falls back to the default blue (#1f6feb / #1a5fce).
+        // working. When NO single brand is assigned the fallback kicks in as a
+        // PrimeOS navy/blue pair, not the old generic saturated tech-blue.
         brand: {
-          DEFAULT: 'rgb(var(--brand-rgb, 31 111 235) / <alpha-value>)',
-          dark: 'rgb(var(--brand-dark-rgb, 26 95 206) / <alpha-value>)',
+          DEFAULT: 'rgb(var(--brand-rgb, 11 79 159) / <alpha-value>)',
+          dark: 'rgb(var(--brand-dark-rgb, 7 26 51) / <alpha-value>)',
         },
       },
     },

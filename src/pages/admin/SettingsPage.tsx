@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile, type ProfileGender } from '@/lib/useProfile';
+import { Spinner } from '@/components/ui/Spinner';
 
 type Settings = Record<string, any>;
 
@@ -72,7 +73,7 @@ export default function SettingsPage() {
   const requireOnboardingUploads = settings.onboarding_require_uploads === true;
   const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
-  if (loading) return <p className="text-[var(--muted)]">טוען...</p>;
+  if (loading) return <p className="text-[var(--muted)]"><Spinner /></p>;
 
   return (
     <div className="space-y-6">
