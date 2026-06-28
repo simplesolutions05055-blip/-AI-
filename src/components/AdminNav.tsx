@@ -44,7 +44,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'ניהול',
     links: [
       { href: '/admin/permissions', label: 'משתמשים והרשאות', adminOnly: true, icon: 'users' },
-      { href: '/admin/branding', label: 'מיתוג', adminOnly: true, icon: 'palette' },
+      { href: '/admin/branding', label: 'מיתוג', icon: 'palette' },
     ],
   },
   {
@@ -180,7 +180,7 @@ export function AdminBottomNav({
   // Mobile version: show branding instead of requests
   const mobileHrefs = isAdmin
     ? ['/admin', '/admin/production', '/admin/files', '/admin/branding']
-    : ['/admin/production', '/admin/files', '/admin/user-settings'];
+    : ['/admin/production', '/admin/files', '/admin/branding', '/admin/user-settings'];
 
   // Use mobile version which swaps requests for branding for better mobile UX
   const itemHrefs = mobileHrefs;

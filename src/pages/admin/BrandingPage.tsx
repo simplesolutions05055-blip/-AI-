@@ -11,6 +11,7 @@ import {
 } from '@/lib/brandCsv';
 import type { Brand, BrandAsset, BrandColor, BrandColorRole, BusinessTextSource } from '@/types/db';
 import { Spinner } from '@/components/ui/Spinner';
+import { useProfile } from '@/lib/useProfile';
 
 const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
@@ -22,6 +23,54 @@ const ROLE_LABEL: Record<BrandColorRole, string> = {
   text: 'טקסט',
 };
 
+const DOCUMENT_STYLE_LABEL: Record<NonNullable<Brand['document_style']>, string> = {
+  official: 'רשמי',
+  modern: 'מודרני',
+  municipal: 'עירוני / רשותי',
+  legal: 'משפטי',
+  commercial: 'מסחרי',
+};
+
+const DOCUMENT_USAGE_LABEL: Record<NonNullable<Brand['document_usage']>, string> = {
+  print: 'הדפסה',
+  digital: 'דיגיטלי',
+  both: 'הדפסה ודיגיטל',
+};
+
+const FONT_OPTIONS = [
+  { value: 'Assistant', label: 'Assistant' },
+  { value: 'Heebo', label: 'Heebo' },
+  { value: 'Noto Sans Hebrew', label: 'Noto Sans Hebrew' },
+  { value: 'Arial', label: 'Arial' },
+  { value: 'David', label: 'David' },
+  { value: 'FrankRuehl', label: 'FrankRuehl' },
+];
+
+const FORMAL_TEXT_FIELDS: Array<{
+  key: keyof Brand;
+  label: string;
+  placeholder?: string;
+  multiline?: boolean;
+  ltr?: boolean;
+}> = [
+  { key: 'official_name', label: 'שם הארגון הרשמי', placeholder: 'עיריית מגדל העמק / חברת לדוגמה בע"מ' },
+  { key: 'short_name', label: 'שם מקוצר / שם מותג', placeholder: 'מגדל העמק' },
+  { key: 'slogan', label: 'סלוגן רשמי', placeholder: 'צומחים. מתחדשים.' },
+  { key: 'department_name', label: 'שם מחלקה', placeholder: 'מנהל הכנסות / השירות הווטרינרי' },
+  { key: 'contact_person_name', label: 'שם איש קשר', placeholder: 'ישראל ישראלי' },
+  { key: 'contact_person_title', label: 'תפקיד איש קשר', placeholder: 'מנהל/ת המחלקה' },
+  { key: 'address', label: 'כתובת מלאה', placeholder: 'רחוב, מספר, עיר, מיקוד' },
+  { key: 'phone', label: 'טלפון', placeholder: '04-6507000', ltr: true },
+  { key: 'fax', label: 'פקס', placeholder: '04-6507222', ltr: true },
+  { key: 'email', label: 'אימייל', placeholder: 'office@example.co.il', ltr: true },
+  { key: 'website', label: 'אתר', placeholder: 'https://example.co.il', ltr: true },
+  { key: 'legal_id', label: 'ח.פ / עמותה / מזהה רשות', placeholder: '500000000', ltr: true },
+  { key: 'default_form_number', label: 'מספר טופס ברירת מחדל', placeholder: '012018', ltr: true },
+  { key: 'document_footer_text', label: 'נוסח פוטר קבוע', placeholder: 'כתובת, טלפון, פקס או משפט שירות קבוע', multiline: true },
+  { key: 'legal_disclaimer', label: 'נוסח משפטי / הצהרה קבועה', placeholder: 'הצהרה, תנאים, אחריות, אישור או התחייבות קבועה', multiline: true },
+  { key: 'signature_label', label: 'נוסח חתימה', placeholder: 'חתימת המבקש / חתימת מורשה חתימה' },
+];
+
 const emptyBrand = (): Partial<Brand> => ({
   name: '',
   aliases: [],
@@ -29,9 +78,15 @@ const emptyBrand = (): Partial<Brand> => ({
   style_notes: '',
   is_active: true,
   client_type: 'business',
+  show_brand_background: true,
+  show_contact_footer: true,
+  document_usage: 'print',
+  document_style: 'official',
 });
 
 export default function BrandingPage() {
+  const { profile } = useProfile();
+  const isAdmin = profile?.role === 'admin';
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Partial<Brand> | null>(null);
@@ -156,6 +211,10 @@ export default function BrandingPage() {
     setSelected((cur) => ({ ...(cur ?? {}), ...p }));
   }
 
+  function patchTextField(key: keyof Brand, value: string) {
+    patch({ [key]: value.trim() ? value : null } as Partial<Brand>);
+  }
+
   // ── color palette ──────────────────────────────────────────────────────────
   function addColor() {
     const palette = [...(selected?.color_palette ?? [])];
@@ -184,16 +243,48 @@ export default function BrandingPage() {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const row = {
-      name: selected.name.trim(),
-      aliases,
-      color_palette: selected.color_palette ?? [],
-      style_notes: selected.style_notes ?? null,
-      is_active: selected.is_active ?? true,
-      client_type: selected.client_type ?? 'business',
-      logo_path: selected.logo_path ?? null,
+    const formalRow = {
+      official_name: selected.official_name ?? null,
+      short_name: selected.short_name ?? null,
+      slogan: selected.slogan ?? null,
+      department_name: selected.department_name ?? null,
+      contact_person_name: selected.contact_person_name ?? null,
+      contact_person_title: selected.contact_person_title ?? null,
+      address: selected.address ?? null,
+      phone: selected.phone ?? null,
+      fax: selected.fax ?? null,
+      email: selected.email ?? null,
+      website: selected.website ?? null,
+      legal_id: selected.legal_id ?? null,
+      default_form_number: selected.default_form_number ?? null,
+      document_footer_text: selected.document_footer_text ?? null,
+      legal_disclaimer: selected.legal_disclaimer ?? null,
+      signature_label: selected.signature_label ?? null,
+      title_font_family: selected.title_font_family ?? null,
+      body_font_family: selected.body_font_family ?? null,
+      document_style: selected.document_style ?? null,
+      show_brand_background: selected.show_brand_background ?? true,
+      show_contact_footer: selected.show_contact_footer ?? true,
+      document_usage: selected.document_usage ?? 'print',
     };
+    const row = isAdmin
+      ? {
+          name: selected.name.trim(),
+          aliases,
+          color_palette: selected.color_palette ?? [],
+          style_notes: selected.style_notes ?? null,
+          is_active: selected.is_active ?? true,
+          client_type: selected.client_type ?? 'business',
+          logo_path: selected.logo_path ?? null,
+          ...formalRow,
+        }
+      : formalRow;
     let id = selected.id ?? null;
+    if (!isAdmin && !id) {
+      alert('משתמש רגיל יכול לערוך רק מותג קיים שהוקצה לו.');
+      setSaving(false);
+      return null;
+    }
     if (id) {
       const { data, error } = await db.from('brands').update(row as never).eq('id', id).select('id');
       if (error) {
@@ -363,6 +454,21 @@ export default function BrandingPage() {
   async function removeTextSource(source: BusinessTextSource) {
     await db.from('business_text_sources').delete().eq('id', source.id);
     setTextSources((cur) => cur.filter((x) => x.id !== source.id));
+  }
+
+  async function updateTextSource(source: BusinessTextSource, patchValues: Partial<Pick<BusinessTextSource, 'title' | 'content'>>) {
+    const title = patchValues.title?.trim();
+    const content = patchValues.content?.trim();
+    const payload: Partial<Pick<BusinessTextSource, 'title' | 'content'>> = {};
+    if (title !== undefined && title && title !== source.title) payload.title = title;
+    if (content !== undefined && content && content !== source.content) payload.content = content;
+    if (Object.keys(payload).length === 0) return;
+    const { error } = await db.from('business_text_sources').update(payload as never).eq('id', source.id);
+    if (error) {
+      alert('עדכון מקור התוכן נכשל: ' + error.message);
+      return;
+    }
+    setTextSources((cur) => cur.map((x) => (x.id === source.id ? { ...x, ...payload } : x)));
   }
 
   async function removeBrand(b: Brand) {
@@ -543,12 +649,15 @@ export default function BrandingPage() {
         <div className="min-w-0">
           <h1 className="text-[28px] font-bold leading-tight sm:text-2xl">מיתוג</h1>
           <p className="mt-1 max-w-xl text-sm leading-6 text-[var(--muted)]">
-            ניהול המקומות, הלוגו, פלטת הצבעים ומקורות התוכן שמהם המערכת מפיקה תוצרים.
+            {isAdmin
+              ? 'ניהול המקומות, הלוגו, פלטת הצבעים, פרטי המסמכים הרשמיים ומקורות התוכן שמהם המערכת מפיקה תוצרים.'
+              : 'עריכת פרטי המסמכים והטפסים הרשמיים של המותגים שהוקצו לך.'}
             {!loading && brands.length > 0 && (
               <span className="font-medium text-[var(--text)]"> · {brands.length} מקומות</span>
             )}
           </p>
         </div>
+        {isAdmin && (
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           <input
             ref={csvRef}
@@ -570,13 +679,14 @@ export default function BrandingPage() {
             הוספת מקום
           </button>
         </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* list */}
         <section className="max-h-[45dvh] min-w-0 overflow-auto rounded-xl border border-[var(--border)] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:col-span-1 lg:max-h-none">
           {/* bulk action bar */}
-          {selectedIds.size > 0 && (
+          {isAdmin && selectedIds.size > 0 && (
             <div className="flex items-center justify-between gap-2 bg-gray-50 border-b border-[var(--border)] px-3 py-2 text-sm">
               <span className="text-[var(--muted)]">נבחרו {selectedIds.size}</span>
               <div className="flex gap-3">
@@ -595,6 +705,7 @@ export default function BrandingPage() {
               <thead>
                 <tr className="text-[var(--muted)] border-b border-[var(--border)]">
                   <th className="p-2 w-8">
+                    {isAdmin && (
                     <input
                       type="checkbox"
                       checked={selectedIds.size === brands.length && brands.length > 0}
@@ -603,6 +714,7 @@ export default function BrandingPage() {
                       }}
                       onChange={toggleAll}
                     />
+                    )}
                   </th>
                   <th className="text-start p-2">מקום</th>
                   <th className="text-start p-2 w-16">סטטוס</th>
@@ -619,6 +731,7 @@ export default function BrandingPage() {
                       }`}
                     >
                       <td className="p-2 text-center">
+                        {isAdmin && (
                         <input
                           type="checkbox"
                           checked={checked}
@@ -635,6 +748,7 @@ export default function BrandingPage() {
                           onPointerUp={pressEnd}
                           onPointerLeave={pressEnd}
                         />
+                        )}
                       </td>
                       <td className="p-2 font-medium" onClick={() => openBrand(b)}>
                         <div className="flex items-center gap-2">
@@ -669,20 +783,24 @@ export default function BrandingPage() {
               <h2 className="font-semibold">{selected.id ? 'עריכת מקום' : 'מקום חדש'}</h2>
               <div className="flex flex-wrap gap-2">
                 {selected.id && (
+                  isAdmin && (
                   <button
                     onClick={() => exportOne(selected as Brand)}
                     className="text-xs text-brand px-3 py-2"
                   >
                     הורד CSV
                   </button>
+                  )
                 )}
                 {selected.id && (
+                  isAdmin && (
                   <button
                     onClick={() => removeBrand(selected as Brand)}
                     className="text-xs text-red-600 px-3 py-2"
                   >
                     מחיקה
                   </button>
+                  )
                 )}
                 <button onClick={save} className="rounded-lg bg-brand text-white px-4 py-2 text-sm font-semibold">
                   {saving ? 'שומר...' : saved ? 'נשמר ✓' : 'שמירה'}
@@ -692,9 +810,17 @@ export default function BrandingPage() {
 
             <label className="block">
               <span className="block text-sm font-medium mb-1">שם המקום</span>
-              <input className={input} dir="auto" value={selected.name ?? ''} onChange={(e) => patch({ name: e.target.value })} />
+              <input
+                className={input}
+                dir="auto"
+                value={selected.name ?? ''}
+                onChange={(e) => patch({ name: e.target.value })}
+                disabled={!isAdmin}
+              />
             </label>
 
+            {isAdmin && (
+            <>
             <label className="block">
               <span className="block text-sm font-medium mb-1">שמות נרדפים (מופרדים בפסיק)</span>
               <input
@@ -796,6 +922,122 @@ export default function BrandingPage() {
                 onChange={(e) => patch({ style_notes: e.target.value })}
               />
             </label>
+            </>
+            )}
+
+            <div className="rounded-lg border border-[var(--border)] p-3">
+              <div className="mb-3">
+                <span className="block text-sm font-semibold">מסמכים וטפסים רשמיים</span>
+                <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                  שדות אופציונליים לתבניות PDF רשמיות: טפסים, אישורים, הצהרות והוראות תשלום. השארת שדה ריק לא תחייב אותו בתוצר.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {FORMAL_TEXT_FIELDS.map((field) => {
+                  const raw = selected[field.key];
+                  const value = typeof raw === 'string' ? raw : '';
+                  const className = field.multiline ? `${input} h-24 text-right` : `${input} text-right`;
+                  return (
+                    <label key={String(field.key)} className={field.multiline ? 'block md:col-span-2' : 'block'}>
+                      <span className="mb-1 block text-sm font-medium">{field.label}</span>
+                      {field.multiline ? (
+                        <textarea
+                          className={className}
+                          dir="rtl"
+                          placeholder={field.placeholder}
+                          value={value}
+                          onChange={(e) => patchTextField(field.key, e.target.value)}
+                        />
+                      ) : (
+                        <input
+                          className={className}
+                          dir={field.ltr ? 'ltr' : 'auto'}
+                          style={{ textAlign: 'right' }}
+                          placeholder={field.placeholder}
+                          value={value}
+                          onChange={(e) => patchTextField(field.key, e.target.value)}
+                        />
+                      )}
+                    </label>
+                  );
+                })}
+
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium">סגנון מסמך</span>
+                  <select
+                    className={input}
+                    value={selected.document_style ?? ''}
+                    onChange={(e) => patch({ document_style: (e.target.value || null) as Brand['document_style'] })}
+                  >
+                    <option value="">לא הוגדר</option>
+                    {Object.entries(DOCUMENT_STYLE_LABEL).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium">פונט לכותרות</span>
+                  <select
+                    className={input}
+                    value={selected.title_font_family ?? ''}
+                    onChange={(e) => patch({ title_font_family: e.target.value || null })}
+                  >
+                    <option value="">ברירת מחדל</option>
+                    {FONT_OPTIONS.map((font) => (
+                      <option key={font.value} value={font.value}>{font.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium">פונט לטקסט רגיל</span>
+                  <select
+                    className={input}
+                    value={selected.body_font_family ?? ''}
+                    onChange={(e) => patch({ body_font_family: e.target.value || null })}
+                  >
+                    <option value="">ברירת מחדל</option>
+                    {FONT_OPTIONS.map((font) => (
+                      <option key={font.value} value={font.value}>{font.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium">שימוש עיקרי</span>
+                  <select
+                    className={input}
+                    value={selected.document_usage ?? ''}
+                    onChange={(e) => patch({ document_usage: (e.target.value || null) as Brand['document_usage'] })}
+                  >
+                    <option value="">לא הוגדר</option>
+                    {Object.entries(DOCUMENT_USAGE_LABEL).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selected.show_brand_background ?? true}
+                    onChange={(e) => patch({ show_brand_background: e.target.checked })}
+                  />
+                  להציג רקע / סימן מים מותגי במסמכים
+                </label>
+
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selected.show_contact_footer ?? true}
+                    onChange={(e) => patch({ show_contact_footer: e.target.checked })}
+                  />
+                  להציג פרטי קשר בפוטר
+                </label>
+              </div>
+            </div>
 
             {/* content brain */}
             <div className="rounded-lg border border-[var(--border)] p-3">
@@ -803,14 +1045,14 @@ export default function BrandingPage() {
                 <div>
                   <span className="block text-sm font-medium">אזור תוכן</span>
                   <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-                    חומרים שהמערכת לוקחת מהם מה להגיד בלבד. עיצוב, צבעים ופונטים מתוך המסמכים האלה לא ישפיעו על התוצר.
+                    חומרים שכל מי ששייך למותג יכול להוסיף ולערוך. המערכת משתמשת בהם לעובדות, מסרים, שירותים וניסוחים בכל התוצרים.
                   </p>
                 </div>
                 <div className="shrink-0">
                   <input
                     ref={textSourceRef}
                     type="file"
-                    accept=".txt,.md,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    accept=".txt,.md,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     className="hidden"
                     onChange={(e) => e.target.files?.[0] && uploadTextSource(e.target.files[0])}
                   />
@@ -853,14 +1095,22 @@ export default function BrandingPage() {
                   {textSources.map((source) => (
                     <div key={source.id} className="rounded-lg border border-[var(--border)] p-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium">{source.title}</span>
                         <button onClick={() => removeTextSource(source)} className="text-xs text-red-600">
                           מחיקה
                         </button>
                       </div>
-                      <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-[var(--muted)]">
-                        {source.content}
-                      </p>
+                      <input
+                        className={`${input} mt-2 text-xs font-medium`}
+                        dir="auto"
+                        defaultValue={source.title}
+                        onBlur={(e) => updateTextSource(source, { title: e.target.value })}
+                      />
+                      <textarea
+                        className={`${input} mt-2 h-24 text-xs leading-5`}
+                        dir="rtl"
+                        defaultValue={source.content}
+                        onBlur={(e) => updateTextSource(source, { content: e.target.value })}
+                      />
                     </div>
                   ))}
                 </div>
@@ -923,14 +1173,18 @@ export default function BrandingPage() {
             </div>
             <h2 className="text-lg font-semibold">בחרו מקום כדי לערוך</h2>
             <p className="mt-1.5 max-w-sm text-sm leading-6 text-[var(--muted)]">
-              לחצו על מקום מהרשימה כדי לערוך את הלוגו, פלטת הצבעים, הנחיות הסגנון ומקורות התוכן — או צרו מקום חדש.
+              {isAdmin
+                ? 'לחצו על מקום מהרשימה כדי לערוך את הלוגו, פלטת הצבעים, הנחיות הסגנון, פרטי הטפסים ומקורות התוכן — או צרו מקום חדש.'
+                : 'לא נמצאו מותגים שהוקצו לך. מנהל המערכת יכול לשייך אותך למותג כדי שתוכל לערוך את פרטי הטפסים שלו.'}
             </p>
+            {isAdmin && (
             <button
               onClick={() => openBrand(null)}
               className="mt-5 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark"
             >
               + הוספת מקום
             </button>
+            )}
           </section>
         )}
       </div>

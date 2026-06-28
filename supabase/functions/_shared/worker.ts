@@ -14,7 +14,7 @@ import {
 } from './util.ts';
 import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences } from './openai.ts';
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
-import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
+import { buildPdfHtml, renderPdfBase64, type PdfBrandSettings } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
 import { matchBrandInText, buildBusinessBrainContext, buildBrandDeliveryFooter, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
 import { buildSkillInstructions, applyBriefSkillGate } from './skills.ts';
@@ -27,6 +27,50 @@ import {
 } from './learning.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
+
+async function loadPdfBrandSettings(database: DB, brandId?: string | null): Promise<PdfBrandSettings | null> {
+  if (!brandId) return null;
+  const { data: brand } = await database
+    .from('brands')
+    .select([
+      'name',
+      'logo_path',
+      'color_palette',
+      'official_name',
+      'short_name',
+      'slogan',
+      'department_name',
+      'contact_person_name',
+      'contact_person_title',
+      'address',
+      'phone',
+      'fax',
+      'email',
+      'website',
+      'legal_id',
+      'default_form_number',
+      'document_footer_text',
+      'legal_disclaimer',
+      'signature_label',
+      'title_font_family',
+      'body_font_family',
+      'document_style',
+      'show_brand_background',
+      'show_contact_footer',
+      'document_usage',
+    ].join(','))
+    .eq('id', brandId)
+    .maybeSingle();
+  if (!brand) return null;
+  let logoUrl: string | null = null;
+  const logoPath = (brand as { logo_path?: string | null }).logo_path;
+  if (logoPath) {
+    const { data: signed } = await database.storage.from('branding').createSignedUrl(logoPath, 3600);
+    logoUrl = signed?.signedUrl ?? null;
+  }
+  const { logo_path: _logoPath, ...rest } = brand as Record<string, unknown>;
+  return { ...(rest as unknown as PdfBrandSettings), logo_url: logoUrl };
+}
 
 async function recordUsage(
   database: DB,
@@ -846,7 +890,7 @@ async function deliverContentToWhatsApp(
   database: DB,
   request: { id: string; brand_id?: string | null; structured_brief: Record<string, unknown> | null },
   conversation: Conv,
-  output: { output_type: string; text_content: string | null; storage_path: string | null; mime_type: string | null; version: number },
+  output: { id?: string; output_type: string; text_content: string | null; storage_path: string | null; mime_type: string | null; version: number },
   productionForm = false
 ): Promise<void> {
   const to = conversation.whatsapp_from;
@@ -879,11 +923,15 @@ async function deliverContentToWhatsApp(
   let contentType = output.mime_type ?? 'application/octet-stream';
   if (type === 'pdf') {
     try {
-      const html = buildPdfHtml({ title: caption, body: output.text_content ?? '', dateLabel: formatHebrewDate(new Date()) });
+      const brand = await loadPdfBrandSettings(database, request.brand_id);
+      const html = buildPdfHtml({ title: caption, body: output.text_content ?? '', dateLabel: formatHebrewDate(new Date()), brand });
       const b64 = await renderPdfBase64(html);
       path = `${request.id}/v${output.version}.pdf`;
       contentType = 'application/pdf';
       await database.storage.from('outputs').upload(path, decodeBase64(b64), { contentType, upsert: true });
+      if (output.id) {
+        await database.from('outputs').update({ storage_path: path, mime_type: contentType } as never).eq('id', output.id);
+      }
     } catch (e) {
       await logEvent(database, { requestId: request.id, severity: 'error', action: 'pdf_render_failed', message: String(e) });
     }
@@ -980,7 +1028,8 @@ export async function sendOutput(requestId: string): Promise<void> {
       contentBase64 = encodeBase64(new Uint8Array(await file!.arrayBuffer()));
       filename = 'image.png';
     } else {
-      const html = buildPdfHtml({ title, body: output.text_content ?? '', dateLabel: formatHebrewDate(new Date()) });
+      const brand = await loadPdfBrandSettings(database, request.brand_id as string | null);
+      const html = buildPdfHtml({ title, body: output.text_content ?? '', dateLabel: formatHebrewDate(new Date()), brand });
       contentBase64 = await renderPdfBase64(html);
       filename = 'document.pdf';
     }
