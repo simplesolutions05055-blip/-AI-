@@ -121,12 +121,14 @@ export default function AdminNav({
         </Link>
         <div className="ltr mt-2 truncate text-center text-xs text-[#526372]">{email}</div>
       </div>
-      <nav className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain pe-1">
+      <nav className={`flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pe-1 ${isAdmin ? 'gap-5' : 'gap-1.5'}`}>
         {sections.map((sec) => (
           <div key={sec.title}>
-            <div className="px-3 py-1.5 text-xs font-bold uppercase text-[#526372]">
-              {sec.title}
-            </div>
+            {isAdmin && (
+              <div className="px-3 py-1.5 text-xs font-bold uppercase text-[#526372]">
+                {sec.title}
+              </div>
+            )}
             <div className="flex flex-col gap-1">
               {sec.links.map((l) => {
                 const active = isActivePath(pathname, l.href);
