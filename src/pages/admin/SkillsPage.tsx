@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { genderCopy } from '@/lib/genderCopy';
+import { useProfile } from '@/lib/useProfile';
 import type { Skill, SkillVersion, SkillCategory, SkillEnforcement } from '@/types/db';
 
 const CATEGORIES: { key: SkillCategory; label: string }[] = [
@@ -61,6 +63,7 @@ const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm
 
 export default function SkillsPage() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const { profile } = useProfile();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [activeCat, setActiveCat] = useState<SkillCategory>('skill');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -113,6 +116,16 @@ export default function SkillsPage() {
 
   const selected = skills.find((s) => s.key === selectedKey) ?? null;
   const dirty = draft !== activeContent;
+  const notePrefix = genderCopy(profile?.gender, {
+    male: 'שים לב:',
+    female: 'שימי לב:',
+    neutral: 'חשוב לדעת:',
+  });
+  const saveEffectWarning = genderCopy(profile?.gender, {
+    male: 'גם לאחר שתשמור כאן גרסה חדשה — השינוי',
+    female: 'גם לאחר שתשמרי כאן גרסה חדשה — השינוי',
+    neutral: 'גם לאחר שמירת גרסה חדשה כאן — השינוי',
+  });
 
   async function saveNewVersion() {
     if (!selected || !dirty) return;
@@ -281,17 +294,17 @@ export default function SkillsPage() {
                 >
                   {selected.enforcement === 'code' ? (
                     <>
-                      <strong>שים לב:</strong> ההיגיון של רכיב זה מוטמע בקוד. עריכת הטקסט כאן היא תיעוד בלבד —
+                      <strong>{notePrefix}</strong> ההיגיון של רכיב זה מוטמע בקוד. עריכת הטקסט כאן היא תיעוד בלבד —
                       היא <strong>לא</strong> תשנה את ההתנהגות בפועל. לשינוי אמיתי נדרשת עריכה בקוד על ידי מפתח.
                     </>
                   ) : (
                     <>
-                      <strong>שים לב:</strong> חלק מההתנהגות מוטמע בקוד (שומר-סף). עריכת הטקסט תשנה רק את ההכוונה
+                      <strong>{notePrefix}</strong> חלק מההתנהגות מוטמע בקוד (שומר-סף). עריכת הטקסט תשנה רק את ההכוונה
                       הרכה של המודל; הכלל הקשיח נשאר בקוד.
                     </>
                   )}
                   <div className="mt-1.5">
-                    גם לאחר שתשמור כאן גרסה חדשה — השינוי <strong>לא ייכנס לתוקף</strong> עד שמפתח יטמיע אותו בקוד.
+                    {saveEffectWarning} <strong>לא ייכנס לתוקף</strong> עד שמפתח יטמיע אותו בקוד.
                   </div>
                   {CODE_REF[selected.key] && (
                     <div className="mt-1.5 text-xs opacity-90">

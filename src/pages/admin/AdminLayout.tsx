@@ -7,6 +7,7 @@ import { useProfile } from '@/lib/useProfile';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { needsOnboardingGate, shouldShowOnboardingBanner } from '@/lib/onboarding';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { genderCopy } from '@/lib/genderCopy';
 
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
 // further by can_create_outputs. Files is view-only for regular users.
@@ -85,7 +86,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <main className="grid min-h-[100dvh] place-items-center p-6 text-center">
           <div>
             <h1 className="mb-2 text-xl font-bold">אין לך עדיין הרשאת יצירת תוצרים</h1>
-            <p className="text-[var(--muted)]">פנה למנהל המערכת כדי שיפעיל עבורך את האפשרות.</p>
+            <p className="text-[var(--muted)]">
+              {genderCopy(profile.gender, {
+                male: 'פנה למנהל המערכת כדי שיפעיל עבורך את האפשרות.',
+                female: 'פני למנהל המערכת כדי שיפעיל עבורך את האפשרות.',
+                neutral: 'יש לפנות למנהל המערכת כדי להפעיל את האפשרות.',
+              })}
+            </p>
             <div className="mt-5 flex flex-col items-center gap-3">
               <div className="text-xs text-[var(--muted)] ltr">{profile.email}</div>
               <button

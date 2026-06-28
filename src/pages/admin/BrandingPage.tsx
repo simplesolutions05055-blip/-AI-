@@ -546,7 +546,7 @@ export default function BrandingPage() {
             {importing ? 'מייבא...' : 'ייבוא CSV'}
           </button>
           <button onClick={() => openBrand(null)} className="rounded-lg bg-brand text-white px-4 py-2 text-sm font-semibold">
-            הוסף מקום
+            הוספת מקום
           </button>
         </div>
       </div>
@@ -564,9 +564,9 @@ export default function BrandingPage() {
             <div className="flex items-center justify-between gap-2 bg-gray-50 border-b border-[var(--border)] px-3 py-2 text-sm">
               <span className="text-[var(--muted)]">נבחרו {selectedIds.size}</span>
               <div className="flex gap-3">
-                <button onClick={() => bulkSetActive(true)} className="text-brand">הפעל</button>
-                <button onClick={() => bulkSetActive(false)} className="text-[var(--muted)]">השבת</button>
-                <button onClick={bulkDelete} className="text-red-600">מחק</button>
+                <button onClick={() => bulkSetActive(true)} className="text-brand">הפעלה</button>
+                <button onClick={() => bulkSetActive(false)} className="text-[var(--muted)]">השבתה</button>
+                <button onClick={bulkDelete} className="text-red-600">מחיקה</button>
               </div>
             </div>
           )}
@@ -719,7 +719,7 @@ export default function BrandingPage() {
                 )}
                 <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadLogo(e.target.files[0])} />
                 <button type="button" onClick={() => logoRef.current?.click()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold text-brand hover:bg-gray-50">
-                  {previews['__logo'] ? 'החלף לוגו' : 'העלה לוגו'}
+                  {previews['__logo'] ? 'החלפת לוגו' : 'העלאת לוגו'}
                 </button>
                 {logoFile && (
                   <button type="button" onClick={() => extractColors(logoFile)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold text-brand hover:bg-gray-50 disabled:opacity-50" disabled={extracting}>
@@ -734,7 +734,7 @@ export default function BrandingPage() {
             <div>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-sm font-medium">פלטת צבעים</span>
-                <button onClick={addColor} className="text-xs text-brand">+ הוסף צבע</button>
+                <button onClick={addColor} className="text-xs text-brand">+ הוספת צבע</button>
               </div>
               <div className="space-y-2">
                 {(selected.color_palette ?? []).map((c, i) => (
@@ -795,7 +795,7 @@ export default function BrandingPage() {
                     onClick={() => textSourceRef.current?.click()}
                     className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-dark"
                   >
-                    + העלה מסמך תוכן
+                    + העלאת מסמך תוכן
                   </button>
                 </div>
               </div>
@@ -819,7 +819,7 @@ export default function BrandingPage() {
                   onClick={() => addTextSource(newSourceTitle, newSourceContent)}
                   className="self-end rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white"
                 >
-                  הוסף
+                  הוספה
                 </button>
               </div>
 
@@ -832,7 +832,7 @@ export default function BrandingPage() {
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium">{source.title}</span>
                         <button onClick={() => removeTextSource(source)} className="text-xs text-red-600">
-                          מחק
+                          מחיקה
                         </button>
                       </div>
                       <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-[var(--muted)]">
@@ -853,11 +853,11 @@ export default function BrandingPage() {
                   onClick={() => assetRef.current?.click()}
                   className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-dark"
                 >
-                  + העלה תמונה
+                  + העלאת תמונה
                 </button>
               </div>
               <p className="mb-2 text-xs text-[var(--muted)] leading-5">
-                התמונות שתעלה כאן (יחד עם הלוגו) ישמשו לעיצוב, השראה ויזואלית ושילוב בתוצרים — לא כמקור לעובדות או מסרים עסקיים.
+                התמונות שיועלו כאן (יחד עם הלוגו) ישמשו לעיצוב, השראה ויזואלית ושילוב בתוצרים — לא כמקור לעובדות או מסרים עסקיים.
                 בעת הפקת מצגת, יצורפו קישורים מאובטחים וזמניים לתמונות אלה, כך שניתן להוריד ולהכניס אותן ישירות.
                 מומלץ להוסיף תיאור קצר לכל תמונה (למשל "תמונת רחוב מרכזי", "אירוע עירוני") כדי שהמערכת תדע היכן לשבץ אותה.
               </p>
@@ -872,7 +872,7 @@ export default function BrandingPage() {
                         onClick={() => removeAsset(a)}
                         className="absolute top-1 left-1 bg-white/90 text-red-600 text-xs rounded px-1"
                       >
-                        מחק
+                        מחיקה
                       </button>
                       <input
                         className={`${input} mt-1 text-xs`}

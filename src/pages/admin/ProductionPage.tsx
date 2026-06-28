@@ -5,6 +5,7 @@ import { formatHebrewDate } from '@/lib/format';
 import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, plainTextFromBlocks } from '@/lib/richText';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
+import { genderCopy } from '@/lib/genderCopy';
 import ImagePickerModal from '@/components/ImagePickerModal';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
@@ -557,6 +558,7 @@ function QuoteReview({ quote }: { quote: Quote }) {
 }
 
 function ProductionPicker({ initialSelected = null }: { initialSelected?: ProductionType | 'quote' | null }) {
+  const { profile } = useProfile();
   const navigate = useNavigate();
   const [selected, setSelected] = useState<ProductionType | 'quote' | null>(initialSelected);
   const [description, setDescription] = useState('');
@@ -772,6 +774,16 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
     { key: 'quote', label: 'הצעת מחיר', icon: '💰', color: 'bg-[#FEF3C7]', to: 'quote' },
   ];
   const selectedPickerLabel = pickerChips.find((item) => !item.disabled && item.to === selected)?.label ?? null;
+  const uploadText = genderCopy(profile?.gender, {
+    male: 'העלה קובץ',
+    female: 'העלי קובץ',
+    neutral: 'העלאת קובץ',
+  });
+  const createText = genderCopy(profile?.gender, {
+    male: 'צור תוצר',
+    female: 'צרי תוצר',
+    neutral: 'יצירת תוצר',
+  });
   const recentOutputCategories: Array<{ key: string; label: string; bg: string; icon: string; type?: OutputType }> = [
     { key: 'image', type: 'image', label: 'תמונה/גרפיקה', bg: '#FEF3C7', icon: '🖼️' },
     { key: 'presentation', type: 'presentation', label: 'מצגת', bg: '#D1FAE5', icon: '📊' },
@@ -921,19 +933,19 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploadingText}
-                  title={uploadingText ? 'מעלה…' : 'העלה קובץ'}
-                  aria-label={uploadingText ? 'מעלה…' : 'העלה קובץ'}
+                  title={uploadingText ? 'מעלה…' : uploadText}
+                  aria-label={uploadingText ? 'מעלה…' : uploadText}
                   className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] border border-[#CBD5E1] bg-white px-3 py-2 text-[14px] font-bold text-[#334155] transition hover:border-brand/30 hover:bg-brand/5 hover:text-brand disabled:cursor-not-allowed disabled:opacity-60 lg:px-4"
                 >
                   <span className="text-[16px]" aria-hidden="true">📎</span>
-                  <span className="hidden lg:inline">{uploadingText ? 'מעלה…' : 'העלה קובץ'}</span>
+                  <span className="hidden lg:inline">{uploadingText ? 'מעלה…' : uploadText}</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleCreate}
                   disabled={description.trim().length === 0}
-                  title={selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}
-                  aria-label={selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}
+                  title={selected === 'quote' ? 'הכנת הצעת מחיר' : createText}
+                  aria-label={selected === 'quote' ? 'הכנת הצעת מחיר' : createText}
                   className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] px-3 py-2 text-[14px] font-bold text-white transition lg:px-5 ${
                     description.trim().length > 0
                       ? 'bg-brand shadow-sm hover:bg-brand/85'
@@ -941,7 +953,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   }`}
                 >
                   <SparkIcon className="h-4 w-4" />
-                  <span className="hidden lg:inline">{selected === 'quote' ? 'הכנת הצעת מחיר' : 'צור תוצר'}</span>
+                  <span className="hidden lg:inline">{selected === 'quote' ? 'הכנת הצעת מחיר' : createText}</span>
                 </button>
               </div>
               <div className="absolute bottom-4 left-4 text-left text-[11px] font-normal text-[#CBD5E1]">
@@ -1128,6 +1140,11 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   const brandSelectRef = useRef<HTMLSelectElement | null>(null);
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
+  const setOpenAiKeyText = genderCopy(profile?.gender, {
+    male: 'שים מפתח OpenAI חד-פעמי',
+    female: 'שימי מפתח OpenAI חד-פעמי',
+    neutral: 'הגדרת מפתח OpenAI חד-פעמי',
+  });
 
   // We send the free text (plus the brand's business brain + palette) to the
   // build-brief function for a full AI-analysed brief, then jump straight to the
@@ -1493,7 +1510,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
               className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
             >
               <SparkIcon className="h-3.5 w-3.5" />
-              {getSessionOpenAiKey() ? 'החלפת המפתח החד-פעמי' : 'שים מפתח OpenAI חד-פעמי'}
+              {getSessionOpenAiKey() ? 'החלפת המפתח החד-פעמי' : setOpenAiKeyText}
             </button>
           )}
         </div>
@@ -1520,7 +1537,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           <div className="flex flex-wrap items-center justify-center gap-3">
             <button type="button" onClick={() => setKeyModalOpen(true)} className={`${PRIMARY_BUTTON} w-fit`}>
               <SparkIcon className="h-4 w-4" />
-              שים מפתח OpenAI חד-פעמי
+              {setOpenAiKeyText}
             </button>
             <Link to="/admin/production" className={`${SECONDARY_BUTTON} w-fit`}>
               חזרה לבחירת תוצר
@@ -1537,6 +1554,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           onClose={() => setKeyModalOpen(false)}
           onSave={saveKeyAndRetry}
           hasExisting={!!getSessionOpenAiKey()}
+          gender={profile?.gender}
         />
       )}
 
@@ -2483,10 +2501,12 @@ function OpenAiKeyModal({
   onClose,
   onSave,
   hasExisting,
+  gender,
 }: {
   onClose: () => void;
   onSave: (key: string) => void;
   hasExisting: boolean;
+  gender?: 'male' | 'female' | null;
 }) {
   const [value, setValue] = useState('');
   return (
@@ -2501,7 +2521,12 @@ function OpenAiKeyModal({
       >
         <h2 className="mb-2 text-lg font-bold">מפתח OpenAI חד-פעמי</h2>
         <p className="mb-4 text-sm text-[var(--muted)]">
-          המפתח נשמר לסשן הדפדפן הזה בלבד ומשמש את ההפקה הנוכחית. כשתסגור את החלון/הדפדפן הוא יימחק
+          המפתח נשמר לסשן הדפדפן הזה בלבד ומשמש את ההפקה הנוכחית.{' '}
+          {genderCopy(gender, {
+            male: 'כשתסגור את החלון/הדפדפן הוא יימחק',
+            female: 'כשתסגרי את החלון/הדפדפן הוא יימחק',
+            neutral: 'בסגירת החלון/הדפדפן הוא יימחק',
+          })}{' '}
           והמערכת תחזור למפתח הרגיל של הפרויקט. המפתח לא נשמר בשרת.
         </p>
         <input

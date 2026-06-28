@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useProfile, type ProfileGender } from '@/lib/useProfile';
 
 type Settings = Record<string, any>;
 
@@ -13,9 +14,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export default function SettingsPage() {
+  const { profile } = useProfile();
   const [settings, setSettings] = useState<Settings>({});
+  const [profileGender, setProfileGender] = useState<ProfileGender | ''>('');
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setProfileGender(profile?.gender ?? '');
+  }, [profile?.gender]);
 
   useEffect(() => {
     createSupabaseBrowserClient()
@@ -40,8 +47,11 @@ export default function SettingsPage() {
     await Promise.all(
       Object.entries(settings).map(([key, value]) =>
         db.from('settings').upsert({ key, value_json: value } as never, { onConflict: 'key' })
-      )
+      ),
     );
+    if (profile?.id && profileGender) {
+      await db.from('profiles').update({ gender: profileGender } as never).eq('id', profile.id);
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
@@ -91,6 +101,27 @@ export default function SettingsPage() {
 
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
         <h2 className="font-semibold mb-3">הרשמה</h2>
+        <div className="mb-4 border-b border-[var(--border)] pb-4">
+          <div className="mb-1 text-sm font-medium">לשון פנייה אישית</div>
+          <p className="mb-3 text-xs text-[var(--muted)]">
+            בחירה זו קובעת אם טקסטים שפונים אליך ביחיד יוצגו בלשון זכר או נקבה.
+          </p>
+          <div className="grid max-w-md grid-cols-2 gap-2">
+            <GenderOption
+              value="male"
+              selected={profileGender}
+              onChange={setProfileGender}
+              label="זכר"
+            />
+            <GenderOption
+              value="female"
+              selected={profileGender}
+              onChange={setProfileGender}
+              label="נקבה"
+            />
+          </div>
+        </div>
+
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -114,7 +145,7 @@ export default function SettingsPage() {
         </label>
         <p className="text-xs text-[var(--muted)] mt-2">
           כשמופעל, משתמש עם מותג משויך חייב להעלות לפחות מסמך אחד וקובץ אחד בשלבי האונבורדינג לפני
-          הכניסה למערכת. פרטי המשתמש (שם, טלפון, תפקיד) הם תמיד חובה.
+          הכניסה למערכת. שם מלא ולשון פנייה הם תמיד חובה; טלפון ותפקיד הם אופציונליים.
         </p>
       </section>
 
@@ -243,5 +274,38 @@ export default function SettingsPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function GenderOption({
+  value,
+  selected,
+  onChange,
+  label,
+}: {
+  value: ProfileGender;
+  selected: ProfileGender | '';
+  onChange: (value: ProfileGender) => void;
+  label: string;
+}) {
+  const active = selected === value;
+  return (
+    <label
+      className={`flex min-h-11 cursor-pointer items-center justify-center rounded-lg border px-3 py-2 text-sm font-semibold ${
+        active
+          ? 'border-brand bg-brand/10 text-brand'
+          : 'border-[var(--border)] bg-white text-[var(--text)] hover:bg-gray-50'
+      }`}
+    >
+      <input
+        type="radio"
+        name="profile_gender"
+        value={value}
+        checked={active}
+        onChange={() => onChange(value)}
+        className="sr-only"
+      />
+      {label}
+    </label>
   );
 }
