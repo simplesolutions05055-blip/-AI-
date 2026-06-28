@@ -7,11 +7,11 @@ import AdminLayout from '@/pages/admin/AdminLayout';
 import DashboardPage from '@/pages/admin/DashboardPage';
 import RequestsCostsPage from '@/pages/admin/RequestsCostsPage';
 import SettingsPage from '@/pages/admin/SettingsPage';
+import UserSettingsPage from '@/pages/admin/UserSettingsPage';
 import SimulatorPage from '@/pages/admin/SimulatorPage';
 import FilesPage from '@/pages/admin/FilesPage';
 import ModelsPage from '@/pages/admin/ModelsPage';
 import SkillsPage from '@/pages/admin/SkillsPage';
-import ConversationsPage from '@/pages/admin/ConversationsPage';
 import BrandingPage from '@/pages/admin/BrandingPage';
 import ProductionPage from '@/pages/admin/ProductionPage';
 import QuotePage from '@/pages/admin/QuotePage';
@@ -33,7 +33,7 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="requests" element={<RequestsCostsPage />} />
           <Route path="costs" element={<RequestsCostsPage />} />
-          <Route path="conversations" element={<ConversationsPage />} />
+          <Route path="conversations" element={<Navigate to="/admin" replace />} />
           <Route path="production" element={<ProductionPage />} />
           <Route path="production/:type" element={<ProductionPage />} />
           <Route path="quote" element={<QuotePage />} />
@@ -46,6 +46,7 @@ export default function App() {
           <Route path="permissions" element={<PermissionsPage />} />
           <Route path="errors" element={<ErrorsPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="user-settings" element={<UserSettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

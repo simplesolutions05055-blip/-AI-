@@ -6,11 +6,14 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { Tooltip } from '@/components/ui/Tooltip';
 import type { OutputType, RequestStatus } from '@/types/db';
 import { Spinner } from '@/components/ui/Spinner';
-import { Image as ImageIcon, FileText, Presentation, File } from 'lucide-react';
+import { Image as ImageIcon, FileText, Presentation, File, X } from 'lucide-react';
 
 // How many users the
 // per-user chart shows before collapsing the rest into "אחרים".
 const TOP_USERS = 8;
+const DRILLDOWN_LIMIT = 80;
+
+type KpiKey = 'requests' | 'cost' | 'outputs' | 'waiting';
 
 type OutputRow = {
   created_at: string;
@@ -30,6 +33,58 @@ type RecentFileRow = {
   requests: { structured_brief: { source?: string | null } | null } | null;
 };
 
+type KpiCard = {
+  key: KpiKey;
+  label: string;
+  value: string | number;
+  ltr?: boolean;
+  subtext: string;
+};
+
+type RequestDrillRow = {
+  id: string;
+  customer_email: string | null;
+  output_type: OutputType | null;
+  status: RequestStatus;
+  estimated_cost: number;
+  created_at: string;
+  conversations: { whatsapp_from: string | null } | null;
+};
+
+type OutputDrillRow = {
+  id: string;
+  request_id: string;
+  output_type: OutputType;
+  model_name: string | null;
+  estimated_cost: number;
+  created_at: string;
+  requests: {
+    customer_email: string | null;
+    conversations: { whatsapp_from: string | null } | null;
+  } | null;
+};
+
+type CostDrillRow = {
+  id: string;
+  provider: string;
+  model: string | null;
+  input_units: number;
+  output_units: number;
+  estimated_cost: number;
+  created_at: string;
+  requests: {
+    customer_email: string | null;
+    output_type: OutputType | null;
+    conversations: { whatsapp_from: string | null } | null;
+  } | null;
+};
+
+type DrilldownData = {
+  requests: RequestDrillRow[];
+  outputs: OutputDrillRow[];
+  costs: CostDrillRow[];
+};
+
 export default function DashboardPage() {
   const [statusRows, setStatusRows] = useState<Array<{ status: RequestStatus }>>([]);
   const [periodReqsCount, setPeriodReqsCount] = useState(0);
@@ -45,6 +100,7 @@ export default function DashboardPage() {
   });
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [timeFilter, setTimeFilter] = useState<number>(14);
+  const [activeKpi, setActiveKpi] = useState<KpiKey | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -52,10 +108,7 @@ export default function DashboardPage() {
     const db = createSupabaseBrowserClient();
     // Removed todayIso since it's no longer used for the top metrics.
 
-    const windowStart = new Date();
-    windowStart.setHours(0, 0, 0, 0);
-    windowStart.setDate(windowStart.getDate() - (timeFilter - 1));
-    const windowIso = windowStart.toISOString();
+    const windowIso = getWindowIso(timeFilter);
 
     // Rich select needs the created_by column + profiles relationship. Until the
     // migration is applied that select errors out wholesale, so fall back to a
@@ -144,11 +197,10 @@ export default function DashboardPage() {
   const daily = buildDailySeries(outputRows, timeFilter);
   const perUser = buildPerUserSeries(outputRows);
 
-  const cards = [
-    { label: 'בקשות בתקופה', value: periodReqsCount, subtext: `סה״כ: ${totals.requests}` },
-    { label: 'עלות בתקופה', value: formatUsd(periodCost), ltr: true, subtext: `סה״כ: ${formatUsd(totals.cost)}` },
-    { label: 'תוצרים בתקופה', value: periodOutputsCount, subtext: `סה״כ: ${totals.outputs}` },
-    { label: 'ממתינות (נוצרו בתקופה)', value: byStatus.waiting_for_approval ?? 0, subtext: `סה״כ ממתינות: ${totals.waiting}` },
+  const cards: KpiCard[] = [
+    { key: 'requests', label: 'בקשות בתקופה', value: periodReqsCount, subtext: `סה״כ: ${totals.requests}` },
+    { key: 'cost', label: 'עלות בתקופה', value: formatUsd(periodCost), ltr: true, subtext: `סה״כ: ${formatUsd(totals.cost)}` },
+    { key: 'outputs', label: 'תוצרים בתקופה', value: periodOutputsCount, subtext: `סה״כ: ${totals.outputs}` },
   ];
 
   if (loading) return <p className="text-[var(--muted)]"><Spinner /></p>;
@@ -172,11 +224,17 @@ export default function DashboardPage() {
 
       <section className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4 lg:mb-8">
         {cards.map((card) => (
-          <div key={card.label} className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-3 sm:p-4 flex flex-col">
+          <button
+            key={card.key}
+            type="button"
+            onClick={() => setActiveKpi(card.key)}
+            className="flex min-w-0 flex-col rounded-xl border border-[var(--border)] bg-white p-3 text-right transition hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand/30 sm:p-4"
+            aria-haspopup="dialog"
+          >
             <div className="mb-1 truncate text-sm text-[var(--muted)]">{card.label}</div>
             <div className={`truncate text-[26px] font-bold leading-tight sm:text-2xl ${card.ltr ? 'ltr max-w-full' : ''}`}>{card.value}</div>
             <div className="mt-1 text-[11px] text-[var(--muted)] font-medium ltr text-right">{card.subtext}</div>
-          </div>
+          </button>
         ))}
       </section>
 
@@ -263,9 +321,258 @@ export default function DashboardPage() {
         </div>
       </section>
 
+      {activeKpi && (
+        <KpiDrilldownModal
+          kpi={activeKpi}
+          cards={cards}
+          timeFilter={timeFilter}
+          onClose={() => setActiveKpi(null)}
+        />
+      )}
 
     </div>
   );
+}
+
+function getWindowIso(timeFilter: number): string {
+  const windowStart = new Date();
+  windowStart.setHours(0, 0, 0, 0);
+  windowStart.setDate(windowStart.getDate() - (timeFilter - 1));
+  return windowStart.toISOString();
+}
+
+function KpiDrilldownModal({
+  kpi,
+  cards,
+  timeFilter,
+  onClose,
+}: {
+  kpi: KpiKey;
+  cards: KpiCard[];
+  timeFilter: number;
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<DrilldownData>({ requests: [], outputs: [], costs: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const card = cards.find((item) => item.key === kpi);
+  const title = card?.label ?? 'פירוט';
+  const windowLabel = timeFilter === 1 ? 'היום האחרון' : `${timeFilter} ימים אחרונים`;
+
+  useEffect(() => {
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const db = createSupabaseBrowserClient();
+    const windowIso = getWindowIso(timeFilter);
+    setLoading(true);
+    setError(null);
+
+    const requestsQuery = db
+      .from('requests')
+      .select('id, customer_email, output_type, status, estimated_cost, created_at, conversations!requests_conversation_id_fkey(whatsapp_from)')
+      .gte('created_at', windowIso)
+      .order('created_at', { ascending: false })
+      .limit(DRILLDOWN_LIMIT);
+    const waitingQuery = db
+      .from('requests')
+      .select('id, customer_email, output_type, status, estimated_cost, created_at, conversations!requests_conversation_id_fkey(whatsapp_from)')
+      .gte('created_at', windowIso)
+      .eq('status', 'waiting_for_approval')
+      .order('created_at', { ascending: false })
+      .limit(DRILLDOWN_LIMIT);
+    const outputsQuery = db
+      .from('outputs')
+      .select('id, request_id, output_type, model_name, estimated_cost, created_at, requests(customer_email, conversations!requests_conversation_id_fkey(whatsapp_from))')
+      .gte('created_at', windowIso)
+      .order('created_at', { ascending: false })
+      .limit(DRILLDOWN_LIMIT);
+    const costsQuery = db
+      .from('usage_events')
+      .select('id, provider, model, input_units, output_units, estimated_cost, created_at, requests(customer_email, output_type, conversations!requests_conversation_id_fkey(whatsapp_from))')
+      .gte('created_at', windowIso)
+      .order('created_at', { ascending: false })
+      .limit(DRILLDOWN_LIMIT);
+
+    const query =
+      kpi === 'outputs' ? outputsQuery :
+        kpi === 'cost' ? costsQuery :
+          kpi === 'waiting' ? waitingQuery :
+            requestsQuery;
+
+    query.then(({ data: rows, error: queryError }) => {
+      if (cancelled) return;
+      if (queryError) {
+        console.error('Dashboard KPI drilldown query failed:', queryError.message);
+        setError('לא ניתן לטעון את הפירוט כרגע.');
+        setLoading(false);
+        return;
+      }
+      setData({
+        requests: kpi === 'requests' || kpi === 'waiting' ? (rows ?? []) as unknown as RequestDrillRow[] : [],
+        outputs: kpi === 'outputs' ? (rows ?? []) as unknown as OutputDrillRow[] : [],
+        costs: kpi === 'cost' ? (rows ?? []) as unknown as CostDrillRow[] : [],
+      });
+      setLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [kpi, timeFilter]);
+
+  const rowsCount = kpi === 'outputs' ? data.outputs.length : kpi === 'cost' ? data.costs.length : data.requests.length;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-3 py-4 backdrop-blur-sm"
+      dir="rtl"
+      onPointerDown={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="kpi-drilldown-title"
+        className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-4 py-4 sm:px-5">
+          <div className="min-w-0">
+            <h2 id="kpi-drilldown-title" className="text-lg font-bold text-[var(--text)]">{title}</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              {windowLabel} · מוצגות עד {DRILLDOWN_LIMIT} רשומות אחרונות
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="סגירה"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--muted)] transition hover:bg-gray-100 hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-brand/30"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          {loading ? (
+            <div className="flex min-h-44 items-center justify-center text-[var(--muted)]"><Spinner /></div>
+          ) : error ? (
+            <p className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</p>
+          ) : rowsCount === 0 ? (
+            <p className="rounded-xl border border-[var(--border)] bg-gray-50 p-4 text-sm text-[var(--muted)]">אין רשומות להצגה בטווח הזה.</p>
+          ) : kpi === 'cost' ? (
+            <CostDrilldownTable rows={data.costs} />
+          ) : kpi === 'outputs' ? (
+            <OutputDrilldownTable rows={data.outputs} />
+          ) : (
+            <RequestDrilldownTable rows={data.requests} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RequestDrilldownTable({ rows }: { rows: RequestDrillRow[] }) {
+  return (
+    <DrilldownTable
+      headers={['תאריך', 'לקוח', 'סוג', 'סטטוס', 'עלות', 'מזהה']}
+      rows={rows.map((row) => [
+        <span className="ltr text-start">{formatHebrewDate(row.created_at)}</span>,
+        <CustomerCell email={row.customer_email} source={row.conversations?.whatsapp_from} />,
+        row.output_type ? OUTPUT_LABEL[row.output_type] : '-',
+        <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${STATUS_COLOR[row.status]}`}>{STATUS_LABEL[row.status]}</span>,
+        <span className="ltr text-start tabular-nums">{formatUsd(Number(row.estimated_cost ?? 0))}</span>,
+        <span className="font-mono text-xs ltr text-start">{shortId(row.id)}</span>,
+      ])}
+    />
+  );
+}
+
+function OutputDrilldownTable({ rows }: { rows: OutputDrillRow[] }) {
+  return (
+    <DrilldownTable
+      headers={['תאריך', 'לקוח', 'סוג תוצר', 'מודל', 'עלות', 'מזהה']}
+      rowHrefs={rows.map((row) => `/admin/files/${row.request_id}/revise`)}
+      rows={rows.map((row) => [
+        <span className="ltr text-start">{formatHebrewDate(row.created_at)}</span>,
+        <CustomerCell email={row.requests?.customer_email} source={row.requests?.conversations?.whatsapp_from} />,
+        OUTPUT_LABEL[row.output_type],
+        <span className="ltr text-start">{row.model_name ?? '-'}</span>,
+        <span className="ltr text-start tabular-nums">{formatUsd(Number(row.estimated_cost ?? 0))}</span>,
+        <span className="font-mono text-xs ltr text-start">{shortId(row.id)}</span>,
+      ])}
+    />
+  );
+}
+
+function CostDrilldownTable({ rows }: { rows: CostDrillRow[] }) {
+  return (
+    <DrilldownTable
+      headers={['תאריך', 'לקוח', 'ספק', 'מודל', 'יחידות', 'עלות']}
+      rows={rows.map((row) => [
+        <span className="ltr text-start">{formatHebrewDate(row.created_at)}</span>,
+        <CustomerCell email={row.requests?.customer_email} source={row.requests?.conversations?.whatsapp_from} />,
+        <span className="ltr text-start">{row.provider}</span>,
+        <span className="ltr text-start">{row.model ?? '-'}</span>,
+        <span className="ltr text-start tabular-nums">{Number(row.input_units ?? 0).toLocaleString()} / {Number(row.output_units ?? 0).toLocaleString()}</span>,
+        <span className="ltr text-start font-semibold tabular-nums">{formatUsd(Number(row.estimated_cost ?? 0))}</span>,
+      ])}
+    />
+  );
+}
+
+function DrilldownTable({ headers, rows, rowHrefs }: { headers: string[]; rows: React.ReactNode[][]; rowHrefs?: string[] }) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+      <table className="min-w-full divide-y divide-[var(--border)] text-sm">
+        <thead className="bg-gray-50">
+          <tr>
+            {headers.map((header) => (
+              <th key={header} className="whitespace-nowrap px-3 py-3 text-start text-xs font-bold text-[var(--muted)]">
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--border)] bg-white">
+          {rows.map((cells, rowIndex) => (
+            <tr key={rowIndex} className={rowHrefs?.[rowIndex] ? 'cursor-pointer hover:bg-gray-50' : 'hover:bg-gray-50'}>
+              {cells.map((cell, cellIndex) => (
+                <td key={cellIndex} className="max-w-[220px] whitespace-nowrap px-3 py-3 align-middle">
+                  {rowHrefs?.[rowIndex] ? (
+                    <Link
+                      to={rowHrefs[rowIndex]}
+                      className="block min-h-6 text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-brand/30"
+                    >
+                      {cell}
+                    </Link>
+                  ) : (
+                    cell
+                  )}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CustomerCell({ email, source }: { email?: string | null; source?: string | null }) {
+  const label = email ?? senderLabel(source);
+  return <span className="block max-w-[220px] truncate ltr text-start">{label}</span>;
+}
+
+function shortId(id: string): string {
+  return id.slice(0, 8);
 }
 
 // ─── daily outputs ──────────────────────────────────────────────────────────

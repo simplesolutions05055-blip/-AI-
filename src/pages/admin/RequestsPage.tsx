@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { STATUS_COLOR, STATUS_LABEL, OUTPUT_LABEL, senderLabel } from '@/lib/labels';
 import { formatHebrewDateTime, formatUsd } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -173,11 +172,7 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
                 <div className="mt-0.5 text-sm text-[var(--muted)]">{briefDetail(row.structured_brief)}</div>
               )}
               <div className="mt-1 truncate text-sm ltr text-[var(--muted)]">
-                {row.conversation_id ? (
-                  <Link to={`/admin/conversations?id=${encodeURIComponent(row.conversation_id)}`} className="text-blue-600" onClick={(e) => e.stopPropagation()}>
-                    {row.customer_email ?? senderLabel(row.conversations?.whatsapp_from)}
-                  </Link>
-                ) : (row.customer_email ?? senderLabel(row.conversations?.whatsapp_from))}
+                {row.customer_email ?? senderLabel(row.conversations?.whatsapp_from)}
               </div>
               <div className="mt-3 border-t border-[var(--border)] pt-2 flex items-baseline gap-2 text-sm">
                 <span className="font-semibold ltr">{formatUsd(cost)}</span>

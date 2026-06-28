@@ -130,6 +130,8 @@
 2. Implement Supabase auth עם session management
 3. Real-time updates דרך Supabase subscriptions
 4. Optimize images ו-fonts לפי Vercel best practices
+5. בכל Modal / Dialog / Bottom-sheet: חובה לאפשר סגירה עם `Escape`, סגירה בלחיצה על הרקע מחוץ לתוכן, כפתור X גלוי עם `aria-label="סגירה"`, ולמנוע סגירה מלחיצה בתוך תוכן המודאל.
+6. במודאלים בעברית: להשתמש ב-`dir="rtl"`, `role="dialog"` ו-`aria-modal="true"` כאשר המודאל חוסם את המסך.
 
 ### Fullstack (Next.js)
 1. API Routes בـ `app/api/` עם Backend patterns

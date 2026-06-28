@@ -15,6 +15,7 @@ import {
   Settings,
   Sparkles,
   Users,
+  UserCog,
 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
@@ -22,6 +23,7 @@ interface NavLink {
   href: string;
   label: string;
   adminOnly?: boolean;
+  userOnly?: boolean;
   icon: NavIconName;
 }
 
@@ -56,7 +58,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'ניטור',
     links: [
       { href: '/admin/requests', label: 'בקשות', adminOnly: true, icon: 'inbox' },
-      { href: '/admin/conversations', label: 'שיחות', adminOnly: true, icon: 'messages' },
+      // { href: '/admin/conversations', label: 'שיחות', adminOnly: true, icon: 'messages' },
       { href: '/admin/errors', label: 'שגיאות', adminOnly: true, icon: 'alert' },
     ],
   },
@@ -66,17 +68,19 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/admin/models', label: 'מודלים', adminOnly: true, icon: 'cpu' },
       { href: '/admin/skills', label: 'סקילים', adminOnly: true, icon: 'puzzle' },
       { href: '/admin/settings', label: 'הגדרות', adminOnly: true, icon: 'gear' },
+      { href: '/admin/user-settings', label: 'הגדרות', userOnly: true, icon: 'userSettings' },
     ],
   },
 ];
 
-type NavIconName = 'spark' | 'users' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu';
+type NavIconName = 'spark' | 'users' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings';
 
 function visibleSections(isAdmin: boolean, canCreateOutputs: boolean) {
   return NAV_SECTIONS.map((sec) => ({
     title: sec.title,
     links: sec.links.filter((l) => {
       if (l.adminOnly && !isAdmin) return false;
+      if (l.userOnly && isAdmin) return false;
       if (l.href === '/admin/production' && !isAdmin && !canCreateOutputs) return false;
       return true;
     }),
@@ -146,7 +150,7 @@ export default function AdminNav({
       </nav>
       <button
         onClick={logout}
-        className="mt-auto flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-start text-sm text-[#526372] transition hover:bg-[#fdebec] hover:text-[#9f2840]"
+        className="mt-3 flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-start text-sm text-[#526372] transition hover:bg-[#fdebec] hover:text-[#9f2840]"
       >
         <NavIcon name="logout" className="h-4 w-4 shrink-0" />
         יציאה
@@ -174,7 +178,7 @@ export function AdminBottomNav({
   // Mobile version: show branding instead of requests
   const mobileHrefs = isAdmin
     ? ['/admin', '/admin/production', '/admin/files', '/admin/branding']
-    : ['/admin/production', '/admin/files'];
+    : ['/admin/production', '/admin/files', '/admin/user-settings'];
 
   // Use mobile version which swaps requests for branding for better mobile UX
   const itemHrefs = mobileHrefs;
@@ -237,6 +241,7 @@ function NavIcon({ name, className = 'h-4 w-4' }: { name: NavIconName; active?: 
     puzzle: Puzzle,
     spark: Sparkles,
     users: Users,
+    userSettings: UserCog,
   } satisfies Record<NavIconName, typeof Sparkles>;
 
   const Icon = icons[name];

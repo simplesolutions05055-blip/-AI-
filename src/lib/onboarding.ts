@@ -31,6 +31,7 @@ export function shouldShowOnboardingBanner(
   requireUploads: boolean,
 ): boolean {
   if (profile.role === 'admin') return false;
+  if (profile.onboarding?.banner_dismissed_at) return false;
   return (
     !needsOnboardingGate(profile, hasBrand, requireUploads) &&
     !isOnboardingComplete(profile, hasBrand)

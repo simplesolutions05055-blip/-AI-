@@ -238,6 +238,11 @@ Deployment ל-Vercel
 
 ### Authentication
 - ✅ Use Anon Key בבראוזר (safe with RLS)
+
+### Frontend / UX
+- ✅ כל Modal / Dialog / Bottom-sheet חייב לכלול סגירה עם מקש `Escape`, סגירה בלחיצה על הרקע מחוץ לתוכן, וכפתור סגירה גלוי עם `aria-label="סגירה"`.
+- ✅ לחיצה בתוך תוכן המודאל לא תסגור אותו; רק הרקע החיצוני או פעולת סגירה מפורשת.
+- ✅ מודאלים בעברית חייבים להיות `dir="rtl"`, עם `role="dialog"` ו-`aria-modal="true"` כשהם חוסמים את המסך.
 - ✅ Use Service Role Key בserver בלבד
 - ✅ Never expose secrets
 

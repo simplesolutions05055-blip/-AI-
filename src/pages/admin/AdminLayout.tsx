@@ -12,7 +12,7 @@ import { Spinner } from '@/components/ui/Spinner';
 
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
 // further by can_create_outputs. Files is view-only for regular users.
-const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files'];
+const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/user-settings'];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile, hasBrand, requireUploads } = useProfile();
@@ -113,10 +113,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex min-h-[100dvh] bg-[#f6f9f8] text-[#071a33]">
+    <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[#f6f9f8] text-[#071a33]">
       {/* desktop sidebar */}
-      <div className="hidden lg:flex lg:self-stretch lg:w-60 lg:shrink-0 lg:border-l lg:border-[#d7e3e0] lg:bg-white">
-        <div className="lg:sticky lg:top-0 lg:h-[100dvh] lg:w-full">
+      <div className="hidden lg:flex lg:h-[100dvh] lg:w-60 lg:shrink-0 lg:border-l lg:border-[#d7e3e0] lg:bg-white">
+        <div className="lg:h-[100dvh] lg:w-full">
           <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} />
         </div>
       </div>
@@ -147,14 +147,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       )}
 
-      <div className="flex-1 flex flex-col min-w-0">
-        {showBanner && <OnboardingBanner />}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {showBanner && <OnboardingBanner userId={profile.id} onboarding={profile.onboarding} />}
         {/* mobile top bar */}
         <main
           className={
             isProductionLanding
-              ? 'w-full flex-1 pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-0'
-              : 'w-full max-w-6xl flex-1 px-3 py-4 pb-[calc(var(--safe-bottom)+5.75rem)] sm:px-4 lg:p-6'
+              ? 'min-h-0 w-full flex-1 overflow-y-auto pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-0'
+              : 'min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-3 py-4 pb-[calc(var(--safe-bottom)+5.75rem)] sm:px-4 lg:p-6'
           }
         >
           {children}

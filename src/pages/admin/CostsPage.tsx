@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { formatHebrewDateTime, formatUsd } from '@/lib/format';
 import { senderLabel } from '@/lib/labels';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -163,9 +162,9 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
           <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">אין נתוני עלות להצגה.</div>
         ) : pageRows.map((row) => (
           <article key={row.conversationId} className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
-            <Link to={`/admin/conversations?id=${encodeURIComponent(row.conversationId)}`} className="block truncate font-semibold text-blue-600 ltr">
+            <div className="truncate font-semibold ltr">
               {row.phone}
-            </Link>
+            </div>
             <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
               <div>
                 <div className="text-xs text-[var(--muted)]">בקשות</div>
@@ -209,12 +208,7 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
             ) : pageRows.map((row) => (
               <tr key={row.conversationId} className="border-b border-[var(--border)] hover:bg-gray-50">
                 <td className="p-3">
-                  <Link
-                    to={`/admin/conversations?id=${encodeURIComponent(row.conversationId)}`}
-                    className="ltr text-blue-600 hover:underline"
-                  >
-                    {row.phone}
-                  </Link>
+                  <span className="ltr">{row.phone}</span>
                 </td>
                 <td className="p-3"><span className="ltr">{row.requestCount}</span></td>
                 <td className="p-3"><span className="ltr">{formatHebrewDateTime(row.lastAt)}</span></td>

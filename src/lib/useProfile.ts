@@ -6,6 +6,7 @@ export interface OnboardingState {
   docs_done?: boolean;
   files_done?: boolean;
   hard_completed_at?: string | null;
+  banner_dismissed_at?: string | null;
 }
 
 export type ProfileGender = 'male' | 'female';

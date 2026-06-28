@@ -33,6 +33,17 @@ function inviteUrl(token: string) {
   return `${window.location.origin}/signup?invite=${token}`;
 }
 
+function useEscapeClose(open: boolean, onClose: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose]);
+}
+
 export default function PermissionsPage() {
   const db = useMemo(() => createSupabaseBrowserClient(), []);
   const { profile: me } = useProfile();
@@ -539,6 +550,7 @@ function CreateInviteModal({
 }) {
   const [open, setOpen] = useState(false);
   const [pickingId, setPickingId] = useState<string | null>(null);
+  useEscapeClose(open, () => setOpen(false));
 
   async function pick(brandId: string) {
     setPickingId(brandId);
@@ -558,19 +570,18 @@ function CreateInviteModal({
       </button>
 
       {open && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/40"
-            onClick={() => setOpen(false)}
-            role="presentation"
-          />
-
+        <div
+          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) setOpen(false);
+          }}
+        >
           <div
             dir="rtl"
             role="dialog"
             aria-modal="true"
             aria-label="בחירת מותג ליצירת קישור"
-            className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200 sm:inset-0 sm:m-auto sm:h-fit sm:max-w-md sm:rounded-2xl sm:border"
+            className="max-h-[80vh] w-full overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200 sm:h-fit sm:max-w-md sm:rounded-2xl sm:border"
           >
             <div className="sticky top-0 flex items-center justify-between border-b border-[var(--border)] bg-white px-4 py-3">
               <h2 className="text-lg font-bold">בחירת מותג</h2>
@@ -625,7 +636,7 @@ function CreateInviteModal({
               })}
             </div>
           </div>
-        </>
+        </div>
       )}
     </>
   );
@@ -635,6 +646,7 @@ function InviteShare({ url, brandName }: { url: string; brandName?: string }) {
   const [waOpen, setWaOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [phone, setPhone] = useState('');
+  useEscapeClose(qrOpen, () => setQrOpen(false));
 
   function openWhatsApp() {
     let n = phone.replace(/\D/g, '');
@@ -719,18 +731,18 @@ function InviteShare({ url, brandName }: { url: string; brandName?: string }) {
       )}
 
       {qrOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/40"
-            onClick={() => setQrOpen(false)}
-            role="presentation"
-          />
+        <div
+          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) setQrOpen(false);
+          }}
+        >
           <div
             dir="rtl"
             role="dialog"
             aria-modal="true"
             aria-label="קוד QR להזמנה"
-            className="fixed inset-x-0 bottom-0 z-50 max-h-[90vh] overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200 sm:inset-0 sm:m-auto sm:h-fit sm:max-w-xs sm:rounded-2xl sm:border"
+            className="max-h-[90vh] w-full overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200 sm:h-fit sm:max-w-xs sm:rounded-2xl sm:border"
           >
             <div className="sticky top-0 flex items-center justify-between border-b border-[var(--border)] bg-white px-4 py-3">
               <h2 className="text-lg font-bold">קוד QR להזמנה</h2>
@@ -755,7 +767,7 @@ function InviteShare({ url, brandName }: { url: string; brandName?: string }) {
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -775,6 +787,7 @@ function BrandSelectionModal({
   disabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  useEscapeClose(open, () => setOpen(false));
 
   return (
     <>
@@ -788,16 +801,18 @@ function BrandSelectionModal({
       </button>
 
       {open && (
-        <>
+        <div
+          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 transition-opacity"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) setOpen(false);
+          }}
+        >
           <div
-            className="fixed inset-0 z-40 bg-black/40 transition-opacity"
-            onClick={() => setOpen(false)}
-            role="presentation"
-          />
-
-          <div
-            className="fixed inset-x-0 bottom-0 z-50 max-h-[70vh] overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200"
+            className="max-h-[70vh] w-full overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200"
             dir="rtl"
+            role="dialog"
+            aria-modal="true"
+            aria-label="בחירת מותגים למשתמש"
           >
             <div className="sticky top-0 border-b border-[var(--border)] bg-white px-4 py-3">
               <div className="flex items-center justify-between">
@@ -845,7 +860,7 @@ function BrandSelectionModal({
               })}
             </div>
           </div>
-        </>
+        </div>
       )}
     </>
   );
