@@ -173,6 +173,90 @@ select {
   }
 }
 
+/* "Editing" overlay shown while an image revision is regenerating. A brand-tinted
+   band with a bright center line sweeps top-to-bottom to signal the image model is
+   re-rendering, plus a diagonal sheen and animated trailing dots on the label. */
+.revise-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgb(var(--brand-rgb, 31 111 235) / 0.22),
+    transparent
+  );
+  animation: revise-scan 2s ease-in-out infinite;
+}
+.revise-scan::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  background: rgb(var(--brand-rgb, 31 111 235) / 0.9);
+  box-shadow: 0 0 12px 2px rgb(var(--brand-rgb, 31 111 235) / 0.6);
+}
+@keyframes revise-scan {
+  0% {
+    top: -64px;
+  }
+  100% {
+    top: 100%;
+  }
+}
+
+.revise-sheen {
+  background: linear-gradient(
+    115deg,
+    transparent 35%,
+    rgb(var(--brand-rgb, 31 111 235) / 0.16) 50%,
+    transparent 65%
+  );
+  background-size: 220% 100%;
+  animation: revise-sheen 1.6s linear infinite;
+}
+@keyframes revise-sheen {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+.revise-dots::after {
+  content: '';
+  animation: revise-dots 1.4s steps(1, end) infinite;
+}
+@keyframes revise-dots {
+  0% {
+    content: '';
+  }
+  25% {
+    content: '.';
+  }
+  50% {
+    content: '..';
+  }
+  75% {
+    content: '...';
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .revise-scan,
+  .revise-sheen {
+    animation: none;
+  }
+  .revise-dots::after {
+    content: '...';
+    animation: none;
+  }
+}
+
 @media (max-width: 767px) {
   input,
   textarea,

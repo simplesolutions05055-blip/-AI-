@@ -752,11 +752,31 @@ export default function RevisePage() {
             <h2 className="font-bold mb-3">{result ? 'התמונה הערוכה' : 'התמונה הנוכחית'}</h2>
             {(result?.previewUrl || source?.previewUrl) && (
               <>
-                <img
-                  src={result?.previewUrl || source?.previewUrl}
-                  alt="תוצר"
-                  className="w-full max-h-[560px] object-contain rounded-lg bg-gray-50"
-                />
+                <div className="relative overflow-hidden rounded-lg">
+                  <img
+                    src={result?.previewUrl || source?.previewUrl}
+                    alt="תוצר"
+                    className={`w-full max-h-[560px] object-contain rounded-lg bg-gray-50 transition-[filter] duration-300 ${
+                      working ? 'blur-[2px] brightness-90' : ''
+                    }`}
+                  />
+                  {working && (
+                    <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg">
+                      <div className="absolute inset-0 bg-slate-900/10" />
+                      <div className="revise-sheen absolute inset-0" />
+                      <div className="revise-scan" />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="flex items-center gap-3 rounded-full bg-white/90 px-5 py-2.5 shadow-lg ring-1 ring-black/5 backdrop-blur">
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                          <span className="text-sm font-semibold text-slate-800">
+                            {regenStatus || 'עורך את התמונה'}
+                            <span className="revise-dots" />
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 {/* Mobile: actions below the image. Hidden on desktop (shown in sidebar). */}
                 <ImageActions
                   imageUrl={(result?.previewUrl || source?.previewUrl) as string}

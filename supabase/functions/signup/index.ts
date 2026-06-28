@@ -3,6 +3,7 @@ import { db } from '../_shared/db.ts';
 interface Body {
   email?: string;
   password?: string;
+  invite_token?: string;
 }
 
 const corsHeaders = {
@@ -19,7 +20,7 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
   try {
-    const { email, password } = (await req.json()) as Body;
+    const { email, password, invite_token } = (await req.json()) as Body;
 
     const cleanEmail = (email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
@@ -29,7 +30,8 @@ Deno.serve(async (req) => {
       return json({ error: 'weak_password' });
     }
 
-    const { error } = await db().auth.admin.createUser({
+    const database = db();
+    const { data: created, error } = await database.auth.admin.createUser({
       email: cleanEmail,
       password,
       email_confirm: true,
@@ -40,7 +42,34 @@ Deno.serve(async (req) => {
       return json({ error: already ? 'email_taken' : 'signup_failed' });
     }
 
-    return json({ ok: true });
+    // When the registration came through a brand-invite link, assign that brand
+    // and enable output creation so the user can work immediately. Best-effort:
+    // a bad/revoked token just yields a normal (unbranded) account.
+    const userId = created.user?.id;
+    let brand_assigned = false;
+    if (invite_token && userId) {
+      const { data: invite } = await database
+        .from('brand_invites')
+        .select('id, brand_id, revoked, uses')
+        .eq('token', invite_token)
+        .maybeSingle();
+      if (invite && !invite.revoked) {
+        await database
+          .from('user_brands')
+          .upsert(
+            { user_id: userId, brand_id: invite.brand_id },
+            { onConflict: 'user_id,brand_id', ignoreDuplicates: true },
+          );
+        await database.from('profiles').update({ can_create_outputs: true }).eq('id', userId);
+        await database
+          .from('brand_invites')
+          .update({ uses: (invite.uses ?? 0) + 1, last_used_at: new Date().toISOString() })
+          .eq('id', invite.id);
+        brand_assigned = true;
+      }
+    }
+
+    return json({ ok: true, brand_assigned });
   } catch (_e) {
     return json({ error: 'signup_failed' });
   }

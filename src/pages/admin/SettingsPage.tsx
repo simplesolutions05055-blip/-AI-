@@ -57,6 +57,9 @@ export default function SettingsPage() {
   const approvalQuickReply = settings.whatsapp_approval_quick_reply ?? { enabled: false, content_sid: '' };
   const limits = settings.rate_limits ?? {};
   const budget = settings.request_budget_usd ?? { max: 0.08 };
+  // Default to visible: only an explicit stored `false` hides the link.
+  const signupVisible = settings.public_signup_visible !== false;
+  const requireOnboardingUploads = settings.onboarding_require_uploads === true;
   const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
   if (loading) return <p className="text-[var(--muted)]">טוען...</p>;
@@ -84,6 +87,35 @@ export default function SettingsPage() {
         <Field label="דחיית מדיה">
           <input className={input} dir="auto" value={tpl.rejected_media ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, rejected_media: e.target.value })} />
         </Field>
+      </section>
+
+      <section className="bg-white rounded-xl border border-[var(--border)] p-4">
+        <h2 className="font-semibold mb-3">הרשמה</h2>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={signupVisible}
+            onChange={(e) => update('public_signup_visible', e.target.checked)}
+          />
+          הצגת הקישור "הירשם" במסך הכניסה
+        </label>
+        <p className="text-xs text-[var(--muted)] mt-2">
+          כשמכובה, אין קישור הרשמה פתוח במסך הכניסה — אפשר עדיין לצרף משתמשים דרך קישורי הזמנה ממותגים
+          (משתמשים והרשאות → הזמנות). הרשמה ישירה דרך הכתובת /signup עדיין אפשרית.
+        </p>
+
+        <label className="mt-4 flex items-center gap-2 border-t border-[var(--border)] pt-4 text-sm">
+          <input
+            type="checkbox"
+            checked={requireOnboardingUploads}
+            onChange={(e) => update('onboarding_require_uploads', e.target.checked)}
+          />
+          חובה להעלות מסמכים וקבצים באונבורדינג
+        </label>
+        <p className="text-xs text-[var(--muted)] mt-2">
+          כשמופעל, משתמש עם מותג משויך חייב להעלות לפחות מסמך אחד וקובץ אחד בשלבי האונבורדינג לפני
+          הכניסה למערכת. פרטי המשתמש (שם, טלפון, תפקיד) הם תמיד חובה.
+        </p>
       </section>
 
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">

@@ -1,14 +1,49 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { applyBrandPalette, resetBrandTheme, type PaletteEntry } from '@/lib/useBrandTheme';
+
+interface InviteBrand {
+  name: string;
+  logo_url: string | null;
+  color_palette: PaletteEntry[];
+}
 
 export default function SignupPage() {
   const navigate = useNavigate();
   const supabase = createSupabaseBrowserClient();
+  const [searchParams] = useSearchParams();
+  const inviteToken = searchParams.get('invite');
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Invite resolution: while we don't know yet, hold off rendering the form so
+  // the brand logo/colors can come in first (avoids a generic→branded flash).
+  const [inviteBrand, setInviteBrand] = useState<InviteBrand | null>(null);
+  const [resolvingInvite, setResolvingInvite] = useState(!!inviteToken);
+
+  useEffect(() => {
+    if (!inviteToken) return;
+    let active = true;
+    (async () => {
+      const { data } = await supabase.functions.invoke('resolve-invite', { body: { token: inviteToken } });
+      if (!active) return;
+      const brand = (data as { brand?: InviteBrand } | null)?.brand ?? null;
+      if (brand) {
+        setInviteBrand(brand);
+        applyBrandPalette(brand.color_palette ?? []);
+      }
+      setResolvingInvite(false);
+    })();
+    return () => {
+      active = false;
+      resetBrandTheme();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteToken]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -22,9 +57,10 @@ export default function SignupPage() {
     setLoading(true);
 
     // Register via the edge function (no email confirmation — the user is
-    // created pre-confirmed), then sign in straight away.
+    // created pre-confirmed), then sign in straight away. When an invite token
+    // is present the function also assigns the brand + enables output creation.
     const { data, error: fnError } = await supabase.functions.invoke('signup', {
-      body: { email: email.trim().toLowerCase(), password },
+      body: { email: email.trim().toLowerCase(), password, invite_token: inviteToken ?? undefined },
     });
 
     const errorCode = (data as { error?: string } | null)?.error;
@@ -43,14 +79,34 @@ export default function SignupPage() {
       setError('נרשמת בהצלחה, אך הכניסה נכשלה. נסו להתחבר ממסך הכניסה.');
       return;
     }
-    navigate('/admin', { replace: true });
+    navigate('/onboarding', { replace: true });
+  }
+
+  if (resolvingInvite) {
+    return <main className="min-h-screen grid place-items-center text-[var(--muted)]">טוען...</main>;
   }
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
       <form onSubmit={onSubmit} className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-[var(--border)] p-6">
-        <h1 className="text-2xl font-bold mb-1">הרשמה</h1>
-        <img src="/primeos-logo.png" alt="PrimeOS" className="mb-6 h-12 w-auto object-contain" />
+        {inviteBrand ? (
+          <div className="mb-6 flex flex-col items-center text-center">
+            <div className="mb-3 flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-[var(--border)] bg-white">
+              {inviteBrand.logo_url ? (
+                <img src={inviteBrand.logo_url} alt={inviteBrand.name} className="h-full w-full object-contain p-1.5" />
+              ) : (
+                <span className="text-2xl font-bold text-brand">{inviteBrand.name.slice(0, 2)}</span>
+              )}
+            </div>
+            <h1 className="text-xl font-bold">הרשמה ל{inviteBrand.name}</h1>
+            <p className="mt-1 text-sm text-[var(--muted)]">צרו חשבון כדי להתחיל לעבוד על המותג</p>
+          </div>
+        ) : (
+          <>
+            <h1 className="text-2xl font-bold mb-1">הרשמה</h1>
+            <img src="/primeos-logo.png" alt="PrimeOS" className="mb-6 h-12 w-auto object-contain" />
+          </>
+        )}
 
         <label className="block mb-1 text-sm font-medium" htmlFor="email">כתובת מייל</label>
         <input id="email" type="email" dir="ltr" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mb-4 rounded-lg border border-[var(--border)] px-3 py-2" style={{ textAlign: 'left' }} />

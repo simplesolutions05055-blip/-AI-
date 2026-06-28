@@ -8,7 +8,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 // CSS variables that tailwind.config maps `brand` to (RGB triplets, so opacity
 // modifiers keep working).
 
-type PaletteEntry = { hex?: string | null; role?: string | null };
+export type PaletteEntry = { hex?: string | null; role?: string | null };
 
 function hexToRgb(hex: string): [number, number, number] | null {
   let h = hex.trim().replace(/^#/, '');
@@ -49,6 +49,16 @@ function applyTheme(rgb: [number, number, number] | null) {
   const dark = shade(rgb, 0.12);
   root.style.setProperty('--brand-rgb', rgb.join(' '));
   root.style.setProperty('--brand-dark-rgb', dark.join(' '));
+}
+
+// Apply a brand's palette directly (e.g. the public signup screen, which has no
+// authenticated `brands` query to read). Pass null/[] to reset to the default.
+export function applyBrandPalette(palette: PaletteEntry[] | null) {
+  applyTheme(palette && palette.length ? pickPrimary(palette) : null);
+}
+
+export function resetBrandTheme() {
+  applyTheme(null);
 }
 
 export function useBrandTheme(enabled: boolean) {

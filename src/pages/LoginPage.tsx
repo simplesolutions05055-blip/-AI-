@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
@@ -9,6 +9,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Admin-controlled (Settings): whether to surface the public "register" link.
+  // Defaults to visible; only an explicit `false` hides it.
+  const [signupVisible, setSignupVisible] = useState(true);
+
+  useEffect(() => {
+    supabase
+      .from('settings')
+      .select('value_json')
+      .eq('key', 'public_signup_visible')
+      .maybeSingle()
+      .then(({ data }) => {
+        if ((data as { value_json?: boolean } | null)?.value_json === false) setSignupVisible(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,10 +55,12 @@ export default function LoginPage() {
           {loading ? 'מתחבר...' : 'כניסה'}
         </button>
 
-        <p className="text-center text-sm text-[var(--muted)] mt-4">
-          אין לך חשבון?{' '}
-          <Link to="/signup" className="text-brand font-semibold hover:underline">הירשם</Link>
-        </p>
+        {signupVisible && (
+          <p className="text-center text-sm text-[var(--muted)] mt-4">
+            אין לך חשבון?{' '}
+            <Link to="/signup" className="text-brand font-semibold hover:underline">הירשם</Link>
+          </p>
+        )}
       </form>
     </main>
   );

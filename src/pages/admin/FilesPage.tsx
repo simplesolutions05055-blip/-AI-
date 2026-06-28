@@ -517,7 +517,7 @@ export default function FilesPage() {
                               >
                                 <DownloadIcon />
                               </button>
-                              {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf' || file.output_type === 'document') && (
+                              {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -545,7 +545,7 @@ export default function FilesPage() {
                                 >
                                   <EyeIcon />
                                 </button>
-                                {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf' || file.output_type === 'document') && (
+                                {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();

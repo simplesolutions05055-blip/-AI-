@@ -1,6 +1,6 @@
-import { unzipSync, strFromU8 } from 'npm:fflate@0.8.2';
 import { db } from '../_shared/db.ts';
 import { transcribeAudio, describeImage } from '../_shared/openai.ts';
+import { extractDocxText, extractPdfText } from '../_shared/extract.ts';
 import {
   getSetting,
   logEvent,
@@ -14,29 +14,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-
-// Extract plain text from a .docx (which is a zip of XML parts). We read
-// word/document.xml, turn paragraph/break tags into newlines and strip the
-// remaining XML, then decode the handful of XML entities Word emits.
-function extractDocxText(base64: string): string {
-  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  const files = unzipSync(bytes);
-  const docXml = files['word/document.xml'];
-  if (!docXml) return '';
-  const xml = strFromU8(docXml);
-  return xml
-    .replace(/<w:p[ >]/g, '\n<w:p ')
-    .replace(/<w:br\s*\/?>/g, '\n')
-    .replace(/<w:tab\s*\/?>/g, '\t')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -70,8 +47,9 @@ Deno.serve(async (req) => {
     let text = '';
 
     if (kind === 'document') {
-      // Only .docx reaches the backend; .txt/.md are read on the client.
-      text = extractDocxText(base64);
+      // .docx and .pdf reach the backend; .txt/.md are read on the client.
+      const isPdf = /pdf/i.test(mime ?? '') || /\.pdf$/i.test(name ?? '');
+      text = isPdf ? await extractPdfText(base64) : extractDocxText(base64);
     } else if (kind === 'audio') {
       const model = aiModels?.transcribe_model || 'gpt-4o-transcribe';
       const result = await transcribeAudio(base64, mime || 'audio/mpeg', name || 'audio', { model });

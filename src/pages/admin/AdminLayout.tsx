@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, Navigate } from 'react-router-dom';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
+import OnboardingBanner from '@/components/OnboardingBanner';
 import { useProfile } from '@/lib/useProfile';
 import { useBrandTheme } from '@/lib/useBrandTheme';
+import { needsOnboardingGate, shouldShowOnboardingBanner } from '@/lib/onboarding';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
@@ -11,7 +13,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files'];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { loading, profile } = useProfile();
+  const { loading, profile, hasBrand, requireUploads } = useProfile();
   const [navOpen, setNavOpen] = useState(false);
   const [navMounted, setNavMounted] = useState(false);
   const { pathname } = useLocation();
@@ -58,6 +60,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (loading) return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]">טוען...</main>;
   if (!profile) return <Navigate to="/login" replace />;
+
+  // Force onboarding before the app: user details always, plus the upload steps
+  // when the admin made them mandatory and the user has a brand.
+  if (needsOnboardingGate(profile, hasBrand, requireUploads)) {
+    return <Navigate to="/onboarding" replace />;
+  }
+  const showBanner = shouldShowOnboardingBanner(profile, hasBrand, requireUploads);
 
   const isAdmin = profile.role === 'admin';
   const email = profile.email;
@@ -128,6 +137,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       )}
 
       <div className="flex-1 flex flex-col min-w-0">
+        {showBanner && <OnboardingBanner />}
         {/* mobile top bar */}
         <main
           className={

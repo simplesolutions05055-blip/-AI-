@@ -17,6 +17,20 @@ interface BrandRow {
   logo_path: string | null;
 }
 
+interface InviteRow {
+  id: string;
+  token: string;
+  brand_id: string;
+  uses: number;
+  revoked: boolean;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+function inviteUrl(token: string) {
+  return `${window.location.origin}/signup?invite=${token}`;
+}
+
 export default function PermissionsPage() {
   const db = useMemo(() => createSupabaseBrowserClient(), []);
   const { profile: me } = useProfile();
@@ -27,17 +41,22 @@ export default function PermissionsPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [tab, setTab] = useState<'admins' | 'users'>('admins');
+  const [tab, setTab] = useState<'admins' | 'users' | 'invites'>('admins');
+  const [invites, setInvites] = useState<InviteRow[]>([]);
+  const [inviteBrandId, setInviteBrandId] = useState<string>('');
+  const [generating, setGenerating] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const admins = profiles.filter((p) => p.role === 'admin');
   const users = profiles.filter((p) => p.role === 'user');
 
   useEffect(() => {
     (async () => {
-      const [{ data: profs }, { data: brs }, { data: ub }] = await Promise.all([
+      const [{ data: profs }, { data: brs }, { data: ub }, { data: inv }] = await Promise.all([
         db.from('profiles').select('id, email, role, can_create_outputs, created_at').order('created_at'),
         db.from('brands').select('id, name, is_active, logo_path').order('name'),
         db.from('user_brands').select('user_id, brand_id'),
+        db.from('brand_invites').select('id, token, brand_id, uses, revoked, created_at, last_used_at').order('created_at', { ascending: false }),
       ]);
       const map: Record<string, Set<string>> = {};
       ((ub as { user_id: string; brand_id: string }[]) ?? []).forEach((row) => {
@@ -55,6 +74,8 @@ export default function PermissionsPage() {
       setBrands(nextBrands);
       setBrandLogoUrls(Object.fromEntries(logoEntries.filter(([, url]) => !!url)));
       setGrants(map);
+      setInvites((inv as unknown as InviteRow[]) ?? []);
+      setInviteBrandId(nextBrands[0]?.id ?? '');
       setLoading(false);
     })();
   }, [db]);
@@ -123,6 +144,53 @@ export default function PermissionsPage() {
     }
   }
 
+  async function createInvite() {
+    if (!inviteBrandId) return flash('בחרו מותג');
+    setGenerating(true);
+    const token = crypto.randomUUID();
+    const { data, error } = await db
+      .from('brand_invites')
+      .insert({ token, brand_id: inviteBrandId, created_by: me?.id ?? null } as never)
+      .select('id, token, brand_id, uses, revoked, created_at, last_used_at')
+      .single();
+    setGenerating(false);
+    if (error || !data) return flash('יצירת הקישור נכשלה');
+    const row = data as unknown as InviteRow;
+    setInvites((prev) => [row, ...prev]);
+    void copyLink(row);
+  }
+
+  async function copyLink(invite: InviteRow) {
+    try {
+      await navigator.clipboard.writeText(inviteUrl(invite.token));
+      setCopiedId(invite.id);
+      setTimeout(() => setCopiedId((cur) => (cur === invite.id ? null : cur)), 2000);
+      flash('הקישור הועתק');
+    } catch {
+      flash('ההעתקה נכשלה — העתיקו ידנית');
+    }
+  }
+
+  async function toggleRevoke(invite: InviteRow) {
+    const next = !invite.revoked;
+    setSavingId(invite.id);
+    const { error } = await db.from('brand_invites').update({ revoked: next } as never).eq('id', invite.id);
+    setSavingId(null);
+    if (error) return flash('שמירה נכשלה');
+    setInvites((prev) => prev.map((x) => (x.id === invite.id ? { ...x, revoked: next } : x)));
+    flash(next ? 'הקישור בוטל' : 'הקישור הופעל מחדש');
+  }
+
+  async function deleteInvite(invite: InviteRow) {
+    if (!confirm('למחוק את הקישור? לא יהיה ניתן להירשם דרכו יותר.')) return;
+    setSavingId(invite.id);
+    const { error } = await db.from('brand_invites').delete().eq('id', invite.id);
+    setSavingId(null);
+    if (error) return flash('המחיקה נכשלה');
+    setInvites((prev) => prev.filter((x) => x.id !== invite.id));
+    flash('הקישור נמחק');
+  }
+
   if (loading) return <div className="text-[var(--muted)]">טוען...</div>;
 
   return (
@@ -162,7 +230,34 @@ export default function PermissionsPage() {
         >
           משתמשים ({users.length})
         </button>
+        <button
+          onClick={() => setTab('invites')}
+          className={`px-4 py-3 font-semibold text-sm border-b-2 transition ${
+            tab === 'invites'
+              ? 'border-brand text-brand'
+              : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          הזמנות ({invites.filter((i) => !i.revoked).length})
+        </button>
       </div>
+
+      {tab === 'invites' ? (
+        <InvitesTab
+          brands={brands}
+          brandLogoUrls={brandLogoUrls}
+          invites={invites}
+          inviteBrandId={inviteBrandId}
+          setInviteBrandId={setInviteBrandId}
+          generating={generating}
+          savingId={savingId}
+          copiedId={copiedId}
+          onCreate={createInvite}
+          onCopy={copyLink}
+          onToggleRevoke={toggleRevoke}
+          onDelete={deleteInvite}
+        />
+      ) : (
 
       <div className="space-y-3">
         {(tab === 'admins' ? admins : users).map((p) => {
@@ -285,6 +380,145 @@ export default function PermissionsPage() {
           );
         })}
       </div>
+      )}
+    </div>
+  );
+}
+
+function InvitesTab({
+  brands,
+  brandLogoUrls,
+  invites,
+  inviteBrandId,
+  setInviteBrandId,
+  generating,
+  savingId,
+  copiedId,
+  onCreate,
+  onCopy,
+  onToggleRevoke,
+  onDelete,
+}: {
+  brands: BrandRow[];
+  brandLogoUrls: Record<string, string>;
+  invites: InviteRow[];
+  inviteBrandId: string;
+  setInviteBrandId: (id: string) => void;
+  generating: boolean;
+  savingId: string | null;
+  copiedId: string | null;
+  onCreate: () => void;
+  onCopy: (invite: InviteRow) => void;
+  onToggleRevoke: (invite: InviteRow) => void;
+  onDelete: (invite: InviteRow) => void;
+}) {
+  const brandById = new Map(brands.map((b) => [b.id, b]));
+
+  return (
+    <div className="space-y-6">
+      {/* generator */}
+      <div className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+        <h2 className="font-semibold">יצירת קישור הזמנה</h2>
+        <p className="text-sm text-[var(--muted)] mt-1">
+          בחרו מותג וצרו קישור הרשמה ייעודי. מי שנרשם דרכו משויך אוטומטית למותג ויכול להתחיל לעבוד מיד.
+        </p>
+        {brands.length === 0 ? (
+          <p className="mt-4 text-sm text-[var(--muted)]">אין מותגים פעילים. הוסיפו מותג במסך המיתוג תחילה.</p>
+        ) : (
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label className="flex-1">
+              <span className="block text-sm font-medium mb-1">מותג</span>
+              <select
+                value={inviteBrandId}
+                onChange={(e) => setInviteBrandId(e.target.value)}
+                className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+              >
+                {brands.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={onCreate}
+              disabled={generating || !inviteBrandId}
+              className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {generating ? 'יוצר...' : 'צור קישור'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* existing invites */}
+      {invites.length === 0 ? (
+        <p className="text-sm text-[var(--muted)]">עדיין לא נוצרו קישורי הזמנה.</p>
+      ) : (
+        <div className="space-y-3">
+          {invites.map((invite) => {
+            const brand = brandById.get(invite.brand_id);
+            const logoUrl = brand ? brandLogoUrls[brand.id] ?? null : null;
+            const url = inviteUrl(invite.token);
+            return (
+              <div
+                key={invite.id}
+                className={`rounded-xl border bg-white p-4 shadow-sm ${
+                  invite.revoked ? 'border-[var(--border)] opacity-70' : 'border-[var(--border)]'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-white">
+                    {logoUrl ? (
+                      <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
+                    ) : (
+                      <span className="text-[10px] font-bold text-brand">{(brand?.name ?? '?').slice(0, 2)}</span>
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-sm truncate">{brand?.name ?? 'מותג נמחק'}</div>
+                    <div className="text-xs text-[var(--muted)] mt-0.5">
+                      {invite.revoked ? 'מבוטל · ' : ''}{invite.uses} נרשמו · נוצר {new Date(invite.created_at).toLocaleDateString('he-IL')}
+                    </div>
+                  </div>
+                  {invite.revoked && (
+                    <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600">מבוטל</span>
+                  )}
+                </div>
+
+                <div className="mt-3 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-gray-50 px-3 py-2">
+                  <span className="min-w-0 flex-1 truncate text-xs text-[var(--muted)] ltr" dir="ltr">{url}</span>
+                  <button
+                    onClick={() => onCopy(invite)}
+                    className="shrink-0 rounded-md border border-[var(--border)] bg-white px-2.5 py-1 text-xs font-semibold hover:bg-gray-50"
+                  >
+                    {copiedId === invite.id ? '✓ הועתק' : 'העתקה'}
+                  </button>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
+                  <button
+                    onClick={() => onToggleRevoke(invite)}
+                    disabled={savingId === invite.id}
+                    className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition disabled:opacity-60 ${
+                      invite.revoked
+                        ? 'border-green-300 bg-green-50 text-green-700'
+                        : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'
+                    }`}
+                  >
+                    {invite.revoked ? 'הפעלה מחדש' : 'ביטול'}
+                  </button>
+                  <button
+                    onClick={() => onDelete(invite)}
+                    disabled={savingId === invite.id}
+                    className="ms-auto rounded-lg border border-red-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                  >
+                    מחיקה
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
