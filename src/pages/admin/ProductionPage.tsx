@@ -119,6 +119,13 @@ function setSessionOpenAiKey(key: string) {
   }
 }
 
+function profileInitials(fullName?: string | null, email?: string | null) {
+  const source = fullName?.trim() || email?.split('@')[0] || '';
+  const words = source.split(/\s+/).filter(Boolean);
+  const initials = words.length > 1 ? `${words[0][0]}${words[1][0]}` : source.slice(0, 2);
+  return initials.toUpperCase() || 'U';
+}
+
 const OPENAI_QUOTA_MESSAGE =
   'נגמר התקציב/המכסה ב-OpenAI (insufficient_quota) — לא ניתן לבנות בריף או להפיק תוצרים כרגע. יש להוסיף קרדיט לחשבון OpenAI או להחליף את מפתח ה-API.';
 
@@ -592,6 +599,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
   });
   const [recentQuoteFiles, setRecentQuoteFiles] = useState<RecentOutputPreviewRow[]>([]);
   const [recentPreviews, setRecentPreviews] = useState<Record<string, string>>({});
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   // For presentations we open the image picker before leaving this page, so the
   // chosen images ride into the flow (and onward into the deck).
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -615,6 +623,27 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }, [initialSelected]);
+
+  useEffect(() => {
+    const avatarPath = profile?.avatar_path;
+    if (!avatarPath) {
+      setAvatarUrl(null);
+      return;
+    }
+
+    let active = true;
+    createSupabaseBrowserClient()
+      .storage
+      .from('avatars')
+      .createSignedUrl(avatarPath, 60 * 60)
+      .then(({ data }) => {
+        if (active) setAvatarUrl(data?.signedUrl ?? null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [profile?.avatar_path]);
 
   // The "pick a type" hint is surfaced only when the user tries to create a
   // product without choosing a type (see handleCreate). Clear it the moment a
@@ -814,8 +843,18 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
       <header className="hidden h-[60px] items-center justify-between border-b border-[var(--border-warm)] bg-[var(--bg-surface)] px-7 lg:flex">
         <div className="text-[15px] font-semibold text-[var(--text-strong)]">הפקה</div>
         <div className="flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
-          <span className="ltr">itayk93@yahoo.com</span>
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand/10 text-[12px] font-bold text-brand">IT</span>
+          <span className="ltr">{profile?.email ?? ''}</span>
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt="תמונת פרופיל"
+              className="h-8 w-8 rounded-full border border-[var(--border-warm)] object-cover"
+            />
+          ) : (
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand/10 text-[12px] font-bold text-brand">
+              {profileInitials(profile?.full_name, profile?.email)}
+            </span>
+          )}
         </div>
       </header>
 
@@ -1672,6 +1711,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           previewUrl={previewUrl}
           brief={brief}
           requestId={requestId}
+          brandId={brandId || null}
           brandLogoUrl={brandLogoUrl}
           email={form.customerEmail}
           setEmail={(value) => update('customerEmail', value)}
@@ -2306,6 +2346,7 @@ function ResultCard({
   previewUrl,
   brief,
   requestId,
+  brandId,
   brandLogoUrl,
   email,
   setEmail,
@@ -2320,6 +2361,7 @@ function ResultCard({
   previewUrl: string | null;
   brief: ProductionBrief | null;
   requestId: string | null;
+  brandId?: string | null;
   brandLogoUrl?: string | null;
   email: string;
   setEmail: (value: string) => void;
@@ -2479,6 +2521,7 @@ function ResultCard({
             <SocialScheduleSection
               requestId={requestId}
               outputId={output.id}
+              brandId={brandId ?? null}
               captionSource={
                 output.output_type === 'image'
                   ? { kind: 'image', brief, requestId }

@@ -148,6 +148,16 @@ export default function SettingsPage() {
           כשמופעל, משתמש עם מותג משויך חייב להעלות לפחות מסמך אחד וקובץ אחד בשלבי האונבורדינג לפני
           הכניסה למערכת. שם מלא ולשון פנייה הם תמיד חובה; טלפון ותפקיד הם אופציונליים.
         </p>
+
+        <div className="mt-4 border-t border-[var(--border)] pt-4">
+          <div className="mb-1 text-sm font-medium">התקנת האפליקציה</div>
+          <p className="text-xs text-[var(--muted)]">
+            סגירת הודעת ההתקנה מסתירה אותה ל-24 שעות בפעם הראשונה, לשבוע בפעם השנייה, ולתמיד
+            בפעם השלישית. התקנה ידנית: ב-iPhone פותחים ב-Safari, לוחצים שיתוף ובוחרים "הוסף
+            למסך הבית"; באנדרואיד או בדסקטופ פותחים את תפריט הדפדפן ובוחרים התקנה או הוספה
+            למסך הבית.
+          </p>
+        </div>
       </section>
 
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">

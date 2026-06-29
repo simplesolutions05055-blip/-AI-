@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   Bot,
+  CalendarDays,
   Cpu,
   Files,
   Gauge,
@@ -44,6 +45,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'ניהול',
     links: [
       { href: '/admin/permissions', label: 'משתמשים והרשאות', adminOnly: true, icon: 'users' },
+      { href: '/admin/holidays', label: 'גאנט', icon: 'calendar' },
       { href: '/admin/branding', label: 'מיתוג', icon: 'palette' },
     ],
   },
@@ -73,7 +75,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
-type NavIconName = 'spark' | 'users' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings';
+type NavIconName = 'spark' | 'users' | 'calendar' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings';
 
 function visibleSections(isAdmin: boolean, canCreateOutputs: boolean) {
   return NAV_SECTIONS.map((sec) => ({
@@ -230,6 +232,7 @@ export function AdminBottomNav({
 function NavIcon({ name, className = 'h-4 w-4' }: { name: NavIconName; active?: boolean; className?: string }) {
   const icons = {
     alert: AlertTriangle,
+    calendar: CalendarDays,
     chat: MessageSquare,
     cpu: Cpu,
     dashboard: Gauge,

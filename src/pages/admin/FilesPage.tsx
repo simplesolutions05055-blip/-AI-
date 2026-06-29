@@ -175,6 +175,7 @@ export default function FilesPage() {
       const requestIds = Array.from(new Set(rawRows.map((r) => r.request_id).filter(Boolean)));
       const creatorByRequest: Record<string, string> = {};
       const sourceByRequest: Record<string, string | null> = {};
+      const parentByRequest: Record<string, string | null> = {};
       // request -> brand logo path, so document exports carry the brand logo.
       const brandPathByRequest: Record<string, string | null> = {};
       if (requestIds.length > 0) {
@@ -187,7 +188,7 @@ export default function FilesPage() {
         for (const req of (reqs ?? []) as Array<{
           id: string;
           customer_email: string | null;
-          structured_brief: { source?: string | null } | null;
+          structured_brief: { source?: string | null; parent_request_id?: string | null } | null;
           brand_id: string | null;
           conversations:
             | { whatsapp_from: string | null; simulated: boolean | null }
@@ -197,6 +198,9 @@ export default function FilesPage() {
           const conv = Array.isArray(req.conversations) ? req.conversations[0] : req.conversations;
           const isSimulator = conv?.simulated || conv?.whatsapp_from === 'simulator';
           const sender = conv?.whatsapp_from ? senderLabel(conv.whatsapp_from) : null;
+          parentByRequest[req.id] = typeof req.structured_brief?.parent_request_id === 'string'
+            ? req.structured_brief.parent_request_id
+            : null;
           creatorByRequest[req.id] = isSimulator
             ? `${siteUser} (סימולטור)`
             : sender || req.customer_email || 'לא ידוע';
@@ -233,7 +237,7 @@ export default function FilesPage() {
         }),
       );
 
-      const rows: FileRow[] = rawRows.map((r) => {
+      const allRows: FileRow[] = rawRows.map((r) => {
         const logoPath = brandPathByRequest[r.request_id] ?? null;
         return {
           ...r,
@@ -242,6 +246,19 @@ export default function FilesPage() {
           brand_logo_url: logoPath ? signedLogoByPath[logoPath] ?? null : null,
         };
       });
+
+      const latestByProduct = new Map<string, FileRow>();
+      for (const row of allRows) {
+        const rootRequestId = parentByRequest[row.request_id] ?? row.request_id;
+        const key = `${rootRequestId}:${row.output_type}`;
+        const current = latestByProduct.get(key);
+        if (!current || new Date(row.created_at).getTime() > new Date(current.created_at).getTime()) {
+          latestByProduct.set(key, row);
+        }
+      }
+      const rows = Array.from(latestByProduct.values()).sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
       setFiles(rows);
       setLoading(false);
 

@@ -98,6 +98,8 @@ input,
 textarea,
 select {
   font-family: inherit;
+  background-position: left 1rem center !important;
+  padding-left: 2.5rem !important;
 }
 
 .image-loading-sheen {
@@ -260,7 +262,7 @@ select {
   }
 }
 
-.revise-dots::after {
+  .revise-dots::after {
   content: '';
   animation: revise-dots 1.4s steps(1, end) infinite;
 }
@@ -286,6 +288,54 @@ select {
   }
   .revise-dots::after {
     content: '...';
+    animation: none;
+  }
+}
+
+.social-caption-writing {
+  box-shadow: 0 0 0 2px rgb(var(--brand-rgb, 11 79 159) / 0.08);
+  transition: box-shadow 160ms ease;
+}
+
+.social-caption-scan {
+  pointer-events: none;
+  position: absolute;
+  inset-inline: 1px;
+  bottom: 1px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 0 0 0.5rem 0.5rem;
+  background: rgb(var(--brand-rgb, 11 79 159) / 0.08);
+}
+
+.social-caption-scan::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inline-size: 42%;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(var(--brand-rgb, 11 79 159) / 0.85),
+    transparent
+  );
+  animation: social-caption-scan 1.15s ease-in-out infinite;
+}
+
+@keyframes social-caption-scan {
+  0% {
+    inset-inline-start: -42%;
+  }
+  100% {
+    inset-inline-start: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .social-caption-scan::after {
+    inset-inline-start: 0;
+    inline-size: 100%;
     animation: none;
   }
 }

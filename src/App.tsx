@@ -18,6 +18,7 @@ import QuotePage from '@/pages/admin/QuotePage';
 import RevisePage from '@/pages/admin/RevisePage';
 import ErrorsPage from '@/pages/admin/ErrorsPage';
 import PermissionsPage from '@/pages/admin/PermissionsPage';
+import HolidaysCalendarPage from '@/pages/admin/HolidaysCalendarPage';
 import ReloadPrompt from '@/components/pwa/ReloadPrompt';
 
 export default function App() {
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="models" element={<ModelsPage />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="permissions" element={<PermissionsPage />} />
+          <Route path="holidays" element={<HolidaysCalendarPage />} />
           <Route path="errors" element={<ErrorsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="user-settings" element={<UserSettingsPage />} />

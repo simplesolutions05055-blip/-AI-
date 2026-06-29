@@ -28,6 +28,18 @@ type DocumentImageChoice =
   | { key: string; kind: 'brand'; caption: string; previewUrl: string; image: DeckImage }
   | { key: string; kind: 'ai'; caption: string; previewUrl: string; row: PersistedDeckImage };
 
+function revisionBrief(brief: Brief, requestId: string | undefined, source: string): Brief {
+  const parent = typeof brief.parent_request_id === 'string' ? brief.parent_request_id : requestId;
+  const currentCount = typeof brief.revision_count === 'number' ? brief.revision_count : 0;
+  return {
+    ...brief,
+    ready: true,
+    source,
+    parent_request_id: parent,
+    revision_count: currentCount + 1,
+  };
+}
+
 // The editable brief sections shown in the modal, in display order.
 const BRIEF_FIELDS: Array<{ key: string; label: string; multiline?: boolean; list?: boolean }> = [
   { key: 'goal', label: 'מטרה', multiline: true },
@@ -169,7 +181,7 @@ export default function RevisePage() {
     try {
       const client = createSupabaseBrowserClient();
       const { data: created, error: createError } = await client.functions.invoke('create-production-request', {
-        body: { output_type: 'presentation', brief: { ...briefToUse, ready: true }, customer_email: null },
+        body: { output_type: 'presentation', brief: revisionBrief(briefToUse, requestId, 'presentation_edit'), customer_email: null },
       });
       if (createError) throw createError;
       const id = (created as { request_id?: string })?.request_id;
@@ -230,7 +242,7 @@ export default function RevisePage() {
     try {
       const client = createSupabaseBrowserClient();
       const { data: created, error: createError } = await client.functions.invoke('create-production-request', {
-        body: { output_type: 'text', brief: { ...briefToUse, ready: true }, customer_email: null },
+        body: { output_type: 'text', brief: revisionBrief(briefToUse, requestId, 'text_edit'), customer_email: null },
       });
       if (createError) throw createError;
       const id = (created as { request_id?: string })?.request_id;
@@ -292,7 +304,7 @@ export default function RevisePage() {
     try {
       const client = createSupabaseBrowserClient();
       const { data: created, error: createError } = await client.functions.invoke('create-production-request', {
-        body: { output_type: 'pdf', brief: { ...briefToUse, ready: true }, customer_email: null },
+        body: { output_type: 'pdf', brief: revisionBrief(briefToUse, requestId, 'pdf_edit'), customer_email: null },
       });
       if (createError) throw createError;
       const id = (created as { request_id?: string })?.request_id;
@@ -391,7 +403,7 @@ export default function RevisePage() {
     try {
       const client = createSupabaseBrowserClient();
       const { data: created, error: createError } = await client.functions.invoke('create-production-request', {
-        body: { output_type: 'image', brief: { ...editedBrief, ready: true }, customer_email: null },
+        body: { output_type: 'image', brief: revisionBrief(editedBrief, requestId, 'image_regeneration'), customer_email: null },
       });
       if (createError) throw createError;
       const id = (created as { request_id?: string })?.request_id;
@@ -621,6 +633,7 @@ export default function RevisePage() {
 
             <SocialScheduleSection
               requestId={textRequestId}
+              brandId={requestBrandId}
               captionSource={{ kind: 'text', text: plainTextFromBlocks(textBlocks) }}
             />
 
@@ -830,6 +843,7 @@ export default function RevisePage() {
 
             <SocialScheduleSection
               requestId={result?.request_id || source?.request_id || null}
+              brandId={requestBrandId}
               captionSource={{ kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }}
             />
 

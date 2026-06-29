@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
       ...body.brief,
       output_type: body.output_type,
       ready: true,
-      source: 'production_form',
+      source: typeof body.brief.source === 'string' ? body.brief.source : 'production_form',
     };
 
     // Prefer the brand the user explicitly chose in the form; otherwise fall back

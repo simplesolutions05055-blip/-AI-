@@ -6,6 +6,8 @@ type Platform = 'facebook' | 'instagram';
 interface Body {
   request_id?: string | null;
   output_id?: string | null;
+  brand_id?: string | null;
+  title?: string;
   platform?: Platform;
   caption?: string;
   scheduled_at?: string;
@@ -37,6 +39,7 @@ Deno.serve(async (req) => {
 
     const caption = (body.caption ?? '').trim();
     if (!caption) return json({ error: 'caption_required' }, 400);
+    const title = (body.title ?? '').trim().slice(0, 160);
 
     const scheduledAt = new Date(body.scheduled_at ?? '');
     if (Number.isNaN(scheduledAt.getTime())) return json({ error: 'invalid_scheduled_at' }, 400);
@@ -48,7 +51,7 @@ Deno.serve(async (req) => {
     }
 
     const database = db();
-    const canUse = await canUseOutput(database, callerId, body.request_id ?? null, body.output_id ?? null);
+    const canUse = await canUseOutput(database, callerId, body.request_id ?? null, body.output_id ?? null, body.brand_id ?? null);
     if (!canUse) return json({ error: 'forbidden' }, 403);
 
     const { data, error } = await database
@@ -56,6 +59,8 @@ Deno.serve(async (req) => {
       .insert({
         request_id: body.request_id ?? null,
         output_id: body.output_id ?? null,
+        brand_id: body.brand_id ?? null,
+        title: title || null,
         platform,
         caption,
         scheduled_at: scheduledAt.toISOString(),
@@ -63,7 +68,7 @@ Deno.serve(async (req) => {
         status: 'scheduled',
         created_by: callerId,
       })
-      .select('id, platform, scheduled_at, status')
+      .select('id, title, platform, scheduled_at, status')
       .single();
     if (error) throw error;
 
@@ -93,9 +98,20 @@ async function canUseOutput(
   callerId: string,
   requestId: string | null,
   outputId: string | null,
+  brandId: string | null,
 ): Promise<boolean> {
   const { data: profile } = await database.from('profiles').select('role').eq('id', callerId).maybeSingle();
   if (profile?.role === 'admin') return true;
+
+  if (brandId && !requestId && !outputId) {
+    const { data } = await database
+      .from('user_brands')
+      .select('brand_id')
+      .eq('user_id', callerId)
+      .eq('brand_id', brandId)
+      .maybeSingle();
+    if (data?.brand_id === brandId) return true;
+  }
 
   if (requestId) {
     const { data } = await database.from('requests').select('created_by').eq('id', requestId).maybeSingle();

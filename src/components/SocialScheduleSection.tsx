@@ -33,10 +33,18 @@ export default function SocialScheduleSection({
   captionSource,
   requestId = null,
   outputId = null,
+  brandId = null,
+  defaultScheduledAt = '',
+  title = 'תזמון פרסום',
+  onScheduled,
 }: {
   captionSource?: CaptionSource;
   requestId?: string | null;
   outputId?: string | null;
+  brandId?: string | null;
+  defaultScheduledAt?: string;
+  title?: string;
+  onScheduled?: () => void;
 } = {}) {
   const [platform, setPlatform] = useState<SocialPlatform | null>(null);
 
@@ -72,7 +80,11 @@ export default function SocialScheduleSection({
     setCaptionLoading(true);
     setCaptionError(null);
     try {
-      const text = await fetchSocialCaption(captionSource.brief, forPlatform, captionSource.requestId);
+      const briefWithBrand =
+        brandId && captionSource.brief && typeof captionSource.brief === 'object'
+          ? { ...(captionSource.brief as Record<string, unknown>), brand_id: (captionSource.brief as { brand_id?: string | null }).brand_id ?? brandId }
+          : captionSource.brief;
+      const text = await fetchSocialCaption(briefWithBrand, forPlatform, captionSource.requestId);
       setCaption(text);
     } catch (e) {
       resolvedRef.current = false; // allow a retry on the next open
@@ -132,12 +144,13 @@ export default function SocialScheduleSection({
 
   return (
     <div>
-      <label className="block text-sm font-semibold mb-2">תזמון פרסום</label>
+      <label className="block text-sm font-semibold mb-2">{title}</label>
       <div className="grid gap-2">
         <button
           type="button"
           onClick={() => openPlatform('facebook')}
-          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+          disabled={!brandId}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
         >
           <span>תזמון פרסום בפייסבוק</span>
           <FacebookIcon />
@@ -145,7 +158,8 @@ export default function SocialScheduleSection({
         <button
           type="button"
           onClick={() => openPlatform('instagram')}
-          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+          disabled={!brandId}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
         >
           <span>תזמון פרסום באינסטגרם</span>
           <InstagramIcon />
@@ -165,12 +179,17 @@ export default function SocialScheduleSection({
           onRemoveMedia={removeMedia}
           requestId={requestId}
           outputId={outputId}
-          onSaved={(message) => setScheduleSaved(message)}
+          brandId={brandId}
+          defaultScheduledAt={defaultScheduledAt}
+          onSaved={(message) => {
+            setScheduleSaved(message);
+            onScheduled?.();
+          }}
           onClose={() => setPlatform(null)}
         />
       )}
 
-      {pickerOpen && <OutputsPickerModal onClose={() => setPickerOpen(false)} onConfirm={addFromOutputs} />}
+      {pickerOpen && <OutputsPickerModal brandId={brandId} onClose={() => setPickerOpen(false)} onConfirm={addFromOutputs} />}
       {scheduleSaved && (
         <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           {scheduleSaved}
@@ -192,6 +211,8 @@ function ScheduleModal({
   onRemoveMedia,
   requestId,
   outputId,
+  brandId,
+  defaultScheduledAt,
   onSaved,
   onClose,
 }: {
@@ -206,13 +227,18 @@ function ScheduleModal({
   onRemoveMedia: (id: string) => void;
   requestId: string | null;
   outputId: string | null;
+  brandId: string | null;
+  defaultScheduledAt: string;
   onSaved: (message: string) => void;
   onClose: () => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [scheduledAt, setScheduledAt] = useState('');
+  const [scheduleTitle, setScheduleTitle] = useState('');
+  const [scheduledAt, setScheduledAt] = useState(defaultScheduledAt);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [aiCaptionLoading, setAiCaptionLoading] = useState(false);
+  const [aiCaptionError, setAiCaptionError] = useState<string | null>(null);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -224,7 +250,8 @@ function ScheduleModal({
   }, [onClose]);
 
   async function saveSchedule() {
-    if (!scheduledAt || !caption.trim() || saving) return;
+    const cleanTitle = scheduleTitle.trim();
+    if (!cleanTitle || !scheduledAt || !caption.trim() || saving) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -262,6 +289,8 @@ function ScheduleModal({
         body: {
           request_id: requestId,
           output_id: outputId,
+          brand_id: brandId,
+          title: cleanTitle,
           platform,
           caption,
           scheduled_at: new Date(scheduledAt).toISOString(),
@@ -269,14 +298,38 @@ function ScheduleModal({
         },
       });
       if (error) throw error;
-      const payload = data as { ok?: boolean; error?: string; schedule?: { scheduled_at?: string } } | null;
+      const payload = data as { ok?: boolean; error?: string; schedule?: { scheduled_at?: string; title?: string | null } } | null;
       if (!payload?.ok) throw new Error(scheduleErrorLabel(payload?.error));
-      onSaved(`הפרסום נשמר לתזמון ב${PLATFORM_LABEL[platform]}.`);
+      onSaved(`"${payload.schedule?.title ?? cleanTitle}" נשמר לתזמון ב${PLATFORM_LABEL[platform]}.`);
       onClose();
     } catch (e) {
       setSaveError(scheduleErrorLabel(String((e as { message?: string })?.message ?? e)));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function generateCaptionFromDraft() {
+    const draft = caption.trim();
+    if (!draft || aiCaptionLoading || captionLoading) return;
+    setAiCaptionLoading(true);
+    setAiCaptionError(null);
+    try {
+      const text = await fetchSocialCaption(
+        {
+          brand_id: brandId,
+          goal: draft,
+          source_text: draft,
+          content_request: 'להפוך את הטקסט החופשי לכיתוב מוכן לפרסום ברשת החברתית, בלי להוסיף עובדות שלא נכתבו.',
+        },
+        platform,
+        requestId
+      );
+      onCaptionChange(text);
+    } catch {
+      setAiCaptionError('לא הצלחנו לנסח את הטקסט עם AI. אפשר לערוך ידנית ולנסות שוב.');
+    } finally {
+      setAiCaptionLoading(false);
     }
   }
 
@@ -287,12 +340,12 @@ function ScheduleModal({
       onClick={onClose}
     >
       <div
-        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg bg-white p-5 text-right shadow-xl"
+        className="flex max-h-[88dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white text-right shadow-xl sm:rounded-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold">תזמון פרסום ב{PLATFORM_LABEL[platform]}</h2>
+        <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] p-3 sm:gap-3 sm:p-5">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold leading-6 sm:text-lg">תזמון פרסום ב{PLATFORM_LABEL[platform]}</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">בחרו מועד לפרסום התוצר בערוץ.</p>
           </div>
           <Tooltip content="סגירה">
@@ -307,109 +360,157 @@ function ScheduleModal({
           </Tooltip>
         </div>
 
-        <label className="mb-2 block text-sm font-semibold">תאריך ושעה</label>
-        <input
-          type="datetime-local"
-          value={scheduledAt}
-          onChange={(e) => setScheduledAt(e.target.value)}
-          className="mb-3 w-full rounded-lg border border-[var(--border)] px-3 py-2 text-right"
-        />
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3 sm:p-5">
+          <label className="mb-2 block text-sm font-semibold">שם התזמון</label>
+          <input
+            type="text"
+            value={scheduleTitle}
+            onChange={(e) => setScheduleTitle(e.target.value)}
+            maxLength={160}
+            placeholder="למשל: בדיקה"
+            className="mb-4 block w-full min-w-0 max-w-full rounded-lg border border-[var(--border)] px-2.5 py-3 text-right text-sm leading-5 sm:px-3 sm:py-2"
+          />
 
-        <label className="mb-2 block text-sm font-semibold">כיתוב לפרסום</label>
-        <textarea
-          rows={6}
-          value={caption}
-          onChange={(e) => onCaptionChange(e.target.value)}
-          disabled={captionLoading}
-          placeholder={captionLoading ? 'כותב טקסט לפרסום…' : 'טקסט שיופיע לצד הפרסום'}
-          className="mb-1 w-full rounded-lg border border-[var(--border)] px-3 py-2 disabled:bg-gray-50"
-        />
-        {captionLoading && (
-          <p className="mb-3 text-xs text-[var(--muted)]">כותב טקסט מוכן לפרסום לפי הבריף…</p>
-        )}
-        {captionError && (
-          <p className="mb-3 text-xs text-red-600">לא הצלחנו לכתוב טקסט אוטומטי. אפשר לכתוב ידנית.</p>
-        )}
-        {!captionLoading && !captionError && <div className="mb-3" />}
+          <label className="mb-2 block text-sm font-semibold">תאריך ושעה</label>
+          <input
+            type="datetime-local"
+            value={scheduledAt}
+            onChange={(e) => setScheduledAt(e.target.value)}
+            className="mb-4 block w-full min-w-0 max-w-full rounded-lg border border-[var(--border)] px-2.5 py-3 text-right text-sm leading-5 sm:px-3 sm:py-2"
+          />
 
-        <label className="mb-2 block text-sm font-semibold">מדיה לפרסום</label>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*,video/*"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            onAddFiles(e.target.files);
-            e.target.value = ''; // allow re-selecting the same file
-          }}
-        />
-        <div className="mb-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-gray-50"
-          >
-            <UploadIcon />
-            העלאת תמונות/סרטונים
-          </button>
-          <button
-            type="button"
-            onClick={onOpenPicker}
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-gray-50"
-          >
-            <GalleryIcon />
-            מתוך התוצרים שלנו
-          </button>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <label className="block text-sm font-semibold">כיתוב לפרסום</label>
+            <Tooltip content="הופך את הטקסט שבתיבה לכיתוב מוכן לפוסט">
+              <button
+                type="button"
+                onClick={generateCaptionFromDraft}
+                disabled={captionLoading || aiCaptionLoading || !caption.trim()}
+                className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3"
+              >
+                {aiCaptionLoading ? <SmallSpinnerIcon /> : <SparkleIcon />}
+                <span>{aiCaptionLoading ? 'מנסח...' : 'ניסוח עם AI'}</span>
+              </button>
+            </Tooltip>
+          </div>
+          <div className="relative mb-1">
+            <textarea
+              rows={5}
+              value={caption}
+              onChange={(e) => {
+                onCaptionChange(e.target.value);
+                if (aiCaptionError) setAiCaptionError(null);
+              }}
+              disabled={captionLoading}
+              placeholder={
+                captionLoading
+                  ? 'כותב טקסט לפרסום...'
+                  : 'אפשר לכתוב כאן כל טקסט, רעיון או טיוטה. כפתור ה-AI יהפוך אותו לכיתוב מוכן לפוסט.'
+              }
+              className={`block w-full min-w-0 max-w-full resize-none rounded-lg border border-[var(--border)] px-3 py-2 text-sm leading-6 placeholder:text-[var(--muted)] disabled:bg-gray-50 ${
+                aiCaptionLoading ? 'social-caption-writing pr-3' : ''
+              }`}
+            />
+            {aiCaptionLoading && <div className="social-caption-scan" aria-hidden="true" />}
+          </div>
+          {captionLoading && (
+            <p className="mb-3 text-xs text-[var(--muted)]">כותב טקסט מוכן לפרסום לפי הבריף...</p>
+          )}
+          {aiCaptionLoading && (
+            <div className="mb-3 flex items-center justify-end gap-2 text-xs font-medium text-[var(--muted)]">
+              <span>מנסח את הטיוטה ככיתוב מוכן לפוסט</span>
+              <span className="flex items-center gap-1" aria-hidden="true">
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand [animation-delay:-0.24s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand [animation-delay:-0.12s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand" />
+              </span>
+            </div>
+          )}
+          {captionError && (
+            <p className="mb-3 text-xs text-red-600">לא הצלחנו לכתוב טקסט אוטומטי. אפשר לכתוב ידנית.</p>
+          )}
+          {aiCaptionError && <p className="mb-3 text-xs text-red-600">{aiCaptionError}</p>}
+          {!captionLoading && !aiCaptionLoading && !captionError && !aiCaptionError && <div className="mb-3" />}
+
+          <label className="mb-2 block text-sm font-semibold">מדיה לפרסום</label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              onAddFiles(e.target.files);
+              e.target.value = ''; // allow re-selecting the same file
+            }}
+          />
+          <div className="mb-3 grid min-w-0 gap-2 sm:flex sm:flex-wrap">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:w-auto sm:px-3"
+            >
+              <UploadIcon />
+              <span className="truncate">העלאת תמונות/סרטונים</span>
+            </button>
+            <button
+              type="button"
+              onClick={onOpenPicker}
+              className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:w-auto sm:px-3"
+            >
+              <GalleryIcon />
+              <span className="truncate">מתוך התוצרים שלנו</span>
+            </button>
+          </div>
+
+          {media.length > 0 && (
+            <div className="mb-4 grid grid-cols-3 gap-2">
+              {media.map((m) => (
+                <div key={m.id} className="group relative aspect-square overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
+                  {m.kind === 'video' ? (
+                    <video src={m.url} className="h-full w-full object-cover" muted />
+                  ) : (
+                    <img src={m.url} alt={m.name} className="h-full w-full object-cover" />
+                  )}
+                  <Tooltip content="הסרה">
+                    <button
+                      type="button"
+                      onClick={() => onRemoveMedia(m.id)}
+                      aria-label="הסרה"
+                      className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+                    >
+                      <CloseIcon size={12} />
+                    </button>
+                  </Tooltip>
+                  {m.kind === 'video' && (
+                    <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">וידאו</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {platform === 'instagram' && media.length === 0 && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
+            </div>
+          )}
+          {saveError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
         </div>
 
-        {media.length > 0 && (
-          <div className="mb-4 grid grid-cols-3 gap-2">
-            {media.map((m) => (
-              <div key={m.id} className="group relative aspect-square overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
-                {m.kind === 'video' ? (
-                  <video src={m.url} className="h-full w-full object-cover" muted />
-                ) : (
-                  <img src={m.url} alt={m.name} className="h-full w-full object-cover" />
-                )}
-                <Tooltip content="הסרה">
-                  <button
-                    type="button"
-                    onClick={() => onRemoveMedia(m.id)}
-                    aria-label="הסרה"
-                    className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
-                  >
-                    <CloseIcon size={12} />
-                  </button>
-                </Tooltip>
-                {m.kind === 'video' && (
-                  <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">וידאו</span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {platform === 'instagram' && media.length === 0 && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
-          </div>
-        )}
-        {saveError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
-
-        <div className="flex items-center justify-start gap-3">
+        <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-[var(--border)] bg-white p-3 sm:flex sm:justify-start sm:gap-3 sm:p-5">
           <button
             type="button"
             onClick={saveSchedule}
-            disabled={saving || !scheduledAt || !caption.trim() || (platform === 'instagram' && media.length === 0)}
-            className="rounded-lg bg-brand px-4 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={saving || !scheduleTitle.trim() || !scheduledAt || !caption.trim() || (platform === 'instagram' && media.length === 0)}
+            className="min-h-11 min-w-0 rounded-lg bg-brand px-2 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-base"
           >
-            {saving ? 'שומר תזמון...' : 'תזמון הפרסום'}
+            {saving ? 'שומר...' : 'תזמון הפרסום'}
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-[var(--border)] px-4 py-2.5 font-semibold hover:bg-gray-50"
+            className="min-h-11 min-w-0 rounded-lg border border-[var(--border)] px-2 py-2.5 text-sm font-semibold hover:bg-gray-50 sm:px-4 sm:text-base"
           >
             ביטול
           </button>
@@ -423,9 +524,11 @@ type OutputImage = { storagePath: string; url: string; name: string };
 
 // RTL modal that lists our existing image outputs as a grid to pick from.
 function OutputsPickerModal({
+  brandId,
   onClose,
   onConfirm,
 }: {
+  brandId: string | null;
   onClose: () => void;
   onConfirm: (items: OutputImage[]) => void;
 }) {
@@ -447,13 +550,15 @@ function OutputsPickerModal({
     (async () => {
       try {
         const client = createSupabaseBrowserClient();
-        const { data, error: qErr } = await client
+        let query = client
           .from('outputs')
-          .select('id, output_type, storage_path, created_at')
+          .select('id, output_type, storage_path, created_at, requests!inner(brand_id)')
           .eq('output_type', 'image')
           .not('storage_path', 'is', null)
           .order('created_at', { ascending: false })
           .limit(40);
+        if (brandId) query = query.eq('requests.brand_id', brandId);
+        const { data, error: qErr } = await query;
         if (qErr) throw qErr;
         const rows = (data ?? []) as Array<{ id: string; storage_path: string }>;
         const resolved = await Promise.all(
@@ -473,7 +578,7 @@ function OutputsPickerModal({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [brandId]);
 
   function toggle(path: string) {
     setSelected((cur) => {
@@ -495,10 +600,10 @@ function OutputsPickerModal({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg bg-white p-5 text-right shadow-xl"
+        className="flex max-h-[88dvh] w-full flex-col rounded-2xl bg-white text-right shadow-xl sm:max-w-lg sm:rounded-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] p-4 sm:p-5">
           <div>
             <h2 className="text-lg font-bold">בחירת תמונות מהתוצרים</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">בחרו תמונה אחת או יותר לצירוף לפרסום.</p>
@@ -515,7 +620,7 @@ function OutputsPickerModal({
           </Tooltip>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
           {loading ? (
             <p className="py-8 text-center text-sm text-[var(--muted)]">טוען תוצרים…</p>
           ) : error ? (
@@ -548,19 +653,19 @@ function OutputsPickerModal({
           )}
         </div>
 
-        <div className="mt-4 flex items-center justify-start gap-3 border-t border-[var(--border)] pt-4">
+        <div className="grid shrink-0 grid-cols-2 gap-3 border-t border-[var(--border)] bg-white p-4 sm:flex sm:justify-start sm:p-5">
           <button
             type="button"
             onClick={confirm}
             disabled={selected.size === 0}
-            className="rounded-lg bg-brand px-4 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 rounded-lg bg-brand px-4 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             הוספה{selected.size > 0 ? ` (${selected.size})` : ''}
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-[var(--border)] px-4 py-2.5 font-semibold hover:bg-gray-50"
+            className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 font-semibold hover:bg-gray-50"
           >
             ביטול
           </button>
@@ -625,6 +730,24 @@ function GalleryIcon() {
       <circle cx="9" cy="9" r="2" />
       <path d="m21 15-3.5-3.5a2 2 0 0 0-2.8 0L6 20" />
     </svg>
+  );
+}
+
+function SparkleIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8L12 3Z" />
+      <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z" />
+    </svg>
+  );
+}
+
+function SmallSpinnerIcon() {
+  return (
+    <span
+      className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+      aria-hidden="true"
+    />
   );
 }
 

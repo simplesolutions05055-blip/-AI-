@@ -159,3 +159,34 @@ export interface SkillVersion {
   created_by: string | null;
   created_at: string;
 }
+
+export interface IsraelHoliday {
+  id: string;
+  source: 'hebcal' | string;
+  external_id: string;
+  date: string;
+  title: string;
+  hebrew_title: string | null;
+  category: string;
+  subcategory: string | null;
+  memo: string | null;
+  link: string | null;
+  is_major: boolean;
+  is_israel_calendar: boolean;
+  raw: Record<string, unknown>;
+  fetched_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PwaInstallPromptDismissal {
+  user_id: string;
+  prompt_key: string;
+  dismiss_count: number;
+  dismissed_until: string | null;
+  permanently_dismissed: boolean;
+  last_shown_at: string | null;
+  last_dismissed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

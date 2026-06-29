@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ChevronLeft, UserCog } from 'lucide-react';
+import { ChevronLeft, Download, UserCog } from 'lucide-react';
 
 export default function UserSettingsPage() {
   return (
@@ -30,6 +30,23 @@ export default function UserSettingsPage() {
             מעבר לאונבורדינג
             <ChevronLeft className="h-4 w-4" />
           </Link>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-[var(--border)] bg-white p-4 shadow-sm">
+        <div className="flex items-start gap-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
+            <Download className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-bold text-[var(--text)]">התקנת האפליקציה</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              אם סגרת את הודעת ההתקנה, היא תחזור אחרי 24 שעות בסגירה הראשונה, אחרי שבוע בסגירה
+              השנייה, ולא תחזור אחרי הסגירה השלישית. כדי להתקין ידנית: ב-iPhone פתח את האתר
+              ב-Safari, לחץ על שיתוף ובחר "הוסף למסך הבית"; באנדרואיד או בדסקטופ פתח את תפריט
+              הדפדפן ובחר התקנה או הוספה למסך הבית.
+            </p>
+          </div>
         </div>
       </div>
     </section>
