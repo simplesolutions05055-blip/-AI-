@@ -19,15 +19,69 @@ export type CaptionSource =
 
 // A media item attached to the scheduled post — either uploaded from the device
 // or picked from our existing image outputs.
-type MediaItem = {
+export type MediaItem = {
   id: string;
   url: string; // object URL (upload) or signed URL (output) for the thumbnail
   kind: 'image' | 'video';
   source: 'upload' | 'output';
   name: string;
   file?: File; // present for uploads
-  storagePath?: string; // present for outputs
+  storagePath?: string; // present for outputs (or already-saved uploads)
 };
+
+// The shape persisted to the scheduled_social_posts.media jsonb column.
+export type StoredMediaRecord = {
+  kind: 'image' | 'video';
+  source: 'upload' | 'output';
+  name: string;
+  storage_path: string | null;
+  mime_type: string | null;
+};
+
+// Turn the in-memory media list into the jsonb records to persist, uploading any
+// device files that don't yet have a storage path. Shared by the create and edit
+// flows so both behave identically.
+export async function uploadPendingMedia(media: MediaItem[], uploadPrefix: string): Promise<StoredMediaRecord[]> {
+  const client = createSupabaseBrowserClient();
+  return Promise.all(
+    media.map(async (item) => {
+      if (item.storagePath) {
+        return { kind: item.kind, source: item.source, name: item.name, storage_path: item.storagePath, mime_type: null };
+      }
+      if (!item.file) throw new Error('קובץ מדיה חסר');
+      const safeName = item.file.name.replace(/[^\w.\-]+/g, '_').slice(-120);
+      const path = `${uploadPrefix}/social/${crypto.randomUUID()}-${safeName}`;
+      const { error } = await client.storage.from('outputs').upload(path, item.file, {
+        contentType: item.file.type || undefined,
+        upsert: false,
+      });
+      if (error) throw error;
+      return { kind: item.kind, source: item.source, name: item.name, storage_path: path, mime_type: item.file.type || null };
+    })
+  );
+}
+
+// Rebuild display-ready media items (with fresh signed thumbnails) from the
+// stored jsonb records — used when opening an existing post for editing.
+export async function hydrateStoredMedia(records: StoredMediaRecord[] | null | undefined): Promise<MediaItem[]> {
+  const client = createSupabaseBrowserClient();
+  const resolved = await Promise.all(
+    (records ?? []).map(async (record) => {
+      if (!record.storage_path) return null;
+      const { data: signed } = await client.storage.from('outputs').createSignedUrl(record.storage_path, 3600);
+      if (!signed?.signedUrl) return null;
+      return {
+        id: crypto.randomUUID(),
+        url: signed.signedUrl,
+        kind: record.kind === 'video' ? 'video' : 'image',
+        source: record.source === 'upload' ? 'upload' : 'output',
+        name: record.name || record.storage_path.split('/').pop() || 'מדיה',
+        storagePath: record.storage_path,
+      } as MediaItem;
+    })
+  );
+  return resolved.filter((item): item is MediaItem => item !== null);
+}
 
 export default function SocialScheduleSection({
   captionSource,
@@ -57,7 +111,6 @@ export default function SocialScheduleSection({
 
   // Media attached to the post — shared across both platform modals.
   const [media, setMedia] = useState<MediaItem[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [scheduleSaved, setScheduleSaved] = useState<string | null>(null);
 
   // Object URLs created for uploads must be revoked to avoid leaks.
@@ -99,49 +152,6 @@ export default function SocialScheduleSection({
     void ensureCaption(next);
   }
 
-  function addUploadedFiles(files: FileList | null) {
-    if (!files?.length) return;
-    const next: MediaItem[] = [];
-    for (const file of Array.from(files)) {
-      const kind = file.type.startsWith('video') ? 'video' : 'image';
-      next.push({
-        id: crypto.randomUUID(),
-        url: URL.createObjectURL(file),
-        kind,
-        source: 'upload',
-        name: file.name,
-        file,
-      });
-    }
-    setMedia((cur) => [...cur, ...next]);
-  }
-
-  function addFromOutputs(items: Array<{ storagePath: string; url: string; name: string }>) {
-    setMedia((cur) => {
-      const existing = new Set(cur.map((m) => m.storagePath).filter(Boolean));
-      const next = items
-        .filter((it) => !existing.has(it.storagePath))
-        .map<MediaItem>((it) => ({
-          id: crypto.randomUUID(),
-          url: it.url,
-          kind: 'image',
-          source: 'output',
-          name: it.name,
-          storagePath: it.storagePath,
-        }));
-      return [...cur, ...next];
-    });
-    setPickerOpen(false);
-  }
-
-  function removeMedia(id: string) {
-    setMedia((cur) => {
-      const target = cur.find((m) => m.id === id);
-      if (target?.source === 'upload') URL.revokeObjectURL(target.url);
-      return cur.filter((m) => m.id !== id);
-    });
-  }
-
   return (
     <div>
       <label className="block text-sm font-semibold mb-2">{title}</label>
@@ -174,9 +184,7 @@ export default function SocialScheduleSection({
           captionLoading={captionLoading}
           captionError={captionError}
           media={media}
-          onAddFiles={addUploadedFiles}
-          onOpenPicker={() => setPickerOpen(true)}
-          onRemoveMedia={removeMedia}
+          setMedia={setMedia}
           requestId={requestId}
           outputId={outputId}
           brandId={brandId}
@@ -189,7 +197,6 @@ export default function SocialScheduleSection({
         />
       )}
 
-      {pickerOpen && <OutputsPickerModal brandId={brandId} onClose={() => setPickerOpen(false)} onConfirm={addFromOutputs} />}
       {scheduleSaved && (
         <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           {scheduleSaved}
@@ -206,9 +213,7 @@ function ScheduleModal({
   captionLoading,
   captionError,
   media,
-  onAddFiles,
-  onOpenPicker,
-  onRemoveMedia,
+  setMedia,
   requestId,
   outputId,
   brandId,
@@ -222,9 +227,7 @@ function ScheduleModal({
   captionLoading: boolean;
   captionError: string | null;
   media: MediaItem[];
-  onAddFiles: (files: FileList | null) => void;
-  onOpenPicker: () => void;
-  onRemoveMedia: (id: string) => void;
+  setMedia: React.Dispatch<React.SetStateAction<MediaItem[]>>;
   requestId: string | null;
   outputId: string | null;
   brandId: string | null;
@@ -232,7 +235,6 @@ function ScheduleModal({
   onSaved: (message: string) => void;
   onClose: () => void;
 }) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [scheduleTitle, setScheduleTitle] = useState('');
   const [scheduledAt, setScheduledAt] = useState(defaultScheduledAt);
   const [saving, setSaving] = useState(false);
@@ -256,34 +258,7 @@ function ScheduleModal({
     setSaveError(null);
     try {
       const client = createSupabaseBrowserClient();
-      const uploadedMedia = await Promise.all(
-        media.map(async (item) => {
-          if (item.source === 'output') {
-            return {
-              kind: item.kind,
-              source: item.source,
-              name: item.name,
-              storage_path: item.storagePath ?? null,
-              mime_type: null,
-            };
-          }
-          if (!item.file) throw new Error('קובץ מדיה חסר');
-          const safeName = item.file.name.replace(/[^\w.\-]+/g, '_').slice(-120);
-          const path = `${requestId || 'manual'}/social/${crypto.randomUUID()}-${safeName}`;
-          const { error } = await client.storage.from('outputs').upload(path, item.file, {
-            contentType: item.file.type || undefined,
-            upsert: false,
-          });
-          if (error) throw error;
-          return {
-            kind: item.kind,
-            source: item.source,
-            name: item.name,
-            storage_path: path,
-            mime_type: item.file.type || null,
-          };
-        })
-      );
+      const uploadedMedia = await uploadPendingMedia(media, requestId || 'manual');
 
       const { data, error } = await client.functions.invoke('schedule-social-post', {
         body: {
@@ -432,63 +407,7 @@ function ScheduleModal({
           {aiCaptionError && <p className="mb-3 text-xs text-red-600">{aiCaptionError}</p>}
           {!captionLoading && !aiCaptionLoading && !captionError && !aiCaptionError && <div className="mb-3" />}
 
-          <label className="mb-2 block text-sm font-semibold">מדיה לפרסום</label>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*,video/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              onAddFiles(e.target.files);
-              e.target.value = ''; // allow re-selecting the same file
-            }}
-          />
-          <div className="mb-3 grid min-w-0 gap-2 sm:flex sm:flex-wrap">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:w-auto sm:px-3"
-            >
-              <UploadIcon />
-              <span className="truncate">העלאת תמונות/סרטונים</span>
-            </button>
-            <button
-              type="button"
-              onClick={onOpenPicker}
-              className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:w-auto sm:px-3"
-            >
-              <GalleryIcon />
-              <span className="truncate">מתוך התוצרים שלנו</span>
-            </button>
-          </div>
-
-          {media.length > 0 && (
-            <div className="mb-4 grid grid-cols-3 gap-2">
-              {media.map((m) => (
-                <div key={m.id} className="group relative aspect-square overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
-                  {m.kind === 'video' ? (
-                    <video src={m.url} className="h-full w-full object-cover" muted />
-                  ) : (
-                    <img src={m.url} alt={m.name} className="h-full w-full object-cover" />
-                  )}
-                  <Tooltip content="הסרה">
-                    <button
-                      type="button"
-                      onClick={() => onRemoveMedia(m.id)}
-                      aria-label="הסרה"
-                      className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
-                    >
-                      <CloseIcon size={12} />
-                    </button>
-                  </Tooltip>
-                  {m.kind === 'video' && (
-                    <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">וידאו</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          <MediaEditor media={media} setMedia={setMedia} brandId={brandId} />
 
           {platform === 'instagram' && media.length === 0 && (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -517,6 +436,129 @@ function ScheduleModal({
         </div>
       </div>
     </div>
+  );
+}
+
+// Reusable media block: upload buttons, the outputs picker, and the thumbnail
+// grid. Shared by the create flow (ScheduleModal) and the edit flow so adding
+// images or AI outputs works identically in both places.
+export function MediaEditor({
+  media,
+  setMedia,
+  brandId,
+}: {
+  media: MediaItem[];
+  setMedia: React.Dispatch<React.SetStateAction<MediaItem[]>>;
+  brandId: string | null;
+}) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  function addUploadedFiles(files: FileList | null) {
+    if (!files?.length) return;
+    const next: MediaItem[] = [];
+    for (const file of Array.from(files)) {
+      const kind = file.type.startsWith('video') ? 'video' : 'image';
+      next.push({
+        id: crypto.randomUUID(),
+        url: URL.createObjectURL(file),
+        kind,
+        source: 'upload',
+        name: file.name,
+        file,
+      });
+    }
+    setMedia((cur) => [...cur, ...next]);
+  }
+
+  function addFromOutputs(items: Array<{ storagePath: string; url: string; name: string }>) {
+    setMedia((cur) => {
+      const existing = new Set(cur.map((m) => m.storagePath).filter(Boolean));
+      const next = items
+        .filter((it) => !existing.has(it.storagePath))
+        .map<MediaItem>((it) => ({
+          id: crypto.randomUUID(),
+          url: it.url,
+          kind: 'image',
+          source: 'output',
+          name: it.name,
+          storagePath: it.storagePath,
+        }));
+      return [...cur, ...next];
+    });
+    setPickerOpen(false);
+  }
+
+  function removeMedia(id: string) {
+    setMedia((cur) => {
+      const target = cur.find((m) => m.id === id);
+      if (target?.source === 'upload' && !target.storagePath) URL.revokeObjectURL(target.url);
+      return cur.filter((m) => m.id !== id);
+    });
+  }
+
+  return (
+    <>
+      <label className="mb-2 block text-sm font-semibold">מדיה לפרסום</label>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          addUploadedFiles(e.target.files);
+          e.target.value = ''; // allow re-selecting the same file
+        }}
+      />
+      <div className="mb-3 grid min-w-0 gap-2 sm:flex sm:flex-wrap">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:w-auto sm:px-3"
+        >
+          <UploadIcon />
+          <span className="truncate">העלאת תמונות/סרטונים</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:w-auto sm:px-3"
+        >
+          <GalleryIcon />
+          <span className="truncate">מתוך התוצרים שלנו</span>
+        </button>
+      </div>
+
+      {media.length > 0 && (
+        <div className="mb-4 grid grid-cols-3 gap-2">
+          {media.map((m) => (
+            <div key={m.id} className="group relative aspect-square overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
+              {m.kind === 'video' ? (
+                <video src={m.url} className="h-full w-full object-cover" muted />
+              ) : (
+                <img src={m.url} alt={m.name} className="h-full w-full object-cover" />
+              )}
+              <Tooltip content="הסרה">
+                <button
+                  type="button"
+                  onClick={() => removeMedia(m.id)}
+                  aria-label="הסרה"
+                  className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+                >
+                  <CloseIcon size={12} />
+                </button>
+              </Tooltip>
+              {m.kind === 'video' && (
+                <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">וידאו</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {pickerOpen && <OutputsPickerModal brandId={brandId} onClose={() => setPickerOpen(false)} onConfirm={addFromOutputs} />}
+    </>
   );
 }
 

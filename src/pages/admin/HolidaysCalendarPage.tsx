@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { Spinner } from '@/components/ui/Spinner';
-import SocialScheduleSection from '@/components/SocialScheduleSection';
+import SocialScheduleSection, {
+  MediaEditor,
+  uploadPendingMedia,
+  hydrateStoredMedia,
+  type MediaItem,
+  type StoredMediaRecord,
+} from '@/components/SocialScheduleSection';
+import { fetchSocialCaption } from '@/lib/social';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import type { IsraelHoliday } from '@/types/db';
@@ -20,11 +27,13 @@ type BrandOption = {
 type ScheduledSocialPost = {
   id: string;
   brand_id: string | null;
+  request_id: string | null;
   title: string | null;
   platform: 'facebook' | 'instagram';
   caption: string;
   scheduled_at: string;
   status: 'scheduled' | 'published' | 'failed' | 'cancelled';
+  media?: StoredMediaRecord[] | null;
   brands?: { name?: string | null } | null;
 };
 
@@ -112,6 +121,10 @@ export default function HolidaysCalendarPage() {
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [editPostId, setEditPostId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EditScheduleForm>({ title: '', scheduledAt: '', caption: '' });
+  const [editMedia, setEditMedia] = useState<MediaItem[]>([]);
+  const [editMediaLoading, setEditMediaLoading] = useState(false);
+  const [editAiLoading, setEditAiLoading] = useState(false);
+  const [editAiError, setEditAiError] = useState<string | null>(null);
   const [savingEditPostId, setSavingEditPostId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [deleteConfirmPostId, setDeleteConfirmPostId] = useState<string | null>(null);
@@ -166,7 +179,7 @@ export default function HolidaysCalendarPage() {
 
     db
       .from('scheduled_social_posts')
-      .select('id, brand_id, title, platform, caption, scheduled_at, status, brands(name)')
+      .select('id, brand_id, request_id, title, platform, caption, scheduled_at, status, media, brands(name)')
       .gte('scheduled_at', monthBoundaryIso(year, month))
       .lt('scheduled_at', monthBoundaryIso(year, month + 1))
       .neq('status', 'cancelled')
@@ -239,7 +252,7 @@ export default function HolidaysCalendarPage() {
         } else if (deleteConfirmPostId) {
           setDeleteConfirmPostId(null);
         } else if (editPostId) {
-          setEditPostId(null);
+          closeEditSchedule();
         } else if (selectedPostId) {
           setSelectedPostId(null);
         } else if (selectedDate) {
@@ -338,12 +351,51 @@ export default function HolidaysCalendarPage() {
 
   function openEditSchedule(post: ScheduledSocialPost) {
     setEditError(null);
+    setEditAiError(null);
     setEditPostId(post.id);
     setEditForm({
       title: scheduleDisplayTitle(post),
       scheduledAt: datetimeLocalFromIso(post.scheduled_at),
       caption: post.caption,
     });
+    setEditMedia([]);
+    setEditMediaLoading(true);
+    void hydrateStoredMedia(post.media)
+      .then((items) => setEditMedia(items))
+      .catch(() => setEditMedia([]))
+      .finally(() => setEditMediaLoading(false));
+  }
+
+  function closeEditSchedule() {
+    setEditMedia((current) => {
+      for (const item of current) if (item.source === 'upload' && !item.storagePath) URL.revokeObjectURL(item.url);
+      return [];
+    });
+    setEditPostId(null);
+  }
+
+  async function generateEditCaption(post: ScheduledSocialPost) {
+    const draft = editForm.caption.trim();
+    if (!draft || editAiLoading) return;
+    setEditAiLoading(true);
+    setEditAiError(null);
+    try {
+      const text = await fetchSocialCaption(
+        {
+          brand_id: post.brand_id,
+          goal: draft,
+          source_text: draft,
+          content_request: 'להפוך את הטקסט החופשי לכיתוב מוכן לפרסום ברשת החברתית, בלי להוסיף עובדות שלא נכתבו.',
+        },
+        post.platform,
+        post.request_id
+      );
+      setEditForm((current) => ({ ...current, caption: text }));
+    } catch {
+      setEditAiError('לא הצלחנו לנסח את הטקסט עם AI. אפשר לערוך ידנית ולנסות שוב.');
+    } finally {
+      setEditAiLoading(false);
+    }
   }
 
   async function saveScheduleEdit(post: ScheduledSocialPost) {
@@ -354,12 +406,22 @@ export default function HolidaysCalendarPage() {
     setEditError(null);
 
     const nextScheduledAt = new Date(editForm.scheduledAt);
+    let storedMedia: StoredMediaRecord[];
+    try {
+      storedMedia = await uploadPendingMedia(editMedia, post.request_id || 'manual');
+    } catch (uploadErr) {
+      setSavingEditPostId(null);
+      setEditError(String((uploadErr as { message?: string })?.message ?? uploadErr));
+      return;
+    }
+
     const { error: updateError } = await createSupabaseBrowserClient()
       .from('scheduled_social_posts')
       .update({
         title: cleanTitle,
         caption: cleanCaption,
         scheduled_at: nextScheduledAt.toISOString(),
+        media: storedMedia,
       } as never)
       .eq('id', post.id);
 
@@ -371,10 +433,10 @@ export default function HolidaysCalendarPage() {
 
     setScheduledPosts((current) => current.map((item) => (
       item.id === post.id
-        ? { ...item, title: cleanTitle, caption: cleanCaption, scheduled_at: nextScheduledAt.toISOString() }
+        ? { ...item, title: cleanTitle, caption: cleanCaption, scheduled_at: nextScheduledAt.toISOString(), media: storedMedia }
         : item
     )));
-    setEditPostId(null);
+    closeEditSchedule();
     setScheduleRefreshKey((value) => value + 1);
   }
 
@@ -672,7 +734,7 @@ export default function HolidaysCalendarPage() {
 
       {editPost && (
         <div className="fixed inset-0 z-[74] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="עריכת תזמון">
-          <button type="button" className="absolute inset-0 h-full w-full cursor-default" aria-label="סגירת חלון" onClick={() => setEditPostId(null)} />
+          <button type="button" className="absolute inset-0 h-full w-full cursor-default" aria-label="סגירת חלון" onClick={closeEditSchedule} />
           <div className="relative max-h-[88dvh] w-full overflow-y-auto rounded-t-2xl border border-[var(--border)] bg-white p-5 text-right shadow-xl sm:max-w-lg sm:rounded-2xl" dir="rtl">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -681,7 +743,7 @@ export default function HolidaysCalendarPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setEditPostId(null)}
+                onClick={closeEditSchedule}
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[#071a33] hover:bg-[#edf4f2]"
                 aria-label="סגירת חלון"
               >
@@ -711,15 +773,42 @@ export default function HolidaysCalendarPage() {
                 />
               </label>
 
-              <label className="block text-sm font-semibold">
-                כיתוב לפרסום
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <label className="block text-sm font-semibold">כיתוב לפרסום</label>
+                  <button
+                    type="button"
+                    onClick={() => void generateEditCaption(editPost)}
+                    disabled={editAiLoading || !editForm.caption.trim()}
+                    className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {editAiLoading ? 'מנסח...' : 'ניסוח עם AI'}
+                  </button>
+                </div>
                 <textarea
                   rows={5}
                   value={editForm.caption}
-                  onChange={(event) => setEditForm((current) => ({ ...current, caption: event.target.value }))}
-                  className="mt-2 block w-full resize-none rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm leading-6"
+                  onChange={(event) => {
+                    setEditForm((current) => ({ ...current, caption: event.target.value }));
+                    if (editAiError) setEditAiError(null);
+                  }}
+                  className="block w-full resize-none rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm leading-6"
                 />
-              </label>
+                {editAiError && <p className="mt-2 text-xs text-red-600">{editAiError}</p>}
+              </div>
+
+              <div>
+                {editMediaLoading ? (
+                  <p className="text-sm text-[var(--muted)]">טוען מדיה...</p>
+                ) : (
+                  <MediaEditor media={editMedia} setMedia={setEditMedia} brandId={editPost.brand_id} />
+                )}
+                {!editMediaLoading && editPost.platform === 'instagram' && editMedia.length === 0 && (
+                  <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
+                  </div>
+                )}
+              </div>
             </div>
 
             {editError && (
@@ -732,14 +821,14 @@ export default function HolidaysCalendarPage() {
               <button
                 type="button"
                 onClick={() => void saveScheduleEdit(editPost)}
-                disabled={savingEditPostId === editPost.id || !editForm.title.trim() || !editForm.caption.trim() || !editForm.scheduledAt}
+                disabled={savingEditPostId === editPost.id || editMediaLoading || !editForm.title.trim() || !editForm.caption.trim() || !editForm.scheduledAt || (editPost.platform === 'instagram' && editMedia.length === 0)}
                 className="min-h-11 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {savingEditPostId === editPost.id ? 'שומר...' : 'שמירת שינויים'}
               </button>
               <button
                 type="button"
-                onClick={() => setEditPostId(null)}
+                onClick={closeEditSchedule}
                 className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50"
               >
                 ביטול
