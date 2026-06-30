@@ -184,6 +184,11 @@ export default function OnboardingPage() {
   const [brandLookupMessage, setBrandLookupMessage] = useState<string | null>(null);
   const [brandCandidates, setBrandCandidates] = useState<BrandCandidate[]>([]);
   const [brandCandidatesOpen, setBrandCandidatesOpen] = useState(false);
+  const [brandColorModalOpen, setBrandColorModalOpen] = useState(false);
+  const [brandColorAnalyzing, setBrandColorAnalyzing] = useState(false);
+  const [brandColorSummary, setBrandColorSummary] = useState<string | null>(null);
+  const [brandColorAnalysis, setBrandColorAnalysis] = useState<{ estimated_cost: number; confidence: number; model: string } | null>(null);
+  const [brandLogoSaving, setBrandLogoSaving] = useState(false);
   const [contentSources, setContentSources] = useState<ContentSource[]>([]);
   const [contentLoaded, setContentLoaded] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
@@ -333,6 +338,15 @@ export default function OnboardingPage() {
   }, [avatarModalOpen]);
 
   useEffect(() => {
+    if (!brandColorModalOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setBrandColorModalOpen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [brandColorModalOpen]);
+
+  useEffect(() => {
     return () => {
       if (avatarPreview?.startsWith('blob:')) URL.revokeObjectURL(avatarPreview);
       if (brandLogoPreview?.startsWith('blob:')) URL.revokeObjectURL(brandLogoPreview);
@@ -353,6 +367,66 @@ export default function OnboardingPage() {
     }
     setBrandLogoFile(file);
     setBrandLogoPreview(file ? URL.createObjectURL(file) : brand.logo_url ?? null);
+    if (file && brandMode === 'existing' && brand.id) {
+      void saveBrandLogoNow(file);
+    }
+  }
+
+  async function saveBrandLogoNow(file: File) {
+    if (!brand.id) return;
+    setBrandLogoSaving(true);
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke('onboarding-brand', {
+        body: {
+          action: 'save',
+          brand_id: brand.id,
+          name: brand.name,
+          aliases: brand.aliases,
+          style_notes: brand.style_notes,
+          client_type: brand.client_type,
+          color_palette: brand.color_palette,
+          logo_base64: await fileToBase64(file),
+          logo_mime: file.type,
+          logo_name: file.name,
+          official_name: brand.official_name,
+          short_name: brand.short_name,
+          slogan: brand.slogan,
+          department_name: brand.department_name,
+          contact_person_name: brand.contact_person_name,
+          contact_person_title: brand.contact_person_title,
+          address: brand.address,
+          phone: brand.phone,
+          fax: brand.fax,
+          email: brand.email,
+          website: brand.website,
+          legal_id: brand.legal_id,
+          default_form_number: brand.default_form_number,
+          document_footer_text: brand.document_footer_text,
+          legal_disclaimer: brand.legal_disclaimer,
+          signature_label: brand.signature_label,
+          title_font_family: brand.title_font_family,
+          body_font_family: brand.body_font_family,
+          document_style: brand.document_style,
+          show_brand_background: brand.show_brand_background,
+          show_contact_footer: brand.show_contact_footer,
+          document_usage: brand.document_usage,
+        },
+      });
+      const payload = data as { error?: string; brand?: Partial<BrandDetails> & { logo_url?: string | null } } | null;
+      if (fnErr || payload?.error || !payload?.brand) throw new Error(payload?.error ?? 'failed');
+      const loaded = brandFromRow(payload.brand);
+      setBrand((cur) => ({ ...cur, ...loaded, logo_url: payload.brand.logo_url ?? loaded.logo_url ?? null }));
+      setBrandLogoPreview(payload.brand.logo_url ?? brandLogoPreview ?? null);
+    } catch (e) {
+      console.error(e);
+      setError('שמירת הלוגו למותג הקיים נכשלה. אפשר לנסות שוב דרך שמירת המותג.');
+    } finally {
+      setBrandLogoSaving(false);
+    }
+  }
+
+  function hasCustomBrandPalette() {
+    return brand.color_palette.some((color, index) => color.hex !== emptyBrand.color_palette[index]?.hex);
   }
 
   function onAvatarButtonClick() {
@@ -375,9 +449,91 @@ export default function OnboardingPage() {
     setBrandLookupMessage(null);
     setBrandCandidates([]);
     setBrandCandidatesOpen(false);
+    setBrandColorModalOpen(false);
+    setBrandColorAnalyzing(false);
+    setBrandColorSummary(null);
+    setBrandColorAnalysis(null);
     setContentSources([]);
     setContentLoaded(false);
     setError(null);
+  }
+
+  async function getBrandLogoBase64(): Promise<{ base64: string; mime: string; name: string } | null> {
+    if (brandLogoFile) {
+      return {
+        base64: await fileToBase64(brandLogoFile),
+        mime: brandLogoFile.type || 'image/png',
+        name: brandLogoFile.name,
+      };
+    }
+    if (brand.logo_url) {
+      const res = await fetch(brand.logo_url);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return {
+        base64: await blobToBase64(blob),
+        mime: blob.type || 'image/png',
+        name: brand.logo_path?.split('/').pop() ?? 'logo',
+      };
+    }
+    return null;
+  }
+
+  async function analyzeBrandColors() {
+    setError(null);
+    setBrandColorSummary(null);
+    setBrandColorAnalysis(null);
+    const logo = await getBrandLogoBase64();
+    if (!logo) {
+      setError('צריך להעלות לוגו או לבחור מותג עם לוגו כדי לזהות צבעים.');
+      return;
+    }
+
+    setBrandColorAnalyzing(true);
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke('analyze-brand-colors', {
+        body: {
+          logo_base64: logo.base64,
+          logo_mime: logo.mime,
+          logo_name: logo.name,
+          brand_name: brand.name || brandName || null,
+        },
+      });
+      const payload = data as
+        | {
+            error?: string;
+            summary?: string;
+            colors?: { role: BrandDetails['color_palette'][number]['role']; hex: string; reason?: string | null }[];
+            estimated_cost?: number;
+            confidence?: number;
+            model?: string;
+          }
+        | null;
+      if (fnErr || payload?.error) throw new Error(payload?.error ?? 'failed');
+      if (!payload) throw new Error('failed');
+
+      if (Array.isArray(payload.colors) && payload.colors.length > 0) {
+        setBrand((cur) => ({
+          ...cur,
+          color_palette: cur.color_palette.map((item) => {
+            const found = payload.colors?.find((color) => color.role === item.role);
+            return found ? { ...item, hex: found.hex } : item;
+          }),
+        }));
+      }
+
+      setBrandColorSummary(payload.summary ?? 'זוהו צבעי מותג מרכזיים.');
+      setBrandColorAnalysis({
+        estimated_cost: Number(payload.estimated_cost ?? 0),
+        confidence: Number(payload.confidence ?? 0),
+        model: payload.model ?? 'gpt-4o',
+      });
+    } catch (e) {
+      console.error(e);
+      setError('זיהוי צבעי המותג נכשל. נסו שוב אחרי בדיקת הלוגו.');
+    } finally {
+      setBrandColorAnalyzing(false);
+    }
   }
 
   async function loadContentSections(brandId: string) {
@@ -835,8 +991,21 @@ export default function OnboardingPage() {
                       onChange={(e) => onPickBrandLogo(e.target.files?.[0] ?? null)}
                     />
                   </label>
-                  <span className="text-xs text-[var(--muted)]">אופציונלי, עד 5MB</span>
+                  <span className="text-xs text-[var(--muted)]">
+                    אופציונלי, עד 5MB{brandMode === 'existing' && brand.id ? ' · נשמר אוטומטית למותג הקיים' : ''}
+                  </span>
                 </div>
+                {brandLogoSaving && <p className="mb-4 text-xs text-[var(--muted)]">שומר לוגו למותג...</p>}
+
+                {!hasCustomBrandPalette() && (
+                  <button
+                    type="button"
+                    onClick={() => setBrandColorModalOpen(true)}
+                    className="mb-4 w-full rounded-xl border border-brand/20 bg-brand/5 px-4 py-3 text-right text-sm font-semibold text-brand hover:bg-brand/10"
+                  >
+                    זיהוי צבעי מותג מהלוגו
+                  </button>
+                )}
 
                 <Field label="סוג לקוח">
                   <select
@@ -1259,6 +1428,99 @@ export default function OnboardingPage() {
           </div>
         </div>
       )}
+      {brandColorModalOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/50 px-4 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="זיהוי צבעי מותג"
+          dir="rtl"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 z-0 h-full w-full cursor-default"
+            aria-label="סגירת מודל זיהוי צבעי מותג"
+            onClick={() => setBrandColorModalOpen(false)}
+          />
+          <div className="relative z-10 w-full max-w-lg rounded-2xl border border-[var(--border)] bg-white p-5 text-right shadow-xl" dir="rtl">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--text)]">זיהוי צבעי מותג</h2>
+                <p className="mt-1 text-sm text-[var(--muted)]">
+                  ה-AI ינתח את הלוגו ויחלץ את צבעי המותג המרכזיים לשימוש במערכת.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBrandColorModalOpen(false)}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--border)] text-lg text-[var(--muted)] hover:bg-gray-50"
+                aria-label="סגירה"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-[var(--border)] bg-gray-50 p-4">
+              <div className="text-sm font-semibold text-[var(--text)]">מה יקרה</div>
+              <ul className="mt-2 space-y-1 text-sm text-[var(--muted)]">
+                <li>• המערכת תנתח את הלוגו או הקובץ שהועלה.</li>
+                <li>• הצבעים יישמרו כצבעי מותג ראשי, משני, הדגשה, רקע וטקסט.</li>
+                <li>• כל הרצה תתועד ביומן הפעולות של ה-AI, כולל עלות.</li>
+              </ul>
+            </div>
+
+            {brandColorSummary && (
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                {brandColorSummary}
+              </div>
+            )}
+
+            {brandColorAnalysis && (
+              <div className="mt-4 grid grid-cols-1 gap-2 rounded-xl border border-[var(--border)] p-4 text-sm sm:grid-cols-3">
+                <div>
+                  <div className="text-[var(--muted)]">עלות</div>
+                  <div className="font-semibold ltr">${brandColorAnalysis.estimated_cost.toFixed(4)}</div>
+                </div>
+                <div>
+                  <div className="text-[var(--muted)]">ביטחון</div>
+                  <div className="font-semibold">{Math.round(brandColorAnalysis.confidence * 100)}%</div>
+                </div>
+                <div>
+                  <div className="text-[var(--muted)]">מודל</div>
+                  <div className="font-semibold ltr">{brandColorAnalysis.model}</div>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 rounded-xl border border-[var(--border)] bg-white p-4">
+              <div className="text-sm font-semibold">יומן פעולה</div>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                זיהוי צבעי מותג נרשם בפעולות AI כך שאפשר לעקוב אחרי שימוש, עלות ותוצאה.
+              </p>
+            </div>
+
+            {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+
+            <div className="mt-5 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={analyzeBrandColors}
+                disabled={brandColorAnalyzing}
+                className="flex-1 rounded-lg bg-brand px-4 py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
+              >
+                {brandColorAnalyzing ? 'מזהה צבעים...' : 'להפעיל זיהוי'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setBrandColorModalOpen(false)}
+                className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+              >
+                ביטול
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1455,5 +1717,14 @@ function fileToBase64(file: File): Promise<string> {
     reader.onload = () => resolve(String(reader.result).split(',').pop() ?? '');
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
+  });
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',').pop() ?? '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
   });
 }
