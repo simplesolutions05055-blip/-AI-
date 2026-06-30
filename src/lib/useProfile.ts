@@ -3,6 +3,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export interface OnboardingState {
   details_done?: boolean;
+  brand_done?: boolean;
   docs_done?: boolean;
   files_done?: boolean;
   hard_completed_at?: string | null;

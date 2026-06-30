@@ -20,11 +20,13 @@ import ErrorsPage from '@/pages/admin/ErrorsPage';
 import PermissionsPage from '@/pages/admin/PermissionsPage';
 import HolidaysCalendarPage from '@/pages/admin/HolidaysCalendarPage';
 import ReloadPrompt from '@/components/pwa/ReloadPrompt';
+import TitleManager from '@/components/TitleManager';
 
 export default function App() {
   return (
     <TooltipProvider delayDuration={200}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <TitleManager />
         <Routes>
           <Route path="/" element={<Navigate to="/admin" replace />} />
         <Route path="/login" element={<LoginPage />} />

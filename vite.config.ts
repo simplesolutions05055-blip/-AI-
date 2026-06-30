@@ -12,7 +12,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'pwa-icon.svg', 'apple-touch-icon.svg'],
+      includeAssets: ['favicon.ico', 'favicon.svg', 'pwa-icon.svg', 'apple-touch-icon.svg'],
       manifest: {
         name: 'סוכן AI ארגוני',
         short_name: 'סוכן AI',

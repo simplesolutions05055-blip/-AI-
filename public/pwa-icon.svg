@@ -1,7 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="104" fill="#111827"/>
-  <circle cx="256" cy="240" r="132" fill="#ffffff"/>
-  <path fill="#111827" d="M180 222h152v36H180zM180 286h108v32H180z"/>
-  <path fill="#16a34a" d="M330 330c-35 24-83 30-126 10l-52 18 18-51c-28-49-18-112 25-150 52-46 131-42 178 10 45 51 40 129-10 174l-33-11Z"/>
-  <path fill="#ffffff" d="M221 190h118v30H221zM221 242h78v28h-78z"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset=".55" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#1E40AF"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g fill="#fff" opacity=".92">
+    <rect x="150" y="186" width="150" height="30" rx="15"/>
+    <rect x="150" y="241" width="200" height="30" rx="15"/>
+    <rect x="150" y="296" width="118" height="30" rx="15"/>
+  </g>
+  <path d="M338 236c4.6 33.4 12.8 41.6 46.2 46.2-33.4 4.6-41.6 12.8-46.2 46.2-4.6-33.4-12.8-41.6-46.2-46.2 33.4-4.6 41.6-12.8 46.2-46.2z" fill="#fff"/>
+  <path d="M362 168c2.4 17.4 6.6 21.6 24 24-17.4 2.4-21.6 6.6-24 24-2.4-17.4-6.6-21.6-24-24 17.4-2.4 21.6-6.6 24-24z" fill="#C7D2FE"/>
 </svg>
