@@ -21,6 +21,7 @@ import PermissionsPage from '@/pages/admin/PermissionsPage';
 import HolidaysCalendarPage from '@/pages/admin/HolidaysCalendarPage';
 import ReloadPrompt from '@/components/pwa/ReloadPrompt';
 import TitleManager from '@/components/TitleManager';
+import DialogHost from '@/components/DialogHost';
 
 export default function App() {
   return (
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
       <ReloadPrompt />
+      <DialogHost />
       </BrowserRouter>
     </TooltipProvider>
   );

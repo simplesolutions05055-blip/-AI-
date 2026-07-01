@@ -8,6 +8,7 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import type { OutputType } from '@/types/db';
 import { parseRichText, exportRichTextPdf, exportRichTextDocx, RichTextPreview } from '@/lib/richText';
 import { Spinner } from '@/components/ui/Spinner';
+import { alertDialog, confirmDialog } from '@/lib/dialog';
 
 const ico = 'h-4 w-4 shrink-0';
 const EyeIcon = () => (
@@ -134,7 +135,7 @@ export default function FilesPage() {
       
       setFiles(cur => cur.map(f => f.id === row.id ? { ...f, storage_path: path, mime_type: file.type } : f));
     } catch (err) {
-      alert('העלאה נכשלה: ' + String(err));
+      await alertDialog('העלאה נכשלה: ' + String(err));
     } finally {
       setUploadingId(null);
     }
@@ -350,7 +351,7 @@ export default function FilesPage() {
   async function deleteSelected() {
     if (!isAdmin) return;
     if (selected.size === 0) return;
-    if (!window.confirm(`למחוק ${selected.size} תוצרים? פעולה זו אינה הפיכה.`)) return;
+    if (!(await confirmDialog({ message: `למחוק ${selected.size} תוצרים? פעולה זו אינה הפיכה.`, danger: true, confirmText: 'מחיקה' }))) return;
     setDeleting(true);
     const client = createSupabaseBrowserClient();
     const toDelete = files.filter((f) => selected.has(f.id));
@@ -359,7 +360,7 @@ export default function FilesPage() {
     // rows), so we can surface it instead of orphaning storage blobs.
     const { error } = await client.from('outputs').delete().in('id', Array.from(selected));
     if (error) {
-      window.alert(`מחיקה נכשלה: ${error.message}`);
+      await alertDialog(`מחיקה נכשלה: ${error.message}`);
       setDeleting(false);
       return;
     }

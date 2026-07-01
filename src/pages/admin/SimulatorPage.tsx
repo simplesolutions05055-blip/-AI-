@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { alertDialog } from '@/lib/dialog';
 
 type AttachmentKind = 'image' | 'audio' | 'document';
 
@@ -90,7 +91,7 @@ export default function SimulatorPage() {
     if (!file) return;
     const kind = detectAttachmentKind(file);
     if (!kind) {
-      alert('אפשר לצרף תמונה, מסמך (docx / txt / md) או קובץ אודיו בלבד.');
+      void alertDialog('אפשר לצרף תמונה, מסמך (docx / txt / md) או קובץ אודיו בלבד.');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
@@ -150,7 +151,7 @@ export default function SimulatorPage() {
       setRecordSeconds(0);
       recordTimerRef.current = setInterval(() => setRecordSeconds((s) => s + 1), 1000);
     } catch {
-      alert('לא ניתן לגשת למיקרופון. ודאו שיש הרשאה.');
+      void alertDialog('לא ניתן לגשת למיקרופון. ודאו שיש הרשאה.');
     }
   }
 

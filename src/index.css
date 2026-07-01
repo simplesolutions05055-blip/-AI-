@@ -340,10 +340,14 @@ select {
   }
 }
 
+/* iOS Safari auto-zooms when a focused control's font-size is under 16px. Pin
+   text controls to 16px on phones — !important is needed to beat Tailwind's
+   text-sm/text-xs utility classes, which otherwise out-specify the bare element
+   selector and leave the field at 14px (triggering the zoom). */
 @media (max-width: 767px) {
-  input,
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
   textarea,
   select {
-    font-size: 16px;
+    font-size: 16px !important;
   }
 }

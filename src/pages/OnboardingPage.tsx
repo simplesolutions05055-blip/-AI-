@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { extractTextFromUploadedFile } from '@/lib/extractText';
 import type { OnboardingState, ProfileGender } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 
-type StepKey = 'details' | 'brand' | 'docs' | 'files';
+type StepKey = 'details' | 'company' | 'brand' | 'docs' | 'files';
 
 interface UploadedItem {
   name: string;
@@ -180,15 +181,17 @@ export default function OnboardingPage() {
   const [brandMode, setBrandMode] = useState<'idle' | 'existing' | 'new'>('idle');
   const [brandLogoFile, setBrandLogoFile] = useState<File | null>(null);
   const [brandLogoPreview, setBrandLogoPreview] = useState<string | null>(null);
+  const [brandLogoModalOpen, setBrandLogoModalOpen] = useState(false);
+  const [brandLogoDragActive, setBrandLogoDragActive] = useState(false);
+  const [missingLogoConfirmOpen, setMissingLogoConfirmOpen] = useState(false);
+  const [missingDocsConfirmOpen, setMissingDocsConfirmOpen] = useState(false);
   const [brandLookupLoading, setBrandLookupLoading] = useState(false);
   const [brandLookupMessage, setBrandLookupMessage] = useState<string | null>(null);
   const [brandCandidates, setBrandCandidates] = useState<BrandCandidate[]>([]);
   const [brandCandidatesOpen, setBrandCandidatesOpen] = useState(false);
-  const [brandColorModalOpen, setBrandColorModalOpen] = useState(false);
   const [brandColorAnalyzing, setBrandColorAnalyzing] = useState(false);
   const [brandColorSummary, setBrandColorSummary] = useState<string | null>(null);
-  const [brandColorAnalysis, setBrandColorAnalysis] = useState<{ estimated_cost: number; confidence: number; model: string } | null>(null);
-  const [brandLogoSaving, setBrandLogoSaving] = useState(false);
+  const [pendingBrandColors, setPendingBrandColors] = useState<BrandDetails['color_palette'] | null>(null);
   const [contentSources, setContentSources] = useState<ContentSource[]>([]);
   const [contentLoaded, setContentLoaded] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
@@ -204,6 +207,7 @@ export default function OnboardingPage() {
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarModalOpen, setAvatarModalOpen] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const brandLogoInputRef = useRef<HTMLInputElement | null>(null);
 
   // uploads
   const [docs, setDocs] = useState<UploadedItem[]>([]);
@@ -214,7 +218,7 @@ export default function OnboardingPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const steps: StepKey[] = useMemo(() => ['details', 'brand', 'docs', 'files'], []);
+  const steps: StepKey[] = useMemo(() => ['details', 'company', 'brand', 'docs', 'files'], []);
   const step = steps[stepIndex];
 
   useBrandTheme(!!userId);
@@ -338,13 +342,31 @@ export default function OnboardingPage() {
   }, [avatarModalOpen]);
 
   useEffect(() => {
-    if (!brandColorModalOpen) return;
+    if (!brandLogoModalOpen) return;
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setBrandColorModalOpen(false);
+      if (event.key === 'Escape') setBrandLogoModalOpen(false);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [brandColorModalOpen]);
+  }, [brandLogoModalOpen]);
+
+  useEffect(() => {
+    if (!missingLogoConfirmOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMissingLogoConfirmOpen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [missingLogoConfirmOpen]);
+
+  useEffect(() => {
+    if (!missingDocsConfirmOpen) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMissingDocsConfirmOpen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [missingDocsConfirmOpen]);
 
   useEffect(() => {
     return () => {
@@ -365,68 +387,20 @@ export default function OnboardingPage() {
       setError('הלוגו גדול מ-5MB.');
       return;
     }
+    setError(null);
+    setBrandColorSummary(null);
+    setPendingBrandColors(null);
     setBrandLogoFile(file);
     setBrandLogoPreview(file ? URL.createObjectURL(file) : brand.logo_url ?? null);
-    if (file && brandMode === 'existing' && brand.id) {
-      void saveBrandLogoNow(file);
+    if (file) {
+      void analyzeBrandColorsFromFile(file);
     }
   }
 
-  async function saveBrandLogoNow(file: File) {
-    if (!brand.id) return;
-    setBrandLogoSaving(true);
-    try {
-      const { data, error: fnErr } = await supabase.functions.invoke('onboarding-brand', {
-        body: {
-          action: 'save',
-          brand_id: brand.id,
-          name: brand.name,
-          aliases: brand.aliases,
-          style_notes: brand.style_notes,
-          client_type: brand.client_type,
-          color_palette: brand.color_palette,
-          logo_base64: await fileToBase64(file),
-          logo_mime: file.type,
-          logo_name: file.name,
-          official_name: brand.official_name,
-          short_name: brand.short_name,
-          slogan: brand.slogan,
-          department_name: brand.department_name,
-          contact_person_name: brand.contact_person_name,
-          contact_person_title: brand.contact_person_title,
-          address: brand.address,
-          phone: brand.phone,
-          fax: brand.fax,
-          email: brand.email,
-          website: brand.website,
-          legal_id: brand.legal_id,
-          default_form_number: brand.default_form_number,
-          document_footer_text: brand.document_footer_text,
-          legal_disclaimer: brand.legal_disclaimer,
-          signature_label: brand.signature_label,
-          title_font_family: brand.title_font_family,
-          body_font_family: brand.body_font_family,
-          document_style: brand.document_style,
-          show_brand_background: brand.show_brand_background,
-          show_contact_footer: brand.show_contact_footer,
-          document_usage: brand.document_usage,
-        },
-      });
-      const payload = data as { error?: string; brand?: Partial<BrandDetails> & { logo_url?: string | null } } | null;
-      if (fnErr || payload?.error || !payload?.brand) throw new Error(payload?.error ?? 'failed');
-      const loaded = brandFromRow(payload.brand);
-      setBrand((cur) => ({ ...cur, ...loaded, logo_url: payload.brand.logo_url ?? loaded.logo_url ?? null }));
-      setBrandLogoPreview(payload.brand.logo_url ?? brandLogoPreview ?? null);
-    } catch (e) {
-      console.error(e);
-      setError('שמירת הלוגו למותג הקיים נכשלה. אפשר לנסות שוב דרך שמירת המותג.');
-    } finally {
-      setBrandLogoSaving(false);
-    }
-  }
-
-  function hasCustomBrandPalette() {
-    return brand.color_palette.some((color, index) => color.hex !== emptyBrand.color_palette[index]?.hex);
+  function onBrandLogoDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setBrandLogoDragActive(false);
+    onPickBrandLogo(event.dataTransfer.files?.[0] ?? null);
   }
 
   function onAvatarButtonClick() {
@@ -446,13 +420,15 @@ export default function OnboardingPage() {
     setBrandName(null);
     setBrandLogoFile(null);
     setBrandLogoPreview(null);
+    setBrandLogoModalOpen(false);
+    setBrandLogoDragActive(false);
+    setMissingLogoConfirmOpen(false);
     setBrandLookupMessage(null);
     setBrandCandidates([]);
     setBrandCandidatesOpen(false);
-    setBrandColorModalOpen(false);
     setBrandColorAnalyzing(false);
     setBrandColorSummary(null);
-    setBrandColorAnalysis(null);
+    setPendingBrandColors(null);
     setContentSources([]);
     setContentLoaded(false);
     setError(null);
@@ -479,11 +455,17 @@ export default function OnboardingPage() {
     return null;
   }
 
-  async function analyzeBrandColors() {
+  async function analyzeBrandColorsFromFile(file?: File) {
     setError(null);
     setBrandColorSummary(null);
-    setBrandColorAnalysis(null);
-    const logo = await getBrandLogoBase64();
+    setPendingBrandColors(null);
+    const logo = file
+      ? {
+          base64: await fileToBase64(file),
+          mime: file.type || 'image/png',
+          name: file.name,
+        }
+      : await getBrandLogoBase64();
     if (!logo) {
       setError('צריך להעלות לוגו או לבחור מותג עם לוגו כדי לזהות צבעים.');
       return;
@@ -504,36 +486,40 @@ export default function OnboardingPage() {
             error?: string;
             summary?: string;
             colors?: { role: BrandDetails['color_palette'][number]['role']; hex: string; reason?: string | null }[];
-            estimated_cost?: number;
-            confidence?: number;
-            model?: string;
           }
         | null;
       if (fnErr || payload?.error) throw new Error(payload?.error ?? 'failed');
       if (!payload) throw new Error('failed');
 
       if (Array.isArray(payload.colors) && payload.colors.length > 0) {
-        setBrand((cur) => ({
-          ...cur,
-          color_palette: cur.color_palette.map((item) => {
-            const found = payload.colors?.find((color) => color.role === item.role);
-            return found ? { ...item, hex: found.hex } : item;
-          }),
-        }));
+        setPendingBrandColors(buildAnalyzedPalette(payload.colors));
       }
 
       setBrandColorSummary(payload.summary ?? 'זוהו צבעי מותג מרכזיים.');
-      setBrandColorAnalysis({
-        estimated_cost: Number(payload.estimated_cost ?? 0),
-        confidence: Number(payload.confidence ?? 0),
-        model: payload.model ?? 'gpt-4o',
-      });
     } catch (e) {
       console.error(e);
       setError('זיהוי צבעי המותג נכשל. נסו שוב אחרי בדיקת הלוגו.');
     } finally {
       setBrandColorAnalyzing(false);
     }
+  }
+
+  function updatePendingBrandColor(role: BrandDetails['color_palette'][number]['role'], hex: string) {
+    setPendingBrandColors((cur) =>
+      (cur ?? brand.color_palette).map((item) => (item.role === role ? { ...item, hex } : item)),
+    );
+  }
+
+  function confirmPendingBrandColors() {
+    if (!pendingBrandColors) return;
+    if (!pendingBrandColors.every((color) => isValidHexColor(color.hex))) {
+      setError('יש צבע לא תקין. צריך להזין ערך HEX מלא, למשל #1A4D9C.');
+      return;
+    }
+    setBrand((cur) => ({ ...cur, color_palette: pendingBrandColors }));
+    setBrandColorSummary('צבעי המותג נשמרו בבחירה הנוכחית.');
+    setPendingBrandColors(null);
+    setError(null);
   }
 
   async function loadContentSections(brandId: string) {
@@ -598,9 +584,9 @@ export default function OnboardingPage() {
     }
   }
 
-  async function resolveBrandByName() {
+  async function resolveBrandByName(): Promise<boolean> {
     const name = brand.name.trim();
-    if (!name || brandDone) return;
+    if (!name) return false;
     setBrandLookupLoading(true);
     setError(null);
     setBrandLookupMessage(null);
@@ -626,24 +612,58 @@ export default function OnboardingPage() {
         setBrandCandidatesOpen(false);
         setBrandLookupMessage(null);
         if (loaded.id) await loadContentSections(loaded.id);
+        return true;
       } else if (payload?.mode === 'candidates' && payload.candidates?.length) {
         setBrandCandidates(payload.candidates);
         setBrandCandidatesOpen(true);
         setBrandLookupMessage('נמצאו כמה מותגים דומים. צריך לבחור את המותג הנכון.');
+        return false;
       } else {
-        setBrand((cur) => ({ ...cur, name }));
+        if (brandLogoPreview?.startsWith('blob:')) URL.revokeObjectURL(brandLogoPreview);
+        setBrand({ ...emptyBrand, name });
+        setBrandLogoFile(null);
+        setBrandLogoPreview(null);
+        setHasBrand(false);
+        setBrandDone(false);
+        setBrandName(null);
+        setContentSources([]);
+        setContentLoaded(false);
         setBrandMode('new');
         setBrandCandidates([]);
         setBrandCandidatesOpen(false);
         setBrandLookupMessage('לא נמצא מותג קיים בשם הזה. אפשר ליצור מותג חדש.');
+        return true;
       }
     } catch (e) {
       console.error(e);
       const message = e instanceof Error ? e.message : 'failed';
       setError(`בדיקת המותג נכשלה (${message}). אם הפונקציה עוד לא פרוסה, צריך לפרוס את onboarding-brand.`);
+      return false;
     } finally {
       setBrandLookupLoading(false);
     }
+  }
+
+  async function saveCompanyAndNext() {
+    setError(null);
+    if (!brand.name.trim()) {
+      setError('יש למלא שם חברה.');
+      return;
+    }
+    if (!brandLogoFile && !brandLogoPreview && !brand.logo_url) {
+      setMissingLogoConfirmOpen(true);
+      return;
+    }
+    await continueCompanyStep();
+  }
+
+  async function continueCompanyStep() {
+    if (brandMode === 'existing' || brandMode === 'new') {
+      advance();
+      return;
+    }
+    const canContinue = await resolveBrandByName();
+    if (canContinue) advance();
   }
 
   async function confirmBrandCandidate(candidate: BrandCandidate) {
@@ -694,8 +714,9 @@ export default function OnboardingPage() {
       const { data, error: fnErr } = await supabase.functions.invoke('onboarding-brand', {
         body: {
           action: 'save',
+          save_mode: brandMode,
           ...brand,
-          brand_id: brand.id,
+          brand_id: brandMode === 'existing' ? brand.id : undefined,
           name,
           ...logoPayload,
           ...(includeContent
@@ -720,7 +741,7 @@ export default function OnboardingPage() {
       setBrandDone(true);
       setCanCreateOutputs(true);
       progress.current = { ...progress.current, brand_done: true };
-      setStepIndex(2);
+      setStepIndex(steps.indexOf('docs'));
     } catch (e) {
       console.error(e);
       setError('שמירת המותג נכשלה. נסו שוב.');
@@ -745,12 +766,50 @@ export default function OnboardingPage() {
         }),
       );
       try {
-        const base64 = await fileToBase64(file);
+        // Documents are parsed in the browser (pdfjs-dist / mammoth): pdf.js
+        // crashes the Supabase edge runtime (546 WORKER_LIMIT), so we extract
+        // text here and send only the text. Assets (images) still upload raw.
+        let body: Record<string, unknown>;
+        if (kind === 'document') {
+          const extracted = (await extractTextFromUploadedFile(file)).trim();
+          if (!extracted) throw new Error('empty_document');
+          body = { kind, text: extracted, mime: file.type, name: file.name };
+        } else {
+          const base64 = await fileToBase64(file);
+          body = { kind, base64, mime: file.type, name: file.name };
+        }
         const { data, error: fnErr } = await supabase.functions.invoke('onboarding-ingest', {
-          body: { kind, base64, mime: file.type, name: file.name },
+          body,
         });
-        const errCode = (data as { error?: string } | null)?.error;
+        const payload = data as { error?: string; source?: ContentSource | null } | null;
+        let errCode = payload?.error;
+        // Non-2xx responses arrive as fnErr with data === null, so the server's
+        // error code lives in the error's Response context — read it so the user
+        // sees the real reason (empty_document / extract_failed) not a generic fail.
+        if (fnErr && !errCode) {
+          const ctx = (fnErr as { context?: Response }).context;
+          if (ctx && typeof ctx.json === 'function') {
+            try {
+              const body = (await ctx.json()) as { error?: string } | null;
+              errCode = body?.error;
+            } catch {
+              // keep errCode undefined; falls back to generic message below
+            }
+          }
+        }
         if (fnErr || errCode) throw new Error(errCode ?? 'failed');
+        if (kind === 'document' && payload?.source) {
+          const uploadedSource = payload.source;
+          setContentLoaded(true);
+          setContentSources((cur) => [
+            ...cur.filter((source) => source.id !== uploadedSource.id),
+            {
+              id: uploadedSource.id,
+              title: uploadedSource.title,
+              content: uploadedSource.content,
+            },
+          ]);
+        }
 
         progress.current = {
           ...progress.current,
@@ -759,8 +818,9 @@ export default function OnboardingPage() {
         setList((cur) => cur.map((it, i) => (i === idx ? { ...it, status: 'done' } : it)));
       } catch (e) {
         console.error(e);
+        const message = e instanceof Error ? uploadErrorMessage(e.message) : 'ההעלאה נכשלה';
         setList((cur) =>
-          cur.map((it, i) => (i === idx ? { ...it, status: 'error', error: 'ההעלאה נכשלה' } : it)),
+          cur.map((it, i) => (i === idx ? { ...it, status: 'error', error: message } : it)),
         );
       }
     }
@@ -772,6 +832,14 @@ export default function OnboardingPage() {
     } else {
       finish();
     }
+  }
+
+  function leaveOptionalUploadStep() {
+    if (step === 'docs' && !docsUploaded) {
+      setMissingDocsConfirmOpen(true);
+      return;
+    }
+    advance();
   }
 
   async function finish() {
@@ -790,7 +858,11 @@ export default function OnboardingPage() {
   const assetsUploaded = assets.some((a) => a.status === 'done');
   // When uploads are mandatory, the user must add at least one item to continue.
   const canLeaveStep =
-    step === 'details' || step === 'brand' ? true : step === 'docs' ? !requireUploads || docsUploaded : !requireUploads || assetsUploaded;
+    step === 'details' || step === 'company' || step === 'brand'
+      ? true
+      : step === 'docs'
+        ? !requireUploads || docsUploaded
+        : !requireUploads || assetsUploaded;
 
   if (loading) {
     return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]"><Spinner /></main>;
@@ -833,7 +905,7 @@ export default function OnboardingPage() {
       )}
 
       <main className="min-h-0 w-full flex-1 overflow-y-auto px-4 py-8 pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-8">
-        <div className="mx-auto w-full max-w-lg">
+        <div className={`mx-auto w-full ${step === 'company' ? 'max-w-3xl' : 'max-w-lg'}`}>
           <Stepper steps={steps} current={stepIndex} />
 
           <div className="mt-6 rounded-2xl border border-[var(--border)] bg-white p-6 shadow-sm">
@@ -911,31 +983,37 @@ export default function OnboardingPage() {
               </section>
             )}
 
-            {step === 'brand' && (
+            {step === 'company' && (
               <section>
-                <h1 className="text-xl font-bold">פרטי המותג</h1>
-                <p className="mb-5 mt-1 text-sm text-[var(--muted)]">
-                  הקלידו שם מותג. אם הוא כבר קיים, הפרטים ייטענו אוטומטית.
+                <h1 className="text-center text-3xl font-bold text-[var(--text)]">איזה חברה אתה</h1>
+                <p className="mb-7 mt-2 text-center text-sm text-[var(--muted)]">
+                  שייכו את המשתמש לחברה או למותג הקיים במערכת.
                 </p>
 
                 <Field label="שם מותג">
                   <div className="flex gap-2">
                     <input
-                      className={inputCls}
+                      className={`${inputCls} ${editingExistingBrand ? 'bg-gray-50 text-[var(--muted)]' : ''}`}
                       value={brand.name}
+                      readOnly={editingExistingBrand}
+                      aria-readonly={editingExistingBrand}
                       onChange={(e) => {
+                        if (editingExistingBrand) return;
                         setBrand((cur) => ({ ...cur, name: e.target.value }));
-                        if (!brandDone) setBrandMode('idle');
+                        setBrandMode('idle');
+                        setBrandDone(false);
+                        setHasBrand(false);
+                        setBrandName(null);
                         setBrandCandidates([]);
                         setBrandLookupMessage(null);
                       }}
-                      onBlur={resolveBrandByName}
+                      onBlur={editingExistingBrand ? undefined : resolveBrandByName}
                     />
                     <button
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={resolveBrandByName}
-                      disabled={brandLookupLoading || !brand.name.trim()}
+                      disabled={editingExistingBrand || brandLookupLoading || !brand.name.trim()}
                       className="shrink-0 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
                     >
                       {brandLookupLoading ? 'בודק...' : 'בדיקה חוזרת'}
@@ -958,11 +1036,6 @@ export default function OnboardingPage() {
                     </button>
                   </div>
                 )}
-                {brandLookupMessage && (
-                  <div className="mb-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3 text-sm text-[var(--muted)]">
-                    {brandLookupMessage}
-                  </div>
-                )}
                 {brandCandidates.length > 0 && (
                   <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                     נמצאו כמה מותגים דומים. בחרו את המותג הנכון בחלון האישור.
@@ -974,38 +1047,44 @@ export default function OnboardingPage() {
                   </div>
                 )}
 
-                <div className="mb-4 flex items-center gap-3">
-                  <div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-[var(--border)] bg-gray-50">
-                    {brandLogoPreview ? (
-                      <img src={brandLogoPreview} alt="" className="h-full w-full object-contain p-1" />
-                    ) : (
-                      <span className="text-xs font-semibold text-[var(--muted)]">לוגו</span>
-                    )}
-                  </div>
-                  <label className="cursor-pointer text-sm font-medium text-brand hover:underline">
-                    העלאת לוגו
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => onPickBrandLogo(e.target.files?.[0] ?? null)}
-                    />
-                  </label>
-                  <span className="text-xs text-[var(--muted)]">
-                    אופציונלי, עד 5MB{brandMode === 'existing' && brand.id ? ' · נשמר אוטומטית למותג הקיים' : ''}
-                  </span>
-                </div>
-                {brandLogoSaving && <p className="mb-4 text-xs text-[var(--muted)]">שומר לוגו למותג...</p>}
-
-                {!hasCustomBrandPalette() && (
+                <div className="mb-6 flex flex-col items-center justify-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setBrandColorModalOpen(true)}
-                    className="mb-4 w-full rounded-xl border border-brand/20 bg-brand/5 px-4 py-3 text-right text-sm font-semibold text-brand hover:bg-brand/10"
+                    onClick={() => setBrandLogoModalOpen(true)}
+                    disabled={brandMode === 'idle'}
+                    className="grid h-[clamp(8rem,18vw,14rem)] w-[clamp(8rem,18vw,14rem)] shrink-0 place-items-center overflow-hidden rounded-2xl border border-[var(--border)] bg-gray-50 transition hover:border-brand hover:bg-brand/5 focus:outline-none focus:ring-2 focus:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--border)] disabled:hover:bg-gray-50"
+                    aria-label="העלאת לוגו"
+                    title={brandMode === 'idle' ? 'יש לבחור מותג לפני העלאת לוגו' : undefined}
                   >
-                    זיהוי צבעי מותג מהלוגו
+                    {brandLogoPreview ? (
+                      <img src={brandLogoPreview} alt="" className="h-full w-full object-contain p-3" />
+                    ) : (
+                      <span className="text-sm font-semibold text-[var(--muted)] sm:text-base">לוגו</span>
+                    )}
                   </button>
-                )}
+                  <span className="text-sm text-[var(--muted)]">
+                    {brandMode === 'idle' ? 'יש לבחור מותג לפני העלאת לוגו' : 'אופציונלי, עד 5MB'}
+                  </span>
+                </div>
+
+                {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+
+                <button
+                  onClick={saveCompanyAndNext}
+                  disabled={saving || brandLookupLoading || !brand.name.trim() || brandCandidatesOpen}
+                  className="mt-2 w-full rounded-lg bg-brand py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
+                >
+                  {brandLookupLoading ? 'בודק מותג...' : 'המשך לפרטי המותג'}
+                </button>
+              </section>
+            )}
+
+            {step === 'brand' && (
+              <section>
+                <h1 className="text-xl font-bold">פרטי המותג</h1>
+                <p className="mb-5 mt-1 text-sm text-[var(--muted)]">
+                  השלימו את פרטי המותג, הנחיות הכתיבה והנתונים שיופיעו במסמכים.
+                </p>
 
                 <Field label="סוג לקוח">
                   <select
@@ -1164,7 +1243,21 @@ export default function OnboardingPage() {
                   </div>
                 </div>
 
-                <div className="mt-5 border-t border-[var(--border)] pt-4">
+                {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+
+                <button
+                  onClick={saveBrandAndNext}
+                  disabled={saving || brandLookupLoading}
+                  className="mt-2 w-full rounded-lg bg-brand py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
+                >
+                  {saving ? 'שומר...' : editingExistingBrand ? 'שמירת שינויים והמשך' : 'שמירת מותג והמשך'}
+                </button>
+              </section>
+            )}
+
+            {step === 'docs' && (
+              <section>
+                <div>
                   <h2 className="mb-1 text-sm font-bold">אזור תוכן — מוח עסקי</h2>
                   <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
                     כל התוכן הקיים של המותג מופיע כאן. אפשר לערוך, להוסיף או למחוק — הכול נשמר על המותג המשותף ויופיע
@@ -1241,27 +1334,18 @@ export default function OnboardingPage() {
                   </button>
                 </div>
 
-                {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
-
-                <button
-                  onClick={saveBrandAndNext}
-                  disabled={saving || brandLookupLoading}
-                  className="mt-2 w-full rounded-lg bg-brand py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
-                >
-                  {saving ? 'שומר...' : editingExistingBrand ? 'שמירת שינויים והמשך' : 'שמירת מותג והמשך'}
-                </button>
+                <div className="mt-6 border-t border-[var(--border)] pt-5">
+                  <UploadStep
+                    title="מסמכי המותג"
+                    subtitle={`העלו מסמכים (DOCX / PDF)${brandName ? ` של ${brandName}` : ''} — נשתמש בתוכן שלהם כמאפייני המותג.`}
+                    accept=".docx,.pdf"
+                    items={docs}
+                    onFiles={(f) => uploadFiles('document', f)}
+                    hint="קבצי Word או PDF, עד 25MB."
+                    processingLabel="מפענח את המסמך ומוסיף לאזור התוכן..."
+                  />
+                </div>
               </section>
-            )}
-
-            {step === 'docs' && (
-              <UploadStep
-                title="מסמכי המותג"
-                subtitle={`העלו מסמכים (DOCX / PDF)${brandName ? ` של ${brandName}` : ''} — נשתמש בתוכן שלהם כמאפייני המותג.`}
-                accept=".docx,.pdf"
-                items={docs}
-                onFiles={(f) => uploadFiles('document', f)}
-                hint="קבצי Word או PDF, עד 25MB."
-              />
             )}
 
             {step === 'files' && (
@@ -1272,6 +1356,7 @@ export default function OnboardingPage() {
                 items={assets}
                 onFiles={(f) => uploadFiles('asset', f)}
                 hint="תמונות (PNG / JPG / WEBP), עד 25MB לקובץ."
+                processingLabel="מעלה ושומר את הקובץ למותג..."
               />
             )}
 
@@ -1285,12 +1370,12 @@ export default function OnboardingPage() {
                 </button>
                 <div className="flex items-center gap-3">
                   {!requireUploads && (
-                    <button onClick={advance} className="text-sm font-medium text-[var(--muted)] hover:underline">
+                    <button onClick={leaveOptionalUploadStep} className="text-sm font-medium text-[var(--muted)] hover:underline">
                       דלג
                     </button>
                   )}
                   <button
-                    onClick={advance}
+                    onClick={leaveOptionalUploadStep}
                     disabled={!canLeaveStep || saving}
                     className="rounded-lg bg-brand px-5 py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
                   >
@@ -1365,9 +1450,21 @@ export default function OnboardingPage() {
               <button
                 type="button"
                 onClick={() => {
+                  const name = brand.name;
+                  if (brandLogoPreview?.startsWith('blob:')) URL.revokeObjectURL(brandLogoPreview);
+                  setBrand({ ...emptyBrand, name });
+                  setBrandLogoFile(null);
+                  setBrandLogoPreview(null);
+                  setPendingBrandColors(null);
+                  setBrandColorSummary(null);
                   setBrandCandidatesOpen(false);
                   setBrandCandidates([]);
                   setBrandMode('new');
+                  setHasBrand(false);
+                  setBrandDone(false);
+                  setBrandName(null);
+                  setContentSources([]);
+                  setContentLoaded(false);
                 }}
                 className="rounded-lg border border-[var(--border)] px-5 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
               >
@@ -1428,95 +1525,292 @@ export default function OnboardingPage() {
           </div>
         </div>
       )}
-      {brandColorModalOpen && (
+      {missingLogoConfirmOpen && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-black/50 px-4 py-6"
           role="dialog"
           aria-modal="true"
-          aria-label="זיהוי צבעי מותג"
+          aria-label="אישור המשך בלי לוגו"
           dir="rtl"
         >
           <button
             type="button"
-            className="absolute inset-0 z-0 h-full w-full cursor-default"
-            aria-label="סגירת מודל זיהוי צבעי מותג"
-            onClick={() => setBrandColorModalOpen(false)}
+            className="absolute inset-0 h-full w-full cursor-default"
+            aria-label="סגירת אישור המשך בלי לוגו"
+            onClick={() => setMissingLogoConfirmOpen(false)}
           />
-          <div className="relative z-10 w-full max-w-lg rounded-2xl border border-[var(--border)] bg-white p-5 text-right shadow-xl" dir="rtl">
+          <div className="relative w-full max-w-md rounded-2xl border border-[var(--border)] bg-white p-5 text-right shadow-xl">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-bold text-[var(--text)]">זיהוי צבעי מותג</h2>
-                <p className="mt-1 text-sm text-[var(--muted)]">
-                  ה-AI ינתח את הלוגו ויחלץ את צבעי המותג המרכזיים לשימוש במערכת.
+                <h2 className="text-lg font-bold text-[var(--text)]">המשך בלי לוגו?</h2>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  {missingLogoPrompt(gender)}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
+                  אפשר להגדיר צבעי מותג ידנית במסך הבא.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setBrandColorModalOpen(false)}
+                onClick={() => setMissingLogoConfirmOpen(false)}
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--border)] text-lg text-[var(--muted)] hover:bg-gray-50"
                 aria-label="סגירה"
               >
                 ×
               </button>
             </div>
-
-            <div className="rounded-xl border border-[var(--border)] bg-gray-50 p-4">
-              <div className="text-sm font-semibold text-[var(--text)]">מה יקרה</div>
-              <ul className="mt-2 space-y-1 text-sm text-[var(--muted)]">
-                <li>• המערכת תנתח את הלוגו או הקובץ שהועלה.</li>
-                <li>• הצבעים יישמרו כצבעי מותג ראשי, משני, הדגשה, רקע וטקסט.</li>
-                <li>• כל הרצה תתועד ביומן הפעולות של ה-AI, כולל עלות.</li>
-              </ul>
-            </div>
-
-            {brandColorSummary && (
-              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-                {brandColorSummary}
-              </div>
-            )}
-
-            {brandColorAnalysis && (
-              <div className="mt-4 grid grid-cols-1 gap-2 rounded-xl border border-[var(--border)] p-4 text-sm sm:grid-cols-3">
-                <div>
-                  <div className="text-[var(--muted)]">עלות</div>
-                  <div className="font-semibold ltr">${brandColorAnalysis.estimated_cost.toFixed(4)}</div>
-                </div>
-                <div>
-                  <div className="text-[var(--muted)]">ביטחון</div>
-                  <div className="font-semibold">{Math.round(brandColorAnalysis.confidence * 100)}%</div>
-                </div>
-                <div>
-                  <div className="text-[var(--muted)]">מודל</div>
-                  <div className="font-semibold ltr">{brandColorAnalysis.model}</div>
-                </div>
-              </div>
-            )}
-
-            <div className="mt-4 rounded-xl border border-[var(--border)] bg-white p-4">
-              <div className="text-sm font-semibold">יומן פעולה</div>
-              <p className="mt-1 text-sm text-[var(--muted)]">
-                זיהוי צבעי מותג נרשם בפעולות AI כך שאפשר לעקוב אחרי שימוש, עלות ותוצאה.
-              </p>
-            </div>
-
-            {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
-
-            <div className="mt-5 flex items-center gap-3">
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-start">
               <button
                 type="button"
-                onClick={analyzeBrandColors}
-                disabled={brandColorAnalyzing}
-                className="flex-1 rounded-lg bg-brand px-4 py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
+                onClick={() => {
+                  setMissingLogoConfirmOpen(false);
+                  void continueCompanyStep();
+                }}
+                className="rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark"
               >
-                {brandColorAnalyzing ? 'מזהה צבעים...' : 'להפעיל זיהוי'}
+                כן, להמשיך בלי לוגו
               </button>
               <button
                 type="button"
-                onClick={() => setBrandColorModalOpen(false)}
-                className="rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+                onClick={() => {
+                  setMissingLogoConfirmOpen(false);
+                  setBrandLogoModalOpen(true);
+                }}
+                className="rounded-lg border border-[var(--border)] px-5 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
               >
-                ביטול
+                לא, להעלות לוגו
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {missingDocsConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/50 px-4 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="אישור המשך בלי מסמכים"
+          dir="rtl"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 h-full w-full cursor-default"
+            aria-label="סגירת אישור המשך בלי מסמכים"
+            onClick={() => setMissingDocsConfirmOpen(false)}
+          />
+          <div className="relative w-full max-w-md rounded-2xl border border-[var(--border)] bg-white p-5 text-right shadow-xl">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--text)]">להמשיך בלי מסמכים?</h2>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  מסמכים עוזרים ל-AI להבין את השפה, השירותים והמידע של המותג. אפשר להמשיך גם בלי, אבל התוצרים יהיו פחות מדויקים.
+                </p>
+                <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
+                  אפשר להעלות מסמכים גם אחר כך באזור המותג.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMissingDocsConfirmOpen(false)}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--border)] text-lg text-[var(--muted)] hover:bg-gray-50"
+                aria-label="סגירה"
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-start">
+              <button
+                type="button"
+                onClick={() => {
+                  setMissingDocsConfirmOpen(false);
+                  advance();
+                }}
+                className="rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark"
+              >
+                כן, להמשיך בלי מסמכים
+              </button>
+              <button
+                type="button"
+                onClick={() => setMissingDocsConfirmOpen(false)}
+                className="rounded-lg border border-[var(--border)] px-5 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+              >
+                לא, להעלות מסמך
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {brandLogoModalOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/50 px-4 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="העלאת לוגו"
+          dir="rtl"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 h-full w-full cursor-default"
+            aria-label="סגירת העלאת לוגו"
+            onClick={() => setBrandLogoModalOpen(false)}
+          />
+          <div className="relative flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white text-right shadow-xl">
+            <div className="flex items-start justify-between gap-3 px-5 pb-4 pt-5">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--text)]">העלאת לוגו</h2>
+                <p className="mt-1 text-sm text-[var(--muted)]">
+                  גררו תמונה לכאן או בחרו קובץ מהמכשיר. אחרי הבחירה ה-AI יזהה את צבעי המותג אוטומטית.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBrandLogoModalOpen(false)}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--border)] text-lg text-[var(--muted)] hover:bg-gray-50"
+                aria-label="סגירה"
+              >
+                ×
+              </button>
+            </div>
+            <div className="overflow-y-auto px-5 pb-5">
+            <input
+              ref={brandLogoInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => onPickBrandLogo(e.target.files?.[0] ?? null)}
+            />
+
+            <div
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setBrandLogoDragActive(true);
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={() => setBrandLogoDragActive(false)}
+              onDrop={onBrandLogoDrop}
+              className={`grid min-h-56 place-items-center rounded-xl border-2 border-dashed p-5 text-center transition ${
+                brandLogoDragActive ? 'border-brand bg-brand/10' : 'border-[var(--border)] bg-gray-50'
+              }`}
+            >
+              <div className="max-w-sm">
+                <div className="mx-auto grid h-24 w-24 place-items-center overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+                  {brandLogoPreview ? (
+                    <img src={brandLogoPreview} alt="לוגו המותג" className="h-full w-full object-contain p-2" />
+                  ) : (
+                    <span className="text-xs font-semibold text-[var(--muted)]">לוגו</span>
+                  )}
+                </div>
+                <div className="mt-4 text-sm font-semibold text-[var(--text)]">גררו תמונת לוגו לכאן</div>
+                <p className="mt-1 text-xs text-[var(--muted)]">PNG, JPG או WEBP, עד 5MB</p>
+                <button
+                  type="button"
+                  onClick={() => brandLogoInputRef.current?.click()}
+                  className="mt-4 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark"
+                >
+                  בחירה מהמכשיר
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-brand/20 bg-brand/5 px-4 py-3 text-sm">
+              <div className="font-semibold text-brand">זיהוי צבעי מותג עם AI</div>
+              {brandColorAnalyzing && (
+                <div className="mt-3 rounded-lg border border-brand/10 bg-white px-3 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className="relative grid h-9 w-9 shrink-0 place-items-center">
+                      <span className="absolute inset-0 rounded-full border-2 border-brand/15" />
+                      <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-brand animate-spin" />
+                      <span className="h-2 w-2 rounded-full bg-brand" />
+                    </span>
+                    <div>
+                      <p className="text-xs font-semibold text-[var(--text)]">מזהה צבעים מהלוגו...</p>
+                      <div className="mt-2 flex items-center gap-1.5" aria-hidden="true">
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand [animation-delay:-0.24s]" />
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand [animation-delay:-0.12s]" />
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {!brandColorAnalyzing && !brandColorSummary && !pendingBrandColors && (
+                <p className="mt-2 text-xs text-[var(--muted)]">הזיהוי יתחיל אוטומטית אחרי בחירת תמונה.</p>
+              )}
+              {brandColorSummary && <p className="mt-2 text-xs text-emerald-700">{brandColorSummary}</p>}
+              {brandColorSummary && !pendingBrandColors && (
+                <div className="mt-4">
+                  <div className="mb-2 text-xs font-semibold text-[var(--text)]">צבעי המותג שנבחרו</div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {brand.color_palette.map((color) => (
+                      <div
+                        key={color.role}
+                        className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2"
+                      >
+                        <span
+                          className="h-9 w-10 shrink-0 rounded-md border border-[var(--border)]"
+                          style={{ backgroundColor: isValidHexColor(color.hex) ? color.hex : '#000000' }}
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-[var(--text)]">{colorRoleLabels[color.role]}</div>
+                          <div className="text-xs font-semibold text-[var(--muted)] ltr">{color.hex}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {pendingBrandColors && (
+                <div className="mt-4 space-y-2">
+                  {pendingBrandColors.map((color) => (
+                    <label
+                      key={color.role}
+                      className="flex items-center gap-3 rounded-lg border border-[var(--border)] bg-white px-3 py-2"
+                    >
+                      <span
+                        className="relative h-12 w-16 shrink-0 overflow-hidden rounded-lg border border-[var(--border)] shadow-sm"
+                        style={{ backgroundColor: isValidHexColor(color.hex) ? color.hex : '#000000' }}
+                      >
+                        <input
+                          type="color"
+                          value={isValidHexColor(color.hex) ? color.hex : '#000000'}
+                          onChange={(event) => updatePendingBrandColor(color.role, event.target.value.toUpperCase())}
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          aria-label={`צבע ${colorRoleLabels[color.role]}`}
+                        />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-semibold text-[var(--text)]">{colorRoleLabels[color.role]}</div>
+                        <input
+                          dir="ltr"
+                          value={color.hex}
+                          onChange={(event) => updatePendingBrandColor(color.role, event.target.value)}
+                          className="mt-1 w-full rounded-md border border-[var(--border)] px-2 py-1 text-xs font-semibold text-[var(--text)]"
+                        />
+                      </div>
+                    </label>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={confirmPendingBrandColors}
+                    className="mt-3 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark"
+                  >
+                    אישור צבעי המותג
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
+            <div className="mt-5 flex justify-start">
+              <button
+                type="button"
+                onClick={() => setBrandLogoModalOpen(false)}
+                className="rounded-lg border border-[var(--border)] px-5 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+              >
+                סגירה
+              </button>
+            </div>
             </div>
           </div>
         </div>
@@ -1532,6 +1826,7 @@ function UploadStep({
   items,
   onFiles,
   hint,
+  processingLabel,
 }: {
   title: string;
   subtitle: string;
@@ -1539,6 +1834,7 @@ function UploadStep({
   items: UploadedItem[];
   onFiles: (files: FileList | null) => void;
   hint: string;
+  processingLabel: string;
 }) {
   return (
     <section>
@@ -1566,7 +1862,16 @@ function UploadStep({
             >
               <span className="truncate">{it.name}</span>
               <span className="shrink-0 text-xs">
-                {it.status === 'uploading' && <span className="text-[var(--muted)]">מעלה…</span>}
+                {it.status === 'uploading' && (
+                  <span className="inline-flex items-center gap-2 text-brand">
+                    <span className="relative grid h-6 w-6 place-items-center" aria-hidden="true">
+                      <span className="absolute inset-0 rounded-full border-2 border-brand/15" />
+                      <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-brand animate-spin" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-brand" />
+                    </span>
+                    {processingLabel}
+                  </span>
+                )}
                 {it.status === 'done' && <span className="text-green-600">✓ נשמר</span>}
                 {it.status === 'error' && <span className="text-red-600">{it.error ?? 'שגיאה'}</span>}
               </span>
@@ -1579,26 +1884,62 @@ function UploadStep({
 }
 
 function Stepper({ steps, current }: { steps: StepKey[]; current: number }) {
-  const labels: Record<StepKey, string> = { details: 'פרטים', brand: 'מותג', docs: 'מסמכים', files: 'קבצים' };
+  const labels: Record<StepKey, string> = {
+    details: 'פרטים',
+    company: 'חברה',
+    brand: 'מותג',
+    docs: 'מסמכים',
+    files: 'קבצים',
+  };
+  const currentLabel = labels[steps[current]];
+  const progress = ((current + 1) / steps.length) * 100;
+
   return (
-    <div className="flex items-center justify-center gap-2">
-      {steps.map((s, i) => (
-        <div key={s} className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`grid h-6 w-6 place-items-center rounded-full text-xs font-bold ${
-                i <= current ? 'bg-brand text-white' : 'bg-gray-200 text-[var(--muted)]'
-              }`}
-            >
-              {i + 1}
-            </span>
-            <span className={`text-sm ${i === current ? 'font-semibold' : 'text-[var(--muted)]'}`}>
-              {labels[s]}
-            </span>
-          </div>
-          {i < steps.length - 1 && <span className="h-px w-6 bg-[var(--border)]" />}
+    <div className="w-full" dir="rtl" aria-label={`שלב ${current + 1} מתוך ${steps.length}: ${currentLabel}`}>
+      <div className="md:hidden">
+        <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+          <span className="font-semibold text-[var(--text)]">{currentLabel}</span>
+          <span className="shrink-0 text-xs font-semibold text-[var(--muted)]">
+            שלב {current + 1} מתוך {steps.length}
+          </span>
         </div>
-      ))}
+        <div className="h-2 overflow-hidden rounded-full bg-gray-200" aria-hidden="true">
+          <div
+            className="h-full rounded-full bg-brand transition-[width] duration-300 ease-out"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="mt-3 flex items-center justify-center gap-1.5" aria-hidden="true">
+          {steps.map((stepKey, i) => (
+            <span
+              key={stepKey}
+              className={`h-2 rounded-full transition-all duration-300 ${
+                i === current ? 'w-7 bg-brand' : i < current ? 'w-2 bg-brand/70' : 'w-2 bg-gray-300'
+              }`}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="hidden items-center justify-center gap-2 md:flex">
+        {steps.map((s, i) => (
+          <div key={s} className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`grid h-6 w-6 place-items-center rounded-full text-xs font-bold ${
+                  i <= current ? 'bg-brand text-white' : 'bg-gray-200 text-[var(--muted)]'
+                }`}
+              >
+                {i + 1}
+              </span>
+              <span className={`text-sm ${i === current ? 'font-semibold' : 'text-[var(--muted)]'}`}>
+                {labels[s]}
+              </span>
+            </div>
+            {i < steps.length - 1 && <span className="h-px w-6 bg-[var(--border)]" />}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1727,4 +2068,34 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+function buildAnalyzedPalette(
+  colors: { role: BrandDetails['color_palette'][number]['role']; hex: string }[],
+): BrandDetails['color_palette'] {
+  return emptyBrand.color_palette.map((fallback) => {
+    const found = colors.find((color) => color.role === fallback.role && isValidHexColor(color.hex));
+    return found ? { role: fallback.role, hex: found.hex.toUpperCase() } : fallback;
+  });
+}
+
+function isValidHexColor(value: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+function uploadErrorMessage(code: string): string {
+  if (code === 'empty_document') return 'לא נמצא טקסט לחילוץ במסמך. אם זה PDF סרוק, צריך להעלות קובץ עם טקסט חי.';
+  if (code === 'extract_failed') return 'חילוץ הטקסט מהמסמך נכשל. נסו PDF אחר או קובץ DOCX.';
+  if (code === 'no_brand') return 'צריך לשמור מותג לפני העלאת מסמכים.';
+  if (code === 'file exceeds 25MB limit') return 'הקובץ גדול מ-25MB.';
+  // Client-side extraction (extractTextFromUploadedFile) throws human-readable
+  // Hebrew messages — surface them as-is instead of the generic fallback.
+  if (/[֐-׿]/.test(code)) return code;
+  return 'ההעלאה נכשלה';
+}
+
+function missingLogoPrompt(gender: ProfileGender | ''): string {
+  if (gender === 'female') return 'היי, ראינו שלא העלית לוגו. את בטוחה שתרצי להמשיך בלי לוגו?';
+  if (gender === 'male') return 'היי, ראינו שלא העלית לוגו. אתה בטוח שתרצה להמשיך בלי לוגו?';
+  return 'היי, ראינו שלא הועלה לוגו. בטוחים שתרצו להמשיך בלי לוגו?';
 }

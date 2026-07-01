@@ -2,6 +2,7 @@
   "name": "whatsapp-ai-agent",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "סוכן AI ארגוני דרך WhatsApp — Vite React + Supabase",
   "scripts": {
     "dev": "vite",

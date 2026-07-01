@@ -4,6 +4,7 @@ import { genderCopy } from '@/lib/genderCopy';
 import { useProfile } from '@/lib/useProfile';
 import type { Skill, SkillVersion, SkillCategory, SkillEnforcement } from '@/types/db';
 import { Spinner } from '@/components/ui/Spinner';
+import { confirmDialog } from '@/lib/dialog';
 
 const CATEGORIES: { key: SkillCategory; label: string }[] = [
   { key: 'skill', label: 'סקילים' },
@@ -144,7 +145,7 @@ export default function SkillsPage() {
 
   async function rollback(versionId: string, num: number) {
     if (!selected) return;
-    if (!confirm(`לשחזר לגרסה ${num}? היא תהפוך לגרסה הפעילה.`)) return;
+    if (!(await confirmDialog(`לשחזר לגרסה ${num}? היא תהפוך לגרסה הפעילה.`))) return;
     const { error } = await supabase.rpc('activate_skill_version', { p_version_id: versionId } as never);
     if (error) return flash('השחזור נכשל');
     flash(`שוחזרה גרסה ${num}`);

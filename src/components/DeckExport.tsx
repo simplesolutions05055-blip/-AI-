@@ -20,6 +20,7 @@ import {
 } from '@/lib/deck';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import ImagePickerModal from '@/components/ImagePickerModal';
+import { alertDialog } from '@/lib/dialog';
 
 const NOTEBOOKLM_CUSTOMIZE_SCREEN = '/notebooklm/customize-slide-deck.png';
 const NOTEBOOKLM_SLIDE_DECK_BUTTON = '/notebooklm/slide-deck-button.png';
@@ -147,7 +148,7 @@ export default function DeckExport({
       if (dbError) throw dbError;
 
       setError(null);
-      alert('הקובץ הועלה בהצלחה!');
+      await alertDialog('הקובץ הועלה בהצלחה!');
     } catch (err) {
       setError('העלאה נכשלה: ' + String(err));
     } finally {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type DragEvent, useEffect, useRef, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatHebrewDateTime } from '@/lib/format';
 import {
@@ -12,8 +12,10 @@ import {
 import type { Brand, BrandAsset, BrandColor, BrandColorRole, BusinessTextSource } from '@/types/db';
 import { Spinner } from '@/components/ui/Spinner';
 import { useProfile } from '@/lib/useProfile';
+import { alertDialog, confirmDialog } from '@/lib/dialog';
 
 const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
+const MAX_LOGO_BYTES = 5 * 1024 * 1024;
 
 const ROLE_LABEL: Record<BrandColorRole, string> = {
   primary: 'ראשי',
@@ -100,6 +102,10 @@ export default function BrandingPage() {
   const [aliasesText, setAliasesText] = useState('');
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [extracting, setExtracting] = useState(false);
+  const [logoModalOpen, setLogoModalOpen] = useState(false);
+  const [logoDragActive, setLogoDragActive] = useState(false);
+  const [colorSummary, setColorSummary] = useState<string | null>(null);
+  const [pendingColors, setPendingColors] = useState<BrandColor[] | null>(null);
   const [saved, setSaved] = useState(false);
   const [logoPreviewOpen, setLogoPreviewOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -153,6 +159,20 @@ export default function BrandingPage() {
       document.body.style.overflow = prevOverflow;
     };
   }, [csvModalOpen]);
+
+  useEffect(() => {
+    if (!logoModalOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLogoModalOpen(false);
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [logoModalOpen]);
 
   async function signedUrl(path: string) {
     const { data } = await db.storage.from('branding').createSignedUrl(path, 600);
@@ -235,7 +255,7 @@ export default function BrandingPage() {
   // ── save brand row ───────────────────────────────────────────────────────────
   async function save(): Promise<string | null> {
     if (!selected?.name?.trim()) {
-      alert('שם מקום חובה');
+      await alertDialog('שם מקום חובה');
       return null;
     }
     setSaving(true);
@@ -281,26 +301,26 @@ export default function BrandingPage() {
       : formalRow;
     let id = selected.id ?? null;
     if (!isAdmin && !id) {
-      alert('משתמש רגיל יכול לערוך רק מותג קיים שהוקצה לו.');
+      await alertDialog('משתמש רגיל יכול לערוך רק מותג קיים שהוקצה לו.');
       setSaving(false);
       return null;
     }
     if (id) {
       const { data, error } = await db.from('brands').update(row as never).eq('id', id).select('id');
       if (error) {
-        alert('שמירה נכשלה: ' + error.message);
+        await alertDialog('שמירה נכשלה: ' + error.message);
         setSaving(false);
         return null;
       }
       if (!data || data.length === 0) {
-        alert('השמירה לא בוצעה — ככל הנראה אין הרשאת מנהל (RLS).');
+        await alertDialog('השמירה לא בוצעה — ככל הנראה אין הרשאת מנהל (RLS).');
         setSaving(false);
         return null;
       }
     } else {
       const { data, error } = await db.from('brands').insert(row as never).select('id').single();
       if (error || !data) {
-        alert('שמירה נכשלה: ' + (error?.message ?? ''));
+        await alertDialog('שמירה נכשלה: ' + (error?.message ?? ''));
         setSaving(false);
         return null;
       }
@@ -315,45 +335,77 @@ export default function BrandingPage() {
   }
 
   // ── uploads ──────────────────────────────────────────────────────────────────
-  // ── extract dominant colors from a logo (client-side canvas, no service) ─────
-  function extractColors(file: File) {
+  async function pickLogo(file: File | null) {
+    if (!file) return;
+    if (file.size > MAX_LOGO_BYTES) {
+      await alertDialog('הלוגו גדול מ-5MB.');
+      return;
+    }
+    setColorSummary(null);
+    setPendingColors(null);
+    await uploadLogo(file);
+    void analyzeLogoColors(file);
+  }
+
+  function onLogoDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setLogoDragActive(false);
+    void pickLogo(event.dataTransfer.files?.[0] ?? null);
+  }
+
+  async function analyzeLogoColors(file: File) {
     setExtracting(true);
-    const img = new Image();
-    img.onload = () => {
-      const W = 64;
-      const H = Math.max(1, Math.round((img.height / img.width) * W));
-      const canvas = document.createElement('canvas');
-      canvas.width = W;
-      canvas.height = H;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return setExtracting(false);
-      ctx.drawImage(img, 0, 0, W, H);
-      const { data } = ctx.getImageData(0, 0, W, H);
-      const buckets = new Map<string, { r: number; g: number; b: number; n: number }>();
-      for (let i = 0; i < data.length; i += 4) {
-        const a = data[i + 3];
-        if (a < 128) continue; // skip transparent
-        const r = data[i], g = data[i + 1], b = data[i + 2];
-        // quantize to 32-steps to group near colors
-        const key = `${r >> 5}-${g >> 5}-${b >> 5}`;
-        const e = buckets.get(key) ?? { r: 0, g: 0, b: 0, n: 0 };
-        e.r += r; e.g += g; e.b += b; e.n += 1;
-        buckets.set(key, e);
-      }
-      const top = [...buckets.values()]
-        .sort((a, z) => z.n - a.n)
-        .slice(0, 4)
-        .map((e) => {
-          const hex = (v: number) => Math.round(v / e.n).toString(16).padStart(2, '0');
-          return `#${hex(e.r)}${hex(e.g)}${hex(e.b)}`.toUpperCase();
-        });
-      const roles: BrandColorRole[] = ['primary', 'secondary', 'accent', 'background'];
-      patch({ color_palette: top.map((hex, i) => ({ hex, role: roles[i] ?? 'accent' })) });
+    setColorSummary(null);
+    setPendingColors(null);
+    try {
+      const { data, error } = await db.functions.invoke('analyze-brand-colors', {
+        body: {
+          logo_base64: await fileToBase64(file),
+          logo_mime: file.type || 'image/png',
+          logo_name: file.name,
+          brand_name: selected?.name ?? null,
+        },
+      });
+      const payload = data as {
+        error?: string;
+        summary?: string;
+        colors?: { role: BrandColorRole; hex: string }[];
+      } | null;
+      if (error || payload?.error) throw new Error(payload?.error ?? 'failed');
+      const current = selected?.color_palette ?? [];
+      const fallbackRoles: BrandColorRole[] = ['primary', 'secondary', 'accent', 'background', 'text'];
+      const next = fallbackRoles.map((role, index) => {
+        const found = payload?.colors?.find((color) => color.role === role);
+        const currentColor = current.find((color) => color.role === role) ?? current[index];
+        return { role, hex: found?.hex ?? currentColor?.hex ?? '#1A4D9C' };
+      });
+      setPendingColors(next);
+      setColorSummary(payload?.summary ?? 'זוהו צבעי מותג מרכזיים.');
+    } catch (e) {
+      console.error(e);
+      setColorSummary('זיהוי הצבעים נכשל. אפשר לבחור צבעים ידנית.');
+    } finally {
       setExtracting(false);
-      URL.revokeObjectURL(img.src);
-    };
-    img.onerror = () => setExtracting(false);
-    img.src = URL.createObjectURL(file);
+    }
+  }
+
+  function updatePendingColor(index: number, color: Partial<BrandColor>) {
+    setPendingColors((cur) => {
+      const next = [...(cur ?? [])];
+      next[index] = { ...next[index], ...color };
+      return next;
+    });
+  }
+
+  function confirmPendingColors() {
+    if (!pendingColors) return;
+    if (!pendingColors.every((color) => isValidHexColor(color.hex))) {
+      void alertDialog('יש צבע לא תקין. צריך להזין ערך HEX מלא, למשל #1A4D9C.');
+      return;
+    }
+    patch({ color_palette: pendingColors });
+    setPendingColors(null);
+    setColorSummary('צבעי המותג נשמרו בבחירה הנוכחית.');
   }
 
   async function uploadLogo(file: File) {
@@ -363,7 +415,10 @@ export default function BrandingPage() {
     const ext = file.name.split('.').pop() || 'png';
     const path = `${id}/logo.${ext}`;
     const { error } = await db.storage.from('branding').upload(path, file, { upsert: true, contentType: file.type });
-    if (error) return alert('העלאה נכשלה: ' + error.message);
+    if (error) {
+      await alertDialog('העלאה נכשלה: ' + error.message);
+      return;
+    }
     await db.from('brands').update({ logo_path: path } as never).eq('id', id);
     patch({ logo_path: path });
     const localUrl = URL.createObjectURL(file);
@@ -378,7 +433,10 @@ export default function BrandingPage() {
     const ext = file.name.split('.').pop() || 'png';
     const path = `${id}/assets/${crypto.randomUUID()}.${ext}`;
     const { error } = await db.storage.from('branding').upload(path, file, { contentType: file.type });
-    if (error) return alert('העלאה נכשלה: ' + error.message);
+    if (error) {
+      await alertDialog('העלאה נכשלה: ' + error.message);
+      return;
+    }
     const { data } = await db
       .from('brand_assets')
       .insert({ brand_id: id, storage_path: path, mime_type: file.type } as never)
@@ -415,7 +473,7 @@ export default function BrandingPage() {
       .select('*')
       .single();
     if (error || !data) {
-      alert('שמירת מקור התוכן נכשלה: ' + (error?.message ?? ''));
+      await alertDialog('שמירת מקור התוכן נכשלה: ' + (error?.message ?? ''));
       return;
     }
     setTextSources((cur) => [data as BusinessTextSource, ...cur]);
@@ -445,7 +503,7 @@ export default function BrandingPage() {
       }
       await addTextSource(file.name.replace(/\.[^.]+$/, ''), text.slice(0, 40000));
     } catch (error) {
-      alert('עיבוד מקור התוכן נכשל: ' + String(error));
+      await alertDialog('עיבוד מקור התוכן נכשל: ' + String(error));
     } finally {
       if (textSourceRef.current) textSourceRef.current.value = '';
     }
@@ -465,14 +523,14 @@ export default function BrandingPage() {
     if (Object.keys(payload).length === 0) return;
     const { error } = await db.from('business_text_sources').update(payload as never).eq('id', source.id);
     if (error) {
-      alert('עדכון מקור התוכן נכשל: ' + error.message);
+      await alertDialog('עדכון מקור התוכן נכשל: ' + error.message);
       return;
     }
     setTextSources((cur) => cur.map((x) => (x.id === source.id ? { ...x, ...payload } : x)));
   }
 
   async function removeBrand(b: Brand) {
-    if (!confirm(`למחוק את "${b.name}"? פעולה בלתי הפיכה.`)) return;
+    if (!(await confirmDialog({ message: `למחוק את "${b.name}"? פעולה בלתי הפיכה.`, danger: true, confirmText: 'מחיקה' }))) return;
     await db.from('brands').delete().eq('id', b.id);
     if (selected?.id === b.id) setSelected(null);
     setSelectedIds((s) => {
@@ -534,7 +592,7 @@ export default function BrandingPage() {
   async function bulkDelete() {
     const ids = [...selectedIds];
     if (!ids.length) return;
-    if (!confirm(`למחוק ${ids.length} מקומות? פעולה בלתי הפיכה.`)) return;
+    if (!(await confirmDialog({ message: `למחוק ${ids.length} מקומות? פעולה בלתי הפיכה.`, danger: true, confirmText: 'מחיקה' }))) return;
     // best-effort: remove their storage folders too
     for (const id of ids) {
       const { data: files } = await db.storage.from('branding').list(id);
@@ -584,7 +642,7 @@ export default function BrandingPage() {
       const text = await file.text();
       const { rows, errors, hasSourceColumns } = parseBrandCsv(text);
       if (!rows.length) {
-        alert('לא נמצאו שורות תקינות בקובץ.\n' + errors.join('\n'));
+        await alertDialog('לא נמצאו שורות תקינות בקובץ.\n' + errors.join('\n'));
         return;
       }
       // Match by name (case-insensitive) against existing brands → update, else insert.
@@ -634,9 +692,9 @@ export default function BrandingPage() {
       await loadBrands();
       const summary = `ייבוא הסתיים: ${inserted} נוספו, ${updated} עודכנו.`;
       const detail = [...errors, ...failures.map((f) => 'שמירה נכשלה — ' + f)];
-      alert(detail.length ? `${summary}\n\n${detail.join('\n')}` : summary);
+      await alertDialog(detail.length ? `${summary}\n\n${detail.join('\n')}` : summary);
     } catch (e) {
-      alert('קריאת הקובץ נכשלה: ' + String(e));
+      await alertDialog('קריאת הקובץ נכשלה: ' + String(e));
     } finally {
       setImporting(false);
       if (csvRef.current) csvRef.current.value = '';
@@ -682,17 +740,32 @@ export default function BrandingPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
         {/* list */}
-        <section className="max-h-[45dvh] min-w-0 overflow-auto rounded-xl border border-[var(--border)] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:col-span-1 lg:max-h-none">
+        <section className="max-h-[45dvh] min-w-0 overflow-auto rounded-xl border border-[var(--border)] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] xl:max-h-none">
           {/* bulk action bar */}
           {isAdmin && selectedIds.size > 0 && (
             <div className="flex items-center justify-between gap-2 bg-gray-50 border-b border-[var(--border)] px-3 py-2 text-sm">
               <span className="text-[var(--muted)]">נבחרו {selectedIds.size}</span>
-              <div className="flex gap-3">
-                <button onClick={() => bulkSetActive(true)} className="text-brand">הפעלה</button>
-                <button onClick={() => bulkSetActive(false)} className="text-[var(--muted)]">השבתה</button>
-                <button onClick={bulkDelete} className="text-red-600">מחיקה</button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => bulkSetActive(true)}
+                  className="rounded-md border border-brand bg-brand px-3 py-1 text-xs font-medium text-white transition-colors hover:opacity-90"
+                >
+                  הפעלה
+                </button>
+                <button
+                  onClick={() => bulkSetActive(false)}
+                  className="rounded-md border border-[var(--border)] bg-white px-3 py-1 text-xs font-medium text-[var(--muted)] transition-colors hover:bg-gray-100"
+                >
+                  השבתה
+                </button>
+                <button
+                  onClick={bulkDelete}
+                  className="rounded-md border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
+                >
+                  מחיקה
+                </button>
               </div>
             </div>
           )}
@@ -717,7 +790,7 @@ export default function BrandingPage() {
                     )}
                   </th>
                   <th className="text-start p-2">מקום</th>
-                  <th className="text-start p-2 w-16">סטטוס</th>
+                  <th className="hidden p-2 text-start sm:table-cell sm:w-16">סטטוס</th>
                 </tr>
               </thead>
               <tbody>
@@ -750,13 +823,13 @@ export default function BrandingPage() {
                         />
                         )}
                       </td>
-                      <td className="p-2 font-medium" onClick={() => openBrand(b)}>
-                        <div className="flex items-center gap-2">
+                      <td className="min-w-0 p-2 font-medium" onClick={() => openBrand(b)}>
+                        <div className="flex min-w-0 items-center gap-2">
                           <BrandListLogo name={b.name} url={brandLogoUrls[b.id] ?? ''} />
                           <span className="min-w-0 truncate">{b.name}</span>
                         </div>
                       </td>
-                      <td className="p-2" onClick={() => openBrand(b)}>
+                      <td className="hidden p-2 sm:table-cell" onClick={() => openBrand(b)}>
                         <span
                           className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
                             b.is_active
@@ -778,10 +851,10 @@ export default function BrandingPage() {
 
         {/* editor */}
         {selected && (
-          <section id="brand-editor" className="min-w-0 space-y-4 rounded-xl border border-[var(--border)] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:col-span-2">
-            <div className="sticky top-[calc(var(--safe-top)+3.75rem)] z-20 -mx-4 -mt-4 flex flex-col gap-2 border-b border-[var(--border)] bg-white p-4 sm:static sm:mx-0 sm:mt-0 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:bg-transparent sm:p-0">
-              <h2 className="font-semibold">{selected.id ? 'עריכת מקום' : 'מקום חדש'}</h2>
-              <div className="flex flex-wrap gap-2">
+          <section id="brand-editor" className="scroll-mt-4 mt-4 min-w-0 space-y-4 rounded-xl border border-[var(--border)] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] xl:mt-0">
+            <div className="sticky top-0 z-20 -mx-4 -mt-4 flex flex-col gap-2 border-b border-[var(--border)] bg-white p-4 before:absolute before:inset-x-0 before:-top-3 before:h-3 before:bg-white before:content-[''] sm:static sm:mx-0 sm:mt-0 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:bg-transparent sm:p-0 sm:before:hidden">
+              <h2 className="relative z-10 font-semibold">{selected.id ? 'עריכת מקום' : 'מקום חדש'}</h2>
+              <div className="relative z-10 flex flex-wrap gap-2">
                 {selected.id && (
                   isAdmin && (
                   <button
@@ -855,28 +928,21 @@ export default function BrandingPage() {
             {/* logo */}
             <div>
               <span className="block text-sm font-medium mb-1">לוגו</span>
-              <div className="flex items-center gap-3">
-                {previews['__logo'] && (
-                  <button
-                    type="button"
-                    onClick={() => setLogoPreviewOpen(true)}
-                    className="rounded border border-[var(--border)] p-1 transition hover:border-brand/40 hover:bg-gray-50"
-                    aria-label="פתיחת תצוגת לוגו"
-                  >
-                    <img src={previews['__logo']} alt="logo" className="h-16 w-16 object-contain rounded" />
-                  </button>
-                )}
-                <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadLogo(e.target.files[0])} />
-                <button type="button" onClick={() => logoRef.current?.click()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold text-brand hover:bg-gray-50">
-                  {previews['__logo'] ? 'החלפת לוגו' : 'העלאת לוגו'}
+              <div className="flex flex-col items-center gap-2 sm:items-start">
+                <button
+                  type="button"
+                  onClick={() => setLogoModalOpen(true)}
+                  className="grid h-28 w-28 place-items-center overflow-hidden rounded-2xl border border-[var(--border)] bg-gray-50 transition hover:border-brand hover:bg-brand/5 focus:outline-none focus:ring-2 focus:ring-brand/30 sm:h-32 sm:w-32"
+                  aria-label="העלאת לוגו"
+                >
+                  {previews['__logo'] ? (
+                    <img src={previews['__logo']} alt="logo" className="h-full w-full object-contain p-3" />
+                  ) : (
+                    <span className="text-sm font-semibold text-[var(--muted)]">לוגו</span>
+                  )}
                 </button>
-                {logoFile && (
-                  <button type="button" onClick={() => extractColors(logoFile)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold text-brand hover:bg-gray-50 disabled:opacity-50" disabled={extracting}>
-                    {extracting ? 'מחלץ...' : 'חלץ צבעים מהלוגו'}
-                  </button>
-                )}
+                <span className="text-xs text-[var(--muted)]">אופציונלי, עד 5MB</span>
               </div>
-              <p className="text-xs text-[var(--muted)] mt-1">חילוץ צבעים זמין מיד אחרי בחירת קובץ לוגו חדש.</p>
             </div>
 
             {/* palette */}
@@ -888,13 +954,19 @@ export default function BrandingPage() {
               <div className="space-y-2">
                 {(selected.color_palette ?? []).map((c, i) => (
                   <div key={i} className="flex flex-nowrap items-center gap-2">
-                    <input
-                      type="color"
-                      value={c.hex}
-                      onChange={(e) => updateColor(i, { hex: e.target.value })}
-                      className="h-9 w-11 rounded border border-[var(--border)] shrink-0 cursor-pointer p-0.5"
+                    <span
+                      className="relative h-12 w-14 shrink-0 overflow-hidden rounded-lg border border-[var(--border)] shadow-sm"
+                      style={{ backgroundColor: isValidHexColor(c.hex) ? c.hex : '#000000' }}
                       title="לחץ לבחירת צבע מדויק"
-                    />
+                    >
+                      <input
+                        type="color"
+                        value={isValidHexColor(c.hex) ? c.hex : '#000000'}
+                        onChange={(e) => updateColor(i, { hex: e.target.value.toUpperCase() })}
+                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                        aria-label={`צבע ${ROLE_LABEL[c.role] ?? 'מותג'}`}
+                      />
+                    </span>
                     <input
                       className={`${input} ltr !w-24 shrink-0`}
                       value={c.hex}
@@ -1164,7 +1236,7 @@ export default function BrandingPage() {
 
         {/* empty state — keeps the two-thirds column inviting instead of blank */}
         {!selected && (
-          <section className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-white p-8 text-center shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:col-span-2">
+          <section className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-white p-8 text-center shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand/5 text-brand">
               <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" />
@@ -1256,6 +1328,184 @@ export default function BrandingPage() {
         </div>
       )}
 
+      {logoModalOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/50 px-4 py-6"
+          dir="rtl"
+          role="dialog"
+          aria-modal="true"
+          aria-label="העלאת לוגו"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 h-full w-full cursor-default"
+            aria-label="סגירת העלאת לוגו"
+            onClick={() => setLogoModalOpen(false)}
+          />
+          <div className="relative flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white text-right shadow-xl">
+            <div className="flex items-start justify-between gap-3 px-5 pb-4 pt-5">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--text)]">העלאת לוגו</h2>
+                <p className="mt-1 text-sm text-[var(--muted)]">
+                  גררו תמונה לכאן או בחרו קובץ מהמכשיר. אחרי הבחירה ה-AI יזהה את צבעי המותג אוטומטית.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLogoModalOpen(false)}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--border)] text-lg text-[var(--muted)] hover:bg-gray-50"
+                aria-label="סגירה"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="overflow-y-auto px-5 pb-5">
+              <input
+                ref={logoRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => void pickLogo(e.target.files?.[0] ?? null)}
+              />
+
+              <div
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setLogoDragActive(true);
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragLeave={() => setLogoDragActive(false)}
+                onDrop={onLogoDrop}
+                className={`grid min-h-56 place-items-center rounded-xl border-2 border-dashed p-5 text-center transition ${
+                  logoDragActive ? 'border-brand bg-brand/10' : 'border-[var(--border)] bg-gray-50'
+                }`}
+              >
+                <div className="max-w-sm">
+                  <div className="mx-auto grid h-28 w-28 place-items-center overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+                    {previews['__logo'] ? (
+                      <img src={previews['__logo']} alt="לוגו המותג" className="h-full w-full object-contain p-3" />
+                    ) : (
+                      <span className="text-xs font-semibold text-[var(--muted)]">לוגו</span>
+                    )}
+                  </div>
+                  <div className="mt-4 text-sm font-semibold text-[var(--text)]">גררו תמונת לוגו לכאן</div>
+                  <p className="mt-1 text-xs text-[var(--muted)]">PNG, JPG או WEBP, עד 5MB</p>
+                  <button
+                    type="button"
+                    onClick={() => logoRef.current?.click()}
+                    className="mt-4 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark"
+                  >
+                    בחירה מהמכשיר
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-brand/20 bg-brand/5 px-4 py-3 text-sm">
+                <div className="font-semibold text-brand">זיהוי צבעי מותג עם AI</div>
+                {extracting && (
+                  <div className="mt-3 rounded-lg border border-brand/10 bg-white px-3 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="relative grid h-9 w-9 shrink-0 place-items-center">
+                        <span className="absolute inset-0 rounded-full border-2 border-brand/15" />
+                        <span className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-brand" />
+                        <span className="h-2 w-2 rounded-full bg-brand" />
+                      </span>
+                      <div>
+                        <p className="text-xs font-semibold text-[var(--text)]">מזהה צבעים מהלוגו...</p>
+                        <div className="mt-2 flex items-center gap-1.5" aria-hidden="true">
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand [animation-delay:-0.24s]" />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand [animation-delay:-0.12s]" />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {!extracting && !colorSummary && !pendingColors && (
+                  <p className="mt-2 text-xs text-[var(--muted)]">הזיהוי יתחיל אוטומטית אחרי בחירת תמונה.</p>
+                )}
+                {colorSummary && <p className="mt-2 text-xs text-emerald-700">{colorSummary}</p>}
+                {colorSummary && !pendingColors && selected?.color_palette?.length ? (
+                  <div className="mt-4">
+                    <div className="mb-2 text-xs font-semibold text-[var(--text)]">צבעי המותג שנבחרו</div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {selected.color_palette.map((color, index) => (
+                        <div key={`${color.role}-${index}`} className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2">
+                          <span
+                            className="h-9 w-10 shrink-0 rounded-md border border-[var(--border)]"
+                            style={{ backgroundColor: isValidHexColor(color.hex) ? color.hex : '#000000' }}
+                          />
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-[var(--text)]">{ROLE_LABEL[color.role]}</div>
+                            <div className="text-xs font-semibold text-[var(--muted)] ltr">{color.hex}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {pendingColors && (
+                  <div className="mt-4 space-y-2">
+                    {pendingColors.map((color, index) => (
+                      <label key={`${color.role}-${index}`} className="flex items-center gap-3 rounded-lg border border-[var(--border)] bg-white px-3 py-2">
+                        <span
+                          className="relative h-12 w-16 shrink-0 overflow-hidden rounded-lg border border-[var(--border)] shadow-sm"
+                          style={{ backgroundColor: isValidHexColor(color.hex) ? color.hex : '#000000' }}
+                        >
+                          <input
+                            type="color"
+                            value={isValidHexColor(color.hex) ? color.hex : '#000000'}
+                            onChange={(event) => updatePendingColor(index, { hex: event.target.value.toUpperCase() })}
+                            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                            aria-label={`צבע ${ROLE_LABEL[color.role]}`}
+                          />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-semibold text-[var(--text)]">{ROLE_LABEL[color.role]}</div>
+                          <input
+                            dir="ltr"
+                            value={color.hex}
+                            onChange={(event) => updatePendingColor(index, { hex: event.target.value })}
+                            className="mt-1 w-full rounded-md border border-[var(--border)] px-2 py-1 text-xs font-semibold text-[var(--text)]"
+                          />
+                        </div>
+                      </label>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={confirmPendingColors}
+                      className="mt-3 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark"
+                    >
+                      אישור צבעי המותג
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5 flex justify-start gap-3">
+                {previews['__logo'] && (
+                  <button
+                    type="button"
+                    onClick={() => setLogoPreviewOpen(true)}
+                    className="rounded-lg border border-[var(--border)] px-5 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+                  >
+                    תצוגה גדולה
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setLogoModalOpen(false)}
+                  className="rounded-lg border border-[var(--border)] px-5 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+                >
+                  סגירה
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {logoPreviewOpen && previews['__logo'] && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
@@ -1301,4 +1551,17 @@ function BrandListLogo({ name, url }: { name: string; url: string }) {
       )}
     </div>
   );
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',').pop() ?? '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function isValidHexColor(value: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(value);
 }

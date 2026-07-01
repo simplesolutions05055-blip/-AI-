@@ -12,6 +12,7 @@ interface PaletteEntry {
 
 interface Body {
   action?: 'resolve' | 'confirm' | 'save';
+  save_mode?: 'idle' | 'existing' | 'new';
   brand_id?: string;
   name?: string;
   aliases?: string[] | null;
@@ -163,7 +164,7 @@ Deno.serve(async (req) => {
     const cleanName = normalizeText(body.name);
     if (!cleanName) return json({ error: 'brand_name_required' }, 400);
 
-    if (action === 'save' && body.brand_id) {
+    if (action === 'save' && body.brand_id && body.save_mode === 'existing') {
       const brandId = normalizeText(body.brand_id);
       await assertBrandMember(database, userId, brandId);
       const logoPath = await uploadLogo(database, brandId, body);
@@ -375,6 +376,13 @@ async function syncContentSources(
 }
 
 async function attachUserToBrand(database: ReturnType<typeof db>, userId: string, brandId: string): Promise<void> {
+  const { error: clearError } = await database
+    .from('user_brands')
+    .delete()
+    .eq('user_id', userId)
+    .neq('brand_id', brandId);
+  if (clearError) throw clearError;
+
   const { error: brandError } = await database
     .from('user_brands')
     .upsert({ user_id: userId, brand_id: brandId }, { onConflict: 'user_id,brand_id', ignoreDuplicates: true });

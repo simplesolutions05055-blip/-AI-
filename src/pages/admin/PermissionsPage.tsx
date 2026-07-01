@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
+import { confirmDialog } from '@/lib/dialog';
 
 interface ProfileRow {
   id: string;
@@ -119,7 +120,7 @@ export default function PermissionsPage() {
   }
 
   async function deleteUser(p: ProfileRow) {
-    if (!confirm(`למחוק את המשתמש ${p.email}? פעולה זו אינה הפיכה.`)) return;
+    if (!(await confirmDialog({ message: `למחוק את המשתמש ${p.email}? פעולה זו אינה הפיכה.`, danger: true, confirmText: 'מחיקה' }))) return;
     setSavingId(p.id);
     const { data, error } = await db.functions.invoke('delete-user', { body: { user_id: p.id } });
     setSavingId(null);
@@ -204,7 +205,7 @@ export default function PermissionsPage() {
   }
 
   async function deleteInvite(invite: InviteRow) {
-    if (!confirm('למחוק את הקישור? לא יהיה ניתן להירשם דרכו יותר.')) return;
+    if (!(await confirmDialog({ message: 'למחוק את הקישור? לא יהיה ניתן להירשם דרכו יותר.', danger: true, confirmText: 'מחיקה' }))) return;
     setSavingId(invite.id);
     const { error } = await db.from('brand_invites').delete().eq('id', invite.id);
     setSavingId(null);

@@ -1,6 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
-import { extractDocxText, extractPdfText } from '../_shared/extract.ts';
 import { logEvent } from '../_shared/util.ts';
 
 interface Body {
@@ -8,6 +7,9 @@ interface Body {
   base64?: string;
   mime?: string;
   name?: string;
+  // Documents are parsed in the browser (pdfjs-dist / mammoth) and sent as text;
+  // server-side pdf.js extraction crashed the edge runtime (546 WORKER_LIMIT).
+  text?: string;
 }
 
 const corsHeaders = {
@@ -28,12 +30,20 @@ Deno.serve(async (req) => {
     const userId = await resolveUserId(req);
     if (!userId) return json({ error: 'unauthorized' }, 401);
 
-    const { kind, base64, mime, name } = (await req.json()) as Body;
-    if ((kind !== 'document' && kind !== 'asset') || !base64 || typeof base64 !== 'string') {
-      return json({ error: 'kind and base64 required' }, 400);
+    const { kind, base64, mime, name, text } = (await req.json()) as Body;
+    if (kind !== 'document' && kind !== 'asset') {
+      return json({ error: 'kind required' }, 400);
+    }
+    const providedText = typeof text === 'string' ? text.trim() : '';
+    // Documents arrive as pre-extracted text; assets upload raw bytes.
+    if (kind === 'asset' && (!base64 || typeof base64 !== 'string')) {
+      return json({ error: 'base64 required' }, 400);
+    }
+    if (kind === 'document' && !providedText) {
+      return json({ error: 'empty_document' }, 422);
     }
     // base64 inflates bytes by ~4/3; reject anything above the 25MB ceiling.
-    if (base64.length * 0.75 > 25 * 1024 * 1024) {
+    if (base64 && base64.length * 0.75 > 25 * 1024 * 1024) {
       return json({ error: 'file exceeds 25MB limit' }, 413);
     }
 
@@ -49,23 +59,34 @@ Deno.serve(async (req) => {
     if (!brandId) return json({ error: 'no_brand' }, 400);
 
     if (kind === 'document') {
-      const isPdf = /pdf/i.test(mime ?? '') || /\.pdf$/i.test(name ?? '');
-      const text = isPdf ? await extractPdfText(base64) : extractDocxText(base64);
-      if (!text) return json({ error: 'empty_document' }, 422);
-
-      const { error } = await database.from('business_text_sources').insert({
-        brand_id: brandId,
-        title: (name ?? 'מסמך').replace(/\.(docx|pdf)$/i, '').slice(0, 200),
-        content: text,
-        source_kind: 'content_only',
-      });
+      const text = providedText;
+      const title = (name ?? 'מסמך').replace(/\.(docx|pdf)$/i, '').slice(0, 200);
+      const { data: source, error } = await database
+        .from('business_text_sources')
+        .insert({
+          brand_id: brandId,
+          title,
+          content: text,
+          source_kind: 'content_only',
+        })
+        .select('id, title, content')
+        .single();
       if (error) throw error;
       await markDone(database, userId, 'docs_done');
       await logEvent(database, {
         action: 'onboarding_document_ingested',
         metadata: { user_id: userId, brand_id: brandId, name: name ?? null, chars: text.length },
       });
-      return json({ ok: true, chars: text.length });
+      return json({
+        ok: true,
+        chars: text.length,
+        source: source
+          ? {
+              ...source,
+              content: source.content.length > 12000 ? `${source.content.slice(0, 12000)}\n\n[התצוגה קוצרה]` : source.content,
+            }
+          : null,
+      });
     }
 
     // kind === 'asset' — store the file under the brand folder in `branding`.

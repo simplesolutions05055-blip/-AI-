@@ -1,5 +1,4 @@
 import { db } from '../_shared/db.ts';
-import { describeImage } from '../_shared/openai.ts';
 import { estimateTextCost, logEvent } from '../_shared/util.ts';
 
 type BrandColorRole = 'primary' | 'secondary' | 'accent' | 'background' | 'text';
@@ -36,17 +35,17 @@ Deno.serve(async (req) => {
 
     const mime = normalizeText(body.logo_mime) || 'image/png';
     const brandName = normalizeText(body.brand_name);
-    const vision = await describeImage(logoBase64, mime, { model: Deno.env.get('OPENAI_VISION_MODEL') || 'gpt-4o' });
-    const analysis = await parseColorAnalysis(vision.text, brandName);
+    const model = Deno.env.get('OPENAI_VISION_MODEL') || 'gpt-4o';
+    const analysis = await analyzeColorsFromImage(logoBase64, mime, brandName, model);
     const palette = sanitizePalette(analysis.colors);
-    const estimatedCost = round4(estimateTextCost(vision.usage.prompt_tokens, vision.usage.completion_tokens));
+    const estimatedCost = round4(estimateTextCost(analysis.usage.prompt_tokens, analysis.usage.completion_tokens));
 
     await database.from('usage_events').insert({
       request_id: null,
       provider: 'openai',
-      model: Deno.env.get('OPENAI_VISION_MODEL') || 'gpt-4o',
-      input_units: vision.usage.prompt_tokens,
-      output_units: vision.usage.completion_tokens,
+      model,
+      input_units: analysis.usage.prompt_tokens,
+      output_units: analysis.usage.completion_tokens,
       estimated_cost: estimatedCost,
     });
 
@@ -55,7 +54,7 @@ Deno.serve(async (req) => {
       metadata: {
         brand_name: brandName,
         logo_name: normalizeText(body.logo_name) || null,
-        model: Deno.env.get('OPENAI_VISION_MODEL') || 'gpt-4o',
+        model,
         estimated_cost: estimatedCost,
         palette,
       },
@@ -67,7 +66,7 @@ Deno.serve(async (req) => {
       confidence: analysis.confidence,
       colors: palette,
       estimated_cost: estimatedCost,
-      model: Deno.env.get('OPENAI_VISION_MODEL') || 'gpt-4o',
+      model,
     });
   } catch (e) {
     await logEvent(database, {
@@ -79,10 +78,15 @@ Deno.serve(async (req) => {
   }
 });
 
-async function parseColorAnalysis(text: string, brandName: string | null): Promise<{ summary: string; confidence: number; colors: PaletteEntry[] }> {
-  const prompt = `אתה מנתח לוגו ומחזיר אך ורק JSON תקין בעברית.
-המשימה: לזהות את צבעי המותג המרכזיים מהלוגו/קובץ המצורף.
-החזר במבנה:
+async function analyzeColorsFromImage(
+  base64: string,
+  mime: string,
+  brandName: string | null,
+  model: string,
+): Promise<{ summary: string; confidence: number; colors: PaletteEntry[]; usage: { prompt_tokens: number; completion_tokens: number } }> {
+  const prompt = `אתה מנתח את התמונה המצורפת ומחזיר אך ורק JSON תקין.
+המטרה: לזהות צבעי מותג מהתמונה עצמה. אם זו תמונת סביבה ולא לוגו נקי, התמקד בצבעי הלוגו/הסמל/השילוט של המותג אם הם מופיעים, ולא בצבעי שמיים, בניינים, כביש או רקע כללי.
+החזר בדיוק במבנה:
 {
   "summary": "משפט עסקי קצר",
   "confidence": 0-1,
@@ -91,31 +95,36 @@ async function parseColorAnalysis(text: string, brandName: string | null): Promi
   ]
 }
 כללים:
-- החזר עד 5 צבעים בלבד, אחד לכל role.
+- החזר 5 צבעים בדיוק, אחד לכל role.
 - אם חסר צבע רקע או טקסט ברור, השלם עם #FFFFFF לרקע ו-#111827 לטקסט.
 - אם יש כמה גוונים דומים, בחר את הדומיננטי והנקי ביותר.
+- אל תחזיר צבעים שלא קיימים בתמונה, חוץ מרקע/טקסט נייטרליים כשאין ברירה.
 - אל תוסיף טקסט מיותר.
-${brandName ? `- השם העסקי/מותגי הוא: ${brandName}` : ''}
-תיאור התמונה:
-${text}`;
+${brandName ? `- שם המותג: ${brandName}` : ''}`;
 
-  const { content } = await fetchJson(prompt);
+  const { content, usage } = await fetchImageJson(prompt, base64, mime, model);
   try {
     const parsed = JSON.parse(content) as { summary?: unknown; confidence?: unknown; colors?: unknown };
     const summary = typeof parsed.summary === 'string' && parsed.summary.trim() ? parsed.summary.trim() : 'זוהו צבעי מותג מרכזיים מהלוגו.';
     const confidence = typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.7;
     const colors = Array.isArray(parsed.colors) ? parsed.colors as PaletteEntry[] : [];
-    return { summary, confidence, colors };
+    return { summary, confidence, colors, usage };
   } catch {
     return {
       summary: 'זוהו צבעי מותג מרכזיים מהלוגו.',
       confidence: 0.5,
       colors: [],
+      usage,
     };
   }
 }
 
-async function fetchJson(prompt: string): Promise<{ content: string }> {
+async function fetchImageJson(
+  prompt: string,
+  base64: string,
+  mime: string,
+  model: string,
+): Promise<{ content: string; usage: { prompt_tokens: number; completion_tokens: number } }> {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -123,15 +132,26 @@ async function fetchJson(prompt: string): Promise<{ content: string }> {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: Deno.env.get('OPENAI_TEXT_MODEL') || 'gpt-4o',
+      model,
       temperature: 0,
       response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
+          ],
+        },
+      ],
     }),
   });
   if (!res.ok) throw new Error(`OpenAI chat ${res.status}: ${await res.text()}`);
   const data = await res.json();
-  return { content: data.choices?.[0]?.message?.content ?? '{}' };
+  return {
+    content: data.choices?.[0]?.message?.content ?? '{}',
+    usage: data.usage ?? { prompt_tokens: 0, completion_tokens: 0 },
+  };
 }
 
 function sanitizePalette(colors: PaletteEntry[]): { hex: string; role: BrandColorRole; reason?: string | null }[] {

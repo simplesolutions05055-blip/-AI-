@@ -1,5 +1,7 @@
-import { unzipSync, strFromU8 } from 'npm:fflate@0.8.2';
-import { extractText, getDocumentProxy } from 'npm:unpdf@0.12.1';
+import { unzipSync, strFromU8 } from 'https://esm.sh/fflate@0.8.2';
+// unpdf 1.x via esm.sh: the npm:unpdf@0.12.x build crashes the Deno edge runtime
+// (546 boot error) and returns empty text. Keep this in sync with _shared/files.ts.
+import { extractText, getDocumentProxy } from 'https://esm.sh/unpdf@1.3.2';
 
 // Extract plain text from a .docx (which is a zip of XML parts). We read
 // word/document.xml, turn paragraph/break tags into newlines and strip the
@@ -29,7 +31,8 @@ export async function extractPdfText(base64: string): Promise<string> {
   const bytes = decodeBase64(base64);
   const pdf = await getDocumentProxy(bytes);
   const { text } = await extractText(pdf, { mergePages: true });
-  return (text ?? '').replace(/\n{3,}/g, '\n\n').trim();
+  const merged = Array.isArray(text) ? text.join('\n') : (text ?? '');
+  return merged.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function decodeBase64(base64: string): Uint8Array {
