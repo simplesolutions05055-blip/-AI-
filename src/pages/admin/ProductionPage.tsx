@@ -25,6 +25,7 @@ import {
 import ImagePickerModal from '@/components/ImagePickerModal';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
+import { fetchSocialCaption, reviseSocialCaption, saveSocialCaption } from '@/lib/social';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { Spinner } from '@/components/ui/Spinner';
 import type { DeckImage } from '@/lib/deck';
@@ -1802,9 +1803,16 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           emailSent={emailSent}
           initialPickedImages={pickedImages}
           initialPickedKeys={pickedKeys}
-          onImageEdited={({ requestId: newId, previewUrl: newUrl }) => {
+          onImageEdited={({ requestId: newId, previewUrl: newUrl, outputId, postText }) => {
             setRequestId(newId);
             setPreviewUrl(newUrl);
+            if (outputId) {
+              setOutput((current) =>
+                current
+                  ? { ...current, id: outputId, text_content: postText ?? current.text_content }
+                  : current,
+              );
+            }
             setEmailSent(false);
           }}
         />
@@ -2452,14 +2460,30 @@ function ResultCard({
   emailSent: boolean;
   initialPickedImages?: DeckImage[] | null;
   initialPickedKeys?: string[];
-  onImageEdited?: (data: { requestId: string; previewUrl: string }) => void;
+  onImageEdited?: (data: { requestId: string; previewUrl: string; outputId?: string | null; postText?: string | null }) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [editFeedback, setEditFeedback] = useState('');
   const [applyingEdit, setApplyingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [postText, setPostText] = useState(output.output_type === 'image' ? output.text_content?.trim() ?? '' : '');
+  const [postOutputId, setPostOutputId] = useState(output.output_type === 'image' ? output.id : null);
+  const [postTextLoading, setPostTextLoading] = useState(false);
+  const [postTextError, setPostTextError] = useState<string | null>(null);
+  const [postFeedback, setPostFeedback] = useState('');
+  const [postEditing, setPostEditing] = useState(false);
+  const [postCopied, setPostCopied] = useState(false);
+  const persistedPostRef = useRef(postText);
   const textBlocks = useMemo(() => parseRichText(output.text_content ?? ''), [output.text_content]);
   const isTextOutput = !output.storage_path && output.output_type !== 'image' && output.output_type !== 'presentation';
+
+  useEffect(() => {
+    if (output.output_type !== 'image') return;
+    const stored = output.text_content?.trim() ?? '';
+    setPostText(stored);
+    setPostOutputId(output.id);
+    persistedPostRef.current = stored;
+  }, [output.id, output.output_type, output.text_content]);
 
   async function copyTextOutput() {
     await navigator.clipboard.writeText(plainTextFromBlocks(textBlocks));
@@ -2492,16 +2516,81 @@ function ResultCard({
         body: { request_id: requestId, feedback },
       });
       if (error) throw error;
-      const result = data as { request_id?: string; base64?: string; mime?: string } | null;
+      const result = data as { request_id?: string; output_id?: string | null; text_content?: string | null; base64?: string; mime?: string } | null;
       if (!result?.request_id || !result.base64) throw new Error('לא התקבלה גרסה מתוקנת');
       const dataUrl = `data:${result.mime || 'image/png'};base64,${result.base64}`;
-      onImageEdited?.({ requestId: result.request_id, previewUrl: dataUrl });
+      if (result.output_id) setPostOutputId(result.output_id);
+      if (result.text_content?.trim() && !postText.trim()) {
+        setPostText(result.text_content.trim());
+        persistedPostRef.current = result.text_content.trim();
+      }
+      onImageEdited?.({
+        requestId: result.request_id,
+        previewUrl: dataUrl,
+        outputId: result.output_id ?? null,
+        postText: result.text_content ?? null,
+      });
       setEditFeedback('');
     } catch (e) {
       setEditError(String((e as { message?: string })?.message ?? e));
     } finally {
       setApplyingEdit(false);
     }
+  }
+
+  // Fold the selected brand into the brief so the caption is grounded in the
+  // brand's Business Brain server-side (same as RevisePage / the schedule modal).
+  function postBrief(): Record<string, unknown> {
+    const b = (brief ?? {}) as Record<string, unknown>;
+    return brandId ? { ...b, brand_id: (b as { brand_id?: string }).brand_id ?? brandId } : b;
+  }
+
+  async function generatePostText() {
+    if (postTextLoading || postEditing) return;
+    setPostTextLoading(true);
+    setPostTextError(null);
+    try {
+      const text = await fetchSocialCaption(postBrief(), 'facebook', requestId, undefined, postOutputId);
+      setPostText(text);
+      persistedPostRef.current = text;
+    } catch {
+      setPostTextError('לא הצלחנו לכתוב את טקסט הפוסט. אפשר לנסות שוב.');
+    } finally {
+      setPostTextLoading(false);
+    }
+  }
+
+  async function revisePostText() {
+    const feedback = postFeedback.trim();
+    if (!feedback || !postText.trim() || postEditing || postTextLoading) return;
+    setPostEditing(true);
+    setPostTextError(null);
+    try {
+      const text = await reviseSocialCaption(postText, feedback, postBrief(), requestId, postOutputId);
+      setPostText(text);
+      persistedPostRef.current = text;
+      setPostFeedback('');
+    } catch {
+      setPostTextError('לא הצלחנו לעדכן את הטקסט. אפשר לנסות שוב.');
+    } finally {
+      setPostEditing(false);
+    }
+  }
+
+  function persistPostTextIfDirty() {
+    const text = postText.trim();
+    if (!postOutputId || !text || text === persistedPostRef.current) return;
+    persistedPostRef.current = text;
+    saveSocialCaption(text, postOutputId, requestId).catch(() => {
+      persistedPostRef.current = '';
+    });
+  }
+
+  async function copyPostText() {
+    if (!postText.trim()) return;
+    await navigator.clipboard.writeText(postText.trim());
+    setPostCopied(true);
+    window.setTimeout(() => setPostCopied(false), 1600);
   }
 
   return (
@@ -2525,6 +2614,77 @@ function ResultCard({
             <button type="button" onClick={downloadImage} className={`mt-4 ${SECONDARY_BUTTON} w-fit`}>
               הורדה
             </button>
+            <div className="mt-5 border-t border-[var(--border-warm)] pt-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h3 className="font-bold">טקסט הפוסט</h3>
+                {postText.trim() && !postTextLoading && (
+                  <button type="button" onClick={copyPostText} className={SECONDARY_BUTTON}>
+                    {postCopied ? 'הועתק' : 'העתקה'}
+                  </button>
+                )}
+              </div>
+              <p className="mb-2 text-xs text-[var(--text-muted)]">
+                נכתב אוטומטית לפי התוצר והמותג. אפשר לערוך ידנית או לבקש שינוי עם AI.
+              </p>
+              {postTextLoading ? (
+                <div className="flex items-center gap-3 rounded-lg bg-[var(--surface-2)] p-4 text-sm text-[var(--text-muted)]">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                  כותב את טקסט הפוסט...
+                </div>
+              ) : postText.trim() ? (
+                <div className={`relative ${postEditing ? 'social-caption-writing' : ''}`}>
+                  <textarea
+                    value={postText}
+                    onChange={(e) => setPostText(e.target.value)}
+                    onBlur={persistPostTextIfDirty}
+                    rows={6}
+                    disabled={postEditing}
+                    className="w-full rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] px-3 py-3 text-sm leading-6 text-[var(--text-strong)] shadow-sm placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15 disabled:opacity-70"
+                  />
+                  {postEditing && <div className="social-caption-scan" aria-hidden="true" />}
+                </div>
+              ) : (
+                <button type="button" onClick={generatePostText} className={SECONDARY_BUTTON}>
+                  כתיבת טקסט לפוסט
+                </button>
+              )}
+              {postTextError && (
+                <div className="mt-2 flex items-center gap-3 text-xs text-red-600">
+                  {postTextError}
+                  <button type="button" onClick={generatePostText} className="font-semibold underline">
+                    נסו שוב
+                  </button>
+                </div>
+              )}
+              {postText.trim() && !postTextLoading && (
+                <div className="mt-3">
+                  <label className="mb-1 block text-sm font-semibold">מה לשנות בטקסט?</label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      value={postFeedback}
+                      onChange={(e) => setPostFeedback(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          revisePostText();
+                        }
+                      }}
+                      placeholder="למשל: לקצר, להוסיף קריאה לפעולה, טון רשמי יותר"
+                      disabled={postEditing}
+                      className="w-full rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text-strong)] shadow-sm placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
+                    />
+                    <button
+                      type="button"
+                      onClick={revisePostText}
+                      disabled={!postFeedback.trim() || postEditing}
+                      className={`shrink-0 ${PRIMARY_BUTTON}`}
+                    >
+                      {postEditing ? 'מעדכן...' : 'עדכון עם AI'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </>
         ) : output.storage_path && previewUrl ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -2606,8 +2766,15 @@ function ResultCard({
               brandId={brandId ?? null}
               captionSource={
                 output.output_type === 'image'
-                  ? { kind: 'image', brief, requestId }
+                  ? postText.trim()
+                    ? { kind: 'text', text: postText.trim() }
+                    : { kind: 'image', brief, requestId }
                   : { kind: 'text', text: plainTextFromBlocks(textBlocks) }
+              }
+              producedImage={
+                output.output_type === 'image' && output.storage_path && previewUrl
+                  ? { url: previewUrl, storagePath: output.storage_path }
+                  : null
               }
             />
           </div>

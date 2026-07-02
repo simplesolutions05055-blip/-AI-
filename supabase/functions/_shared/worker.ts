@@ -12,7 +12,7 @@ import {
   estimateImageCost,
   round4,
 } from './util.ts';
-import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences } from './openai.ts';
+import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption } from './openai.ts';
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64, type PdfBrandSettings } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
@@ -765,6 +765,24 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       storagePath = `${requestId}/v${version}.png`;
       mime = imgMime;
       await database.storage.from('outputs').upload(storagePath, decodeBase64(base64), { contentType: imgMime, upsert: true });
+      // Every image ships with a ready-to-publish post text, stored on the output
+      // (text_content) so the UI shows it under the image, the schedule modal
+      // pre-fills it, and WhatsApp delivery sends it after the media. Best-effort:
+      // a caption failure must never fail the image itself.
+      try {
+        const { text: socialCaption, usage: capUsage } = await generateSocialCaption(brief, 'facebook');
+        textContent = socialCaption;
+        await recordUsage(
+          database, requestId, 'openai', 'chat',
+          capUsage.prompt_tokens, capUsage.completion_tokens,
+          estimateTextCost(capUsage.prompt_tokens, capUsage.completion_tokens),
+        );
+      } catch (capErr) {
+        await logEvent(database, {
+          requestId, severity: 'warning', action: 'social_caption_failed',
+          message: String(capErr),
+        });
+      }
       qaDescription = [
         `תמונה נוצרה ונשמרה ב-storage path: ${storagePath}.`,
         `מטרת התמונה: ${brief.goal ?? ''}`,
@@ -941,6 +959,17 @@ async function deliverContentToWhatsApp(
   // the brand colors+dimensions footer; the bare `caption` stays the title.
   const mediaCaption = brandFooter ? `${caption}\n\n${brandFooter}` : caption;
 
+  // For images, text_content holds the ready-to-publish social post written at
+  // generation time. Delivered as a follow-up message right after the media so
+  // the user gets image + post text as one package. (PDF text_content is the
+  // document body and must NOT be sent.)
+  const postText = type === 'image' && output.text_content?.trim() ? output.text_content.trim() : null;
+  async function sendPostText() {
+    if (!postText) return;
+    await sendOut(database, conversation.id, request.id, to,
+      `טקסט מוכן לפוסט:\n\n${postText}`, simulated);
+  }
+
   if (productionForm) return;
 
   if (simulated) {
@@ -952,10 +981,12 @@ async function deliverContentToWhatsApp(
       body: mediaCaption, media_type: contentType, storage_path: path,
       twilio_message_sid: `sim-${crypto.randomUUID()}`,
     });
+    await sendPostText();
     return;
   }
   if (!path) {
     await sendOut(database, conversation.id, request.id, to, mediaCaption, false);
+    await sendPostText();
     return;
   }
 
@@ -963,6 +994,7 @@ async function deliverContentToWhatsApp(
   const url = signed?.signedUrl;
   if (!url) {
     await sendOut(database, conversation.id, request.id, to, mediaCaption, false);
+    await sendPostText();
     return;
   }
   try {
@@ -975,6 +1007,7 @@ async function deliverContentToWhatsApp(
     await logEvent(database, { requestId: request.id, severity: 'error', action: 'whatsapp_media_send_failed', message: String(e) });
     await sendOut(database, conversation.id, request.id, to, `${mediaCaption}\n${url}`, false);
   }
+  await sendPostText();
 }
 
 export async function sendOutput(requestId: string): Promise<void> {

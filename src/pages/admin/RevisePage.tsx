@@ -5,6 +5,7 @@ import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, 
 import { isValidEmail } from '@/lib/format';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
+import { fetchSocialCaption, reviseSocialCaption, saveSocialCaption } from '@/lib/social';
 import { fetchBrandImages, fetchBrandAiImages, loadPersistedDeckImage, type DeckImage, type PersistedDeckImage } from '@/lib/deck';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { Spinner } from '@/components/ui/Spinner';
@@ -62,7 +63,7 @@ export default function RevisePage() {
   const [feedback, setFeedback] = useState('');
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ request_id: string; previewUrl: string } | null>(null);
+  const [result, setResult] = useState<{ request_id: string; previewUrl: string; storagePath?: string } | null>(null);
   const [brief, setBrief] = useState<Brief | null>(null);
   const [briefModalOpen, setBriefModalOpen] = useState(false);
   const [regenStatus, setRegenStatus] = useState<string | null>(null);
@@ -82,6 +83,20 @@ export default function RevisePage() {
   const [emailSent, setEmailSent] = useState(false);
   // Optional photo the user uploads to blend into the graphic (e.g. the mayor).
   const [referenceImage, setReferenceImage] = useState<{ file: File; previewUrl: string } | null>(null);
+  // The ready-to-publish post text that accompanies an image output. Written by
+  // the pipeline at generation time (outputs.text_content); for older outputs it
+  // is generated here once and persisted. Editable manually + revisable with AI.
+  const [postText, setPostText] = useState('');
+  const [postOutputId, setPostOutputId] = useState<string | null>(null);
+  const [postTextLoading, setPostTextLoading] = useState(false);
+  const [postTextError, setPostTextError] = useState<string | null>(null);
+  const [postFeedback, setPostFeedback] = useState('');
+  const [postEditing, setPostEditing] = useState(false);
+  const [postCopied, setPostCopied] = useState(false);
+  // Last value persisted to the DB. Blur only saves when the text actually changed.
+  const persistedPostRef = useRef('');
+  // Guards the one-time auto-generation against StrictMode double-mount.
+  const postInitRef = useRef(false);
 
   async function sendEmail(id: string | null) {
     if (!id || !isValidEmail(customerEmail)) return;
@@ -157,14 +172,15 @@ export default function RevisePage() {
       setOutputType('image');
       const { data: output } = await client
         .from('outputs')
-        .select('storage_path')
+        .select('id, storage_path, text_content')
         .eq('request_id', requestId)
         .eq('output_type', 'image')
         .not('storage_path', 'is', null)
         .order('version', { ascending: false })
         .limit(1)
         .maybeSingle();
-      const path = (output as { storage_path?: string } | null)?.storage_path;
+      const outputRow = output as { id?: string; storage_path?: string; text_content?: string | null } | null;
+      const path = outputRow?.storage_path;
       if (!path) {
         setError('לא נמצאה תמונה לתוצר הזה.');
         setLoading(false);
@@ -173,6 +189,33 @@ export default function RevisePage() {
       const { data: signed } = await client.storage.from('outputs').createSignedUrl(path, 600);
       setSource({ request_id: requestId, storage_path: path, previewUrl: signed?.signedUrl ?? '' });
       setLoading(false);
+
+      // Post text: use the stored one; for older outputs (generated before the
+      // caption pipeline) write it now once and persist onto the output row.
+      const storedPost = outputRow?.text_content?.trim() ?? '';
+      setPostOutputId(outputRow?.id ?? null);
+      if (storedPost) {
+        setPostText(storedPost);
+        persistedPostRef.current = storedPost;
+      } else if (!postInitRef.current) {
+        postInitRef.current = true;
+        setPostTextLoading(true);
+        setPostTextError(null);
+        try {
+          const briefObj = (requestRow?.structured_brief ?? {}) as Brief;
+          const briefWithBrand = requestRow?.brand_id
+            ? { ...briefObj, brand_id: (briefObj as { brand_id?: string }).brand_id ?? requestRow.brand_id }
+            : briefObj;
+          const text = await fetchSocialCaption(briefWithBrand, 'facebook', requestId, undefined, outputRow?.id ?? null);
+          setPostText(text);
+          persistedPostRef.current = text;
+        } catch {
+          setPostTextError('לא הצלחנו לכתוב את טקסט הפוסט. אפשר לנסות שוב.');
+          postInitRef.current = false; // allow retry
+        } finally {
+          setPostTextLoading(false);
+        }
+      }
     })();
   }, [requestId]);
 
@@ -422,7 +465,7 @@ export default function RevisePage() {
           client.from('requests').select('status').eq('id', id).single(),
           client
             .from('outputs')
-            .select('storage_path')
+            .select('id, storage_path, text_content')
             .eq('request_id', id)
             .eq('output_type', 'image')
             .not('storage_path', 'is', null)
@@ -430,11 +473,18 @@ export default function RevisePage() {
             .limit(1)
             .maybeSingle(),
         ]);
-        const path = (out as { storage_path?: string } | null)?.storage_path;
+        const outRow = out as { id?: string; storage_path?: string; text_content?: string | null } | null;
+        const path = outRow?.storage_path;
         if (path) {
           const { data: signed } = await client.storage.from('outputs').createSignedUrl(path, 600);
-          setResult({ request_id: id, previewUrl: signed?.signedUrl ?? '' });
+          setResult({ request_id: id, previewUrl: signed?.signedUrl ?? '', storagePath: path });
           setBrief({ ...editedBrief });
+          // A full regeneration wrote a fresh post text on the new output. Show it.
+          if (outRow?.id) setPostOutputId(outRow.id);
+          if (outRow?.text_content?.trim()) {
+            setPostText(outRow.text_content.trim());
+            persistedPostRef.current = outRow.text_content.trim();
+          }
           return;
         }
         const st = (r as { status?: string } | null)?.status;
@@ -486,11 +536,18 @@ export default function RevisePage() {
         },
       });
       if (fnError) throw fnError;
-      const res = data as { request_id?: string; storage_path?: string; error?: string };
+      const res = data as { request_id?: string; output_id?: string | null; text_content?: string | null; storage_path?: string; error?: string };
       if (res.error) throw new Error(res.error);
       if (!res.request_id || !res.storage_path) throw new Error('לא התקבלה תמונה ערוכה');
       const { data: signed } = await client.storage.from('outputs').createSignedUrl(res.storage_path, 600);
-      setResult({ request_id: res.request_id, previewUrl: signed?.signedUrl ?? '' });
+      setResult({ request_id: res.request_id, previewUrl: signed?.signedUrl ?? '', storagePath: res.storage_path });
+      // The edited image lives on a NEW request/output; the post text was carried
+      // over server-side. Point further caption edits at the new output row.
+      if (res.output_id) setPostOutputId(res.output_id);
+      if (res.text_content?.trim() && !postText.trim()) {
+        setPostText(res.text_content.trim());
+        persistedPostRef.current = res.text_content.trim();
+      }
       setFeedback('');
       attachReferenceImage(null);
       setEmailSent(false);
@@ -499,6 +556,67 @@ export default function RevisePage() {
     } finally {
       setWorking(false);
     }
+  }
+
+  // ── post text actions (image outputs) ──────────────────────────────────────
+  const activeImageRequestId = result?.request_id || source?.request_id || requestId || null;
+
+  function postBrief(): Brief {
+    const b = (brief ?? {}) as Brief;
+    return requestBrandId ? { ...b, brand_id: (b as { brand_id?: string }).brand_id ?? requestBrandId } : b;
+  }
+
+  // Retry after a failed auto-generation (or write one on demand).
+  async function generatePostText() {
+    if (postTextLoading || postEditing) return;
+    setPostTextLoading(true);
+    setPostTextError(null);
+    try {
+      const text = await fetchSocialCaption(postBrief(), 'facebook', activeImageRequestId, undefined, postOutputId);
+      setPostText(text);
+      persistedPostRef.current = text;
+    } catch {
+      setPostTextError('לא הצלחנו לכתוב את טקסט הפוסט. אפשר לנסות שוב.');
+    } finally {
+      setPostTextLoading(false);
+    }
+  }
+
+  // AI edit: same interaction as image corrections. Describe the change, get an
+  // updated post. Persisted server-side onto the output row.
+  async function revisePostText() {
+    const fb = postFeedback.trim();
+    if (!fb || !postText.trim() || postEditing || postTextLoading) return;
+    setPostEditing(true);
+    setPostTextError(null);
+    try {
+      const text = await reviseSocialCaption(postText, fb, postBrief(), activeImageRequestId, postOutputId);
+      setPostText(text);
+      persistedPostRef.current = text;
+      setPostFeedback('');
+    } catch {
+      setPostTextError('לא הצלחנו לעדכן את הטקסט. אפשר לנסות שוב.');
+    } finally {
+      setPostEditing(false);
+    }
+  }
+
+  // Manual edits persist on blur so a reload (or the WhatsApp copy) stays in sync.
+  function persistPostTextIfDirty() {
+    const text = postText.trim();
+    if (!postOutputId || !text || text === persistedPostRef.current) return;
+    persistedPostRef.current = text;
+    saveSocialCaption(text, postOutputId, activeImageRequestId).catch(() => {
+      // Non-fatal: the on-screen text is still right; next blur retries.
+      persistedPostRef.current = '';
+    });
+  }
+
+  async function copyPostText() {
+    if (!postText.trim()) return;
+    await navigator.clipboard.writeText(postText.trim());
+    setPostCopied(true);
+    window.setTimeout(() => setPostCopied(false), 1600);
   }
 
   const pageTitle =
@@ -781,6 +899,88 @@ export default function RevisePage() {
                 />
               </>
             )}
+
+            {/* Ready-to-publish post text: shown with every image, editable inline
+                and revisable with AI, mirroring the image corrections flow. */}
+            <div className="mt-5 border-t border-[var(--border)] pt-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h3 className="font-bold">טקסט הפוסט</h3>
+                {postText.trim() && !postTextLoading && (
+                  <button
+                    type="button"
+                    onClick={copyPostText}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-semibold hover:bg-gray-50"
+                  >
+                    {postCopied ? 'הועתק' : 'העתקה'}
+                  </button>
+                )}
+              </div>
+              <p className="mb-2 text-xs text-[var(--muted)]">
+                נכתב אוטומטית לפי התוצר והמותג. מוכן לפרסום לצד התמונה, ואפשר לערוך ישירות או לבקש שינוי עם AI.
+              </p>
+              {postTextLoading ? (
+                <div className="flex items-center gap-3 rounded-lg bg-gray-50 p-4 text-sm text-[var(--muted)]">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                  כותב את טקסט הפוסט...
+                </div>
+              ) : postText.trim() ? (
+                <div className={`relative ${postEditing ? 'social-caption-writing' : ''}`}>
+                  <textarea
+                    value={postText}
+                    onChange={(e) => setPostText(e.target.value)}
+                    onBlur={persistPostTextIfDirty}
+                    rows={6}
+                    disabled={postEditing}
+                    className="w-full rounded-lg border border-[var(--border)] bg-gray-50 p-3 text-sm leading-6 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15 disabled:opacity-70"
+                  />
+                  {postEditing && <div className="social-caption-scan" aria-hidden="true" />}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={generatePostText}
+                  className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-semibold hover:bg-gray-50"
+                >
+                  כתיבת טקסט לפוסט
+                </button>
+              )}
+              {postTextError && (
+                <div className="mt-2 flex items-center gap-3 text-xs text-red-600">
+                  {postTextError}
+                  <button type="button" onClick={generatePostText} className="font-semibold underline">
+                    נסו שוב
+                  </button>
+                </div>
+              )}
+              {postText.trim() && !postTextLoading && (
+                <div className="mt-3">
+                  <label className="mb-1 block text-sm font-semibold">מה לשנות בטקסט?</label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      value={postFeedback}
+                      onChange={(e) => setPostFeedback(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          revisePostText();
+                        }
+                      }}
+                      placeholder="למשל: טון צעיר יותר, להוסיף קריאה לפעולה, לקצר"
+                      disabled={postEditing}
+                      className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
+                    />
+                    <button
+                      type="button"
+                      onClick={revisePostText}
+                      disabled={!postFeedback.trim() || postEditing}
+                      className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {postEditing ? 'מעדכן...' : 'עדכון עם AI'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <ActionSidebar
@@ -822,7 +1022,16 @@ export default function RevisePage() {
                     sent={emailSent}
                   />
                 }
-                captionSource={{ kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }}
+                captionSource={
+                  postText.trim()
+                    ? { kind: 'text', text: postText.trim() }
+                    : { kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }
+                }
+                producedImage={(() => {
+                  const url = result?.previewUrl || source?.previewUrl;
+                  const storagePath = result?.storagePath || source?.storage_path;
+                  return url && storagePath ? { url, storagePath } : null;
+                })()}
               />
             }
             resetText="רוצים תמונה אחרת לגמרי?"

@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
     // Latest image output of the source request.
     const { data: output } = await database
       .from('outputs')
-      .select('storage_path, mime_type, output_type')
+      .select('storage_path, mime_type, output_type, text_content')
       .eq('request_id', sourceRequestId)
       .eq('output_type', 'image')
       .not('storage_path', 'is', null)
@@ -138,13 +138,20 @@ Deno.serve(async (req) => {
       .upload(storagePath, decodeBase64(edited.base64), { contentType: edited.mime, upsert: true });
     if (upError) throw upError;
 
-    const { error: outError } = await database.from('outputs').insert({
-      request_id: newReq.id,
-      output_type: 'image',
-      storage_path: storagePath,
-      mime_type: edited.mime,
-      version: 1,
-    });
+    // Carry the social post text forward. An image edit changes pixels, not the
+    // post's wording, so the edited version keeps its ready-to-publish caption.
+    const { data: newOutput, error: outError } = await database
+      .from('outputs')
+      .insert({
+        request_id: newReq.id,
+        output_type: 'image',
+        storage_path: storagePath,
+        mime_type: edited.mime,
+        version: 1,
+        text_content: (output as { text_content?: string | null }).text_content ?? null,
+      })
+      .select('id')
+      .single();
     if (outError) throw outError;
 
     await database
@@ -165,7 +172,14 @@ Deno.serve(async (req) => {
       metadata: { parent_request_id: sourceRequestId, model: edited.model, with_reference: Boolean(referencePath) },
     });
 
-    return json({ request_id: newReq.id, storage_path: storagePath, base64: edited.base64, mime: edited.mime });
+    return json({
+      request_id: newReq.id,
+      output_id: newOutput?.id ?? null,
+      text_content: (output as { text_content?: string | null }).text_content ?? null,
+      storage_path: storagePath,
+      base64: edited.base64,
+      mime: edited.mime,
+    });
   } catch (e) {
     await logEvent(database, { severity: 'error', action: 'image_edit_failed', message: String(e) });
     return json({ error: String(e) }, 500);

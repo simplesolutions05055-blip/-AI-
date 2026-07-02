@@ -31,6 +31,7 @@ export type MediaItem = {
   name: string;
   file?: File; // present for uploads
   storagePath?: string; // present for outputs (or already-saved uploads)
+  aiGenerated?: boolean; // the image produced by the AI pipeline for this very post
 };
 
 // The shape persisted to the scheduled_social_posts.media jsonb column.
@@ -96,6 +97,7 @@ export default function SocialScheduleSection({
   title = 'תזמון פרסום',
   trailingAction = null,
   onScheduled,
+  producedImage = null,
 }: {
   captionSource?: CaptionSource;
   requestId?: string | null;
@@ -105,6 +107,9 @@ export default function SocialScheduleSection({
   title?: string;
   trailingAction?: React.ReactNode;
   onScheduled?: () => void;
+  // The image this flow just produced with AI. Auto-attached to the post media
+  // when the schedule modal opens, so the user sees it will be published too.
+  producedImage?: { url: string; storagePath: string } | null;
 } = {}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [platforms, setPlatforms] = useState<SocialPlatform[]>(['facebook', 'instagram']);
@@ -119,6 +124,9 @@ export default function SocialScheduleSection({
   // Media attached to the post — shared across both platform modals.
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [scheduleSaved, setScheduleSaved] = useState<string | null>(null);
+  // Seed the produced AI image once per session — if the user removes it on
+  // purpose, we don't force it back on the next open.
+  const seededProducedRef = useRef(false);
 
   // Object URLs created for uploads must be revoked to avoid leaks.
   useEffect(() => {
@@ -127,6 +135,18 @@ export default function SocialScheduleSection({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A text captionSource can change after it was first resolved (the page's post
+  // text was edited with AI). Re-sync while the modal is closed only, so the
+  // user's in-modal edits are never overwritten mid-typing.
+  const sourceText = captionSource?.kind === 'text' ? captionSource.text : null;
+  useEffect(() => {
+    if (sourceText === null || modalOpen) return;
+    if (resolvedRef.current && sourceText.trim() && sourceText !== caption) {
+      setCaption(sourceText);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceText, modalOpen]);
 
   async function ensureCaption(forPlatform: SocialPlatform) {
     if (resolvedRef.current || captionLoading || !captionSource) return;
@@ -155,6 +175,25 @@ export default function SocialScheduleSection({
   }
 
   function openSchedule() {
+    if (producedImage && !seededProducedRef.current) {
+      seededProducedRef.current = true;
+      setMedia((cur) =>
+        cur.some((m) => m.storagePath === producedImage.storagePath)
+          ? cur
+          : [
+              {
+                id: crypto.randomUUID(),
+                url: producedImage.url,
+                kind: 'image' as const,
+                source: 'output' as const,
+                name: 'התמונה שנוצרה עם AI',
+                storagePath: producedImage.storagePath,
+                aiGenerated: true,
+              },
+              ...cur,
+            ],
+      );
+    }
     setModalOpen(true);
     void ensureCaption(platforms[0] ?? 'facebook');
   }
@@ -248,10 +287,12 @@ function ScheduleModal({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [aiCaptionLoading, setAiCaptionLoading] = useState(false);
   const [aiCaptionError, setAiCaptionError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const includesInstagram = platforms.includes('instagram');
   const channelsLabel = platformsLabel(platforms);
   const hasPlatforms = platforms.length > 0;
+  const hasAiImage = media.some((m) => m.aiGenerated);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -445,7 +486,24 @@ function ScheduleModal({
           {aiCaptionError && <p className="mb-3 text-xs text-red-600">{aiCaptionError}</p>}
           {!captionLoading && !aiCaptionLoading && !captionError && !aiCaptionError && <div className="mb-3" />}
 
+          {hasAiImage && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800">
+              <SparkleIcon />
+              <span>התמונה שיצרנו עם ה-AI מצורפת לפוסט ותפורסם יחד עם הכיתוב.</span>
+            </div>
+          )}
+
           <MediaEditor media={media} setMedia={setMedia} brandId={brandId} />
+
+          <button
+            type="button"
+            onClick={() => setPreviewOpen(true)}
+            disabled={!caption.trim() && media.length === 0}
+            className="mb-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#1877F2]/30 bg-[#1877F2]/5 px-3 py-2 text-sm font-semibold text-[#1877F2] hover:bg-[#1877F2]/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <EyeIcon />
+            <span>דוגמה של הפוסט</span>
+          </button>
 
           {includesInstagram && media.length === 0 && (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -454,6 +512,15 @@ function ScheduleModal({
           )}
           {saveError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
         </div>
+
+        {previewOpen && (
+          <PostPreviewModal
+            caption={caption}
+            media={media}
+            brandId={brandId}
+            onClose={() => setPreviewOpen(false)}
+          />
+        )}
 
         <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-[var(--border)] bg-white p-3 sm:flex sm:justify-start sm:gap-3 sm:p-5">
           <button
@@ -626,6 +693,11 @@ export function MediaEditor({
               {m.kind === 'video' && (
                 <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">וידאו</span>
               )}
+              {m.aiGenerated && (
+                <span className="absolute bottom-1 right-1 rounded bg-violet-600/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  נוצרה עם AI
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -791,6 +863,188 @@ function OutputsPickerModal({
   );
 }
 
+// A faithful RTL mock of a Facebook feed post, so the user sees exactly how the
+// scheduled post will look: page header (avatar + name + time), the caption text
+// on top, the AI image below it, and the standard engagement/action rows.
+// Colors follow Facebook's palette: #1877F2 (blue), #050505 (text),
+// #65676B (secondary), #F0F2F5 (feed bg), #CED0D4 (dividers).
+function PostPreviewModal({
+  caption,
+  media,
+  brandId,
+  onClose,
+}: {
+  caption: string;
+  media: MediaItem[];
+  brandId: string | null;
+  onClose: () => void;
+}) {
+  const [pageName, setPageName] = useState('העמוד שלכם');
+  const [pageLogoUrl, setPageLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  // The page identity in the preview is the brand: its name + logo as avatar.
+  useEffect(() => {
+    let alive = true;
+    if (!brandId) return;
+    (async () => {
+      const client = createSupabaseBrowserClient();
+      const { data: brand } = await client.from('brands').select('name, logo_path').eq('id', brandId).maybeSingle();
+      if (!alive || !brand) return;
+      if ((brand as { name?: string }).name) setPageName((brand as { name: string }).name);
+      const logoPath = (brand as { logo_path?: string | null }).logo_path;
+      if (logoPath) {
+        const { data: signed } = await client.storage.from('branding').createSignedUrl(logoPath, 600);
+        if (alive && signed?.signedUrl) setPageLogoUrl(signed.signedUrl);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [brandId]);
+
+  const images = media.filter((m) => m.kind === 'image');
+  const extraCount = images.length - 2;
+
+  return (
+    <div
+      dir="rtl"
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[90dvh] w-full max-w-[540px] flex-col overflow-hidden rounded-2xl bg-white text-right shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] p-4">
+          <div>
+            <h2 className="text-lg font-bold">דוגמה של הפוסט</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">כך הפוסט ייראה בפיד של פייסבוק. תצוגה להמחשה בלבד.</p>
+          </div>
+          <Tooltip content="סגירה">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="סגירה"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
+            >
+              <CloseIcon />
+            </button>
+          </Tooltip>
+        </div>
+
+        {/* Facebook feed background */}
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[#F0F2F5] p-3 sm:p-5">
+          {/* The post card */}
+          <div className="overflow-hidden rounded-lg bg-white shadow-[0_1px_2px_rgba(0,0,0,0.2)]">
+            {/* Header: avatar + page name + time */}
+            <div className="flex items-center justify-between px-4 pt-3">
+              <div className="flex items-center gap-2.5">
+                {pageLogoUrl ? (
+                  <img src={pageLogoUrl} alt={pageName} className="h-10 w-10 shrink-0 rounded-full border border-black/5 bg-white object-cover" />
+                ) : (
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1877F2] text-lg font-bold text-white">
+                    {pageName.trim().charAt(0) || 'ע'}
+                  </span>
+                )}
+                <div className="leading-tight">
+                  <div className="text-[15px] font-semibold text-[#050505]">{pageName}</div>
+                  <div className="mt-0.5 flex items-center gap-1 text-[13px] text-[#65676B]">
+                    <span>עכשיו</span>
+                    <span>·</span>
+                    <GlobeIcon />
+                  </div>
+                </div>
+              </div>
+              <span className="text-[#65676B]" aria-hidden="true">
+                <MoreIcon />
+              </span>
+            </div>
+
+            {/* Caption text — on top, before the image, like on Facebook */}
+            {caption.trim() && (
+              <div className="whitespace-pre-wrap px-4 pb-2 pt-2.5 text-[15px] leading-6 text-[#050505]">
+                {caption.trim()}
+              </div>
+            )}
+
+            {/* The AI image(s) — full width, no padding */}
+            {images.length === 1 && (
+              <img src={images[0].url} alt="תמונת הפוסט" className="max-h-[440px] w-full bg-black/5 object-cover" />
+            )}
+            {images.length >= 2 && (
+              <div className="grid grid-cols-2 gap-0.5">
+                {images.slice(0, 2).map((img, idx) => (
+                  <div key={img.id} className="relative">
+                    <img src={img.url} alt="תמונת הפוסט" className="h-[240px] w-full bg-black/5 object-cover" />
+                    {idx === 1 && extraCount > 0 && (
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-2xl font-bold text-white">
+                        +{extraCount}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Engagement counts row */}
+            <div className="flex items-center justify-between px-4 py-2.5 text-[13px] text-[#65676B]">
+              <span className="flex items-center gap-1.5">
+                <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[#1877F2] text-white">
+                  <ThumbIcon size={10} filled />
+                </span>
+                <span>אתם ועוד 12</span>
+              </span>
+              <span>3 תגובות · שיתוף אחד</span>
+            </div>
+
+            <div className="mx-3 border-t border-[#CED0D4]" />
+
+            {/* Action buttons row */}
+            <div className="grid grid-cols-3 px-2 py-1">
+              <span className="flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold text-[#65676B] hover:bg-[#F2F2F2]">
+                <ThumbIcon size={18} />
+                <span>אהבתי</span>
+              </span>
+              <span className="flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold text-[#65676B] hover:bg-[#F2F2F2]">
+                <CommentIcon />
+                <span>תגובה</span>
+              </span>
+              <span className="flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold text-[#65676B] hover:bg-[#F2F2F2]">
+                <ShareIcon />
+                <span>שיתוף</span>
+              </span>
+            </div>
+          </div>
+
+          {images.length === 0 && (
+            <p className="mt-3 text-center text-xs text-[#65676B]">
+              לא מצורפת תמונה — הפוסט יפורסם כטקסט בלבד.
+            </p>
+          )}
+        </div>
+
+        <div className="shrink-0 border-t border-[var(--border)] bg-white p-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-11 w-full rounded-lg bg-brand px-4 py-2.5 font-semibold text-white sm:w-auto"
+          >
+            נראה מצוין, סגירה
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function scheduleErrorLabel(error?: string | null): string {
   if (!error) return 'לא הצלחנו לשמור את התזמון.';
   if (error.includes('scheduled_at_must_be_future')) return 'בחרו תאריך ושעה עתידיים.';
@@ -871,6 +1125,69 @@ function CheckIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function GlobeIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="5" cy="12" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="19" cy="12" r="2" />
+    </svg>
+  );
+}
+
+function ThumbIcon({ size = 18, filled = false }: { size?: number; filled?: boolean }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill={filled ? 'currentColor' : 'none'}
+      stroke="currentColor"
+      strokeWidth={filled ? 0 : 2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M7 10v12H4a1 1 0 0 1-1-1V11a1 1 0 0 1 1-1h3Zm0 0 4.2-7.4a1.8 1.8 0 0 1 3.3 1L13.6 8H19a2 2 0 0 1 2 2.4l-1.6 8A2 2 0 0 1 17.4 20H9a2 2 0 0 1-2-2v-8Z" />
+    </svg>
+  );
+}
+
+function CommentIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+    </svg>
+  );
+}
+
+function ShareIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M15 5l7 7-7 7v-4.1C8 14.9 4.9 17 3 20c0-7 4.5-10.5 12-10.9V5z" />
     </svg>
   );
 }

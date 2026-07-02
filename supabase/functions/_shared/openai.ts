@@ -439,8 +439,18 @@ function fallbackSocialPostFromBrief(brief: unknown): string {
 // Used when the produced output is an image: the brief is the only source of the
 // post's wording, so the model turns it into a finished caption the admin can
 // schedule as-is or lightly edit.
-export async function generateSocialCaption(brief: unknown, platform: string, apiKey?: string) {
+export async function generateSocialCaption(
+  brief: unknown,
+  platform: string,
+  apiKey?: string,
+  // Revision mode: rewrite an existing caption per the user's feedback instead
+  // of drafting a fresh one. Same guardrails (no invented facts).
+  revision?: { currentCaption: string; feedback: string },
+) {
   const platformLabel = platform === 'instagram' ? 'אינסטגרם' : 'פייסבוק';
+  const userContent = revision
+    ? `זהו הפוסט הנוכחי שמלווה את התמונה:\n"""\n${revision.currentCaption}\n"""\n\nבקשת שינוי מהמשתמש: ${revision.feedback}\n\nעדכן את הפוסט לפי הבקשה בלבד, ושמור על שאר התוכן, העובדות והטון. החזר רק את הפוסט המעודכן, בלי הסברים.\n\nהבריף המקורי לעיון:\n${JSON.stringify(brief, null, 2)}`
+    : `כתוב פוסט ל${platformLabel} שילווה את התמונה, לפי הבריף הבא:\n${JSON.stringify(brief, null, 2)}`;
   const { content, usage } = await chat(
     [
       {
@@ -460,7 +470,7 @@ export async function generateSocialCaption(brief: unknown, platform: string, ap
       },
       {
         role: 'user',
-        content: `כתוב פוסט ל${platformLabel} שילווה את התמונה, לפי הבריף הבא:\n${JSON.stringify(brief, null, 2)}`,
+        content: userContent,
       },
     ],
     { temperature: 0.7, apiKey }

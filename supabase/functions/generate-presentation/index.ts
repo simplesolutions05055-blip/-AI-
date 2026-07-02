@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key } = await req.json();
+    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
 
     // 'images' mode: generate up to 3 AI images from explicit prompts (built by
@@ -218,8 +218,42 @@ Deno.serve(async (req) => {
     }
 
     // 'social_caption' mode: a ready-to-publish Facebook/Instagram caption written
-    // from the brief — used to pre-fill the post text when scheduling an image.
+    // from the brief. Shown under a produced image and used to pre-fill the post
+    // text when scheduling. Three sub-modes:
+    //   • default: write a fresh caption from the brief.
+    //   • current_caption + feedback: AI-revise the existing caption.
+    //   • save_only + current_caption: persist a manual edit, no AI call.
+    // When output_id is provided, the resulting caption is persisted onto that
+    // outputs row (text_content) so it survives reloads and reaches WhatsApp.
     if (format === 'social_caption') {
+      const captionOutputId = typeof output_id === 'string' && output_id.trim() ? output_id.trim() : null;
+      async function persistCaption(text: string) {
+        if (!captionOutputId) return;
+        await database
+          .from('outputs')
+          .update({ text_content: text })
+          .eq('id', captionOutputId)
+          .eq('output_type', 'image');
+      }
+
+      if (save_only === true) {
+        const manual = typeof current_caption === 'string' ? current_caption.trim() : '';
+        if (!manual) {
+          return new Response(JSON.stringify({ error: 'current_caption required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        await persistCaption(manual);
+        await logEvent(database, {
+          action: 'social_caption_saved',
+          metadata: { request_id: requestId ?? null, output_id: captionOutputId },
+        });
+        return new Response(JSON.stringify({ ok: true, caption: manual }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       const aiModelsCaption = await getSetting<{ text_model?: string }>(database, 'ai_models');
 
       // Ground the caption in the brand's Business Brain (facts/messaging/tone),
@@ -234,7 +268,17 @@ Deno.serve(async (req) => {
         if (cBrain.content) (brief as Record<string, unknown>).business_content_context = cBrain.content;
       }
 
-      const { text: caption, usage } = await generateSocialCaption(brief, typeof platform === 'string' ? platform : 'facebook', overrideKey);
+      const revision =
+        typeof current_caption === 'string' && current_caption.trim() && typeof feedback === 'string' && feedback.trim()
+          ? { currentCaption: current_caption.trim(), feedback: feedback.trim() }
+          : undefined;
+      const { text: caption, usage } = await generateSocialCaption(
+        brief,
+        typeof platform === 'string' ? platform : 'facebook',
+        overrideKey,
+        revision,
+      );
+      await persistCaption(caption);
       await recordUsageAndCost(database, requestId ?? null, {
         provider: 'openai',
         model: aiModelsCaption?.text_model || 'gpt-4o',
@@ -243,8 +287,8 @@ Deno.serve(async (req) => {
         cost: estimateTextCost(usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0),
       });
       await logEvent(database, {
-        action: 'social_caption_generated',
-        metadata: { request_id: requestId ?? null, platform: platform ?? null },
+        action: revision ? 'social_caption_revised' : 'social_caption_generated',
+        metadata: { request_id: requestId ?? null, platform: platform ?? null, output_id: captionOutputId },
       });
       return new Response(JSON.stringify({ ok: true, caption }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
