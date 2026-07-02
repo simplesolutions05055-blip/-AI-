@@ -31,6 +31,7 @@ export default function App() {
         <TitleManager />
         <Routes>
           <Route path="/" element={<Navigate to="/admin" replace />} />
+          <Route path="/app" element={<Navigate to="/admin" replace />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />

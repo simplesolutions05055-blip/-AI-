@@ -19,7 +19,7 @@ export default defineConfig({
         description: 'ניהול בקשות, שיחות ותוצרים לסוכן AI ארגוני ב-WhatsApp',
         lang: 'he',
         dir: 'rtl',
-        start_url: '/admin',
+        start_url: '/app',
         scope: '/',
         display: 'standalone',
         background_color: '#f6f7f9',
