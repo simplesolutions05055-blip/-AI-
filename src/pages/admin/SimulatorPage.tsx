@@ -285,6 +285,10 @@ export default function SimulatorPage() {
 
   return (
     <div className="mx-auto flex h-[calc(100dvh-6.5rem)] max-w-md flex-col lg:h-[calc(100dvh-3rem)]">
+      <div className="mb-4" dir="rtl">
+        <h1 className="text-xl font-semibold tracking-normal">סימולטור שיחה</h1>
+        <p className="mt-1 text-sm text-[var(--muted)]">בדקו את זרימת הבקשה לפני הפעלה אמיתית.</p>
+      </div>
       <div
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-sm"
         onDragOver={handleDragOver}

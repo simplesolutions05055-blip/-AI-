@@ -44,6 +44,8 @@ export default function LoginPage() {
     <main className="min-h-screen flex items-center justify-center p-4">
       <form onSubmit={onSubmit} className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-[var(--border)] p-6">
         <img src="/primeos-logo.png" alt="PrimeOS" className="mb-6 h-12 w-auto object-contain" />
+        <h1 className="mb-1 text-xl font-semibold tracking-normal">כניסה למערכת</h1>
+        <p className="mb-4 text-sm text-[var(--muted)]">התחברו כדי להמשיך לעבודה במערכת.</p>
 
         <label className="block mb-1 text-sm font-medium" htmlFor="email">כתובת מייל</label>
         <input id="email" type="email" dir="ltr" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mb-4 rounded-lg border border-[var(--border)] px-3 py-2 text-start" style={{ textAlign: 'left' }} />

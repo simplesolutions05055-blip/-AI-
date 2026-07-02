@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, plainTextFromBlocks, type RichTextBlock } from '@/lib/richText';
@@ -54,6 +54,9 @@ const BRIEF_FIELDS: Array<{ key: string; label: string; multiline?: boolean; lis
 export default function RevisePage() {
   const { requestId } = useParams();
   const navigate = useNavigate();
+  // When leaving to start a brand-new brief, carry the current output's URL so the
+  // production hub can offer a one-click way back here (in case it was a misclick).
+  const productionReturnState = { returnTo: `/admin/files/${requestId}/revise` };
   const [source, setSource] = useState<SourceImage | null>(null);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
@@ -77,6 +80,8 @@ export default function RevisePage() {
   const [customerEmail, setCustomerEmail] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  // Optional photo the user uploads to blend into the graphic (e.g. the mayor).
+  const [referenceImage, setReferenceImage] = useState<{ file: File; previewUrl: string } | null>(null);
 
   async function sendEmail(id: string | null) {
     if (!id || !isValidEmail(customerEmail)) return;
@@ -445,14 +450,40 @@ export default function RevisePage() {
     }
   }
 
+  function attachReferenceImage(file: File | null) {
+    setReferenceImage((current) => {
+      if (current) URL.revokeObjectURL(current.previewUrl);
+      return file ? { file, previewUrl: URL.createObjectURL(file) } : null;
+    });
+  }
+
   async function runEdit(fromRequestId: string) {
     if (!feedback.trim()) return;
     setWorking(true);
     setError(null);
     try {
       const client = createSupabaseBrowserClient();
+
+      // The reference photo goes through storage (not the JSON body) so large
+      // uploads don't blow up the function payload, and it stays available.
+      let referencePath: string | null = null;
+      if (referenceImage) {
+        const safeName = referenceImage.file.name.replace(/[^\w.\-]+/g, '_').slice(-120);
+        referencePath = `${fromRequestId}/edit-refs/${crypto.randomUUID()}-${safeName}`;
+        const { error: upError } = await client.storage.from('outputs').upload(referencePath, referenceImage.file, {
+          contentType: referenceImage.file.type || undefined,
+          upsert: false,
+        });
+        if (upError) throw upError;
+      }
+
       const { data, error: fnError } = await client.functions.invoke('edit-image', {
-        body: { request_id: fromRequestId, feedback: feedback.trim() },
+        body: {
+          request_id: fromRequestId,
+          feedback: feedback.trim(),
+          reference_path: referencePath ?? undefined,
+          reference_mime: referenceImage?.file.type || undefined,
+        },
       });
       if (fnError) throw fnError;
       const res = data as { request_id?: string; storage_path?: string; error?: string };
@@ -461,6 +492,7 @@ export default function RevisePage() {
       const { data: signed } = await client.storage.from('outputs').createSignedUrl(res.storage_path, 600);
       setResult({ request_id: res.request_id, previewUrl: signed?.signedUrl ?? '' });
       setFeedback('');
+      attachReferenceImage(null);
       setEmailSent(false);
     } catch (e) {
       setError(String(e));
@@ -469,10 +501,22 @@ export default function RevisePage() {
     }
   }
 
+  const pageTitle =
+    outputType === 'presentation'
+      ? 'עריכת מצגת'
+      : outputType === 'text'
+        ? 'עריכת טקסט'
+        : outputType === 'pdf'
+          ? 'עריכת מסמך'
+          : 'עריכת תמונה';
+
   return (
     <div dir="rtl">
-      <div className="mb-6 flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">שיפור תוצר</h1>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-normal">{pageTitle}</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">עדכנו את התוצר, שתפו או שמרו גרסה חדשה.</p>
+        </div>
         <Link
           to="/admin/files"
           title="חזרה לתוצרים"
@@ -497,50 +541,26 @@ export default function RevisePage() {
             />
           </div>
 
-          <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
-            <label className="block text-sm font-semibold mb-2">מה לשנות במצגת?</label>
-            <textarea
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
-              disabled={working}
-              rows={5}
-              placeholder="למשל: להוסיף שקף על עלויות, לקצר את שקף הסיכום, טון יותר רשמי"
-              className="w-full rounded-lg border border-[var(--border)] px-3 py-2"
-            />
-            <button
-              onClick={regeneratePresentationFromFeedback}
-              disabled={working || !feedback.trim()}
-              className="mt-3 w-full bg-brand text-white rounded-lg px-4 py-2.5 font-semibold disabled:opacity-50"
-            >
-              {working && !regenStatus ? 'מעדכן את המצגת...' : 'עדכון המצגת לפי ההערות'}
-            </button>
-
-            {regenStatus && <p className="mt-3 text-sm text-[var(--muted)]">{regenStatus}…</p>}
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <EmailSend
-              email={customerEmail}
-              setEmail={setCustomerEmail}
-              onSend={() => sendEmail(presRequestId)}
-              sending={sendingEmail}
-              sent={emailSent}
-            />
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-[var(--muted)]">רוצים מצגת אחרת לגמרי?</p>
-              <button
-                onClick={() => navigate('/admin/production/presentation')}
-                title="להתחיל מבריף חדש"
-                aria-label="להתחיל מבריף חדש"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-              >
-                <NewBriefIcon />
-              </button>
-            </div>
-          </div>
+          <ActionSidebar
+            editLabel="מה לשנות במצגת?"
+            placeholder="למשל: להוסיף שקף על עלויות, לקצר את שקף הסיכום, טון יותר רשמי"
+            feedback={feedback}
+            onFeedbackChange={setFeedback}
+            working={working}
+            regenStatus={regenStatus}
+            onRegenerate={regeneratePresentationFromFeedback}
+            actionText="עדכון המצגת לפי ההערות"
+            workingText="מעדכן את המצגת..."
+            emailProps={{
+              email: customerEmail,
+              setEmail: setCustomerEmail,
+              onSend: () => sendEmail(presRequestId),
+              sending: sendingEmail,
+              sent: emailSent,
+            }}
+            resetText="רוצים מצגת אחרת לגמרי?"
+            onReset={() => navigate('/admin/production', { state: productionReturnState })}
+          />
         </div>
       ) : outputType === 'text' ? (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
@@ -599,58 +619,43 @@ export default function RevisePage() {
             )}
           </div>
 
-          <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
-            <label className="block text-sm font-semibold mb-2">מה לשנות בטקסט?</label>
-            <textarea
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
-              disabled={working}
-              rows={5}
-              placeholder="למשל: לקצר, להפוך לרשמי יותר, להוסיף פתיחה חזקה"
-              className="w-full rounded-lg border border-[var(--border)] px-3 py-2"
-            />
-            <button
-              onClick={regenerateTextFromFeedback}
-              disabled={working || !feedback.trim()}
-              className="mt-3 w-full bg-brand text-white rounded-lg px-4 py-2.5 font-semibold disabled:opacity-50"
-            >
-              {working && !regenStatus ? 'מעדכן את הטקסט...' : 'עדכון הטקסט לפי ההערות'}
-            </button>
-
-            {regenStatus && <p className="mt-3 text-sm text-[var(--muted)]">{regenStatus}…</p>}
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <EmailSend
-              email={customerEmail}
-              setEmail={setCustomerEmail}
-              onSend={() => sendEmail(textRequestId)}
-              sending={sendingEmail}
-              sent={emailSent}
-            />
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <SocialScheduleSection
-              requestId={textRequestId}
-              brandId={requestBrandId}
-              captionSource={{ kind: 'text', text: plainTextFromBlocks(textBlocks) }}
-            />
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-[var(--muted)]">רוצים טקסט אחר לגמרי?</p>
-              <button
-                onClick={() => navigate('/admin/production/text')}
-                title="להתחיל מבריף חדש"
-                aria-label="להתחיל מבריף חדש"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-              >
-                <NewBriefIcon />
-              </button>
-            </div>
-          </div>
+          <ActionSidebar
+            editLabel="מה לשנות בטקסט?"
+            placeholder="למשל: לקצר, להפוך לרשמי יותר, להוסיף פתיחה חזקה"
+            feedback={feedback}
+            onFeedbackChange={setFeedback}
+            working={working}
+            regenStatus={regenStatus}
+            onRegenerate={regenerateTextFromFeedback}
+            actionText="עדכון הטקסט לפי ההערות"
+            workingText="מעדכן את הטקסט..."
+            emailProps={{
+              email: customerEmail,
+              setEmail: setCustomerEmail,
+              onSend: () => sendEmail(textRequestId),
+              sending: sendingEmail,
+              sent: emailSent,
+            }}
+            social={
+              <SocialScheduleSection
+                requestId={textRequestId}
+                brandId={requestBrandId}
+                title=""
+                trailingAction={
+                  <EmailSend
+                    email={customerEmail}
+                    setEmail={setCustomerEmail}
+                    onSend={() => sendEmail(textRequestId)}
+                    sending={sendingEmail}
+                    sent={emailSent}
+                  />
+                }
+                captionSource={{ kind: 'text', text: plainTextFromBlocks(textBlocks) }}
+              />
+            }
+            resetText="רוצים טקסט אחר לגמרי?"
+            onReset={() => navigate('/admin/production', { state: productionReturnState })}
+          />
         </div>
       ) : outputType === 'pdf' ? (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
@@ -716,50 +721,26 @@ export default function RevisePage() {
             )}
           </div>
 
-          <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
-            <label className="block text-sm font-semibold mb-2">מה לשנות במסמך?</label>
-            <textarea
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
-              disabled={working}
-              rows={5}
-              placeholder="למשל: לקצר את המבוא, להוסיף סעיף סיכום, להפוך את הטון לרשמי יותר"
-              className="w-full rounded-lg border border-[var(--border)] px-3 py-2"
-            />
-            <button
-              onClick={regeneratePdfFromFeedback}
-              disabled={working || !feedback.trim()}
-              className="mt-3 w-full bg-brand text-white rounded-lg px-4 py-2.5 font-semibold disabled:opacity-50"
-            >
-              {working && !regenStatus ? 'מעדכן את המסמך...' : 'עדכון המסמך לפי ההערות'}
-            </button>
-
-            {regenStatus && <p className="mt-3 text-sm text-[var(--muted)]">{regenStatus}…</p>}
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <EmailSend
-              email={customerEmail}
-              setEmail={setCustomerEmail}
-              onSend={() => sendEmail(pdfOutput?.request_id ?? null)}
-              sending={sendingEmail}
-              sent={emailSent}
-            />
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-[var(--muted)]">רוצים מסמך אחר לגמרי?</p>
-              <button
-                onClick={() => navigate('/admin/production/pdf')}
-                title="להתחיל מבריף חדש"
-                aria-label="להתחיל מבריף חדש"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-              >
-                <NewBriefIcon />
-              </button>
-            </div>
-          </div>
+          <ActionSidebar
+            editLabel="מה לשנות במסמך?"
+            placeholder="למשל: לקצר את המבוא, להוסיף סעיף סיכום, להפוך את הטון לרשמי יותר"
+            feedback={feedback}
+            onFeedbackChange={setFeedback}
+            working={working}
+            regenStatus={regenStatus}
+            onRegenerate={regeneratePdfFromFeedback}
+            actionText="עדכון המסמך לפי ההערות"
+            workingText="מעדכן את המסמך..."
+            emailProps={{
+              email: customerEmail,
+              setEmail: setCustomerEmail,
+              onSend: () => sendEmail(pdfOutput?.request_id ?? null),
+              sending: sendingEmail,
+              sent: emailSent,
+            }}
+            resetText="רוצים מסמך אחר לגמרי?"
+            onReset={() => navigate('/admin/production', { state: productionReturnState })}
+          />
         </div>
       ) : (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
@@ -785,7 +766,6 @@ export default function RevisePage() {
                           <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
                           <span className="text-sm font-semibold text-slate-800">
                             {regenStatus || 'עורך את התמונה'}
-                            <span className="revise-dots" />
                           </span>
                         </div>
                       </div>
@@ -803,74 +783,61 @@ export default function RevisePage() {
             )}
           </div>
 
-          <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
-            <label className="block text-sm font-semibold mb-2">מה לא אהבתם / מה לשנות?</label>
-            <textarea
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
-              disabled={working}
-              rows={5}
-              placeholder="למשל: להחליף את הרקע לכחול, להגדיל את הכותרת, להסיר את האייקון התחתון"
-              className="w-full rounded-lg border border-[var(--border)] px-3 py-2"
-            />
-
-            <button
-              onClick={() => runEdit(result?.request_id || source?.request_id || '')}
-              disabled={working || !feedback.trim()}
-              className="mt-3 w-full bg-brand text-white rounded-lg px-4 py-2.5 font-semibold disabled:opacity-50"
-            >
-              {working && !regenStatus ? 'עורך את התמונה...' : result ? 'עריכה נוספת על הגרסה החדשה' : 'ערוך את התמונה הזו'}
-            </button>
-
-            <p className="mt-3 text-xs text-amber-700">
-              שימו לב: התיקון יוצר את התמונה מחדש דרך מודל התמונה. הוא משתדל לשמור על העיצוב המקורי,
-              אך לא ניתן להתחייב לשינוי הטקסט בלבד — ייתכנו שינויים קלים גם בעיצוב.
-            </p>
-
-            {regenStatus && <p className="mt-3 text-sm text-[var(--muted)]">{regenStatus}…</p>}
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <EmailSend
-              email={customerEmail}
-              setEmail={setCustomerEmail}
-              onSend={() => sendEmail(result?.request_id || source?.request_id || null)}
-              sending={sendingEmail}
-              sent={emailSent}
-            />
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <SocialScheduleSection
-              requestId={result?.request_id || source?.request_id || null}
-              brandId={requestBrandId}
-              captionSource={{ kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }}
-            />
-
-            <div className="my-4 border-t border-[var(--border)]" />
-
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-[var(--muted)]">רוצים תמונה אחרת לגמרי?</p>
-              <button
-                onClick={() => navigate('/admin/production/image')}
-                title="להתחיל מבריף חדש"
-                aria-label="להתחיל מבריף חדש"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-              >
-                <NewBriefIcon />
-              </button>
-            </div>
-
-            {/* Desktop: actions below the "new brief" button. Hidden on mobile (shown under the image). */}
-            {(result?.previewUrl || source?.previewUrl) && (
-              <ImageActions
-                imageUrl={(result?.previewUrl || source?.previewUrl) as string}
-                resultUrl={result?.previewUrl}
-                onDownload={downloadImage}
-                className="mt-4 hidden lg:flex"
+          <ActionSidebar
+            editLabel={referenceImage ? 'מה לשנות בתוצר בעזרת התמונה שהעליתם?' : 'מה לא אהבתם / מה לשנות?'}
+            placeholder={referenceImage ? 'למשל: לשלב את האדם שבתמונה בצד ימין של הגרפיקה, בלי לשנות את הכותרת' : 'למשל: להחליף את הרקע לכחול, להגדיל את הכותרת, להסיר את האייקון התחתון'}
+            feedback={feedback}
+            onFeedbackChange={setFeedback}
+            working={working}
+            regenStatus={regenStatus}
+            onRegenerate={() => runEdit(result?.request_id || source?.request_id || '')}
+            actionText={referenceImage ? 'שילוב התמונה לפי ההנחיה' : result ? 'עריכה נוספת על הגרסה החדשה' : 'ערוך את התמונה הזו'}
+            workingText="עורך את התמונה..."
+            beforeAction={
+              <ReferenceImageUpload
+                reference={referenceImage}
+                onChange={attachReferenceImage}
+                disabled={working}
               />
-            )}
-          </div>
+            }
+            note="שימו לב: התיקון יוצר את התמונה מחדש דרך מודל התמונה. הוא משתדל לשמור על העיצוב המקורי, אך לא ניתן להתחייב לשינוי הטקסט בלבד — ייתכנו שינויים קלים גם בעיצוב."
+            emailProps={{
+              email: customerEmail,
+              setEmail: setCustomerEmail,
+              onSend: () => sendEmail(result?.request_id || source?.request_id || null),
+              sending: sendingEmail,
+              sent: emailSent,
+            }}
+            social={
+              <SocialScheduleSection
+                requestId={result?.request_id || source?.request_id || null}
+                brandId={requestBrandId}
+                title=""
+                trailingAction={
+                  <EmailSend
+                    email={customerEmail}
+                    setEmail={setCustomerEmail}
+                    onSend={() => sendEmail(result?.request_id || source?.request_id || null)}
+                    sending={sendingEmail}
+                    sent={emailSent}
+                  />
+                }
+                captionSource={{ kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }}
+              />
+            }
+            resetText="רוצים תמונה אחרת לגמרי?"
+            onReset={() => navigate('/admin/production', { state: productionReturnState })}
+            footer={
+              (result?.previewUrl || source?.previewUrl) ? (
+                <ImageActions
+                  imageUrl={(result?.previewUrl || source?.previewUrl) as string}
+                  resultUrl={result?.previewUrl}
+                  onDownload={downloadImage}
+                  className="hidden lg:flex"
+                />
+              ) : null
+            }
+          />
         </div>
       )}
 
@@ -1295,6 +1262,68 @@ async function findDeliveredPdfPath(client: ReturnType<typeof createSupabaseBrow
   return (data as { storage_path?: string | null } | null)?.storage_path ?? null;
 }
 
+// Upload control for a reference photo to blend into the graphic (e.g. a
+// portrait of the mayor). Shown in the image-edit sidebar.
+function ReferenceImageUpload({
+  reference,
+  onChange,
+  disabled,
+}: {
+  reference: { file: File; previewUrl: string } | null;
+  onChange: (file: File | null) => void;
+  disabled: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  return (
+    <div className="mt-3">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          onChange(e.target.files?.[0] ?? null);
+          e.target.value = ''; // allow re-selecting the same file
+        }}
+      />
+      {reference ? (
+        <div className="flex items-center gap-3 rounded-lg border border-[var(--border)] bg-gray-50 p-2">
+          <img src={reference.previewUrl} alt={reference.file.name} className="h-12 w-12 shrink-0 rounded-md object-cover" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{reference.file.name}</p>
+            <p className="text-xs text-[var(--muted)]">עכשיו כתבו למעלה איך לשלב אותה בתוצר.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            disabled={disabled}
+            aria-label="הסרת תמונת הרפרנס"
+            className="shrink-0 px-2 text-xl leading-none text-[var(--muted)] hover:text-black disabled:opacity-50"
+          >
+            ×
+          </button>
+        </div>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={disabled}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--border)] px-3 py-2.5 text-sm font-semibold text-[var(--muted)] hover:bg-gray-50 hover:text-black disabled:opacity-50"
+          >
+            <ImageAddIcon />
+            העלאת תמונה לשילוב בתוצר
+          </button>
+          <p className="mt-1.5 text-xs text-[var(--muted)]">
+            העלו תמונה, כתבו בתיבה למעלה מה לשנות בעזרתה, ואז המערכת תשלב אותה בתוצר הקיים.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Icon action buttons for an image result. Rendered twice (mobile under the
 // image, desktop in the sidebar) with responsive visibility via className.
 function ImageActions({
@@ -1350,35 +1379,164 @@ function EmailSend({
   sending: boolean;
   sent: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <div>
-      <label className="block text-sm font-semibold mb-2">שליחה במייל</label>
-      <input
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="name@example.com"
-        dir="ltr"
-        className="w-full rounded-lg border border-[var(--border)] px-3 py-2 mb-2"
-      />
+    <div className="contents">
       <button
-        onClick={onSend}
-        disabled={!isValidEmail(email) || sending || sent}
-        className="w-full bg-brand text-white rounded-lg px-4 py-2.5 font-semibold disabled:opacity-50"
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+          open
+            ? 'border-emerald-600 bg-emerald-50 text-emerald-700'
+            : 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50'
+        }`}
       >
-        {sent ? 'נשלח' : sending ? 'שולח...' : 'שליחה במייל'}
+        <MailIcon />
+        <span>{sent ? 'נשלח במייל' : 'מייל'}</span>
       </button>
+
+      {open && (
+        <div className="basis-full pt-1">
+          <div className="mb-2 flex items-center gap-2" dir="ltr">
+            <Tooltip content="סגירה">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="סגירת שליחה במייל"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
+              >
+                <span className="text-xl leading-none" aria-hidden="true">×</span>
+              </button>
+            </Tooltip>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@example.com"
+              dir="ltr"
+              className="min-h-10 min-w-0 flex-1 rounded-lg border border-[var(--border)] py-2 pl-1 pr-3 text-left"
+            />
+          </div>
+          <button
+            onClick={onSend}
+            disabled={!isValidEmail(email) || sending || sent}
+            className="w-full rounded-lg border border-[var(--border)] bg-white px-4 py-2.5 font-semibold text-[var(--text)] hover:bg-gray-50 disabled:opacity-50"
+          >
+            {sent ? 'נשלח' : sending ? 'שולח...' : 'שליחה במייל'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function NewBriefIcon() {
+type EmailSendProps = Parameters<typeof EmailSend>[0];
+
+function ActionSidebar({
+  editLabel,
+  placeholder,
+  feedback,
+  onFeedbackChange,
+  working,
+  regenStatus,
+  onRegenerate,
+  actionText,
+  workingText,
+  note,
+  emailProps,
+  social,
+  resetText,
+  onReset,
+  footer,
+  beforeAction,
+  allowEmptyFeedback = false,
+}: {
+  editLabel: string;
+  placeholder: string;
+  feedback: string;
+  onFeedbackChange: (value: string) => void;
+  working: boolean;
+  regenStatus: string | null;
+  onRegenerate: () => void;
+  actionText: string;
+  workingText: string;
+  note?: string;
+  emailProps: EmailSendProps;
+  social?: React.ReactNode;
+  resetText: string;
+  onReset: () => void;
+  footer?: React.ReactNode;
+  // Extra content between the feedback textarea and the action button
+  // (e.g. the reference-image upload in the image flow).
+  beforeAction?: React.ReactNode;
+  // Let the action run without feedback text (when a reference image is attached).
+  allowEmptyFeedback?: boolean;
+}) {
+  const [editOpen, setEditOpen] = useState(true);
+
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-      <line x1="12" y1="12" x2="12" y2="18" />
-      <line x1="9" y1="15" x2="15" y2="15" />
-    </svg>
+    <aside className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
+      <section className="rounded-lg border border-[var(--border)] bg-gray-50/60 p-4">
+        <div className="mb-3">
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <ShareIcon />
+            <span>הפצה ושיתוף</span>
+          </p>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">מייל, פייסבוק ואינסטגרם</p>
+        </div>
+        <div className="mt-1 flex flex-wrap gap-3">
+          {social || <EmailSend {...emailProps} />}
+        </div>
+      </section>
+
+      <section className="mt-4 rounded-lg border border-[var(--border)] bg-white">
+        <button
+          type="button"
+          onClick={() => setEditOpen((open) => !open)}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-right"
+          aria-expanded={editOpen}
+        >
+          <div>
+            <p className="text-sm font-semibold">עריכה ושיפור</p>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">{editLabel}</p>
+          </div>
+          <ChevronDownIcon className={`shrink-0 transition-transform ${editOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {editOpen && (
+          <div className="border-t border-[var(--border)] p-4">
+            <label className="mb-2 block text-sm font-semibold">{editLabel}</label>
+            <textarea
+              value={feedback}
+              onChange={(e) => onFeedbackChange(e.target.value)}
+              disabled={working}
+              rows={5}
+              placeholder={placeholder}
+              className="w-full rounded-lg border border-[var(--border)] px-3 py-2"
+            />
+            {beforeAction}
+            <button
+              onClick={onRegenerate}
+              disabled={working || (!feedback.trim() && !allowEmptyFeedback)}
+              className="mt-3 w-full rounded-lg bg-brand px-4 py-2.5 font-semibold text-white disabled:opacity-50"
+            >
+              {working && !regenStatus ? workingText : actionText}
+            </button>
+            <button
+              type="button"
+              onClick={onReset}
+              className="mt-2 w-full rounded-lg border border-[var(--border)] bg-white px-4 py-2.5 text-sm font-semibold text-[var(--muted)] transition-colors hover:bg-gray-50 hover:text-black"
+            >
+              {resetText}
+            </button>
+            {note && <p className="mt-3 text-xs text-amber-700">{note}</p>}
+            {regenStatus && <p className="mt-3 text-sm text-[var(--muted)]">{regenStatus}…</p>}
+          </div>
+        )}
+      </section>
+
+      {footer && <div className="mt-5 flex flex-wrap items-center justify-end gap-3">{footer}</div>}
+    </aside>
   );
 }
 
@@ -1410,6 +1568,35 @@ function ImageAddIcon() {
       <path d="m21 15-4-4-5 5-2-2-5 5" />
       <path d="M18 3v4" />
       <path d="M16 5h4" />
+    </svg>
+  );
+}
+
+function MailIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
+    </svg>
+  );
+}
+
+function ShareIcon() {
+  return (
+    <svg className="text-[var(--muted)]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <path d="m8.6 10.5 6.8-4" />
+      <path d="m8.6 13.5 6.8 4" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="6 9 12 15 18 9" />
     </svg>
   );
 }

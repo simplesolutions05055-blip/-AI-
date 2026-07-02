@@ -101,12 +101,13 @@ export default function SignupPage() {
                 <span className="text-2xl font-bold text-brand">{inviteBrand.name.slice(0, 2)}</span>
               )}
             </div>
-            <h1 className="text-xl font-bold">הרשמה ל{inviteBrand.name}</h1>
+            <h1 className="text-xl font-semibold tracking-normal">הרשמה ל{inviteBrand.name}</h1>
             <p className="mt-1 text-sm text-[var(--muted)]">צרו חשבון כדי להתחיל לעבוד על המותג</p>
           </div>
         ) : (
           <>
-            <h1 className="text-2xl font-bold mb-1">הרשמה</h1>
+            <h1 className="mb-1 text-xl font-semibold tracking-normal">הרשמה</h1>
+            <p className="mb-4 text-sm text-[var(--muted)]">צרו חשבון כדי להצטרף למערכת.</p>
             <img src="/primeos-logo.png" alt="PrimeOS" className="mb-6 h-12 w-auto object-contain" />
           </>
         )}

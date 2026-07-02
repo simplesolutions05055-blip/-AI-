@@ -1,12 +1,14 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
-import { assertCanProduce, PermissionError } from '../_shared/output_permissions.ts';
 
-interface Body {
+interface UploadItem {
   file_base64?: string;
   file_name?: string;
-  prompt?: string;
-  quote_title?: string;
+  mime_type?: string;
+}
+
+interface Body {
+  files?: UploadItem[];
   brand_id?: string | null;
 }
 
@@ -20,19 +22,20 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
+    const createdBy = await resolveUserId(req);
+    if (!createdBy) return json({ error: 'unauthorized' }, 401);
+
     const body = await req.json() as Body;
-    if (!body.file_base64) return json({ error: 'file_base64 required' }, 400);
+    const files = (body.files ?? []).filter((file) => file.file_base64);
+    if (files.length === 0) return json({ error: 'files_required' }, 400);
+    if (files.length > 20) return json({ error: 'too_many_files' }, 400);
 
     const database = db();
-    const createdBy = await resolveUserId(req);
-    await assertCanProduce(database, createdBy, 'quote');
-    const fileName = safeStorageFileName(body.file_name || body.quote_title || 'quote');
-    const fileBytes = decodeBase64(body.file_base64);
     const brandId = nullableUuid(body.brand_id);
 
     const { data: conversation, error: convError } = await database
       .from('conversations')
-      .insert({ whatsapp_from: 'production-form', status: 'active', simulated: true })
+      .insert({ whatsapp_from: 'user-upload', status: 'active', simulated: true })
       .select('id')
       .single();
     if (convError || !conversation) throw convError ?? new Error('conversation create failed');
@@ -41,45 +44,58 @@ Deno.serve(async (req) => {
       .from('requests')
       .insert({
         conversation_id: conversation.id,
-        output_type: 'pdf',
+        output_type: 'image',
         brand_id: brandId,
         created_by: createdBy,
         structured_brief: {
-          output_type: 'pdf',
-          source: 'quote',
+          output_type: 'image',
+          source: 'user_upload',
           ready: true,
-          goal: body.prompt ?? body.quote_title ?? 'הצעת מחיר',
-          quote_title: body.quote_title ?? null,
+          goal: 'תכנים שהועלו ידנית',
         },
-        status: 'approved',
+        status: 'sent',
+        sent_at: new Date().toISOString(),
       })
       .select('id')
       .single();
     if (reqError || !requestRow) throw reqError ?? new Error('request create failed');
 
-    const storagePath = `${requestRow.id}/${crypto.randomUUID()}-${fileName}.pdf`;
-    const { error: uploadError } = await database.storage
-      .from('outputs')
-      .upload(storagePath, fileBytes, { contentType: 'application/pdf', upsert: false });
-    if (uploadError) throw uploadError;
+    const saved: Array<{ id: string; request_id: string; storage_path: string; mime_type: string; file_name: string }> = [];
+    let version = 1;
+    for (const item of files) {
+      const mimeType = normalizeImageMime(item.mime_type);
+      if (!mimeType) return json({ error: 'images_only' }, 400);
+      const fileName = safeStorageFileName(item.file_name || `upload-${version}`);
+      const ext = extensionForMime(mimeType, fileName);
+      const storagePath = `${requestRow.id}/user-uploads/${crypto.randomUUID()}-${fileName}.${ext}`;
+      const bytes = decodeBase64(item.file_base64 ?? '');
 
-    const { error: outError } = await database.from('outputs').insert({
-      request_id: requestRow.id,
-      output_type: 'pdf',
-      storage_path: storagePath,
-      mime_type: 'application/pdf',
-      text_content: body.quote_title ? `הצעת מחיר: ${body.quote_title}` : 'הצעת מחיר',
-      prompt_snapshot: body.prompt ?? null,
-      version: 1,
-    });
-    if (outError) throw outError;
+      const { error: uploadError } = await database.storage
+        .from('outputs')
+        .upload(storagePath, bytes, { contentType: mimeType, upsert: false });
+      if (uploadError) throw uploadError;
 
-    return json({ ok: true, request_id: requestRow.id, storage_path: storagePath });
-  } catch (e) {
-    if (e instanceof PermissionError) {
-      return json({ error: 'אין הרשאה להפיק הצעת מחיר' }, 403);
+      const { data: output, error: outError } = await database
+        .from('outputs')
+        .insert({
+          request_id: requestRow.id,
+          output_type: 'image',
+          storage_path: storagePath,
+          mime_type: mimeType,
+          text_content: item.file_name ?? 'תוכן שהועלה',
+          prompt_snapshot: 'user_upload',
+          version,
+        })
+        .select('id, request_id, storage_path, mime_type')
+        .single();
+      if (outError || !output) throw outError ?? new Error('output create failed');
+      saved.push({ ...output, file_name: item.file_name ?? fileName });
+      version += 1;
     }
-    console.error('save-quote-output failed', serializeError(e));
+
+    return json({ ok: true, request_id: requestRow.id, files: saved });
+  } catch (e) {
+    console.error('upload-user-content failed', serializeError(e));
     return json({ error: errorMessage(e) }, 500);
   }
 });
@@ -108,6 +124,22 @@ function decodeBase64(value: string): Uint8Array {
   return bytes;
 }
 
+function normalizeImageMime(value: string | undefined): string | null {
+  const clean = (value ?? '').toLowerCase();
+  if (clean === 'image/jpeg' || clean === 'image/png' || clean === 'image/webp' || clean === 'image/gif') return clean;
+  return null;
+}
+
+function extensionForMime(mimeType: string, fileName: string): string {
+  const fromName = fileName.split('.').pop()?.toLowerCase();
+  if (fromName && /^[a-z0-9]{2,5}$/.test(fromName)) return fromName === 'jpeg' ? 'jpg' : fromName;
+  if (mimeType === 'image/jpeg') return 'jpg';
+  if (mimeType === 'image/png') return 'png';
+  if (mimeType === 'image/webp') return 'webp';
+  if (mimeType === 'image/gif') return 'gif';
+  return 'png';
+}
+
 function nullableUuid(value: string | null | undefined): string | null {
   const clean = (value ?? '').trim();
   return clean || null;
@@ -124,8 +156,9 @@ function safeStorageFileName(value: string): string {
     .toLowerCase();
 
   return ascii
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
     .slice(0, 48)
-    .replace(/\.+$/g, '') || 'quote';
+    .replace(/\.+$/g, '') || 'upload';
 }
 
 function json(payload: unknown, status = 200): Response {

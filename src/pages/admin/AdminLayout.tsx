@@ -12,7 +12,8 @@ import { Spinner } from '@/components/ui/Spinner';
 
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
 // further by can_create_outputs. Files is view-only for regular users.
-const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/branding', '/admin/holidays', '/admin/user-settings'];
+// Branding is admin-only; regular users manage their brand via onboarding.
+const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/holidays', '/admin/user-settings'];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile, hasBrand, requireUploads } = useProfile();
@@ -89,7 +90,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       return (
         <main className="grid min-h-[100dvh] place-items-center p-6 text-center">
           <div>
-            <h1 className="mb-2 text-xl font-bold">אין לך עדיין הרשאת יצירת תוצרים</h1>
+            <h1 className="mb-2 text-xl font-semibold tracking-normal">אין הרשאת הפקת תוצרים</h1>
             <p className="text-[var(--muted)]">
               {genderCopy(profile.gender, {
                 male: 'פנה למנהל המערכת כדי שיפעיל עבורך את האפשרות.',

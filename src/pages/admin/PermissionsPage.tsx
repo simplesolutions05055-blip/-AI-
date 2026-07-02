@@ -98,6 +98,34 @@ export default function PermissionsPage() {
   }
 
   async function setRole(p: ProfileRow, role: 'admin' | 'user') {
+    if (p.role === role) return;
+    // Regular users may hold only one brand — trim extras before demoting.
+    if (role === 'user') {
+      const current = [...(grants[p.id] ?? new Set<string>())];
+      if (current.length > 1) {
+        const { data: rows } = await db
+          .from('user_brands')
+          .select('brand_id')
+          .eq('user_id', p.id)
+          .order('created_at')
+          .limit(1);
+        const keep = (rows as { brand_id: string }[] | null)?.[0]?.brand_id;
+        if (!keep) return flash('שמירה נכשלה');
+        const keepName = brands.find((b) => b.id === keep)?.name ?? '';
+        const ok = await confirmDialog({
+          message: `משתמש רגיל יכול להיות משויך למותג אחד בלבד. המערכת תשאיר את המותג "${keepName}" ותסיר את שאר המותגים. להמשיך?`,
+          confirmText: 'המשך',
+        });
+        if (!ok) return;
+        setSavingId(p.id);
+        const { error: trimError } = await db.from('user_brands').delete().eq('user_id', p.id).neq('brand_id', keep);
+        if (trimError) {
+          setSavingId(null);
+          return flash('שמירה נכשלה');
+        }
+        setGrants((prev) => ({ ...prev, [p.id]: new Set([keep]) }));
+      }
+    }
     setSavingId(p.id);
     const patch: Partial<ProfileRow> = { role };
     if (role === 'admin') patch.can_create_outputs = true; // admins always may create
@@ -136,9 +164,17 @@ export default function PermissionsPage() {
     const current = grants[p.id] ?? new Set<string>();
     const has = current.has(brandId);
     setSavingId(p.id);
-    const { error } = has
-      ? await db.from('user_brands').delete().eq('user_id', p.id).eq('brand_id', brandId)
-      : await db.from('user_brands').insert({ user_id: p.id, brand_id: brandId } as never);
+    let error: { message: string } | null = null;
+    if (has) {
+      ({ error } = await db.from('user_brands').delete().eq('user_id', p.id).eq('brand_id', brandId));
+    } else {
+      // A regular user holds exactly one brand: picking a brand replaces any
+      // existing assignment instead of adding to it.
+      ({ error } = await db.from('user_brands').delete().eq('user_id', p.id));
+      if (!error) {
+        ({ error } = await db.from('user_brands').insert({ user_id: p.id, brand_id: brandId } as never));
+      }
+    }
     if (!error && !has && !p.can_create_outputs) {
       const { error: profileError } = await db.from('profiles').update({ can_create_outputs: true } as never).eq('id', p.id);
       if (profileError) {
@@ -148,8 +184,7 @@ export default function PermissionsPage() {
     }
     setSavingId(null);
     if (error) return flash('שמירה נכשלה');
-    const nextSet = new Set(current);
-    has ? nextSet.delete(brandId) : nextSet.add(brandId);
+    const nextSet = has ? new Set<string>() : new Set([brandId]);
     setGrants((prev) => ({ ...prev, [p.id]: nextSet }));
     if (!has && !p.can_create_outputs) {
       setProfiles((prev) => prev.map((x) => (x.id === p.id ? { ...x, can_create_outputs: true } : x)));
@@ -218,10 +253,10 @@ export default function PermissionsPage() {
 
   return (
     <div dir="rtl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">משתמשים והרשאות</h1>
-        <p className="text-[var(--muted)] text-sm mt-1">
-          ניהול תפקידים, הרשאות יצירה, ומותגים מותרים.
+      <div className="mb-4">
+        <h1 className="text-xl font-semibold tracking-normal">משתמשים והרשאות</h1>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          נהלו משתמשים, מותגים והרשאות גישה.
         </p>
       </div>
 
@@ -352,7 +387,7 @@ export default function PermissionsPage() {
                   {/* Mobile: modal for many brands */}
                   {brands.length > 2 ? (
                     <div className="mt-3 pt-3 border-t border-[var(--border)] lg:hidden">
-                      <div className="text-xs font-medium mb-2">מותגים:</div>
+                      <div className="text-xs font-medium mb-2">מותג:</div>
                       <BrandSelectionModal
                         userBrands={userBrands}
                         brands={brands}
@@ -365,7 +400,7 @@ export default function PermissionsPage() {
 
                   {/* Desktop: buttons grid */}
                   <div className="mt-3 pt-3 border-t border-[var(--border)] hidden lg:block">
-                    <div className="text-xs font-medium mb-2">מותגים:</div>
+                    <div className="text-xs font-medium mb-2">מותג (אחד בלבד):</div>
                     <div className="flex flex-wrap gap-1.5">
                       {brands.map((b) => {
                         const on = userBrands.has(b.id);
@@ -798,7 +833,7 @@ function BrandSelectionModal({
         disabled={disabled}
         className="w-full rounded-lg border border-brand bg-white px-4 py-2.5 text-sm font-semibold text-brand hover:bg-brand/5 transition disabled:opacity-50"
       >
-        בחרו מותגים
+        בחירת מותג
       </button>
 
       {open && (
@@ -813,11 +848,11 @@ function BrandSelectionModal({
             dir="rtl"
             role="dialog"
             aria-modal="true"
-            aria-label="בחירת מותגים למשתמש"
+            aria-label="בחירת מותג למשתמש"
           >
             <div className="sticky top-0 border-b border-[var(--border)] bg-white px-4 py-3">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold">בחרו מותגים</h2>
+                <h2 className="text-lg font-bold">בחירת מותג (אחד בלבד)</h2>
                 <button
                   type="button"
                   onClick={() => setOpen(false)}

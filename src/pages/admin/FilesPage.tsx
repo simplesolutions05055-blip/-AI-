@@ -56,6 +56,7 @@ interface FileRow {
   mime_type: string | null;
   created_at: string;
   creator: string;
+  creator_id: string | null;
   request_source: string | null;
   brand_logo_url: string | null;
 }
@@ -71,7 +72,7 @@ type FileFilter = {
   key: string;
   types: OutputType[] | null;
   queryType: OutputType | null;
-  source: 'quote' | null;
+  source: 'quote' | 'user_upload' | null;
   label: string;
   icon: string;
 };
@@ -82,10 +83,20 @@ const FILE_TYPE_FILTERS: FileFilter[] = [
   { key: 'presentation', types: ['presentation'], queryType: 'presentation', source: null, label: 'מצגת', icon: TYPE_ICON.presentation },
   { key: 'document', types: ['pdf', 'text'], queryType: 'pdf', source: null, label: 'מסמך', icon: TYPE_ICON.pdf },
   { key: 'quote', types: ['pdf'], queryType: 'pdf', source: 'quote', label: 'הצעות מחיר', icon: '💰' },
+  { key: 'user_upload', types: ['image'], queryType: null, source: 'user_upload', label: 'תכנים שהעליתי', icon: '⬆️' },
 ];
 
 function isOutputType(value: string | null): value is OutputType {
   return value === 'image' || value === 'presentation' || value === 'pdf' || value === 'text';
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(reader.error ?? new Error('file_read_failed'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function FilesPage() {
@@ -93,7 +104,9 @@ export default function FilesPage() {
   const [searchParams] = useSearchParams();
   const rawFilterType = searchParams.get('type');
   const filterType = isOutputType(rawFilterType) ? rawFilterType : null;
-  const sourceFilter = searchParams.get('source') === 'quote' ? 'quote' : null;
+  const rawSource = searchParams.get('source');
+  const sourceFilter: 'quote' | 'user_upload' | null =
+    rawSource === 'quote' || rawSource === 'user_upload' ? rawSource : null;
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
   const [files, setFiles] = useState<FileRow[]>([]);
@@ -107,12 +120,23 @@ export default function FilesPage() {
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [targetFileRow, setTargetFileRow] = useState<FileRow | null>(null);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [uploadFiles, setUploadFiles] = useState<Array<{ id: string; file: File; previewUrl: string }>>([]);
+  const [uploadSaving, setUploadSaving] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (targetFileRow && fileInputRef.current) {
       fileInputRef.current.click();
     }
   }, [targetFileRow]);
+
+  useEffect(() => {
+    return () => {
+      for (const item of uploadFiles) URL.revokeObjectURL(item.previewUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleUploadFinal(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -165,7 +189,7 @@ export default function FilesPage() {
         .order('created_at', { ascending: false })
         // Admins must see every תוצר; cap at Supabase's default max-rows ceiling.
         .limit(1000);
-      const rawRows = (data ?? []) as Omit<FileRow, 'creator' | 'request_source' | 'brand_logo_url'>[];
+      const rawRows = (data ?? []) as Omit<FileRow, 'creator' | 'creator_id' | 'request_source' | 'brand_logo_url'>[];
 
       // The admin currently using the site — credited for simulator outputs.
       const { data: auth } = await client.auth.getUser();
@@ -175,6 +199,7 @@ export default function FilesPage() {
       // requests<->conversations has two FKs, so the embed must name the one we want.
       const requestIds = Array.from(new Set(rawRows.map((r) => r.request_id).filter(Boolean)));
       const creatorByRequest: Record<string, string> = {};
+      const creatorIdByRequest: Record<string, string | null> = {};
       const sourceByRequest: Record<string, string | null> = {};
       const parentByRequest: Record<string, string | null> = {};
       // request -> brand logo path, so document exports carry the brand logo.
@@ -182,30 +207,48 @@ export default function FilesPage() {
       if (requestIds.length > 0) {
         const { data: reqs } = await client
           .from('requests')
-          .select('id, customer_email, structured_brief, brand_id, conversations!requests_conversation_id_fkey(whatsapp_from, simulated)')
+          .select('id, customer_email, structured_brief, brand_id, created_by, conversations!requests_conversation_id_fkey(whatsapp_from, simulated)')
           .in('id', requestIds);
+        const createdByIds = new Set<string>();
         const brandIds = new Set<string>();
         const brandIdByRequest: Record<string, string | null> = {};
-        for (const req of (reqs ?? []) as Array<{
+        const requestRows = (reqs ?? []) as Array<{
           id: string;
           customer_email: string | null;
           structured_brief: { source?: string | null; parent_request_id?: string | null } | null;
           brand_id: string | null;
+          created_by: string | null;
           conversations:
             | { whatsapp_from: string | null; simulated: boolean | null }
             | { whatsapp_from: string | null; simulated: boolean | null }[]
             | null;
-        }>) {
+        }>;
+        for (const req of requestRows) if (req.created_by) createdByIds.add(req.created_by);
+        const profileLabelById: Record<string, string> = {};
+        if (createdByIds.size > 0) {
+          const { data: profileRows } = await client
+            .from('profiles')
+            .select('id, email, full_name')
+            .in('id', Array.from(createdByIds));
+          for (const p of (profileRows ?? []) as Array<{ id: string; email: string | null; full_name: string | null }>) {
+            profileLabelById[p.id] = p.full_name || p.email || p.id;
+          }
+        }
+        for (const req of requestRows) {
           const conv = Array.isArray(req.conversations) ? req.conversations[0] : req.conversations;
           const isSimulator = conv?.simulated || conv?.whatsapp_from === 'simulator';
           const sender = conv?.whatsapp_from ? senderLabel(conv.whatsapp_from) : null;
+          const requestSource = req.structured_brief?.source ?? null;
           parentByRequest[req.id] = typeof req.structured_brief?.parent_request_id === 'string'
             ? req.structured_brief.parent_request_id
             : null;
-          creatorByRequest[req.id] = isSimulator
+          creatorIdByRequest[req.id] = req.created_by ?? null;
+          creatorByRequest[req.id] = requestSource === 'user_upload' && req.created_by
+            ? profileLabelById[req.created_by] ?? 'משתמש'
+            : isSimulator
             ? `${siteUser} (סימולטור)`
             : sender || req.customer_email || 'לא ידוע';
-          sourceByRequest[req.id] = req.structured_brief?.source ?? null;
+          sourceByRequest[req.id] = requestSource;
           brandIdByRequest[req.id] = req.brand_id ?? null;
           if (req.brand_id) brandIds.add(req.brand_id);
         }
@@ -243,6 +286,7 @@ export default function FilesPage() {
         return {
           ...r,
           creator: creatorByRequest[r.request_id] ?? 'לא ידוע',
+          creator_id: creatorIdByRequest[r.request_id] ?? null,
           request_source: sourceByRequest[r.request_id] ?? null,
           brand_logo_url: logoPath ? signedLogoByPath[logoPath] ?? null : null,
         };
@@ -251,7 +295,7 @@ export default function FilesPage() {
       const latestByProduct = new Map<string, FileRow>();
       for (const row of allRows) {
         const rootRequestId = parentByRequest[row.request_id] ?? row.request_id;
-        const key = `${rootRequestId}:${row.output_type}`;
+        const key = row.request_source === 'user_upload' ? row.id : `${rootRequestId}:${row.output_type}`;
         const current = latestByProduct.get(key);
         if (!current || new Date(row.created_at).getTime() > new Date(current.created_at).getTime()) {
           latestByProduct.set(key, row);
@@ -296,6 +340,7 @@ export default function FilesPage() {
   }
 
   function labelFor(type: OutputType) {
+    if (sourceFilter === 'user_upload' && type === 'image') return 'תכנים שהעליתי';
     if (sourceFilter === 'quote' && type === 'pdf') return 'הצעת מחיר';
     return OUTPUT_LABEL[type];
   }
@@ -310,14 +355,16 @@ export default function FilesPage() {
   }
 
   function toggle(index: number, shiftKey: boolean) {
-    if (!isAdmin) return;
     const file = files[index];
+    if (!canManageFile(file)) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (shiftKey && lastIndex !== null) {
         // Range select between last clicked and current.
         const [from, to] = lastIndex < index ? [lastIndex, index] : [index, lastIndex];
-        for (let i = from; i <= to; i++) next.add(files[i].id);
+        for (let i = from; i <= to; i++) {
+          if (canManageFile(files[i])) next.add(files[i].id);
+        }
       } else if (next.has(file.id)) {
         next.delete(file.id);
       } else {
@@ -334,38 +381,136 @@ export default function FilesPage() {
   }
 
   function selectAllVisible() {
-    if (!isAdmin) return;
-    setSelected(new Set(visibleFiles.map((f) => f.id)));
+    setSelected(new Set(visibleFiles.filter(canManageFile).map((f) => f.id)));
     setLastIndex(null);
+  }
+
+  function canManageFile(file: FileRow) {
+    return isAdmin || (file.request_source === 'user_upload' && file.creator_id === profile?.id);
   }
 
   const visibleFiles = files.filter((file) => {
     const matchesSource =
-      sourceFilter === 'quote' ? file.request_source === 'quote' : file.request_source !== 'quote';
+      sourceFilter === 'quote'
+        ? file.request_source === 'quote'
+        : sourceFilter === 'user_upload'
+          ? file.request_source === 'user_upload'
+          : file.request_source !== 'quote' && file.request_source !== 'user_upload';
     if (!matchesSource) return false;
+    if (sourceFilter === 'user_upload') return file.output_type === 'image';
     if (sourceFilter === 'quote') return file.output_type === 'pdf';
     if (filterType === 'pdf' || filterType === 'text') return file.output_type === 'pdf' || file.output_type === 'text';
     return filterType ? file.output_type === filterType : true;
   });
+  const manageableVisibleFiles = visibleFiles.filter(canManageFile);
+
+  function addUploadFiles(fileList: FileList | null) {
+    const nextFiles = Array.from(fileList ?? []).filter((file) => file.type.startsWith('image/'));
+    if (nextFiles.length === 0) return;
+    setUploadFiles((current) => [
+      ...current,
+      ...nextFiles.map((file) => ({ id: crypto.randomUUID(), file, previewUrl: URL.createObjectURL(file) })),
+    ]);
+  }
+
+  function removeUploadFile(id: string) {
+    setUploadFiles((current) => {
+      const target = current.find((item) => item.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return current.filter((item) => item.id !== id);
+    });
+  }
+
+  function closeUploadModal() {
+    setUploadModalOpen(false);
+    setUploadFiles((current) => {
+      for (const item of current) URL.revokeObjectURL(item.previewUrl);
+      return [];
+    });
+  }
+
+  async function saveUploadedContent() {
+    if (uploadFiles.length === 0 || uploadSaving) return;
+    setUploadSaving(true);
+    try {
+      const client = createSupabaseBrowserClient();
+      const payloadFiles = await Promise.all(
+        uploadFiles.map(async (item) => ({
+          file_base64: await readFileAsDataUrl(item.file),
+          file_name: item.file.name,
+          mime_type: item.file.type,
+        })),
+      );
+      const { data, error } = await client.functions.invoke('upload-user-content', {
+        body: { files: payloadFiles },
+      });
+      if (error) throw error;
+      const payload = data as {
+        ok?: boolean;
+        error?: string;
+        files?: Array<{ id: string; request_id: string; storage_path: string; mime_type: string; file_name: string }>;
+      } | null;
+      if (!payload?.ok) throw new Error(payload?.error ?? 'upload_failed');
+
+      const createdAt = new Date().toISOString();
+      const rows: FileRow[] = (payload.files ?? []).map((file) => ({
+        id: file.id,
+        request_id: file.request_id,
+        output_type: 'image',
+        storage_path: file.storage_path,
+        text_content: file.file_name,
+        mime_type: file.mime_type,
+        created_at: createdAt,
+        creator: 'אני',
+        request_source: 'user_upload',
+        brand_logo_url: null,
+        creator_id: profile?.id ?? null,
+      }));
+      const signedPairs = await Promise.all(
+        rows.map(async (row) => {
+          const { data: signed } = await client.storage.from('outputs').createSignedUrl(row.storage_path as string, 600);
+          return [row.id, signed?.signedUrl] as const;
+        }),
+      );
+      setFiles((current) => [...rows, ...current]);
+      setPreviews((current) => ({
+        ...Object.fromEntries(signedPairs.filter(([, url]) => url)),
+        ...current,
+      }) as Record<string, string>);
+      closeUploadModal();
+      navigate('/admin/files?source=user_upload');
+    } catch (err) {
+      await alertDialog('העלאה נכשלה: ' + String(err));
+    } finally {
+      setUploadSaving(false);
+    }
+  }
 
   async function deleteSelected() {
-    if (!isAdmin) return;
     if (selected.size === 0) return;
-    if (!(await confirmDialog({ message: `למחוק ${selected.size} תוצרים? פעולה זו אינה הפיכה.`, danger: true, confirmText: 'מחיקה' }))) return;
+    const toDelete = files.filter((f) => selected.has(f.id) && canManageFile(f));
+    if (toDelete.length === 0) return;
+    if (!(await confirmDialog({ message: `למחוק ${toDelete.length} תוצרים? פעולה זו אינה הפיכה.`, danger: true, confirmText: 'מחיקה' }))) return;
     setDeleting(true);
     const client = createSupabaseBrowserClient();
-    const toDelete = files.filter((f) => selected.has(f.id));
     const paths = toDelete.map((f) => f.storage_path).filter((p): p is string => Boolean(p));
-    // Delete the DB rows first: if RLS blocks this it returns an error (and 0
-    // rows), so we can surface it instead of orphaning storage blobs.
-    const { error } = await client.from('outputs').delete().in('id', Array.from(selected));
+    if (paths.length) {
+      const { error: storageError } = await client.storage.from('outputs').remove(paths);
+      if (storageError) {
+        await alertDialog(`מחיקת קבצים נכשלה: ${storageError.message}`);
+        setDeleting(false);
+        return;
+      }
+    }
+    // Storage is removed before the row so owner-scoped storage policies can
+    // still resolve the request folder to the uploader.
+    const { error } = await client.from('outputs').delete().in('id', toDelete.map((f) => f.id));
     if (error) {
       await alertDialog(`מחיקה נכשלה: ${error.message}`);
       setDeleting(false);
       return;
     }
-    if (paths.length) await client.storage.from('outputs').remove(paths);
-    setFiles((prev) => prev.filter((f) => !selected.has(f.id)));
+    setFiles((prev) => prev.filter((f) => !toDelete.some((item) => item.id === f.id)));
     clearSelection();
     setDeleting(false);
   }
@@ -379,37 +524,42 @@ export default function FilesPage() {
         className="hidden"
         onChange={handleUploadFinal}
       />
-      <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
-        <h1 className="text-2xl font-bold">תוצרים</h1>
-        {isAdmin && selected.size === 0 && !loading && visibleFiles.length > 0 && (
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold tracking-normal">תוצרים</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">צפו, ערכו ושתפו תוצרים שנוצרו במערכת.</p>
+        </div>
+        <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto sm:flex-nowrap">
+          {selected.size > 0 && (
+            <>
+              <span className="text-sm text-[var(--muted)]">{selected.size} נבחרו</span>
+              <button
+                onClick={selected.size === manageableVisibleFiles.length ? clearSelection : selectAllVisible}
+                className="text-sm text-[var(--muted)] hover:underline"
+              >
+                {selected.size === manageableVisibleFiles.length ? 'בטל הכל' : 'בחר הכל'}
+              </button>
+              <button onClick={clearSelection} className="text-sm text-[var(--muted)] hover:underline">
+                ביטול בחירה
+              </button>
+              <button
+                onClick={deleteSelected}
+                disabled={deleting}
+                className="text-sm bg-red-600 text-white px-3 py-1.5 rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? 'מוחק...' : `מחיקה (${selected.size})`}
+              </button>
+            </>
+          )}
           <button
-            onClick={selectAllVisible}
-            className="text-sm text-[var(--muted)] hover:underline"
+            type="button"
+            onClick={() => setUploadModalOpen(true)}
+            className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-90 sm:flex-none"
           >
-            בחר הכל ({visibleFiles.length})
+            <UploadIcon />
+            העלאת קבצים
           </button>
-        )}
-        {isAdmin && selected.size > 0 && (
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-[var(--muted)]">{selected.size} נבחרו</span>
-            <button
-              onClick={selected.size === visibleFiles.length ? clearSelection : selectAllVisible}
-              className="text-sm text-[var(--muted)] hover:underline"
-            >
-              {selected.size === visibleFiles.length ? 'בטל הכל' : 'בחר הכל'}
-            </button>
-            <button onClick={clearSelection} className="text-sm text-[var(--muted)] hover:underline">
-              ביטול בחירה
-            </button>
-            <button
-              onClick={deleteSelected}
-              disabled={deleting}
-              className="text-sm bg-red-600 text-white px-3 py-1.5 rounded-lg hover:bg-red-700 disabled:opacity-50"
-            >
-              {deleting ? 'מוחק...' : `מחיקה (${selected.size})`}
-            </button>
-          </div>
-        )}
+        </div>
       </div>
 
       <div className="mb-5 sm:overflow-x-auto sm:pb-1">
@@ -419,7 +569,9 @@ export default function FilesPage() {
               sourceFilter === item.source &&
               (item.types === null
                 ? filterType === null
-                : item.types.includes(filterType as OutputType));
+                : item.source === 'user_upload'
+                  ? filterType === null
+                  : item.types.includes(filterType as OutputType));
             return (
               <button
                 key={item.key}
@@ -440,10 +592,18 @@ export default function FilesPage() {
         </div>
       </div>
 
-      {isAdmin && selected.size === 0 && !loading && visibleFiles.length > 0 && (
-        <p className="text-xs text-[var(--muted)] mb-4">
-          לחיצה לבחירה. Shift+לחיצה לבחירת טווח. בחירה מרובה או יחידה ומחיקה.
-        </p>
+      {selected.size === 0 && !loading && manageableVisibleFiles.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <p className="text-xs text-[var(--muted)]">
+            לחיצה לבחירה. Shift+לחיצה לבחירת טווח. בחירה מרובה או יחידה ומחיקה.
+          </p>
+          <button
+            onClick={selectAllVisible}
+            className="text-xs text-[var(--muted)] hover:underline"
+          >
+            בחר הכל ({manageableVisibleFiles.length})
+          </button>
+        </div>
       )}
 
       {loading ? (
@@ -467,6 +627,7 @@ export default function FilesPage() {
                   {typeFiles.map((file, index) => {
                     const isSelected = selected.has(file.id);
                     const fileIndex = files.indexOf(file);
+                    const canManage = canManageFile(file);
                     return (
                       <div
                         key={file.id}
@@ -475,7 +636,7 @@ export default function FilesPage() {
                           isSelected ? 'border-brand ring-2 ring-brand' : 'border-[var(--border)] hover:border-brand'
                         }`}
                       >
-                        {isAdmin && <div className="absolute top-2 start-2 z-10">
+                        {canManage && <div className="absolute top-2 start-2 z-10">
                           <span
                             className={`flex items-center justify-center w-5 h-5 rounded border text-xs ${
                               isSelected ? 'bg-brand border-brand text-white' : 'bg-white/80 border-[var(--border)]'
@@ -628,7 +789,7 @@ export default function FilesPage() {
         </div>
       )}
 
-      {isAdmin && selected.size > 0 && (
+      {selected.size > 0 && (
         <div className="fixed inset-x-3 bottom-[calc(var(--safe-bottom)+0.75rem)] z-30 rounded-xl border border-[var(--border)] bg-white p-3 shadow-lg md:hidden" dir="rtl">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm font-semibold">{selected.size} נבחרו</span>
@@ -641,6 +802,104 @@ export default function FilesPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {uploadModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-3 pb-[calc(var(--safe-bottom)+12px)] sm:items-center sm:p-4"
+          dir="rtl"
+          onClick={closeUploadModal}
+        >
+          <section
+            className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl sm:rounded-xl"
+            onClick={(e) => e.stopPropagation()}
+            aria-label="העלאת תכנים"
+            role="dialog"
+            aria-modal="true"
+          >
+            <header className="flex items-start justify-between gap-3 border-b border-[var(--border)] p-4 sm:p-5">
+              <div>
+                <h2 className="text-lg font-bold">העלאת תכנים שהעליתי</h2>
+                <p className="mt-1 text-sm text-[var(--muted)]">
+                  העלו תמונות משלכם כדי להשתמש בהן אחר כך בשילוב בתוך עיצובים או כתוכן עצמאי.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeUploadModal}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-2xl leading-none text-[var(--muted)] hover:bg-gray-50 hover:text-black"
+                aria-label="סגירה"
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+              <input
+                ref={uploadInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  addUploadFiles(event.target.files);
+                  event.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => uploadInputRef.current?.click()}
+                disabled={uploadSaving}
+                className="flex min-h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-brand/40 bg-brand/5 px-4 py-6 text-center font-semibold text-brand hover:bg-brand/10 disabled:opacity-50"
+              >
+                <UploadIcon />
+                בחירת תמונות מהמחשב
+                <span className="text-xs font-normal text-[var(--muted)]">אפשר לבחור כמה תמונות יחד</span>
+              </button>
+
+              {uploadFiles.length > 0 && (
+                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {uploadFiles.map((item) => (
+                    <div key={item.id} className="relative overflow-hidden rounded-xl border border-[var(--border)] bg-gray-50">
+                      <img src={item.previewUrl} alt={item.file.name} className="aspect-square w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removeUploadFile(item.id)}
+                        disabled={uploadSaving}
+                        aria-label="הסרת תמונה"
+                        className="absolute left-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-xl leading-none text-white hover:bg-black/80 disabled:opacity-50"
+                      >
+                        ×
+                      </button>
+                      <div className="p-2">
+                        <p className="truncate text-xs font-semibold" title={item.file.name}>{item.file.name}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <footer className="grid shrink-0 grid-cols-2 gap-3 border-t border-[var(--border)] bg-white p-4 sm:flex sm:justify-start sm:p-5">
+              <button
+                type="button"
+                onClick={saveUploadedContent}
+                disabled={uploadSaving || uploadFiles.length === 0}
+                className="min-h-11 rounded-lg bg-brand px-4 py-2.5 font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {uploadSaving ? 'מעלה...' : `העלאה${uploadFiles.length ? ` (${uploadFiles.length})` : ''}`}
+              </button>
+              <button
+                type="button"
+                onClick={closeUploadModal}
+                disabled={uploadSaving}
+                className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 font-semibold hover:bg-gray-50 disabled:opacity-50"
+              >
+                ביטול
+              </button>
+            </footer>
+          </section>
         </div>
       )}
 

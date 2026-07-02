@@ -207,8 +207,11 @@ export default function DashboardPage() {
 
   return (
     <div dir="rtl" className="min-w-0">
-      <div className="mb-5 flex items-center justify-between sm:mb-6">
-        <h1 className="text-[28px] font-bold leading-tight sm:text-2xl">לוח בקרה</h1>
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold leading-tight tracking-normal">לוח בקרה</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">מבט מהיר על תוצרים, שימוש ועלויות.</p>
+        </div>
         <select
           value={timeFilter}
           onChange={(e) => setTimeFilter(Number(e.target.value))}

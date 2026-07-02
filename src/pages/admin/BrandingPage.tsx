@@ -705,11 +705,11 @@ export default function BrandingPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-[28px] font-bold leading-tight sm:text-2xl">מיתוג</h1>
+          <h1 className="text-xl font-semibold leading-tight tracking-normal">ניהול מותג</h1>
           <p className="mt-1 max-w-xl text-sm leading-6 text-[var(--muted)]">
             {isAdmin
-              ? 'ניהול המקומות, הלוגו, פלטת הצבעים, פרטי המסמכים הרשמיים ומקורות התוכן שמהם המערכת מפיקה תוצרים.'
-              : 'עריכת פרטי המסמכים והטפסים הרשמיים של המותגים שהוקצו לך.'}
+              ? 'עדכנו פרטי מותג, לוגו, צבעים ומקורות תוכן.'
+              : 'עדכנו פרטי מסמכים וטפסים רשמיים של המותגים שהוקצו לכם.'}
             {!loading && brands.length > 0 && (
               <span className="font-medium text-[var(--text)]"> · {brands.length} מקומות</span>
             )}

@@ -85,7 +85,12 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
 
   return (
     <div>
-      {!embedded && <h1 className="text-2xl font-bold mb-6">בקשות</h1>}
+      {!embedded && (
+        <div className="mb-4">
+          <h1 className="text-xl font-semibold tracking-normal">בקשות</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">צפו בבקשות, סטטוסים ובריפים שנשלחו למערכת.</p>
+        </div>
+      )}
 
       <div className="mb-3 flex items-center justify-between gap-2 md:hidden">
         <button

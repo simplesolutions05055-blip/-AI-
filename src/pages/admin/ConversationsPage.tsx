@@ -253,8 +253,8 @@ export default function ConversationsPage() {
     <div className="min-h-[calc(100dvh-8rem)] lg:min-h-[calc(100dvh-3rem)]">
       <div className={`mb-5 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:flex ${selected ? 'hidden lg:flex' : 'flex'}`}>
         <div>
-          <h1 className="text-2xl font-bold">שיחות</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">צפייה בכל השיחות וההודעות שנקלטו במערכת.</p>
+          <h1 className="text-xl font-semibold tracking-normal">שיחות WhatsApp</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">עקבו אחרי פניות, סטטוס ובקשות מתוך השיחות.</p>
         </div>
         <input
           value={query}

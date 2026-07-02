@@ -9,6 +9,7 @@ import {
   Grid3X3,
   Inbox,
   LogOut,
+  Mail,
   Menu,
   MessageSquare,
   Palette,
@@ -46,7 +47,7 @@ const NAV_SECTIONS: NavSection[] = [
     links: [
       { href: '/admin/permissions', label: 'משתמשים והרשאות', adminOnly: true, icon: 'users' },
       { href: '/admin/holidays', label: 'גאנט', icon: 'calendar' },
-      { href: '/admin/branding', label: 'מיתוג', icon: 'palette' },
+      { href: '/admin/branding', label: 'מיתוג', adminOnly: true, icon: 'palette' },
     ],
   },
   {
@@ -70,12 +71,13 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/admin/models', label: 'מודלים', adminOnly: true, icon: 'cpu' },
       { href: '/admin/skills', label: 'סקילים', adminOnly: true, icon: 'puzzle' },
       { href: '/admin/settings', label: 'הגדרות', adminOnly: true, icon: 'gear' },
+      { href: '/admin/test-email', label: 'מייל ניסיון', adminOnly: true, icon: 'mail' },
       { href: '/admin/user-settings', label: 'הגדרות', userOnly: true, icon: 'userSettings' },
     ],
   },
 ];
 
-type NavIconName = 'spark' | 'users' | 'calendar' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings';
+type NavIconName = 'spark' | 'users' | 'calendar' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings' | 'mail';
 
 function visibleSections(isAdmin: boolean, canCreateOutputs: boolean) {
   return NAV_SECTIONS.map((sec) => ({
@@ -179,10 +181,10 @@ export function AdminBottomNav({
   const primaryHrefs = isAdmin
     ? ['/admin', '/admin/production', '/admin/files', '/admin/requests']
     : ['/admin/production', '/admin/files'];
-  // Mobile version: show branding instead of requests
+  // Mobile version: show branding instead of requests (admins only)
   const mobileHrefs = isAdmin
     ? ['/admin', '/admin/production', '/admin/files', '/admin/branding']
-    : ['/admin/production', '/admin/files', '/admin/branding', '/admin/user-settings'];
+    : ['/admin/production', '/admin/files', '/admin/user-settings'];
 
   // Use mobile version which swaps requests for branding for better mobile UX
   const itemHrefs = mobileHrefs;
@@ -240,6 +242,7 @@ function NavIcon({ name, className = 'h-4 w-4' }: { name: NavIconName; active?: 
     gear: Settings,
     inbox: Inbox,
     logout: LogOut,
+    mail: Mail,
     menu: Menu,
     messages: MessageSquare,
     palette: Palette,

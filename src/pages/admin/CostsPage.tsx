@@ -125,7 +125,7 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
           <p className="text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
         ) : (
           <div>
-            <h1 className="text-2xl font-bold">עלויות</h1>
+            <h1 className="text-xl font-semibold tracking-normal">עלויות</h1>
             <p className="mt-1 text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
           </div>
         )}

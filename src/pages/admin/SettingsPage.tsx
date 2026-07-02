@@ -2,8 +2,26 @@ import { useEffect, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile, type ProfileGender } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
+import {
+  PRODUCTION_PERMISSION_TYPES,
+  normalizeOutputPermissions,
+  type OutputPermissions,
+  type OutputPermissionsRole,
+  type ProductionPermissionType,
+} from '@/lib/outputPermissions';
 
 type Settings = Record<string, any>;
+type SettingsTab = 'whatsapp' | 'signup' | 'permissions' | 'email' | 'models' | 'approval' | 'limits';
+
+const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: 'permissions', label: 'הרשאות תוצרים' },
+  { id: 'models', label: 'מודלי AI' },
+  { id: 'limits', label: 'מגבלות' },
+  { id: 'whatsapp', label: 'WhatsApp' },
+  { id: 'signup', label: 'הרשמה' },
+  { id: 'email', label: 'מייל' },
+  { id: 'approval', label: 'אישור' },
+];
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -20,6 +38,7 @@ export default function SettingsPage() {
   const [profileGender, setProfileGender] = useState<ProfileGender | ''>('');
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('permissions');
 
   useEffect(() => {
     setProfileGender(profile?.gender ?? '');
@@ -68,6 +87,7 @@ export default function SettingsPage() {
   const approvalQuickReply = settings.whatsapp_approval_quick_reply ?? { enabled: false, content_sid: '' };
   const limits = settings.rate_limits ?? {};
   const budget = settings.request_budget_usd ?? { max: 0.08 };
+  const outputPermissions = normalizeOutputPermissions(settings.output_permissions);
   // Default to visible: only an explicit stored `false` hides the link.
   const signupVisible = settings.public_signup_visible !== false;
   const requireOnboardingUploads = settings.onboarding_require_uploads === true;
@@ -78,12 +98,38 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div className="sticky top-[calc(var(--safe-top)+3.75rem)] z-20 -mx-3 flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0">
-        <h1 className="text-2xl font-bold">הגדרות</h1>
+        <div>
+          <h1 className="text-xl font-semibold tracking-normal">הגדרות מערכת</h1>
+          <p className="mt-1 hidden text-sm text-[var(--muted)] sm:block">נהלו נוסחים, הרשאות, מיילים, מודלים ומגבלות.</p>
+        </div>
         <button onClick={save} className="rounded-lg bg-brand text-white px-4 py-2 text-sm font-semibold">
           {saved ? 'נשמר' : 'שמירת הגדרות'}
         </button>
       </div>
 
+      <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-white p-1">
+        <div className="flex min-w-max gap-1">
+          {SETTINGS_TABS.map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`min-h-10 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                  active
+                    ? 'bg-brand text-white'
+                    : 'text-[var(--muted)] hover:bg-gray-50 hover:text-[var(--text)]'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {activeTab === 'whatsapp' && (
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
         <h2 className="font-semibold mb-3">נוסחי WhatsApp</h2>
         <Field label="קבלת בקשה">
@@ -99,7 +145,9 @@ export default function SettingsPage() {
           <input className={input} dir="auto" value={tpl.rejected_media ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, rejected_media: e.target.value })} />
         </Field>
       </section>
+      )}
 
+      {activeTab === 'signup' && (
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
         <h2 className="font-semibold mb-3">הרשמה</h2>
         <div className="mb-4 border-b border-[var(--border)] pb-4">
@@ -152,14 +200,56 @@ export default function SettingsPage() {
         <div className="mt-4 border-t border-[var(--border)] pt-4">
           <div className="mb-1 text-sm font-medium">התקנת האפליקציה</div>
           <p className="text-xs text-[var(--muted)]">
-            סגירת הודעת ההתקנה מסתירה אותה ל-24 שעות בפעם הראשונה, לשבוע בפעם השנייה, ולתמיד
-            בפעם השלישית. התקנה ידנית: ב-iPhone פותחים ב-Safari, לוחצים שיתוף ובוחרים "הוסף
-            למסך הבית"; באנדרואיד או בדסקטופ פותחים את תפריט הדפדפן ובוחרים התקנה או הוספה
-            למסך הבית.
+            כדי להתקין את האפליקציה, פתחו את תפריט הדפדפן ובחרו התקנה או הוספה למסך הבית.
           </p>
         </div>
       </section>
+      )}
 
+      {activeTab === 'permissions' && (
+      <section className="bg-white rounded-xl border border-[var(--border)] p-4">
+        <h2 className="font-semibold mb-1">הרשאות הפקת תוצרים</h2>
+        <p className="mb-4 text-xs text-[var(--muted)]">
+          קובע אילו סוגי תוצרים כל תפקיד יכול להפיק. למשתמש רגיל עדיין נדרשת גם הרשאת הפקה כללית במסך משתמשים והרשאות.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-[var(--border)] text-right text-xs text-[var(--muted)]">
+                <th className="py-2 font-semibold">תוצר</th>
+                <th className="py-2 text-center font-semibold">מנהל</th>
+                <th className="py-2 text-center font-semibold">משתמש רגיל</th>
+              </tr>
+            </thead>
+            <tbody>
+              {PRODUCTION_PERMISSION_TYPES.map((item) => (
+                <tr key={item.type} className="border-b border-[var(--border)] last:border-0">
+                  <td className="py-3 font-medium">{item.label}</td>
+                  <td className="py-3 text-center">
+                    <PermissionCheckbox
+                      permissions={outputPermissions}
+                      type={item.type}
+                      role="admin"
+                      onChange={(next) => update('output_permissions', next)}
+                    />
+                  </td>
+                  <td className="py-3 text-center">
+                    <PermissionCheckbox
+                      permissions={outputPermissions}
+                      type={item.type}
+                      role="user"
+                      onChange={(next) => update('output_permissions', next)}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      )}
+
+      {activeTab === 'email' && (
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
         <h2 className="font-semibold mb-3">מייל</h2>
         <Field label="שם שולח">
@@ -172,7 +262,9 @@ export default function SettingsPage() {
           <textarea className={`${input} h-20`} value={email.signature ?? ''} onChange={(e) => update('email_settings', { ...email, signature: e.target.value })} />
         </Field>
       </section>
+      )}
 
+      {activeTab === 'models' && (
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
         <h2 className="font-semibold mb-3">מודלי AI</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -232,7 +324,9 @@ export default function SettingsPage() {
           </p>
         </div>
       </section>
+      )}
 
+      {activeTab === 'approval' && (
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
         <h2 className="font-semibold mb-3">מצב אישור</h2>
         <Field label="מצב כללי">
@@ -260,7 +354,9 @@ export default function SettingsPage() {
           />
         </Field>
       </section>
+      )}
 
+      {activeTab === 'limits' && (
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
         <h2 className="font-semibold mb-3">מגבלות ושימוש</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -284,7 +380,36 @@ export default function SettingsPage() {
           </Field>
         </div>
       </section>
+      )}
     </div>
+  );
+}
+
+function PermissionCheckbox({
+  permissions,
+  type,
+  role,
+  onChange,
+}: {
+  permissions: OutputPermissions;
+  type: ProductionPermissionType;
+  role: OutputPermissionsRole;
+  onChange: (permissions: OutputPermissions) => void;
+}) {
+  const checked = permissions[type][role];
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      aria-label={`${type}-${role}`}
+      onChange={(e) => onChange({
+        ...permissions,
+        [type]: {
+          ...permissions[type],
+          [role]: e.target.checked,
+        },
+      })}
+    />
   );
 }
 

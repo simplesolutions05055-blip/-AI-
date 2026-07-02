@@ -16,10 +16,17 @@ import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, 
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import { genderCopy } from '@/lib/genderCopy';
+import {
+  canProduceType,
+  normalizeOutputPermissions,
+  type OutputPermissions,
+  type ProductionPermissionType,
+} from '@/lib/outputPermissions';
 import ImagePickerModal from '@/components/ImagePickerModal';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { Spinner } from '@/components/ui/Spinner';
 import type { DeckImage } from '@/lib/deck';
 import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, themeFromQuoteBrand, attachBrandToQuote, tint, type Quote } from '@/lib/quote';
 import type { OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
@@ -215,15 +222,81 @@ const FIELDS: Record<ProductionType, FieldConfig[]> = {
 export default function ProductionPage() {
   const { type } = useParams();
   const [searchParams] = useSearchParams();
+  const { profile, loading } = useProfile();
+  const [permissions, setPermissions] = useState<OutputPermissions>(() => normalizeOutputPermissions(null));
+  const [permissionsLoaded, setPermissionsLoaded] = useState(false);
+  const [permissionsError, setPermissionsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    createSupabaseBrowserClient()
+      .from('settings')
+      .select('value_json')
+      .eq('key', 'output_permissions')
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (error) {
+          setPermissionsError(error.message);
+          setPermissionsLoaded(true);
+          return;
+        }
+        setPermissions(normalizeOutputPermissions((data as { value_json?: unknown } | null)?.value_json));
+        setPermissionsLoaded(true);
+      });
+  }, []);
+
+  const role = profile?.role ?? 'user';
+  const allowed = (productionType: ProductionPermissionType) =>
+    canProduceType(permissions, productionType, role, profile?.can_create_outputs ?? false);
+
+  if (loading || !permissionsLoaded) return <p className="p-4 text-[var(--muted)]"><Spinner /></p>;
+  if (permissionsError && role !== 'admin') return <ProductionPermissionsError />;
   // Quote is a production type with its own lightweight flow (no brief wizard):
   // the prompt goes straight to the quote builder, and the price is read from it.
-  if (type === 'quote') return <QuoteFlow />;
+  if (type === 'quote') {
+    if (!allowed('quote')) return <ProductionBlocked typeLabel="הצעת מחיר" />;
+    return <QuoteFlow />;
+  }
   const selectedType = isProductionType(type) ? type : null;
   const pickerType = searchParams.get('type');
   const initialPickerType = pickerType === 'quote' ? 'quote' : pickerType && isProductionType(pickerType) ? pickerType : undefined;
 
-  if (!selectedType) return <ProductionPicker initialSelected={initialPickerType} />;
+  if (!selectedType) return <ProductionPicker initialSelected={initialPickerType} permissions={permissions} />;
+  if (!allowed(selectedType)) return <ProductionBlocked typeLabel={OUTPUT_LABEL[selectedType]} />;
   return <ProductionFlow type={selectedType} />;
+}
+
+function ProductionBlocked({ typeLabel }: { typeLabel: string }) {
+  const navigate = useNavigate();
+  return (
+    <div dir="rtl" className="theme-warm min-h-full bg-[var(--bg-page)] px-5 py-6 sm:px-8 lg:px-10">
+      <section className="rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] p-6 text-right shadow-[var(--warm-shadow-card)]">
+        <h1 className="text-xl font-semibold tracking-normal text-[var(--text-strong)]">אין הרשאת הפקת {typeLabel}</h1>
+        <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">
+          ההרשאה לסוג התוצר הזה כבויה עבור התפקיד שלך. אפשר לחזור לבחירת תוצר אחר או לפנות למנהל המערכת.
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate('/admin/production')}
+          className="mt-5 inline-flex min-h-11 items-center justify-center rounded-[10px] bg-brand px-5 py-2 text-sm font-semibold text-white transition hover:bg-brand-dark"
+        >
+          חזרה לבחירת תוצר
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function ProductionPermissionsError() {
+  return (
+    <div dir="rtl" className="theme-warm min-h-full bg-[var(--bg-page)] px-5 py-6 sm:px-8 lg:px-10">
+      <section className="rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] p-6 text-right shadow-[var(--warm-shadow-card)]">
+        <h1 className="text-xl font-semibold tracking-normal text-[var(--text-strong)]">לא ניתן לטעון הרשאות הפקה</h1>
+        <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">
+          צריך לפרוס את הרשאת הגישה להגדרת התוצרים. אחרי הפריסה, רענון העמוד יציג רק את התוצרים שמותרים למשתמש.
+        </p>
+      </section>
+    </div>
+  );
 }
 
 // Price quote flow: prompt → quote PDF immediately. Corrections happen after the
@@ -328,7 +401,7 @@ function QuoteFlow() {
         </button>
 
         <section className="rounded-[16px] border border-[#EAECF0] bg-white px-5 py-7 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8">
-          <h1 className="text-[22px] font-bold text-[#1A1A2E]">הצעת מחיר</h1>
+          <h1 className="text-xl font-semibold tracking-normal text-[#1A1A2E]">הצעת מחיר</h1>
           <p className="mt-1 text-[14px] text-[#94A3B8]">
             בונים הצעת מחיר ומייצרים PDF מיד. תיקונים עושים אחרי שהתוצר נשמר.
           </p>
@@ -539,9 +612,20 @@ function QuoteReview({ quote }: { quote: Quote }) {
   );
 }
 
-function ProductionPicker({ initialSelected = null }: { initialSelected?: ProductionType | 'quote' | null }) {
+function ProductionPicker({
+  initialSelected = null,
+  permissions,
+}: {
+  initialSelected?: ProductionType | 'quote' | null;
+  permissions?: OutputPermissions;
+}) {
   const { profile } = useProfile();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Set only when the user reached this hub from an existing output (e.g. tapped
+  // "רוצים X אחר לגמרי?" by mistake). Lets us offer a one-click way back to that
+  // exact output; absent on a normal visit to /admin/production, so no button then.
+  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo ?? null;
   const [selected, setSelected] = useState<ProductionType | 'quote' | null>(initialSelected);
   const [description, setDescription] = useState('');
   const [uploadingText, setUploadingText] = useState(false);
@@ -572,18 +656,30 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
   // chosen) — separate from the explicit hint message, which only shows on a
   // create attempt without a chosen type.
   const [glowTypeChips, setGlowTypeChips] = useState(false);
-  const canCreate = !!selected && description.trim().length > 0;
+  const role = profile?.role ?? 'user';
+  const effectivePermissions = permissions ?? normalizeOutputPermissions(null);
+  const allowedTypes = useMemo(
+    () => (['image', 'text', 'presentation', 'pdf', 'quote'] as const).filter((item) =>
+      canProduceType(effectivePermissions, item, role, profile?.can_create_outputs ?? false),
+    ),
+    [effectivePermissions, profile?.can_create_outputs, role],
+  );
+  const canCreate = !!selected && allowedTypes.includes(selected) && description.trim().length > 0;
   const singleBrand = brands.length === 1 ? brands[0] : null;
   const selectedBrand = brands.find((brand) => brand.id === brandId) ?? singleBrand ?? null;
   const selectedBrandLogoUrl = selectedBrand ? brandLogoUrls[selectedBrand.id] ?? null : null;
 
   useEffect(() => {
-    if (!initialSelected) return;
+    if (!initialSelected || !allowedTypes.includes(initialSelected)) return;
     setSelected(initialSelected);
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
-  }, [initialSelected]);
+  }, [initialSelected, allowedTypes]);
+
+  useEffect(() => {
+    if (selected && !allowedTypes.includes(selected)) setSelected(null);
+  }, [allowedTypes, selected]);
 
   useEffect(() => {
     const avatarPath = profile?.avatar_path;
@@ -733,6 +829,10 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
       setShowTypeHint(true);
       return;
     }
+    if (!allowedTypes.includes(selected)) {
+      setShowTypeHint(true);
+      return;
+    }
     if (!canCreate) return;
     // Quote: go to the in-flow review screen (show content → revise with AI →
     // approve → build PDF). Same production chrome, not a foreign page.
@@ -768,7 +868,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
     }
   }
 
-  const pickerChips: Array<{ key: string; label: string; tone: string; to?: ProductionType | 'quote'; disabled?: boolean }> = [
+  const allPickerChips: Array<{ key: string; label: string; tone: string; to: ProductionType | 'quote'; disabled?: boolean }> = [
     { key: 'image', label: 'תמונה / גרפיקה', tone: 'bg-[var(--tint-clay)]', to: 'image' },
     { key: 'text', label: 'פוסט / טקסט', tone: 'bg-[var(--tint-olive)]', to: 'text' },
     { key: 'presentation', label: 'מצגת', tone: 'bg-[var(--tint-sand)]', to: 'presentation' },
@@ -777,6 +877,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
     // The price is taken from the prompt only (see QuoteFlow / generateQuote).
     { key: 'quote', label: 'הצעת מחיר', tone: 'bg-[var(--tint-ochre)]', to: 'quote' },
   ];
+  const pickerChips = allPickerChips.filter((item) => allowedTypes.includes(item.to));
   const selectedPickerLabel = pickerChips.find((item) => !item.disabled && item.to === selected)?.label ?? null;
   const uploadText = genderCopy(profile?.gender, {
     male: 'העלה קובץ',
@@ -788,7 +889,7 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
     female: 'צרי תוצר',
     neutral: 'יצירת תוצר',
   });
-  const recentOutputCategories: Array<{ key: string; label: string; bg: string; type?: OutputType }> = [
+  const allRecentOutputCategories: Array<{ key: string; label: string; bg: string; type?: OutputType }> = [
     { key: 'image', type: 'image', label: 'תמונה/גרפיקה', bg: 'var(--tint-clay)' },
     { key: 'presentation', type: 'presentation', label: 'מצגת', bg: 'var(--tint-olive)' },
     { key: 'pdf', type: 'pdf', label: 'מסמך', bg: 'var(--tint-sand)' },
@@ -798,6 +899,9 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
       bg: 'var(--tint-ochre)',
     },
   ];
+  const recentOutputCategories = allRecentOutputCategories.filter((item) =>
+    allowedTypes.includes((item.key === 'quote' ? 'quote' : item.type) as ProductionPermissionType),
+  );
 
   return (
     <div dir="rtl" className="theme-warm min-h-full bg-[var(--bg-page)]">
@@ -820,12 +924,22 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
       </header>
 
       <div className="px-5 py-6 sm:px-8 lg:px-10">
+        {returnTo && (
+          <button
+            type="button"
+            onClick={() => navigate(returnTo)}
+            className="mb-4 inline-flex items-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-4 py-2 text-sm font-semibold text-[var(--text-strong)] shadow-[var(--warm-shadow-card)] transition hover:bg-[var(--bg-subtle)]"
+          >
+            <span aria-hidden="true">→</span>
+            חזרה לתוצר
+          </button>
+        )}
         <section className="relative rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-7 shadow-[var(--warm-shadow-card)] sm:px-8 lg:px-8 lg:py-8">
           <div className="flex flex-col gap-5">
             <div className={`space-y-2.5 text-right ${selectedBrand ? 'min-h-[7.5rem] sm:min-h-[8.25rem]' : ''}`}>
               <div className="flex items-start justify-between gap-3 pe-28 sm:pe-32 lg:pe-44">
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-[30px] font-extrabold leading-[1.12] tracking-tight text-[var(--text-strong)] sm:text-[24px]">מה תרצו ליצור היום?</h1>
+                  <h1 className="text-2xl font-semibold leading-tight tracking-normal text-[var(--text-strong)]">מה תרצו ליצור היום?</h1>
                 </div>
                 {selectedBrand && (
                   <div className="absolute left-5 top-7 flex shrink-0 items-center justify-center sm:left-8 lg:left-8 lg:top-8">
@@ -890,6 +1004,12 @@ function ProductionPicker({ initialSelected = null }: { initialSelected?: Produc
                   <span className="text-base">💡</span>
                   בחרו קודם סוג תוצר מהאפשרויות למעלה
                 </span>
+              </div>
+            )}
+
+            {allowedTypes.length === 0 && (
+              <div className="rounded-[10px] border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--warn-fg)]">
+                אין לך כרגע הרשאה להפיק תוצרים. אפשר לפנות למנהל המערכת.
               </div>
             )}
 
@@ -1494,7 +1614,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     <div dir="rtl" className="theme-warm min-h-full bg-[var(--bg-page)] px-4 py-5 text-[var(--text-strong)] sm:px-6 lg:px-8 lg:py-7">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-[26px] font-extrabold leading-tight text-[var(--text-strong)]">הפקת {OUTPUT_LABEL[type]}</h1>
+          <h1 className="text-xl font-semibold leading-tight tracking-normal text-[var(--text-strong)]">הפקת {OUTPUT_LABEL[type]}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {step === 'form' && !showBriefLoader && (
@@ -1659,6 +1779,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
               {revisionCount >= 3 && (
                 <p className="mt-2 text-sm text-[var(--warn-fg)]">הגענו למקסימום תיקוני בריף. אפשר להפיק עכשיו או להתחיל מחדש.</p>
               )}
+
             </div>
           </div>
         </div>

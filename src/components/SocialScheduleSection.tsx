@@ -8,6 +8,10 @@ const PLATFORM_LABEL: Record<SocialPlatform, string> = {
   instagram: 'אינסטגרם',
 };
 
+function platformsLabel(platforms: SocialPlatform[]): string {
+  return platforms.map((p) => PLATFORM_LABEL[p]).join(' וב');
+}
+
 // What pre-fills the "כיתוב לפרסום" field:
 // - text: the produced post text itself, used as-is.
 // - image: there is no text output, so the post is written from the brief.
@@ -90,6 +94,7 @@ export default function SocialScheduleSection({
   brandId = null,
   defaultScheduledAt = '',
   title = 'תזמון פרסום',
+  trailingAction = null,
   onScheduled,
 }: {
   captionSource?: CaptionSource;
@@ -98,9 +103,11 @@ export default function SocialScheduleSection({
   brandId?: string | null;
   defaultScheduledAt?: string;
   title?: string;
+  trailingAction?: React.ReactNode;
   onScheduled?: () => void;
 } = {}) {
-  const [platform, setPlatform] = useState<SocialPlatform | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [platforms, setPlatforms] = useState<SocialPlatform[]>(['facebook', 'instagram']);
 
   // The caption is resolved once and shared across both modals so opening
   // Facebook and then Instagram doesn't regenerate (or double-charge) it.
@@ -147,38 +154,36 @@ export default function SocialScheduleSection({
     }
   }
 
-  function openPlatform(next: SocialPlatform) {
-    setPlatform(next);
-    void ensureCaption(next);
+  function openSchedule() {
+    setModalOpen(true);
+    void ensureCaption(platforms[0] ?? 'facebook');
+  }
+
+  function updatePlatforms(next: SocialPlatform[]) {
+    setPlatforms(next);
+    void ensureCaption(next[0] ?? 'facebook');
   }
 
   return (
     <div>
-      <label className="block text-sm font-semibold mb-2">{title}</label>
-      <div className="grid gap-2">
+      {title && <label className="block text-sm font-semibold mb-2">{title}</label>}
+      <div className="flex flex-wrap gap-3">
         <button
           type="button"
-          onClick={() => openPlatform('facebook')}
-          disabled={!brandId}
-          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+          onClick={openSchedule}
+          className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <span>תזמון פרסום בפייסבוק</span>
           <FacebookIcon />
-        </button>
-        <button
-          type="button"
-          onClick={() => openPlatform('instagram')}
-          disabled={!brandId}
-          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-        >
-          <span>תזמון פרסום באינסטגרם</span>
           <InstagramIcon />
+          <span>תזמון לרשתות חברתיות</span>
         </button>
+        {trailingAction}
       </div>
 
-      {platform && (
+      {modalOpen && (
         <ScheduleModal
-          platform={platform}
+          platforms={platforms}
+          onPlatformsChange={updatePlatforms}
           caption={caption}
           onCaptionChange={setCaption}
           captionLoading={captionLoading}
@@ -193,7 +198,7 @@ export default function SocialScheduleSection({
             setScheduleSaved(message);
             onScheduled?.();
           }}
-          onClose={() => setPlatform(null)}
+          onClose={() => setModalOpen(false)}
         />
       )}
 
@@ -207,7 +212,8 @@ export default function SocialScheduleSection({
 }
 
 function ScheduleModal({
-  platform,
+  platforms,
+  onPlatformsChange,
   caption,
   onCaptionChange,
   captionLoading,
@@ -221,7 +227,8 @@ function ScheduleModal({
   onSaved,
   onClose,
 }: {
-  platform: SocialPlatform;
+  platforms: SocialPlatform[];
+  onPlatformsChange: (platforms: SocialPlatform[]) => void;
   caption: string;
   onCaptionChange: (value: string) => void;
   captionLoading: boolean;
@@ -242,6 +249,10 @@ function ScheduleModal({
   const [aiCaptionLoading, setAiCaptionLoading] = useState(false);
   const [aiCaptionError, setAiCaptionError] = useState<string | null>(null);
 
+  const includesInstagram = platforms.includes('instagram');
+  const channelsLabel = platformsLabel(platforms);
+  const hasPlatforms = platforms.length > 0;
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') onClose();
@@ -251,9 +262,16 @@ function ScheduleModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
+  function togglePlatform(platform: SocialPlatform) {
+    const next = platforms.includes(platform)
+      ? platforms.filter((item) => item !== platform)
+      : [...platforms, platform];
+    onPlatformsChange(next);
+  }
+
   async function saveSchedule() {
     const cleanTitle = scheduleTitle.trim();
-    if (!cleanTitle || !scheduledAt || !caption.trim() || saving) return;
+    if (!cleanTitle || !scheduledAt || !caption.trim() || !hasPlatforms || saving) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -266,7 +284,7 @@ function ScheduleModal({
           output_id: outputId,
           brand_id: brandId,
           title: cleanTitle,
-          platform,
+          platforms,
           caption,
           scheduled_at: new Date(scheduledAt).toISOString(),
           media: uploadedMedia,
@@ -275,7 +293,7 @@ function ScheduleModal({
       if (error) throw error;
       const payload = data as { ok?: boolean; error?: string; schedule?: { scheduled_at?: string; title?: string | null } } | null;
       if (!payload?.ok) throw new Error(scheduleErrorLabel(payload?.error));
-      onSaved(`"${payload.schedule?.title ?? cleanTitle}" נשמר לתזמון ב${PLATFORM_LABEL[platform]}.`);
+      onSaved(`"${payload.schedule?.title ?? cleanTitle}" נשמר לתזמון ב${channelsLabel}.`);
       onClose();
     } catch (e) {
       setSaveError(scheduleErrorLabel(String((e as { message?: string })?.message ?? e)));
@@ -297,7 +315,7 @@ function ScheduleModal({
           source_text: draft,
           content_request: 'להפוך את הטקסט החופשי לכיתוב מוכן לפרסום ברשת החברתית, בלי להוסיף עובדות שלא נכתבו.',
         },
-        platform,
+        platforms[0] ?? 'facebook',
         requestId
       );
       onCaptionChange(text);
@@ -310,18 +328,19 @@ function ScheduleModal({
 
   return (
     <div
-      dir="rtl"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
+      dir="ltr"
+      className="relative mt-5 w-full"
     >
       <div
-        className="flex max-h-[88dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white text-right shadow-xl sm:rounded-lg"
-        onClick={(e) => e.stopPropagation()}
+        dir="rtl"
+        className="flex w-full flex-col overflow-hidden rounded-2xl bg-white text-right shadow-lg"
       >
         <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] p-3 sm:gap-3 sm:p-5">
           <div className="min-w-0">
-            <h2 className="text-base font-bold leading-6 sm:text-lg">תזמון פרסום ב{PLATFORM_LABEL[platform]}</h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">בחרו מועד לפרסום התוצר בערוץ.</p>
+            <h2 className="text-base font-bold leading-6 sm:text-lg">תזמון לרשתות חברתיות</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              בחרו איפה הפוסט יפורסם, הוסיפו מועד וכיתוב, ושמרו תזמון אחד.
+            </p>
           </div>
           <Tooltip content="סגירה">
             <button
@@ -335,7 +354,26 @@ function ScheduleModal({
           </Tooltip>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3 sm:p-5">
+        <div className="overflow-x-hidden p-3 sm:p-5">
+          <fieldset className="mb-4">
+            <legend className="mb-2 block text-sm font-semibold">איפה לפרסם?</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <PlatformToggle
+                platform="facebook"
+                checked={platforms.includes('facebook')}
+                onChange={() => togglePlatform('facebook')}
+              />
+              <PlatformToggle
+                platform="instagram"
+                checked={platforms.includes('instagram')}
+                onChange={() => togglePlatform('instagram')}
+              />
+            </div>
+            {!hasPlatforms && (
+              <p className="mt-2 text-xs text-red-600">בחרו לפחות רשת חברתית אחת לפרסום.</p>
+            )}
+          </fieldset>
+
           <label className="mb-2 block text-sm font-semibold">שם התזמון</label>
           <input
             type="text"
@@ -409,7 +447,7 @@ function ScheduleModal({
 
           <MediaEditor media={media} setMedia={setMedia} brandId={brandId} />
 
-          {platform === 'instagram' && media.length === 0 && (
+          {includesInstagram && media.length === 0 && (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
             </div>
@@ -421,7 +459,7 @@ function ScheduleModal({
           <button
             type="button"
             onClick={saveSchedule}
-            disabled={saving || !scheduleTitle.trim() || !scheduledAt || !caption.trim() || (platform === 'instagram' && media.length === 0)}
+            disabled={saving || !hasPlatforms || !scheduleTitle.trim() || !scheduledAt || !caption.trim() || (includesInstagram && media.length === 0)}
             className="min-h-11 min-w-0 rounded-lg bg-brand px-2 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-base"
           >
             {saving ? 'שומר...' : 'תזמון הפרסום'}
@@ -436,6 +474,40 @@ function ScheduleModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function PlatformToggle({
+  platform,
+  checked,
+  onChange,
+}: {
+  platform: SocialPlatform;
+  checked: boolean;
+  onChange: () => void;
+}) {
+  const isFacebook = platform === 'facebook';
+  return (
+    <label
+      className={`flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+        checked
+          ? isFacebook
+            ? 'border-blue-500 bg-blue-50 text-blue-700'
+            : 'border-pink-500 bg-pink-50 text-pink-700'
+          : 'border-[var(--border)] bg-white text-[var(--text)] hover:bg-gray-50'
+      }`}
+    >
+      <span className="inline-flex items-center gap-2">
+        {isFacebook ? <FacebookIcon /> : <InstagramIcon />}
+        <span>{PLATFORM_LABEL[platform]}</span>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        className="h-5 w-5 accent-brand"
+      />
+    </label>
   );
 }
 
@@ -511,19 +583,21 @@ export function MediaEditor({
           e.target.value = ''; // allow re-selecting the same file
         }}
       />
-      <div className="mb-3 grid min-w-0 gap-2 sm:flex sm:flex-wrap">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:w-auto sm:px-3"
-        >
-          <UploadIcon />
-          <span className="truncate">העלאת תמונות/סרטונים</span>
-        </button>
+      <div className="mb-3 flex min-w-0 flex-wrap gap-2">
+        <Tooltip content="העלאת תמונות/סרטונים">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="העלאת תמונות או סרטונים"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-gray-50"
+          >
+            <UploadIcon />
+          </button>
+        </Tooltip>
         <button
           type="button"
           onClick={() => setPickerOpen(true)}
-          className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:w-auto sm:px-3"
+          className="inline-flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:flex-none sm:px-3"
         >
           <GalleryIcon />
           <span className="truncate">מתוך התוצרים שלנו</span>

@@ -163,7 +163,7 @@ const emptyBrand: BrandDetails = {
   document_usage: 'print',
 };
 
-export default function OnboardingPage() {
+export default function OnboardingPage({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -848,7 +848,7 @@ export default function OnboardingPage() {
     try {
       progress.current = { ...progress.current, hard_completed_at: new Date().toISOString() };
       await supabase.from('profiles').update({ onboarding: progress.current } as never).eq('id', userId);
-      navigate('/admin', { replace: true });
+      navigate(embedded ? '/admin/user-settings' : '/admin', { replace: true });
     } finally {
       setSaving(false);
     }
@@ -872,14 +872,22 @@ export default function OnboardingPage() {
   const editingExistingBrand = brandMode === 'existing';
 
   return (
-    <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[#f6f9f8] text-[#071a33]">
+    <div
+      className={
+        embedded
+          ? 'w-full bg-transparent text-[#071a33]'
+          : 'flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[#f6f9f8] text-[#071a33]'
+      }
+    >
+      {!embedded && (
       <div className="hidden lg:flex lg:h-[100dvh] lg:w-60 lg:shrink-0 lg:border-l lg:border-[#d7e3e0] lg:bg-white">
         <div className="lg:h-[100dvh] lg:w-full">
           <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={canCreateOutputs} />
         </div>
       </div>
+      )}
 
-      {navMounted && (
+      {!embedded && navMounted && (
         <div
           className={`fixed inset-0 z-40 transition-opacity duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
             navVisible ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
@@ -904,14 +912,20 @@ export default function OnboardingPage() {
         </div>
       )}
 
-      <main className="min-h-0 w-full flex-1 overflow-y-auto px-4 py-8 pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-8">
+      <main
+        className={
+          embedded
+            ? 'w-full'
+            : 'min-h-0 w-full flex-1 overflow-y-auto px-4 py-8 pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-8'
+        }
+      >
         <div className={`mx-auto w-full ${step === 'company' ? 'max-w-3xl' : 'max-w-lg'}`}>
           <Stepper steps={steps} current={stepIndex} />
 
           <div className="mt-6 rounded-2xl border border-[var(--border)] bg-white p-6 shadow-sm">
             {step === 'details' && (
               <section>
-                <h1 className="text-xl font-bold">ברוכים הבאים 👋</h1>
+                <h1 className="text-xl font-semibold tracking-normal">ברוכים הבאים</h1>
                 <p className="mb-5 mt-1 text-sm text-[var(--muted)]">כמה פרטים קצרים כדי להכיר אתכם.</p>
 
                 <div className="mb-4 flex items-center gap-3">
@@ -985,7 +999,7 @@ export default function OnboardingPage() {
 
             {step === 'company' && (
               <section>
-                <h1 className="text-center text-3xl font-bold text-[var(--text)]">איזה חברה אתה</h1>
+                <h1 className="text-center text-2xl font-semibold tracking-normal text-[var(--text)]">בחירת סוג ארגון</h1>
                 <p className="mb-7 mt-2 text-center text-sm text-[var(--muted)]">
                   שייכו את המשתמש לחברה או למותג הקיים במערכת.
                 </p>
@@ -1081,7 +1095,7 @@ export default function OnboardingPage() {
 
             {step === 'brand' && (
               <section>
-                <h1 className="text-xl font-bold">פרטי המותג</h1>
+                <h1 className="text-xl font-semibold tracking-normal">פרטי המותג</h1>
                 <p className="mb-5 mt-1 text-sm text-[var(--muted)]">
                   השלימו את פרטי המותג, הנחיות הכתיבה והנתונים שיופיעו במסמכים.
                 </p>
@@ -1387,8 +1401,8 @@ export default function OnboardingPage() {
           </div>
         </div>
       </main>
-      <AdminBottomNav isAdmin={isAdmin} canCreateOutputs={canCreateOutputs} onOpenMenu={() => setNavOpen(true)} />
-      <InstallPrompt />
+      {!embedded && <AdminBottomNav isAdmin={isAdmin} canCreateOutputs={canCreateOutputs} onOpenMenu={() => setNavOpen(true)} />}
+      {!embedded && <InstallPrompt />}
       {brandCandidatesOpen && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-black/50 px-4 py-6"
@@ -1838,7 +1852,7 @@ function UploadStep({
 }) {
   return (
     <section>
-      <h1 className="text-xl font-bold">{title}</h1>
+      <h1 className="text-xl font-semibold tracking-normal">{title}</h1>
       <p className="mb-4 mt-1 text-sm text-[var(--muted)]">{subtitle}</p>
 
       <label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-[var(--border)] bg-gray-50 px-4 py-8 text-center hover:bg-gray-100">

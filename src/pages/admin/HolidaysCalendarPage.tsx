@@ -512,7 +512,8 @@ export default function HolidaysCalendarPage() {
     <div className="space-y-5" dir="rtl">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="lg:hidden">
-          <h1 className="text-2xl font-bold">לוח שנה</h1>
+          <h1 className="text-xl font-semibold tracking-normal">לוח פרסומים וחגים</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">נהלו חגים, אירועים ותזמוני פרסום.</p>
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3 lg:w-full lg:justify-between">
           <div className="flex gap-1.5 lg:gap-2 lg:order-1">

@@ -9,6 +9,9 @@ interface Body {
   brand_id?: string | null;
   title?: string;
   platform?: Platform;
+  // Multi-channel scheduling: one call creates a row per platform so the
+  // publish worker keeps handling each channel independently.
+  platforms?: Platform[];
   caption?: string;
   scheduled_at?: string;
   media?: Array<{
@@ -34,8 +37,15 @@ Deno.serve(async (req) => {
     if (!callerId) return json({ error: 'unauthorized' }, 401);
 
     const body = await req.json() as Body;
-    const platform = body.platform;
-    if (platform !== 'facebook' && platform !== 'instagram') return json({ error: 'invalid_platform' }, 400);
+    const requested = Array.isArray(body.platforms) && body.platforms.length > 0
+      ? body.platforms
+      : body.platform !== undefined
+        ? [body.platform]
+        : [];
+    const platforms = [...new Set(requested)];
+    if (platforms.length === 0 || platforms.some((p) => p !== 'facebook' && p !== 'instagram')) {
+      return json({ error: 'invalid_platform' }, 400);
+    }
 
     const caption = (body.caption ?? '').trim();
     if (!caption) return json({ error: 'caption_required' }, 400);
@@ -46,7 +56,7 @@ Deno.serve(async (req) => {
     if (scheduledAt.getTime() <= Date.now() + 60_000) return json({ error: 'scheduled_at_must_be_future' }, 400);
 
     const media = normalizeMedia(body.media ?? []);
-    if (platform === 'instagram' && media.length === 0) {
+    if (platforms.includes('instagram') && media.length === 0) {
       return json({ error: 'instagram_requires_media' }, 400);
     }
 
@@ -56,7 +66,7 @@ Deno.serve(async (req) => {
 
     const { data, error } = await database
       .from('scheduled_social_posts')
-      .insert({
+      .insert(platforms.map((platform) => ({
         request_id: body.request_id ?? null,
         output_id: body.output_id ?? null,
         brand_id: body.brand_id ?? null,
@@ -67,12 +77,11 @@ Deno.serve(async (req) => {
         media,
         status: 'scheduled',
         created_by: callerId,
-      })
-      .select('id, title, platform, scheduled_at, status')
-      .single();
+      })))
+      .select('id, title, platform, scheduled_at, status');
     if (error) throw error;
 
-    return json({ ok: true, schedule: data });
+    return json({ ok: true, schedule: data?.[0] ?? null, schedules: data ?? [] });
   } catch (e) {
     return json({ error: String(e) }, 500);
   }

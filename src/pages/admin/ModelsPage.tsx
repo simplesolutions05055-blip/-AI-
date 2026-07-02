@@ -47,9 +47,9 @@ export default function ModelsPage() {
     <div className="max-w-3xl">
       <div className="sticky top-[calc(var(--safe-top)+3.75rem)] z-20 -mx-3 mb-6 flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0">
         <div>
-          <h1 className="text-2xl font-bold">ניהול מודלים</h1>
-          <p className="text-sm text-[var(--muted)] mt-1">
-            הגדרת מודל השפה לתגובות, מודל התמונות, וה־System Message המרכזי.
+          <h1 className="text-xl font-semibold tracking-normal">מודלי AI</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            בחרו אילו מודלים זמינים לכל סוג תוצר.
           </p>
         </div>
         <button onClick={save} className="rounded-lg bg-brand text-white px-4 py-2 text-sm font-semibold">

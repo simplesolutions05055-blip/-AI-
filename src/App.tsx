@@ -19,6 +19,7 @@ import RevisePage from '@/pages/admin/RevisePage';
 import ErrorsPage from '@/pages/admin/ErrorsPage';
 import PermissionsPage from '@/pages/admin/PermissionsPage';
 import HolidaysCalendarPage from '@/pages/admin/HolidaysCalendarPage';
+import TestEmailPage from '@/pages/admin/TestEmailPage';
 import ReloadPrompt from '@/components/pwa/ReloadPrompt';
 import TitleManager from '@/components/TitleManager';
 import DialogHost from '@/components/DialogHost';
@@ -51,6 +52,7 @@ export default function App() {
           <Route path="holidays" element={<HolidaysCalendarPage />} />
           <Route path="errors" element={<ErrorsPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="test-email" element={<TestEmailPage />} />
           <Route path="user-settings" element={<UserSettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/admin" replace />} />

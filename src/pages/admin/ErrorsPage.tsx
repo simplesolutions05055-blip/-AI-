@@ -67,7 +67,10 @@ export default function ErrorsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">שגיאות ואזהרות</h1>
+      <div className="mb-4">
+        <h1 className="text-xl font-semibold tracking-normal">שגיאות ואזהרות</h1>
+        <p className="mt-1 text-sm text-[var(--muted)]">בדקו תקלות מערכת, חסימות ופעולות שדורשות טיפול.</p>
+      </div>
 
       <div className="mb-4 flex gap-2">
         <button

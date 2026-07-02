@@ -28,8 +28,8 @@ export default function QuotePage() {
 
   return (
     <div className="mx-auto max-w-2xl p-4" dir="rtl">
-      <h1 className="text-xl font-bold mb-1">הצעת מחיר</h1>
-      <p className="text-sm text-[var(--muted)] mb-4">
+      <h1 className="mb-1 text-xl font-semibold tracking-normal">הצעת מחיר</h1>
+      <p className="mb-4 text-sm text-[var(--muted)]">
         בנו הצעת מחיר מעוצבת (PDF) בעברית מתוך בריף חופשי. המחיר נלקח אך ורק מהטקסט שתכתבו.
       </p>
 

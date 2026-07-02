@@ -20,6 +20,10 @@ const RTL_IMAGE_DIRECTIVE =
 interface Body {
   request_id?: string;
   feedback?: string;
+  // Optional reference image (already uploaded to the outputs bucket by the
+  // client) whose subject should be blended into the edited graphic.
+  reference_path?: string;
+  reference_mime?: string;
 }
 
 Deno.serve(async (req) => {
@@ -31,8 +35,9 @@ Deno.serve(async (req) => {
     const body = (await req.json()) as Body;
     const sourceRequestId = body.request_id;
     const feedback = (body.feedback ?? '').trim();
+    const referencePath = (body.reference_path ?? '').trim();
     if (!sourceRequestId) return json({ error: 'request_id required' }, 400);
-    if (!feedback) return json({ error: 'feedback required' }, 400);
+    if (!feedback && !referencePath) return json({ error: 'feedback required' }, 400);
 
     // Latest image output of the source request.
     const { data: output } = await database
@@ -60,14 +65,29 @@ Deno.serve(async (req) => {
     const sourceBase64 = encodeBase64(new Uint8Array(await file.arrayBuffer()));
     const sourceMime = output.mime_type || 'image/png';
 
+    // Optional reference image uploaded by the client — its subject (a person,
+    // a product, a logo) is blended into the edited graphic.
+    let reference: { base64: string; mime: string } | null = null;
+    if (referencePath) {
+      const { data: refFile, error: refError } = await database.storage.from('outputs').download(referencePath);
+      if (refError || !refFile) return json({ error: 'failed to read reference image' }, 500);
+      reference = {
+        base64: encodeBase64(new Uint8Array(await refFile.arrayBuffer())),
+        mime: body.reference_mime || refFile.type || 'image/png',
+      };
+    }
+
     const aiModels = await getSetting<{ image_model?: string; image_size?: string; system_message?: string }>(
       database,
       'ai_models',
     );
 
     const editPrompt = [
-      'ערוך את התמונה הקיימת לפי המשוב הבא, תוך שמירה על הקומפוזיציה הכללית והסגנון המקורי ושינוי רק מה שהתבקש.',
-      `משוב המשתמש: ${feedback}`,
+      'ערוך את התמונה הראשונה (הגרפיקה הקיימת) תוך שמירה על הקומפוזיציה הכללית והסגנון המקורי ושינוי רק מה שהתבקש.',
+      feedback ? `משוב המשתמש: ${feedback}` : '',
+      reference
+        ? 'התמונה השנייה היא תמונת רפרנס שהמשתמש העלה: שלב את הדמות/האובייקט המרכזי ממנה בתוך הגרפיקה באופן טבעי ומכובד, תוך שמירה מדויקת על מראה הדמות/האובייקט כפי שהם ברפרנס.'
+        : '',
       sourceBrief.goal ? `מטרת התמונה המקורית: ${sourceBrief.goal}` : '',
       sourceBrief.style ? `סגנון: ${sourceBrief.style}` : '',
       RTL_IMAGE_DIRECTIVE,
@@ -79,6 +99,7 @@ Deno.serve(async (req) => {
       model: aiModels?.image_model,
       size: aiModels?.image_size,
       systemMessage: aiModels?.system_message,
+      references: reference ? [reference] : undefined,
     });
 
     // Persist as a fresh production-form request + output.
@@ -95,6 +116,7 @@ Deno.serve(async (req) => {
       source: 'image_edit',
       parent_request_id: sourceRequestId,
       edit_feedback: feedback,
+      ...(referencePath ? { edit_reference_path: referencePath } : {}),
     };
 
     const { data: newReq, error: reqError } = await database
@@ -140,7 +162,7 @@ Deno.serve(async (req) => {
     await logEvent(database, {
       requestId: newReq.id,
       action: 'image_edited',
-      metadata: { parent_request_id: sourceRequestId, model: edited.model },
+      metadata: { parent_request_id: sourceRequestId, model: edited.model, with_reference: Boolean(referencePath) },
     });
 
     return json({ request_id: newReq.id, storage_path: storagePath, base64: edited.base64, mime: edited.mime });

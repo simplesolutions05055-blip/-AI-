@@ -592,17 +592,33 @@ export async function editImage(
   sourceBase64: string,
   sourceMime: string,
   prompt: string,
-  opts: { model?: string; size?: string; systemMessage?: string } = {}
+  opts: { model?: string; size?: string; systemMessage?: string; references?: Array<{ base64: string; mime: string }> } = {}
 ): Promise<{ base64: string; mime: string; model: string }> {
   const model = opts.model || imageModel();
   const finalPrompt = opts.systemMessage ? `${opts.systemMessage}\n\nבקשת המשתמש:\n${prompt}` : prompt;
-  const bytes = Uint8Array.from(atob(sourceBase64), (c) => c.charCodeAt(0));
-  const ext = (sourceMime || 'image/png').includes('jpeg') ? 'jpg' : 'png';
+  const toBlob = (base64: string, mime: string) => {
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    return new Blob([bytes], { type: mime || 'image/png' });
+  };
+  const extFor = (mime: string) => {
+    const m = mime || 'image/png';
+    return m.includes('jpeg') ? 'jpg' : m.includes('webp') ? 'webp' : 'png';
+  };
+  const references = opts.references ?? [];
   const buildForm = () => {
     const form = new FormData();
     form.append('model', model);
     form.append('prompt', finalPrompt);
-    form.append('image', new Blob([bytes], { type: sourceMime || 'image/png' }), `source.${ext}`);
+    if (references.length > 0) {
+      // With references the image[] array form is required; the first image is
+      // the one being edited and the rest supply content to blend in.
+      form.append('image[]', toBlob(sourceBase64, sourceMime), `source.${extFor(sourceMime)}`);
+      for (const [idx, ref] of references.entries()) {
+        form.append('image[]', toBlob(ref.base64, ref.mime), `reference-${idx + 1}.${extFor(ref.mime)}`);
+      }
+    } else {
+      form.append('image', toBlob(sourceBase64, sourceMime), `source.${extFor(sourceMime)}`);
+    }
     if (opts.size) form.append('size', opts.size);
     form.append('n', '1');
     return form;

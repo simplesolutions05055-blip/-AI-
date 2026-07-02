@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { matchBrandInText, type BrandRow } from '../_shared/brand.ts';
+import { assertCanProduce, PermissionError } from '../_shared/output_permissions.ts';
 
 type OutputType = 'text' | 'image' | 'pdf' | 'presentation';
 
@@ -44,6 +45,7 @@ Deno.serve(async (req) => {
     // attribute the request on the dashboard's per-user breakdown. The form is
     // admin-gated, so a token is normally present.
     const createdBy = await resolveUserId(req);
+    await assertCanProduce(database, createdBy, body.output_type);
 
     const { data: conversation, error: convError } = await database
       .from('conversations')
@@ -90,6 +92,9 @@ Deno.serve(async (req) => {
 
     return json({ request_id: requestRow.id });
   } catch (e) {
+    if (e instanceof PermissionError) {
+      return json({ error: 'אין הרשאה להפיק את סוג התוצר הזה' }, 403);
+    }
     return json({ error: String(e) }, 500);
   }
 });
