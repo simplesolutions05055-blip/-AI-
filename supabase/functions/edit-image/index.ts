@@ -24,6 +24,9 @@ interface Body {
   // client) whose subject should be blended into the edited graphic.
   reference_path?: string;
   reference_mime?: string;
+  // Attribution for the WhatsApp flow (server-to-server calls carry the
+  // identified user); browser calls omit it and inherit the source request's.
+  created_by?: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -54,7 +57,7 @@ Deno.serve(async (req) => {
     // Original brief — fed back in as context so the edit stays on-brand.
     const { data: sourceReq } = await database
       .from('requests')
-      .select('structured_brief, brand_id')
+      .select('structured_brief, brand_id, created_by')
       .eq('id', sourceRequestId)
       .single();
     const sourceBrief = (sourceReq?.structured_brief ?? {}) as Record<string, unknown>;
@@ -124,6 +127,7 @@ Deno.serve(async (req) => {
       .insert({
         conversation_id: conversation.id,
         brand_id: sourceReq?.brand_id ?? null,
+        created_by: body.created_by ?? (sourceReq as { created_by?: string | null } | null)?.created_by ?? null,
         output_type: 'image',
         structured_brief: newBrief,
         status: 'approved',

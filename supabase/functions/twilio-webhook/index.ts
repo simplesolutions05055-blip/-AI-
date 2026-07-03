@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
 
   // Hand off to the shared orchestration. Twilio media download is the only
   // channel-specific step, supplied here as the resolveMedia callback.
-  const { requestIdToProcess } = await handleInbound(database, {
+  const { requestIdToProcess, background } = await handleInbound(database, {
     conversation, from, phone, body, messageSid, numMedia, templates, simulated: false,
     resolveMedia: async (requestId): Promise<MediaResult> => {
       let effectiveBody = body;
@@ -124,6 +124,12 @@ Deno.serve(async (req) => {
       return { effectiveBody, firstStoragePath, firstMediaType, anyRejected };
     },
   });
+  if (background) {
+    // Long flow action (AI image edit / caption rewrite) — run after the 200.
+    // @ts-ignore EdgeRuntime is provided by the Supabase runtime
+    EdgeRuntime.waitUntil(background());
+    return twiml();
+  }
   if (!requestIdToProcess) return twiml();
   const requestId = requestIdToProcess;
 

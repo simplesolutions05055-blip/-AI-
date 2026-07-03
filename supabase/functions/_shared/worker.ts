@@ -16,7 +16,7 @@ import { analyzeBrief, generateText, generateDocumentText, generatePresentationO
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64, type PdfBrandSettings } from './pdf.ts';
 import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
-import { matchBrandInText, buildBusinessBrainContext, buildBrandDeliveryFooter, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
+import { matchBrandInText, buildBusinessBrainContext, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
 import { buildSkillInstructions, applyBriefSkillGate } from './skills.ts';
 import {
   loadLearnedRules,
@@ -25,6 +25,7 @@ import {
   buildTemplateLockBlock,
   maybeLockTemplate,
 } from './learning.ts';
+import { buildPostDeliveryMenu } from './flow.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
@@ -573,6 +574,16 @@ async function runRequestPipeline(
     await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
 
     const b = brief as Record<string, unknown>;
+    // Menu-locked type (WhatsApp guided flow): the user explicitly chose the
+    // deliverable type, so the analyzer's guess never overrides it.
+    const lockedType =
+      (request.structured_brief as Record<string, unknown> | null)?.output_type_locked === true
+        ? ((request.output_type as string | null) ?? null)
+        : null;
+    if (lockedType) {
+      b.output_type = lockedType;
+      b.output_type_locked = true;
+    }
     const emailFromMsgs = (msgs ?? [])
       .map((m: { body: string | null }) => (m.body ? extractEmail(m.body) : null))
       .find(Boolean);
@@ -895,13 +906,17 @@ async function deliverOutput(database: DB, requestId: string): Promise<void> {
     await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
     return;
   }
-  // No email: finish in WhatsApp only and free the slot for the next request.
+  // No email: finish in WhatsApp, free the slot, and offer the next actions
+  // (fix with AI / schedule to social / new deliverable).
   await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
   await logEvent(database, { requestId, action: 'delivered_whatsapp_only' });
   await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-    'זהו, התוצר מוכן ונשלח כאן 🙌 אם תרצה גם עותק במייל — כתוב לי כתובת. לתוצר נוסף פשוט כתוב לי מה צריך.',
-    conversation.simulated);
-  await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
+    buildPostDeliveryMenu(output.output_type === 'image'), conversation.simulated);
+  await database.from('conversations').update({
+    status: 'active', current_request_id: null,
+    flow_state: 'post_delivery', last_delivered_request_id: requestId,
+    selected_output_type: null, flow_context: {},
+  }).eq('id', conversation.id);
 }
 
 async function deliverContentToWhatsApp(
@@ -914,25 +929,14 @@ async function deliverContentToWhatsApp(
   const to = conversation.whatsapp_from;
   const simulated = conversation.simulated;
   const type = output.output_type;
+  // Clean delivery: just the deliverable with a short title. No brand-color
+  // footer — the post-delivery actions message invites changes instead.
   const caption = ((request.structured_brief?.goal as string) || 'התוצר שלך').slice(0, 200);
-
-  // Footer shown UNDER the output: brand colors + dimensions, attributed to the
-  // brand, with an invitation to request changes. Empty when no brand is set.
-  let brandFooter: string | null = null;
-  if (request.brand_id) {
-    const { data: brand } = await database
-      .from('brands')
-      .select('name, color_palette, style_notes, is_active, client_type')
-      .eq('id', request.brand_id)
-      .single();
-    brandFooter = buildBrandDeliveryFooter(brand ?? null, (request.structured_brief ?? {}) as Record<string, unknown>);
-  }
 
   if (type === 'text' || type === 'presentation') {
     const textBody = output.text_content ?? '(לא נוצר תוכן)';
-    const body = brandFooter ? `${textBody}\n\n${brandFooter}` : textBody;
     if (productionForm) return;
-    await sendOut(database, conversation.id, request.id, to, body, simulated);
+    await sendOut(database, conversation.id, request.id, to, textBody, simulated);
     return;
   }
 
@@ -955,9 +959,7 @@ async function deliverContentToWhatsApp(
     }
   }
 
-  // The caption that travels with the media (below the image on WhatsApp) carries
-  // the brand colors+dimensions footer; the bare `caption` stays the title.
-  const mediaCaption = brandFooter ? `${caption}\n\n${brandFooter}` : caption;
+  const mediaCaption = caption;
 
   // For images, text_content holds the ready-to-publish social post written at
   // generation time. Delivered as a follow-up message right after the media so
@@ -1003,6 +1005,10 @@ async function deliverContentToWhatsApp(
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
       body: mediaCaption, media_type: contentType, storage_path: path, twilio_message_sid: sid,
     });
+    // Twilio delivers media slower than plain texts (it must fetch the file),
+    // so texts sent immediately after tend to arrive BEFORE the image. Give the
+    // media a head start so the order on the phone is: file → post text → menu.
+    await new Promise((r) => setTimeout(r, 6000));
   } catch (e) {
     await logEvent(database, { requestId: request.id, severity: 'error', action: 'whatsapp_media_send_failed', message: String(e) });
     await sendOut(database, conversation.id, request.id, to, `${mediaCaption}\n${url}`, false);
@@ -1048,7 +1054,12 @@ export async function sendOutput(requestId: string): Promise<void> {
       await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
       await logEvent(database, { requestId, action: 'email_sent', message: 'simulated (skipped Resend)' });
       await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, true);
-      await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
+      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, buildPostDeliveryMenu(output.output_type === 'image'), true);
+      await database.from('conversations').update({
+        status: 'active', current_request_id: null,
+        flow_state: 'post_delivery', last_delivered_request_id: requestId,
+        selected_output_type: null, flow_context: {},
+      }).eq('id', conversation.id);
       return;
     }
 
@@ -1085,7 +1096,12 @@ export async function sendOutput(requestId: string): Promise<void> {
       return;
     }
     await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, conversation.simulated);
-    await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
+    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, buildPostDeliveryMenu(output.output_type === 'image'), conversation.simulated);
+    await database.from('conversations').update({
+      status: 'active', current_request_id: null,
+      flow_state: 'post_delivery', last_delivered_request_id: requestId,
+      selected_output_type: null, flow_context: {},
+    }).eq('id', conversation.id);
   } catch (e) {
     await logEvent(database, { requestId, severity: 'error', action: 'send_failed', message: String(e) });
     await setStatus(database, requestId, 'needs_attention');

@@ -158,6 +158,73 @@ async function chat(
   };
 }
 
+// Classify what the user wants to do with a just-delivered output, so a free
+// text like "תחליף את הרקע לכחול" routes straight to the right fix flow
+// without menus. Intents depend on the output: image outputs distinguish
+// image_fix vs caption_fix; other outputs use content_fix.
+export async function classifyPostDeliveryIntent(
+  text: string,
+  context: { hasImage: boolean; captionSnippet?: string | null }
+): Promise<{
+  intent: 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'new_request' | 'unclear';
+  confidence: number;
+  reason: string;
+  usage: ChatUsage;
+  model: string;
+}> {
+  const model = textModel();
+  const intents = context.hasImage
+    ? `"image_fix"   — המשתמש רוצה לשנות משהו בתמונה/גרפיקה עצמה (צבע, רקע, טקסט שמופיע בתוך התמונה, פריסה, לוגו, מידות).
+"caption_fix" — המשתמש רוצה לשנות את מלל הפוסט שמלווה את התמונה (ניסוח, אורך, טון, אימוג'ים, האשטגים).
+"schedule"    — המשתמש רוצה לתזמן/לפרסם את התוצר לרשתות (פייסבוק/אינסטגרם).
+"new_request" — המשתמש מבקש תוצר חדש לגמרי (בריף חדש, נושא אחר).
+"unclear"     — אי אפשר לקבוע.`
+    : `"content_fix" — המשתמש רוצה לשנות משהו בתוצר שנמסר (תוכן, ניסוח, מבנה, תוספות).
+"schedule"    — המשתמש רוצה לתזמן/לפרסם את התוצר לרשתות.
+"new_request" — המשתמש מבקש תוצר חדש לגמרי (בריף חדש, נושא אחר).
+"unclear"     — אי אפשר לקבוע.`;
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content: `זה עתה נמסר למשתמש תוצר בוואטסאפ${context.hasImage ? ' (תמונה + טקסט פוסט)' : ''}. סווג את ההודעה הבאה של המשתמש.
+החזר JSON בלבד:
+{
+  "intent": "<אחד מהערכים>",
+  "confidence": 0-1,
+  "reason": "הסבר קצר"
+}
+
+ערכי intent אפשריים:
+${intents}
+
+שים לב: בקשת שינוי מנוסחת לרוב כהוראה ("תחליף", "תוסיף", "תקצר", "שנה"). בריף חדש מתאר תוצר שלם אחר ("תכין לי עכשיו הזמנה ל...").`,
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          user_message: text,
+          current_post_text_snippet: (context.captionSnippet ?? '').slice(0, 300) || null,
+        }),
+      },
+    ],
+    { json: true, temperature: 0, model }
+  );
+  const allowed = context.hasImage
+    ? ['image_fix', 'caption_fix', 'schedule', 'new_request', 'unclear']
+    : ['content_fix', 'schedule', 'new_request', 'unclear'];
+  try {
+    const parsed = JSON.parse(content) as { intent?: unknown; confidence?: unknown; reason?: unknown };
+    const intent = allowed.includes(String(parsed.intent))
+      ? (String(parsed.intent) as 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'new_request' | 'unclear')
+      : 'unclear';
+    const confidence = typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0;
+    return { intent, confidence, reason: typeof parsed.reason === 'string' ? parsed.reason : '', usage, model };
+  } catch {
+    return { intent: 'unclear', confidence: 0, reason: 'invalid_json_response', usage, model };
+  }
+}
+
 export async function classifyResetIntent(
   text: string,
   context: { lastAssistantMessage?: string | null } = {}

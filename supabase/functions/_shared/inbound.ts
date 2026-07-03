@@ -6,6 +6,11 @@
 // Channel differences are isolated to two inputs: `simulated` (routes outbound
 // through sendOut's sim path instead of Twilio) and `resolveMedia` (the webhook
 // downloads from Twilio; the simulator already has extracted text inline).
+//
+// Flow layer (guided menu): the sender is identified by phone → site profile
+// (unknown numbers are sent to sign up), and a bot-style state machine drives
+// main menu → brief → post-delivery actions. Free-flow (the legacy analyzer
+// path) still handles anything the menus don't claim.
 import { type DB } from './db.ts';
 import { sendOut, sendOutput } from './worker.ts';
 import {
@@ -18,14 +23,16 @@ import {
   estimateTextCost,
 } from './util.ts';
 import { classifyResetIntent } from './openai.ts';
+import {
+  resolveIdentity,
+  handleFlowMessage,
+  showMainMenu,
+  buildSignupMessage,
+  type FlowConversation,
+  type SendFn,
+} from './flow.ts';
 
-type Conversation = {
-  id: string;
-  whatsapp_from: string;
-  simulated: boolean;
-  status: string;
-  current_request_id: string | null;
-};
+type Conversation = FlowConversation;
 
 export type MediaResult = {
   effectiveBody: string;
@@ -47,6 +54,14 @@ export type InboundOpts = {
   // the inbound row is claimed. The webhook downloads Twilio media here; the
   // simulator returns the body as-is (its file text is already folded in).
   resolveMedia: (requestId: string) => Promise<MediaResult>;
+};
+
+export type InboundResult = {
+  requestIdToProcess: string | null;
+  // Long-running flow action (AI image edit, caption rewrite). The webhook runs
+  // it via EdgeRuntime.waitUntil so Twilio gets its fast 200; the simulator
+  // awaits it inline.
+  background?: (() => Promise<void>) | null;
 };
 
 // Find the live conversation for a sender, or open a new one. Closed
@@ -76,7 +91,7 @@ export async function findOrCreateConversation(
 async function resetConversation(
   database: DB,
   opts: { conversation: Conversation; body: string; messageSid: string; from: string; phone: string; templates: Record<string, string>; reason: 'deterministic' | 'semantic'; simulated: boolean; metadata?: Record<string, unknown> }
-): Promise<void> {
+): Promise<boolean> {
   const { conversation, body, messageSid, from, phone, templates, reason, simulated, metadata } = opts;
   if (conversation.current_request_id) {
     await database.from('requests')
@@ -87,30 +102,64 @@ async function resetConversation(
   const { error: resetClaim } = await database.from('messages').insert({
     conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
   });
-  if (resetClaim) return;
+  if (resetClaim) return false;
   await database.from('conversations').update({
     current_request_id: null, status: 'active', last_message_at: new Date().toISOString(), timeout_warned_at: null,
+    flow_state: null, flow_context: {}, selected_output_type: null,
   }).eq('id', conversation.id);
   await logEvent(database, { action: 'conversation_reset', metadata: { phone, reason, ...(metadata ?? {}) } });
   await sendOut(database, conversation.id, null, from, templates.reset, simulated);
+  return true;
 }
 
 // Returns the requestId that should be processed by the caller, or null when
-// the message was fully handled here (reset / greeting / email-followup) and no
-// generation pipeline run is needed.
+// the message was fully handled here (menu step / reset / greeting / email-
+// followup) and no generation pipeline run is needed.
 export async function handleInbound(
   database: DB,
   opts: InboundOpts
-): Promise<{ requestIdToProcess: string | null }> {
+): Promise<InboundResult> {
   const { conversation, from, phone, body, messageSid, numMedia, templates, simulated, resolveMedia } = opts;
 
-  // ── "start over" command ─────────────────────────────────────────────────
-  if (isResetCommand(body)) {
-    await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated });
+  // Flow messages are conversation-level (no request yet).
+  const send: SendFn = (text) => sendOut(database, conversation.id, null, from, text, simulated);
+
+  // ── who is this? phone → site profile (+ their single brand) ─────────────
+  const identity = await resolveIdentity(database, conversation, phone, simulated);
+
+  // ── unknown number → invite to sign up, nothing else runs ────────────────
+  if (!identity.known) {
+    const { error: claimErr } = await database.from('messages').insert({
+      conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
+    });
+    if (claimErr) return { requestIdToProcess: null };
+    await database.from('conversations').update({
+      last_message_at: new Date().toISOString(), timeout_warned_at: null,
+    }).eq('id', conversation.id);
+    await logEvent(database, { action: 'whatsapp_unknown_number', metadata: { phone } });
+    await send(await buildSignupMessage(database));
     return { requestIdToProcess: null };
   }
 
-  // ── bare greeting / opener ───────────────────────────────────────────────
+  // ── "start over" command → clear flow + fresh main menu ──────────────────
+  if (isResetCommand(body)) {
+    const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated });
+    if (didReset) await showMainMenu(database, conversation, identity, send);
+    return { requestIdToProcess: null };
+  }
+
+  // ── guided-menu state machine ─────────────────────────────────────────────
+  const flow = await handleFlowMessage(database, {
+    conversation, identity, body, messageSid, numMedia, send,
+  });
+  if (flow.kind === 'handled') {
+    return { requestIdToProcess: null, background: flow.background ?? null };
+  }
+  if (flow.kind === 'new_request' || flow.kind === 'revision_request') {
+    return await createFlowRequest(database, opts, identity.userId, identity.brandId, flow);
+  }
+
+  // ── bare greeting / opener → personalized main menu ──────────────────────
   // Fires when there's no open request, or the open request has no substantive
   // (non-greeting) content yet — so repeated greetings can't loop the analyzer.
   let greetingNoContext = !conversation.current_request_id;
@@ -133,7 +182,7 @@ export async function handleInbound(
       status: 'active', last_message_at: new Date().toISOString(), timeout_warned_at: null,
     }).eq('id', conversation.id);
     await logEvent(database, { action: 'greeting_welcomed', metadata: { phone } });
-    await sendOut(database, conversation.id, null, from, templates.welcome, simulated);
+    await showMainMenu(database, conversation, identity, send);
     return { requestIdToProcess: null };
   }
 
@@ -159,10 +208,11 @@ export async function handleInbound(
         metadata: { reset: intent.reset, confidence: intent.confidence, reason: intent.reason },
       });
       if (intent.reset && intent.confidence >= 0.8) {
-        await resetConversation(database, {
+        const didReset = await resetConversation(database, {
           conversation, body, messageSid, from, phone, templates, reason: 'semantic', simulated,
           metadata: { confidence: intent.confidence, classifier_reason: intent.reason },
         });
+        if (didReset) await showMainMenu(database, conversation, identity, send);
         return { requestIdToProcess: null };
       }
     } catch (e) {
@@ -202,11 +252,16 @@ export async function handleInbound(
     }
   }
 
-  // ── active request or new one ─────────────────────────────────────────────
+  // ── active request or new one (legacy free flow) ──────────────────────────
   let requestId = conversation.current_request_id;
   let isNewRequest = false;
   if (!requestId) {
-    const { data: newReq } = await database.from('requests').insert({ conversation_id: conversation.id, status: 'received' }).select().single();
+    const { data: newReq } = await database.from('requests').insert({
+      conversation_id: conversation.id,
+      status: 'received',
+      created_by: identity.userId,
+      brand_id: identity.brandId,
+    }).select().single();
     requestId = newReq!.id as string;
     isNewRequest = true;
     await database.from('conversations').update({ current_request_id: requestId, status: 'active' }).eq('id', conversation.id);
@@ -245,6 +300,93 @@ export async function handleInbound(
     last_message_at: new Date().toISOString(), timeout_warned_at: null,
   }).eq('id', conversation.id);
   await database.from('jobs').insert({ request_id: requestId, job_type: 'process-request', status: 'pending' });
+
+  return { requestIdToProcess: requestId };
+}
+
+// Create a request coming out of the guided flow: either a fresh brief with a
+// locked output type (main menu → brief), or a ready revision of the last
+// deliverable. Both then run through the normal processing pipeline.
+async function createFlowRequest(
+  database: DB,
+  opts: InboundOpts,
+  userId: string | null,
+  brandId: string | null,
+  flow:
+    | { kind: 'new_request'; outputType: string }
+    | { kind: 'revision_request'; outputType: string; brief: Record<string, unknown> }
+): Promise<InboundResult> {
+  const { conversation, from, body, messageSid, numMedia, templates, simulated, resolveMedia } = opts;
+
+  const isRevision = flow.kind === 'revision_request';
+  let requestBrandId = brandId;
+  if (isRevision) {
+    // A revision keeps the source request's brand (may differ from the user's).
+    const parentId = (flow.brief.parent_request_id as string | undefined) ?? null;
+    if (parentId) {
+      const { data: parent } = await database.from('requests').select('brand_id').eq('id', parentId).maybeSingle();
+      requestBrandId = (parent?.brand_id as string | null) ?? brandId;
+    }
+  }
+
+  const { data: newReq, error: reqErr } = await database.from('requests').insert({
+    conversation_id: conversation.id,
+    status: isRevision ? 'queued' : 'received',
+    output_type: flow.outputType,
+    created_by: userId,
+    brand_id: requestBrandId,
+    structured_brief: isRevision
+      ? flow.brief
+      : { output_type: flow.outputType, output_type_locked: true, source: 'whatsapp_menu' },
+  }).select('id').single();
+  if (reqErr || !newReq) {
+    await logEvent(database, { severity: 'error', action: 'flow_request_create_failed', message: String(reqErr) });
+    return { requestIdToProcess: null };
+  }
+  const requestId = newReq.id as string;
+
+  // Claim the message onto the new request (idempotency vs Twilio retries).
+  const { error: claimErr } = await database.from('messages').insert({
+    conversation_id: conversation.id, request_id: requestId, direction: 'inbound', body, twilio_message_sid: messageSid,
+  });
+  if (claimErr) {
+    // Duplicate delivery — drop the request we just opened.
+    await database.from('requests').delete().eq('id', requestId);
+    await logEvent(database, { requestId, action: 'duplicate_message_ignored', metadata: { messageSid } });
+    return { requestIdToProcess: null };
+  }
+
+  await database.from('conversations').update({
+    current_request_id: requestId,
+    status: 'active',
+    flow_state: null,
+    selected_output_type: null,
+    flow_context: {},
+    last_message_at: new Date().toISOString(),
+    timeout_warned_at: null,
+  }).eq('id', conversation.id);
+
+  await sendOut(
+    database, conversation.id, requestId, from,
+    isRevision ? 'קיבלתי ✏️ מכין גרסה מתוקנת, זה ייקח רגע.' : templates.received,
+    simulated
+  );
+
+  // Attachments (brief materials) — same handling as the legacy path.
+  const media = await resolveMedia(requestId);
+  if (media.anyRejected) {
+    await sendOut(database, conversation.id, requestId, from, templates.rejected_media, simulated);
+  }
+  await database.from('messages').update({
+    body: media.effectiveBody, media_type: media.firstMediaType, storage_path: media.firstStoragePath,
+  }).eq('twilio_message_sid', messageSid);
+  await database.from('jobs').insert({ request_id: requestId, job_type: 'process-request', status: 'pending' });
+
+  await logEvent(database, {
+    requestId,
+    action: isRevision ? 'whatsapp_revision_started' : 'whatsapp_menu_brief_received',
+    metadata: { output_type: flow.outputType, user_id: userId, num_media: numMedia },
+  });
 
   return { requestIdToProcess: requestId };
 }

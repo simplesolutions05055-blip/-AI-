@@ -547,6 +547,13 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       setError('יש למלא שם מלא ולבחור לשון פנייה.');
       return;
     }
+    // Phone is required — it identifies the user in the WhatsApp bot.
+    const phoneDigits = phone.replace(/\D+/g, '');
+    const normalizedPhone = phoneDigits.startsWith('972') ? `0${phoneDigits.slice(3)}` : phoneDigits;
+    if (!/^05\d{8}$/.test(normalizedPhone)) {
+      setError('יש להזין מספר נייד ישראלי תקין (למשל 050-0000000) — הוא משמש לזיהוי בבוט הוואטסאפ.');
+      return;
+    }
     if (!userId) return;
     setSaving(true);
     try {
@@ -566,7 +573,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
         .from('profiles')
         .update({
           full_name: fullName.trim(),
-          phone: phone.trim() || null,
+          phone: normalizedPhone,
           job_title: jobTitle.trim() || null,
           gender,
           ...(avatar_path ? { avatar_path } : {}),
@@ -750,6 +757,26 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
     }
   }
 
+  async function syncContentSources() {
+    if (!brand.id || (!contentLoaded && brandMode === 'existing')) return;
+    const { data, error: fnErr } = await supabase.functions.invoke('onboarding-brand', {
+      body: {
+        action: 'save',
+        save_mode: brandMode,
+        ...brand,
+        brand_id: brandMode === 'existing' ? brand.id : undefined,
+        name: brand.name.trim(),
+        content_sources: contentSources.map((source) => ({
+          id: source.id ?? null,
+          title: source.title,
+          content: source.content,
+        })),
+      },
+    });
+    const payload = data as { error?: string; brand?: Partial<BrandDetails> & { logo_url?: string | null } } | null;
+    if (fnErr || payload?.error || !payload?.brand) throw new Error(payload?.error ?? 'failed');
+  }
+
   async function uploadFiles(kind: 'document' | 'asset', files: FileList | null) {
     if (!files || files.length === 0) return;
     const setList = kind === 'document' ? setDocs : setAssets;
@@ -845,10 +872,15 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
   async function finish() {
     if (!userId) return;
     setSaving(true);
+    setError(null);
     try {
+      if (embedded) await syncContentSources();
       progress.current = { ...progress.current, hard_completed_at: new Date().toISOString() };
       await supabase.from('profiles').update({ onboarding: progress.current } as never).eq('id', userId);
-      navigate(embedded ? '/admin/user-settings' : '/admin', { replace: true });
+      navigate(embedded ? '/admin/production' : '/admin', { replace: true });
+    } catch (e) {
+      console.error(e);
+      setError('השמירה נכשלה. נסו שוב.');
     } finally {
       setSaving(false);
     }
@@ -863,6 +895,8 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       : step === 'docs'
         ? !requireUploads || docsUploaded
         : !requireUploads || assetsUploaded;
+  const detailsSubmitLabel = embedded ? 'שמירה' : steps.length > 1 ? 'המשך' : 'סיום וכניסה';
+  const uploadSubmitLabel = embedded ? 'שמירה' : stepIndex < steps.length - 1 ? 'המשך' : 'סיום וכניסה';
 
   if (loading) {
     return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]"><Spinner /></main>;
@@ -963,16 +997,21 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                 <Field label="שם מלא">
                   <input className={inputCls} value={fullName} onChange={(e) => setFullName(e.target.value)} />
                 </Field>
-                <Field label="טלפון (אופציונלי)">
+                <div className="mb-4">
+                  <span className="mb-1 block text-sm font-medium">טלפון נייד</span>
+                  <p className="mb-2 text-xs text-[var(--muted)]">
+                    המספר משמש לזיהוי שלכם בבוט הוואטסאפ — כתבו מהמספר הזה ונדע מיד מי אתם ולאיזה מותג אתם שייכים.
+                  </p>
                   <input
                     className={inputCls}
                     type="tel"
                     dir="ltr"
                     style={{ textAlign: 'right' }}
+                    placeholder="050-0000000"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                   />
-                </Field>
+                </div>
                 <Field label="תפקיד / עיסוק (אופציונלי)">
                   <input className={inputCls} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
                 </Field>
@@ -992,7 +1031,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   disabled={saving}
                   className="mt-2 w-full rounded-lg bg-brand py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
                 >
-                  {saving ? 'שומר...' : steps.length > 1 ? 'המשך' : 'סיום וכניסה'}
+                  {saving ? 'שומר...' : detailsSubmitLabel}
                 </button>
               </section>
             )}
@@ -1383,7 +1422,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   חזרה
                 </button>
                 <div className="flex items-center gap-3">
-                  {!requireUploads && (
+                  {!embedded && !requireUploads && (
                     <button onClick={leaveOptionalUploadStep} className="text-sm font-medium text-[var(--muted)] hover:underline">
                       דלג
                     </button>
@@ -1393,7 +1432,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                     disabled={!canLeaveStep || saving}
                     className="rounded-lg bg-brand px-5 py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
                   >
-                    {stepIndex < steps.length - 1 ? 'המשך' : 'סיום וכניסה'}
+                    {saving ? 'שומר...' : uploadSubmitLabel}
                   </button>
                 </div>
               </div>

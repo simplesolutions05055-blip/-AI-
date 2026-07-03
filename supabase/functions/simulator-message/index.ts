@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     const messageSid = `sim-in-${crypto.randomUUID()}`;
     const turnStart = new Date().toISOString();
 
-    const { requestIdToProcess } = await handleInbound(database, {
+    const { requestIdToProcess, background } = await handleInbound(database, {
       conversation, from, phone: from, body: text, messageSid,
       numMedia: uploaded.length, templates, simulated: true,
       resolveMedia: async (requestId) => {
@@ -84,6 +84,10 @@ Deno.serve(async (req) => {
         return { effectiveBody, firstStoragePath, firstMediaType, anyRejected };
       },
     });
+
+    // Long flow action (AI image edit / caption rewrite) — the simulator waits
+    // inline so its HTTP response already carries the result messages.
+    if (background) await background();
 
     // Run the SAME pipeline WhatsApp runs — synchronously, so the HTTP response
     // already carries every outbound message produced this turn. Match Twilio's
