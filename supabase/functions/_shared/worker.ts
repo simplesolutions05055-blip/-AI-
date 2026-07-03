@@ -455,7 +455,21 @@ export async function processRequest(
       if (IN_FLIGHT.includes(status) || status === 'waiting_for_approval') {
         const conv = cur!.conversations as unknown as Conv;
         const tpls = await getTemplates(database);
-        await sendOut(database, conv.id, requestId, conv.whatsapp_from, tpls.in_progress, conv.simulated);
+        // Message economy: a burst of messages during generation must not
+        // produce a stack of identical "כבר בטיפול" acks — one per 3 minutes.
+        const threeMinAgo = new Date(Date.now() - 3 * 60_000).toISOString();
+        const { data: recentAck } = await database
+          .from('messages')
+          .select('id')
+          .eq('conversation_id', conv.id)
+          .eq('direction', 'outbound')
+          .eq('body', tpls.in_progress)
+          .gte('created_at', threeMinAgo)
+          .limit(1)
+          .maybeSingle();
+        if (!recentAck) {
+          await sendOut(database, conv.id, requestId, conv.whatsapp_from, tpls.in_progress, conv.simulated);
+        }
       }
       return;
     }
@@ -549,6 +563,7 @@ async function runRequestPipeline(
         await sendOut(database, conversation.id, requestId, waFrom,
           'התוצר עבר כמה סבבי תיקון. הבקשה הועברה לבדיקת מנהל כדי לוודא שאנחנו פותרים את השורש.',
           conversation.simulated);
+        await releaseConversationSlot(database, conversation.id);
         return;
       }
 
@@ -688,6 +703,7 @@ async function runRequestPipeline(
     if (effectiveNextQuestion && roundsRemaining <= 0 && b.ready !== true) {
       await setStatus(database, requestId, 'needs_attention');
       await sendOut(database, conversation.id, requestId, waFrom, templates.needs_attention, conversation.simulated);
+      await releaseConversationSlot(database, conversation.id);
       return;
     }
     await logEvent(database, { requestId, action: 'brief_ready_fast_flow' });
@@ -734,6 +750,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     });
     await setStatus(database, requestId, 'needs_attention');
     await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.needs_attention, conversation.simulated);
+    await releaseConversationSlot(database, conversation.id);
     return;
   }
 
@@ -803,6 +820,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
             message: 'Image generation skipped because WhatsApp could not deliver the preflight message.',
           });
           await setStatus(database, requestId, 'needs_attention');
+          await releaseConversationSlot(database, conversation.id);
           return;
         }
       }
@@ -889,6 +907,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       if (version >= maxAttempts) {
         await setStatus(database, requestId, 'needs_attention');
         await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.needs_attention, conversation.simulated);
+        await releaseConversationSlot(database, conversation.id);
         return;
       }
       return generateAndQa(database, requestId);
@@ -906,7 +925,26 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     await setStatus(database, requestId, 'failed', {
       structured_brief: { ...brief, last_error: String(e) },
     });
+    // Never leave the user hanging on a dead request: tell them, and free the
+    // conversation slot so their next message starts fresh instead of hitting
+    // the SETTLED guard's silence.
+    if (!productionForm) {
+      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
+        'משהו השתבש ביצירת התוצר 😕 נסו לשלוח את הבקשה שוב בעוד רגע, או כתבו "תפריט" להתחלה חדשה.',
+        conversation.simulated);
+    }
+    await releaseConversationSlot(database, conversation.id);
   }
+}
+
+// Free the conversation for the next request after a request dies
+// (failed / needs_attention). The request row stays for the admin; only the
+// chat routing pointer is cleared so the user is never stuck talking to a
+// settled request (which the processRequest guard ignores silently).
+async function releaseConversationSlot(database: DB, conversationId: string): Promise<void> {
+  await database.from('conversations').update({
+    current_request_id: null, status: 'active',
+  }).eq('id', conversationId);
 }
 
 // Deliver the generated output to the user IN WhatsApp (simulator parity):

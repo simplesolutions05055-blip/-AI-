@@ -912,7 +912,6 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await send('פרסום באינסטגרם דורש תמונה, והתוצר הזה הוא טקסט בלבד. אפשר לבחור פייסבוק (1).');
         return { kind: 'handled' };
       }
-      const requestId = conversation.last_delivered_request_id;
       const schedulePrompt = await buildScheduleDateTimePrompt(database, requestId);
       const delivered = await send(schedulePrompt.prompt);
       if (delivered) {
