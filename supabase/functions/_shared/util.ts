@@ -38,9 +38,9 @@ export const DEFAULT_TEMPLATES: Record<string, string> = {
   rejected_media: 'אפשר לשלוח טקסט, תמונה (PNG/JPG), PDF או DOCX בלבד — עד 10MB.',
   blocked: 'לא ניתן לטפל בבקשה זו.',
   in_progress: 'הבקשה שלך כבר בטיפול אצלנו ⏳ נעדכן אותך ברגע שהתוצר מוכן.',
-  timeout_warning: 'עוד 10 דקות נסגור את הבקשה הנוכחית. רוצה להמשיך? פשוט כתוב לי הודעה 🙂',
-  closed_idle: 'סגרנו את הבקשה הקודמת מאחר שלא התקבלה תשובה. אפשר לפתוח בקשה חדשה בכל רגע.',
-  reset: 'התחלנו מחדש ✅ ספר לי מה תרצה שניצור עבורך.',
+  timeout_warning: 'נראה שעצרנו כאן. שמרתי את מה שעשינו עד עכשיו. כשתרצה להמשיך, פשוט שלח הודעה.',
+  closed_idle: 'נראה שעצרנו כאן. שמרתי את מה שעשינו עד עכשיו. כשתרצה להמשיך, פשוט שלח הודעה.',
+  reset: 'בטח. שמרתי את התוצר הקודם ופתחתי תוצר חדש. מה ניצור עכשיו?',
   welcome: 'היי! 👋 אני סוכן ה-AI שמכין עבורך תכנים — טקסטים, תמונות, מצגות ומסמכים. מה תרצה שניצור?',
 };
 
@@ -51,7 +51,16 @@ const RESET_PHRASES = [
   'שיחה חדשה', 'בקשה חדשה', 'התחל מחדש', 'להתחיל מחדש', 'נתחיל מחדש',
   'מתחילים מחדש', 'התחלה מחדש', 'מההתחלה', 'נתחיל מההתחלה',
   'בוא נתחיל מההתחלה', 'תתחיל מההתחלה', 'תתחיל מחדש', 'אתחול', 'איפוס',
+  'תוצר חדש', 'תוצר אחר', 'משהו אחר', 'פוסט אחר', 'מודעה אחרת',
+  'עזוב אני רוצה משהו אחר', 'בוא נעשה משהו אחר',
   'reset', 'restart', 'start over', 'new conversation', 'new request',
+  'new artifact',
+];
+
+const CONTINUE_PHRASES = [
+  'להמשיך', 'נמשיך', 'תמשיך', 'המשך', 'ממשיכים', 'אפשר להמשיך',
+  'מאיפה שעצרנו', 'איפה שעצרנו', 'להמשיך מאיפה שעצרנו', 'אני פה',
+  'חזרתי', 'כן להמשיך', 'continue', 'resume',
 ];
 
 // ~1 allowed typo per 5 chars, capped at 2.
@@ -90,6 +99,12 @@ export function isGreetingOnly(text: string): boolean {
   const words = t.split(' ').filter(Boolean);
   if (!words.length) return false;
   return words.every((w) => GREETING_WORDS.has(w));
+}
+
+export function isContinueCommand(text: string): boolean {
+  const t = (text || '').replace(/[",'׳״.\-?!;:()@#]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!t || t.length > 80) return false;
+  return CONTINUE_PHRASES.some((phrase) => t.includes(phrase));
 }
 
 export function isResetCommand(text: string): boolean {

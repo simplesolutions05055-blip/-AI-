@@ -84,6 +84,7 @@ const SIMULATOR_STORAGE_KEY = 'admin-simulator-conversations';
 const STATUS_LABEL: Record<ConversationStatus, string> = {
   active: 'פעילה',
   waiting_for_user: 'ממתינה למשתמש',
+  soft_closed: 'נשמרה להמשך',
   closed: 'סגורה',
 };
 

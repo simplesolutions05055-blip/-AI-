@@ -1,4 +1,4 @@
-export type ConversationStatus = 'active' | 'waiting_for_user' | 'closed';
+export type ConversationStatus = 'active' | 'waiting_for_user' | 'soft_closed' | 'closed';
 
 export type RequestStatus =
   | 'received'
@@ -55,6 +55,11 @@ export interface WhatsappTemplates {
   needs_attention: string;
   rejected_media: string;
   blocked: string;
+  in_progress?: string;
+  timeout_warning?: string;
+  closed_idle?: string;
+  reset?: string;
+  welcome?: string;
 }
 
 export interface EmailSettings {

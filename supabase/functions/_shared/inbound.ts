@@ -16,6 +16,7 @@ import { sendOut, sendOutput } from './worker.ts';
 import {
   logEvent,
   isResetCommand,
+  isContinueCommand,
   isGreetingOnly,
   extractEmail,
   isValidEmail,
@@ -64,8 +65,9 @@ export type InboundResult = {
   background?: (() => Promise<void>) | null;
 };
 
-// Find the live conversation for a sender, or open a new one. Closed
-// conversations are left alone so a new message starts fresh.
+// Find the live conversation for a sender, or open a new one. Soft-closed
+// conversations are still reusable: the next user message can continue or
+// explicitly start a new artifact. Hard-closed conversations start fresh.
 export async function findOrCreateConversation(
   database: DB,
   from: string,
@@ -75,7 +77,7 @@ export async function findOrCreateConversation(
     .from('conversations')
     .select('*')
     .eq('whatsapp_from', from)
-    .in('status', ['active', 'waiting_for_user'])
+    .in('status', ['active', 'waiting_for_user', 'soft_closed'])
     .order('last_message_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -86,6 +88,73 @@ export async function findOrCreateConversation(
     .select()
     .single();
   return (created as Conversation) ?? null;
+}
+
+async function askContinueOrNew(
+  database: DB,
+  conversation: Conversation,
+  opts: { body: string; messageSid: string; from: string; simulated: boolean }
+): Promise<boolean> {
+  const { body, messageSid, from, simulated } = opts;
+  const { error: claimErr } = await database.from('messages').insert({
+    conversation_id: conversation.id,
+    request_id: conversation.current_request_id ?? null,
+    direction: 'inbound',
+    body,
+    twilio_message_sid: messageSid,
+  });
+  if (claimErr) return false;
+  await database.from('conversations').update({
+    status: 'waiting_for_user',
+    last_message_at: new Date().toISOString(),
+    timeout_warned_at: null,
+    flow_context: { ...((conversation.flow_context ?? {}) as Record<string, unknown>), resume_choice_pending: true },
+  }).eq('id', conversation.id);
+  await sendOut(
+    database,
+    conversation.id,
+    conversation.current_request_id ?? null,
+    from,
+    [
+      'אפשר להמשיך מאיפה שעצרנו, או להתחיל תוצר חדש.',
+      '',
+      '1️⃣ להמשיך',
+      '2️⃣ תוצר חדש',
+    ].join('\n'),
+    simulated
+  );
+  return true;
+}
+
+async function resumeSoftClosedConversation(
+  database: DB,
+  conversation: Conversation,
+  opts: { body: string; messageSid: string; from: string; simulated: boolean }
+): Promise<boolean> {
+  const { body, messageSid, from, simulated } = opts;
+  const { error: claimErr } = await database.from('messages').insert({
+    conversation_id: conversation.id,
+    request_id: conversation.current_request_id ?? null,
+    direction: 'inbound',
+    body,
+    twilio_message_sid: messageSid,
+  });
+  if (claimErr) return false;
+  await database.from('conversations').update({
+    status: 'active',
+    last_message_at: new Date().toISOString(),
+    timeout_warned_at: null,
+    flow_context: { ...((conversation.flow_context ?? {}) as Record<string, unknown>), resume_choice_pending: false },
+  }).eq('id', conversation.id);
+  await sendOut(
+    database,
+    conversation.id,
+    conversation.current_request_id ?? null,
+    from,
+    'ממשיכים מאיפה שעצרנו. כתוב לי מה תרצה לשנות או להוסיף.',
+    simulated
+  );
+  return true;
 }
 
 async function resetConversation(
@@ -146,8 +215,39 @@ export async function handleInbound(
     return { requestIdToProcess: null };
   }
 
-  // ── "start over" command → clear flow + fresh main menu ──────────────────
+  // ── "start over / new artifact" command → archive current work + menu ────
   if (isResetCommand(body)) {
+    const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated });
+    if (didReset) await showMainMenu(database, conversation, identity, send);
+    return { requestIdToProcess: null };
+  }
+
+  // ── soft-closed return: ask whether to continue or start a new artifact ───
+  if (conversation.status === 'soft_closed') {
+    if (isContinueCommand(body) || /^(1|1\.|כן|כן להמשיך)$/i.test(body.trim())) {
+      await resumeSoftClosedConversation(database, conversation, { body, messageSid, from, simulated });
+      return { requestIdToProcess: null };
+    }
+    if (/^(2|2\.)$/.test(body.trim())) {
+      const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated });
+      if (didReset) await showMainMenu(database, conversation, identity, send);
+      return { requestIdToProcess: null };
+    }
+    await askContinueOrNew(database, conversation, { body, messageSid, from, simulated });
+    return { requestIdToProcess: null };
+  }
+
+  // If the previous turn asked "continue or new", honor the numeric choice.
+  const resumeChoicePending = ((conversation.flow_context ?? {}) as Record<string, unknown>).resume_choice_pending === true;
+  if (
+    resumeChoicePending &&
+    conversation.status === 'waiting_for_user' &&
+    (isContinueCommand(body) || /^(1|1\.|כן|כן להמשיך)$/i.test(body.trim()))
+  ) {
+    await resumeSoftClosedConversation(database, conversation, { body, messageSid, from, simulated });
+    return { requestIdToProcess: null };
+  }
+  if (resumeChoicePending && conversation.status === 'waiting_for_user' && /^(2|2\.)$/.test(body.trim())) {
     const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated });
     if (didReset) await showMainMenu(database, conversation, identity, send);
     return { requestIdToProcess: null };
