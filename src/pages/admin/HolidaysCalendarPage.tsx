@@ -1,5 +1,6 @@
+import { useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Lightbulb, X } from 'lucide-react';
 import { Spinner } from '@/components/ui/Spinner';
 import SocialScheduleSection, {
   MediaEditor,
@@ -104,7 +105,13 @@ function datetimeLocalFromIso(value: string) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
+function hebrewDateLabel(date: string) {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(year, month - 1, day));
+}
+
 export default function HolidaysCalendarPage() {
+  const navigate = useNavigate();
   const { profile } = useProfile();
   const [visibleMonth, setVisibleMonth] = useState(() => {
     const today = new Date();
@@ -461,6 +468,39 @@ export default function HolidaysCalendarPage() {
     setScheduleRefreshKey((value) => value + 1);
   }
 
+  function buildProductionIdeaPrompt(date: string, holidaysForDay: IsraelHoliday[], postsForDay: ScheduledSocialPost[]) {
+    const lines = [`צרו רעיון לתוכן עבור התאריך ${hebrewDateLabel(date)}.`];
+
+    if (holidaysForDay.length > 0) {
+      lines.push(`אירועים וחגים ביום הזה: ${holidaysForDay.map((holiday) => holiday.hebrew_title || holiday.title).join(', ')}.`);
+    }
+    if (postsForDay.length > 0) {
+      lines.push('תזמונים קיימים ביום הזה:');
+      postsForDay.forEach((post, index) => {
+        const platform = post.platform === 'facebook' ? 'פייסבוק' : 'אינסטגרם';
+        lines.push(
+          `${index + 1}. ${scheduleDisplayTitle(post)} (${platform}, ${scheduleLabel(post)})`,
+          `תוכן התזמון: ${post.caption}`,
+        );
+      });
+    }
+
+    lines.push(
+      'הציעו כיוון ברור לתוצר שאפשר להפיק עכשיו: פוסט, תמונה/גרפיקה, מסמך או מצגת.',
+      'כתבו בשפה עברית עסקית, קצרה וברורה, עם רעיון מרכזי, קהל יעד, מסר מוביל וקריאה לפעולה.',
+    );
+
+    return lines.join('\n');
+  }
+
+  function goToProductionIdea(date: string, holidaysForDay: IsraelHoliday[], postsForDay: ScheduledSocialPost[]) {
+    navigate('/admin/production', {
+      state: {
+        freeText: buildProductionIdeaPrompt(date, holidaysForDay, postsForDay),
+      },
+    });
+  }
+
   function renderCalendarDay(date: string | null, compact = false) {
     if (!date) return <div key={crypto.randomUUID()} className={`${compact ? 'min-h-28' : 'min-h-[104px]'} bg-[#f9fafb]`} />;
     const day = Number(date.slice(8, 10));
@@ -481,12 +521,20 @@ export default function HolidaysCalendarPage() {
       })) : []),
     ];
     const visibleEvents = events.slice(0, compact ? 5 : 3);
+    const hasEvents = events.length > 0;
 
     return (
-      <button
+      <div
         key={date}
-        type="button"
         onClick={() => setSelectedDate(date)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setSelectedDate(date);
+          }
+        }}
         className={`flex ${compact ? 'min-h-28' : 'min-h-[104px]'} flex-col justify-start bg-white p-2 text-start transition hover:bg-[#f8faff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30`}
       >
         <div className="mb-1 flex w-full justify-start">
@@ -504,7 +552,20 @@ export default function HolidaysCalendarPage() {
             <div className="text-[11px] font-semibold text-[var(--muted)]">+{events.length - visibleEvents.length}</div>
           )}
         </div>
-      </button>
+        {hasEvents && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              goToProductionIdea(date, dayHolidays, dayPosts);
+            }}
+            className="mt-auto inline-flex min-h-7 w-full items-center justify-center gap-1 rounded-md border border-[#bfdbfe] bg-white/80 px-2 py-1 text-[11px] font-bold text-[#1d4ed8] transition hover:bg-[#eff6ff]"
+          >
+            <Lightbulb className="h-3.5 w-3.5" />
+            קבלו רעיון
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -697,6 +758,13 @@ export default function HolidaysCalendarPage() {
                       <p className="mt-2 line-clamp-3 text-sm opacity-85">{post.caption}</p>
                     </button>
                     <div className="mt-3 flex flex-wrap justify-start gap-2">
+                      <button
+                        type="button"
+                        onClick={() => goToProductionIdea(post.scheduled_at ? dateKeyFromIso(post.scheduled_at) : selectedDate, [], [post])}
+                        className="min-h-10 rounded-lg border border-[#bfdbfe] bg-white px-3 py-2 text-sm font-semibold text-[#1d4ed8] hover:bg-[#eff6ff]"
+                      >
+                        קבלו רעיון
+                      </button>
                       <button
                         type="button"
                         onClick={() => openEditSchedule(post)}

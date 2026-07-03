@@ -1,10 +1,12 @@
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
+  CalendarDays as CalendarDaysIcon,
   Check as CheckIcon,
   File as FileIcon,
   FileText as FileTextIcon,
   Image as ImageIcon,
+  Lightbulb as LightbulbIcon,
   Presentation as PresentationIcon,
   ReceiptText as ReceiptTextIcon,
   Upload as UploadIcon,
@@ -30,7 +32,7 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import { Spinner } from '@/components/ui/Spinner';
 import type { DeckImage } from '@/lib/deck';
 import { fetchQuote, renderQuoteToPdf, downloadBlob as downloadQuoteBlob, themeFromQuoteBrand, attachBrandToQuote, tint, type Quote } from '@/lib/quote';
-import type { OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
+import type { IsraelHoliday, OutputType, QaResult, RequestStatus, StructuredBrief } from '@/types/db';
 
 type ProductionType = OutputType;
 type Step = 'form' | 'brief' | 'generating' | 'result';
@@ -91,6 +93,8 @@ interface RecentOutputPreviewRow {
   request_source?: string | null;
 }
 
+type UpcomingEvent = Pick<IsraelHoliday, 'id' | 'date' | 'title' | 'hebrew_title' | 'subcategory' | 'is_major'>;
+
 const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: string; accent: string; iconBg: string; iconText: string }> = [
   { type: 'image', title: 'תמונה', description: 'פוסט, מודעה, הזמנה או גרפיקה לרשתות.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-clay)]', iconText: 'text-[var(--text-strong)]' },
   { type: 'presentation', title: 'מצגת', description: 'מבנה ותוכן שקפים למצגת עסקית או שיווקית.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-sand)]', iconText: 'text-[var(--text-strong)]' },
@@ -143,6 +147,20 @@ const IMAGE_QUOTA_MESSAGE =
 
 const DESCRIPTION_MAX_LENGTH = 12000;
 const TEXT_UPLOAD_ACCEPT = '.txt,.md,.doc,.docx,.pdf,text/plain,text/markdown,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf';
+
+function localIsoDate(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function upcomingEventName(event: UpcomingEvent) {
+  return event.hebrew_title?.trim() || event.title.trim();
+}
+
+function upcomingEventTag(event: UpcomingEvent) {
+  if (event.is_major || event.subcategory === 'major') return 'חג';
+  if (event.subcategory === 'modern') return 'יום מיוחד';
+  return 'אירוע קרוב';
+}
 
 // Detect the function's openai_quota signal (402 with {error:'openai_quota'}) or
 // any raw quota/billing message leaking through the error body.
@@ -223,6 +241,7 @@ const FIELDS: Record<ProductionType, FieldConfig[]> = {
 export default function ProductionPage() {
   const { type } = useParams();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const { profile, loading } = useProfile();
   const [permissions, setPermissions] = useState<OutputPermissions>(() => normalizeOutputPermissions(null));
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
@@ -263,6 +282,14 @@ export default function ProductionPage() {
 
   if (!selectedType) return <ProductionPicker initialSelected={initialPickerType} permissions={permissions} />;
   if (!allowed(selectedType)) return <ProductionBlocked typeLabel={OUTPUT_LABEL[selectedType]} />;
+  // Production only happens through the new flow: the picker hands a free-text
+  // brief in navigation state, and ProductionFlow builds the AI brief from it.
+  // Reaching /admin/production/:type directly (copy-pasted URL, refresh) has no
+  // freeText, which would otherwise drop into the deprecated step-by-step
+  // questionnaire. Send those back to the picker (type pre-selected) so the old
+  // form can't be produced from. Mirrors QuoteFlow's own no-freeText guard.
+  const hasFreeText = !!(location.state as { freeText?: string } | null)?.freeText?.trim();
+  if (!hasFreeText) return <ProductionPicker initialSelected={selectedType} permissions={permissions} />;
   return <ProductionFlow type={selectedType} />;
 }
 
@@ -626,11 +653,14 @@ function ProductionPicker({
   // Set only when the user reached this hub from an existing output (e.g. tapped
   // "רוצים X אחר לגמרי?" by mistake). Lets us offer a one-click way back to that
   // exact output; absent on a normal visit to /admin/production, so no button then.
-  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo ?? null;
+  const navState = (location.state as { returnTo?: string; freeText?: string } | null) ?? null;
+  const returnTo = navState?.returnTo ?? null;
+  const initialFreeText = navState?.freeText?.trim() ?? '';
   const [selected, setSelected] = useState<ProductionType | 'quote' | null>(initialSelected);
   const [description, setDescription] = useState('');
   const [uploadingText, setUploadingText] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Brand chosen here is passed to the brief builder so the brand's content +
   // official color palette are folded into the AI brief.
@@ -645,6 +675,7 @@ function ProductionPicker({
   });
   const [recentQuoteFiles, setRecentQuoteFiles] = useState<RecentOutputPreviewRow[]>([]);
   const [recentPreviews, setRecentPreviews] = useState<Record<string, string>>({});
+  const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   // For presentations we open the image picker before leaving this page, so the
   // chosen images ride into the flow (and onward into the deck).
@@ -677,6 +708,15 @@ function ProductionPicker({
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   }, [initialSelected, allowedTypes]);
+
+  useEffect(() => {
+    if (!initialFreeText) return;
+    setDescription(initialFreeText.slice(0, DESCRIPTION_MAX_LENGTH));
+    window.requestAnimationFrame(() => {
+      descriptionRef.current?.focus();
+      descriptionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, [initialFreeText]);
 
   useEffect(() => {
     if (selected && !allowedTypes.includes(selected)) setSelected(null);
@@ -811,6 +851,25 @@ function ProductionPicker({
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    createSupabaseBrowserClient()
+      .from('israel_holidays')
+      .select('id, date, title, hebrew_title, subcategory, is_major')
+      .gte('date', localIsoDate())
+      .eq('is_israel_calendar', true)
+      .order('date', { ascending: true })
+      .limit(5)
+      .then(({ data, error }) => {
+        if (!active) return;
+        setUpcomingEvents(error ? [] : ((data ?? []) as UpcomingEvent[]));
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   function goToFlow(extra?: { pickedImages?: DeckImage[] | null; pickedKeys?: string[] }) {
     if (!selected) return;
     // Hand the free-text brief + chosen brand to the flow, which skips the
@@ -822,6 +881,27 @@ function ProductionPicker({
         pickedImages: extra?.pickedImages ?? null,
         pickedKeys: extra?.pickedKeys ?? [],
       },
+    });
+  }
+
+  function firstAllowedProductionType() {
+    return (['image', 'text', 'presentation', 'pdf', 'quote'] as const).find((item) => allowedTypes.includes(item)) ?? null;
+  }
+
+  function handleUseUpcomingEvent(event: UpcomingEvent) {
+    const eventName = upcomingEventName(event);
+    const prompt = [
+      `צרו רעיון לתוכן עבור ${eventName}.`,
+      `תאריך האירוע: ${formatHebrewDate(event.date)}.`,
+      'הציעו כיוון ברור לתוצר שאפשר להפיק עכשיו: פוסט, תמונה/גרפיקה, מסמך או מצגת.',
+      'כתבו בשפה עברית עסקית, קצרה וברורה, עם רעיון מרכזי, קהל יעד, מסר מוביל וקריאה לפעולה.',
+    ].join('\n');
+
+    setDescription(prompt.slice(0, DESCRIPTION_MAX_LENGTH));
+    if (!selected) setSelected(firstAllowedProductionType());
+    window.requestAnimationFrame(() => {
+      descriptionRef.current?.focus();
+      descriptionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }
 
@@ -1051,6 +1131,7 @@ function ProductionPicker({
 
             <div className="relative min-h-[130px] rounded-[10px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 pb-4 pt-4">
               <textarea
+                ref={descriptionRef}
                 dir="rtl"
                 rows={5}
                 maxLength={DESCRIPTION_MAX_LENGTH}
@@ -1120,6 +1201,62 @@ function ProductionPicker({
             )}
           </div>
         </section>
+
+        {upcomingEvents.length > 0 && (
+          <section className="mt-5 rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-5 shadow-[var(--warm-shadow-card)] sm:px-8">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[var(--border-soft)] bg-[var(--tint-sand)] text-[var(--text-strong)]">
+                  <CalendarDaysIcon className="h-5 w-5 stroke-[1.75]" />
+                </span>
+                <div>
+                  <h2 className="text-[18px] font-bold text-[var(--text-strong)]">אירועים קרובים</h2>
+                  <p className="mt-0.5 text-[13px] leading-5 text-[var(--text-muted)]">הזדמנויות תוכן שאפשר להפוך לבריף מוכן.</p>
+                </div>
+              </div>
+              <Link
+                to="/admin/holidays"
+                className="inline-flex min-h-10 items-center justify-center rounded-[10px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-3.5 py-2 text-[13px] font-bold text-[var(--text-strong)] transition hover:border-brand/35 hover:bg-brand/5 hover:text-brand"
+              >
+                לוח פרסומים וחגים
+              </Link>
+            </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-5">
+              {upcomingEvents.map((event) => {
+                const label = upcomingEventName(event);
+                return (
+                  <article
+                    key={event.id}
+                    className="flex min-h-[128px] flex-col justify-between rounded-[12px] border border-[var(--border-warm)] bg-[var(--bg-surface)] p-3.5 text-right transition hover:border-brand/30 hover:bg-[var(--surface-2)]"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="rounded-[8px] bg-brand/10 px-2 py-1 text-[11px] font-bold text-brand">
+                          {upcomingEventTag(event)}
+                        </span>
+                        <span className="ltr shrink-0 text-start text-[11px] font-semibold text-[var(--text-muted)]">
+                          {formatHebrewDate(event.date)}
+                        </span>
+                      </div>
+                      <h3 className="mt-3 line-clamp-2 text-[14px] font-bold leading-5 text-[var(--text-strong)]">{label}</h3>
+                    </div>
+                    {allowedTypes.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleUseUpcomingEvent(event)}
+                        className="mt-4 inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-[9px] border border-brand/35 bg-transparent px-3 py-2 text-[13px] font-semibold text-brand transition hover:border-brand hover:bg-brand/10"
+                      >
+                        <LightbulbIcon className="h-4 w-4 stroke-[1.75]" />
+                        קבלו רעיון
+                      </button>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         <section className="mt-5 rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-6 shadow-[var(--warm-shadow-card)] sm:px-8">
           <div className="flex items-center justify-between">
