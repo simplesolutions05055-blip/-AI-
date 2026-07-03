@@ -290,7 +290,8 @@ function israelLocalToUtc(y: number, mo: number, d: number, h: number, mi: numbe
 // Parse "25/12 18:00" / "25/12/2026 18:00" / "היום 18:30" / "מחר 10:00".
 // Returns UTC Date + a display label, or null when unparseable / in the past.
 export function parseScheduleDateTime(
-  text: string
+  text: string,
+  defaultDate?: { y: number; mo: number; d: number } | null
 ): { at: Date; label: string } | { error: 'unparseable' | 'past' } {
   const t = (text ?? '').trim().replace(/[.\-]/g, '/');
   const timeMatch = t.match(/(\d{1,2}):(\d{2})/);
@@ -300,7 +301,7 @@ export function parseScheduleDateTime(
   if (h > 23 || mi > 59) return { error: 'unparseable' };
 
   const now = israelNowParts();
-  let y = now.y, mo = now.mo, d = now.d;
+  let y = defaultDate?.y ?? now.y, mo = defaultDate?.mo ?? now.mo, d = defaultDate?.d ?? now.d;
   let explicitYear = false;
 
   const dateMatch = t.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
@@ -324,8 +325,10 @@ export function parseScheduleDateTime(
     const p = datePartsInIsrael(target);
     y = p.y; mo = p.mo; d = p.d;
   } else if (/היום/.test(t)) {
-    // keep today
-  } else {
+    y = now.y;
+    mo = now.mo;
+    d = now.d;
+  } else if (!defaultDate) {
     return { error: 'unparseable' };
   }
 
@@ -338,6 +341,53 @@ export function parseScheduleDateTime(
 
   const label = `${String(d).padStart(2, '0')}/${String(mo).padStart(2, '0')}/${y} בשעה ${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}`;
   return { at, label };
+}
+
+function extractDatePartsFromBrief(brief: Record<string, unknown>): { y: number; mo: number; d: number; label: string } | null {
+  const candidates: string[] = [];
+  for (const key of ['event_date', 'date', 'scheduled_date', 'deadline', 'goal']) {
+    const value = brief[key];
+    if (typeof value === 'string') candidates.push(value);
+  }
+  const mustInclude = brief.must_include;
+  if (Array.isArray(mustInclude)) candidates.push(...mustInclude.map(String));
+  const text = candidates.join('\n').replace(/[.\-]/g, '/');
+  const m = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (!m) return null;
+  const d = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  let y = parseInt(m[3], 10);
+  if (y < 100) y += 2000;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return {
+    y,
+    mo,
+    d,
+    label: `${String(d).padStart(2, '0')}/${String(mo).padStart(2, '0')}/${y}`,
+  };
+}
+
+async function buildScheduleDateTimePrompt(database: DB, requestId: string | null): Promise<{
+  prompt: string;
+  suggestedDate: { y: number; mo: number; d: number; label: string } | null;
+}> {
+  if (!requestId) return { prompt: SCHEDULE_DATETIME_PROMPT, suggestedDate: null };
+  const { data: req } = await database
+    .from('requests')
+    .select('structured_brief')
+    .eq('id', requestId)
+    .maybeSingle();
+  const brief = (req?.structured_brief ?? {}) as Record<string, unknown>;
+  const suggestedDate = extractDatePartsFromBrief(brief);
+  if (!suggestedDate) return { prompt: SCHEDULE_DATETIME_PROMPT, suggestedDate: null };
+  return {
+    suggestedDate,
+    prompt: [
+      `מתי לפרסם? לפי הבריף האירוע בתאריך ${suggestedDate.label}.`,
+      'אפשר לכתוב רק שעה לאותו תאריך, למשל: 10:00',
+      'או לכתוב תאריך ושעה אחרים, למשל: 05/07 18:00.',
+    ].join('\n'),
+  };
 }
 
 function datePartsInIsrael(date: Date): { y: number; mo: number; d: number } {
@@ -433,6 +483,25 @@ async function sendMediaOut(
     storage_path: storagePath,
     twilio_message_sid: sid,
   });
+}
+
+// "בטל" / "תפריט" while a fix is awaited must NOT become fix feedback (an
+// image edit with the prompt "בטל" would burn money on garbage). Returns true
+// when the message was a cancel and was fully handled here.
+async function handleFixCancel(
+  database: DB,
+  conversation: FlowConversation,
+  send: SendFn,
+  text: string,
+  messageSid: string
+): Promise<boolean> {
+  const t = norm(text);
+  const isCancel = isNoText(text) || /^(תפריט|חזור|חזרה|back|menu)\.?$/.test(t);
+  if (!isCancel) return false;
+  if (!(await claimMessage(database, conversation.id, text, messageSid))) return true;
+  await setFlow(database, conversation.id, { flow_state: 'post_delivery' });
+  await sendPostDeliveryMenu(database, conversation, send);
+  return true;
 }
 
 // Send the correct flat actions menu for the last delivered output.
@@ -628,12 +697,26 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await send(BRIEF_PROMPTS[conversation.selected_output_type ?? 'image']);
         return { kind: 'handled' };
       }
-      // Allow changing the mind ("מצגת" while asked for image brief).
-      const switched = numMedia === 0 ? parseMainMenuChoice(text) : null;
-      if (switched && switched !== conversation.selected_output_type) {
+      const choice = numMedia === 0 ? parseMainMenuChoice(text) : null;
+      // Re-tapping the same option (double-click / impatience) must not become
+      // a garbage brief like "1" — just re-show the prompt.
+      if (choice && choice === conversation.selected_output_type) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        const delivered = await send(BRIEF_PROMPTS[switched]);
-        if (delivered) await setFlow(database, conversation.id, { selected_output_type: switched });
+        await send(BRIEF_PROMPTS[choice]);
+        return { kind: 'handled' };
+      }
+      // Allow changing the mind ("מצגת" while asked for image brief).
+      if (choice && choice !== conversation.selected_output_type) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        const delivered = await send(BRIEF_PROMPTS[choice]);
+        if (delivered) await setFlow(database, conversation.id, { selected_output_type: choice });
+        return { kind: 'handled' };
+      }
+      // Too short to be a real brief (emoji / "אוקיי") — ask for substance
+      // instead of burning a generation on garbage.
+      if (numMedia === 0 && text.trim().length < 6) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await send('כתבו קצת יותר פירוט כדי שאכין בדיוק מה שצריך 🙂 למשל: מה האירוע, איפה, מתי ומה הכותרת.');
         return { kind: 'handled' };
       }
       const outputType = conversation.selected_output_type ?? 'image';
@@ -655,6 +738,13 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (numMedia > 0 || /@/.test(text)) {
         await setFlow(database, conversation.id, { flow_state: null });
         return { kind: 'not_handled' };
+      }
+
+      // Greeting / thanks — no LLM call, just re-show the actions once.
+      if (isGreetingOnly(text) || /^(תודה|מעולה|אחלה|סבבה|וואו|יפה|מושלם|👍|🙏|❤️)+!?$/.test(norm(text))) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await send(buildPostDeliveryMenu(hasImage));
+        return { kind: 'handled' };
       }
 
       let action: PostDeliveryAction | null = parsePostDeliveryAction(text, hasImage);
@@ -764,6 +854,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
     // ── image edit with AI (runs in background — takes ~1 min) ──────────────
     case 'awaiting_image_fix': {
       if (!text && numMedia === 0) return { kind: 'not_handled' };
+      if (await handleFixCancel(database, conversation, send, text, messageSid)) return { kind: 'handled' };
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       const sourceRequestId = conversation.last_delivered_request_id;
       if (!sourceRequestId) {
@@ -776,6 +867,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
     // ── caption (post text) rewrite ──────────────────────────────────────────
     case 'awaiting_caption_fix': {
       if (!text) return { kind: 'not_handled' };
+      if (await handleFixCancel(database, conversation, send, text, messageSid)) return { kind: 'handled' };
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       const requestId = conversation.last_delivered_request_id;
       if (!requestId) {
@@ -788,6 +880,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
     // ── fix a text/pdf/presentation deliverable → revision request ──────────
     case 'awaiting_fix_feedback': {
       if (!text) return { kind: 'not_handled' };
+      if (await handleFixCancel(database, conversation, send, text, messageSid)) return { kind: 'handled' };
       const requestId = conversation.last_delivered_request_id;
       if (!requestId) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
@@ -819,11 +912,13 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await send('פרסום באינסטגרם דורש תמונה, והתוצר הזה הוא טקסט בלבד. אפשר לבחור פייסבוק (1).');
         return { kind: 'handled' };
       }
-      const delivered = await send(SCHEDULE_DATETIME_PROMPT);
+      const requestId = conversation.last_delivered_request_id;
+      const schedulePrompt = await buildScheduleDateTimePrompt(database, requestId);
+      const delivered = await send(schedulePrompt.prompt);
       if (delivered) {
         await setFlow(database, conversation.id, {
           flow_state: 'schedule_datetime',
-          flow_context: { platforms },
+          flow_context: { platforms, suggested_date: schedulePrompt.suggestedDate },
         });
       }
       return { kind: 'handled' };
@@ -837,7 +932,8 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await sendPostDeliveryMenu(database, conversation, send);
         return { kind: 'handled' };
       }
-      const parsed = parseScheduleDateTime(text);
+      const suggestedDate = (ctx.suggested_date ?? null) as { y: number; mo: number; d: number; label?: string } | null;
+      const parsed = parseScheduleDateTime(text, suggestedDate);
       if ('error' in parsed) {
         await send(
           parsed.error === 'past'

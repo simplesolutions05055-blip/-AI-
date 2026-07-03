@@ -305,6 +305,36 @@ async function loadBrandLogoReference(
   };
 }
 
+async function loadInboundImageReferences(
+  database: DB,
+  requestId: string
+): Promise<Array<{ base64: string; mime: string; name: string }>> {
+  const { data: messages } = await database
+    .from('messages')
+    .select('storage_path, media_type')
+    .eq('request_id', requestId)
+    .eq('direction', 'inbound')
+    .not('storage_path', 'is', null)
+    .order('created_at', { ascending: true })
+    .limit(3);
+
+  const refs: Array<{ base64: string; mime: string; name: string }> = [];
+  for (const [idx, message] of (messages ?? []).entries()) {
+    const mime = String(message.media_type ?? '');
+    const path = String(message.storage_path ?? '');
+    if (!path || !mime.startsWith('image/')) continue;
+    const { data: file, error } = await database.storage.from('inbound').download(path);
+    if (error || !file) continue;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    refs.push({
+      base64: encodeBase64(bytes),
+      mime: file.type || mime || 'image/png',
+      name: `user-reference-${idx + 1}.${(file.type || mime).includes('jpeg') ? 'jpg' : 'png'}`,
+    });
+  }
+  return refs;
+}
+
 async function setStatus(database: DB, requestId: string, status: string, extra: Record<string, unknown> = {}) {
   await database.from('requests').update({ status, ...extra }).eq('id', requestId);
 }
@@ -467,7 +497,7 @@ async function runRequestPipeline(
 
   const { data: msgs } = await database
     .from('messages')
-    .select('body, direction, media_type')
+    .select('body, direction, media_type, storage_path')
     .eq('request_id', requestId)
     .order('created_at', { ascending: true });
 
@@ -583,6 +613,11 @@ async function runRequestPipeline(
     if (lockedType) {
       b.output_type = lockedType;
       b.output_type_locked = true;
+    }
+    // The analyzer result replaces the brief — carry over flow bookkeeping so
+    // downstream steps (preflight skip) still see it.
+    if ((request.structured_brief as Record<string, unknown> | null)?.ack_sent === true) {
+      b.ack_sent = true;
     }
     const emailFromMsgs = (msgs ?? [])
       .map((m: { body: string | null }) => (m.body ? extractEmail(m.body) : null))
@@ -744,15 +779,20 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         'אם מצורפת תמונת רפרנס של לוגו רשמי, השתמש אך ורק בה כלוגו המותג. ' +
         'אל תמציא לוגו, אל תצייר מחדש סמל עירוני אחר, ואל תחליף טקסט או צורה של הלוגו. ' +
         'שלב את הלוגו הרשמי בתוך התמונה כחלק אינטגרלי מהעיצוב, שקוף או חצי-שקוף, נקי וממוקם טבעית בקומפוזיציה.';
+      const USER_REFERENCE_DIRECTIVE =
+        'אם צורפה תמונת משתמש, היא רפרנס חזותי מחייב: שלב את האדם/האובייקט המרכזי שמופיע בה בתוך הפוסט, ' +
+        'במיוחד אם המשתמש כתב "מי שבתמונה", "בתמונה", "תכניס אותו/אותה". שמור על זהות, גיל, מראה ולבוש מהרפרנס; ' +
+        'אל תחליף באדם אחר ואל תתעלם מהרפרנס.';
       const prompt = basePrompt
-        ? `${basePrompt}\n\n${RTL_IMAGE_DIRECTIVE}\n\n${BRAND_LOGO_DIRECTIVE}`
-        : `${RTL_IMAGE_DIRECTIVE}\n\n${BRAND_LOGO_DIRECTIVE}`;
+        ? `${basePrompt}\n\n${RTL_IMAGE_DIRECTIVE}\n\n${BRAND_LOGO_DIRECTIVE}\n\n${USER_REFERENCE_DIRECTIVE}`
+        : `${RTL_IMAGE_DIRECTIVE}\n\n${BRAND_LOGO_DIRECTIVE}\n\n${USER_REFERENCE_DIRECTIVE}`;
       // Map the requested dimensions to a supported image size (square / portrait /
       // landscape) so a "story 1080x1920" request actually changes the output ratio.
       const imageSize = dimensionsToImageSize(brief.dimensions as string | null | undefined);
       // One waiting message only, and only on the first attempt — retries stay silent
       // so the user never gets "מעולה אני עובד" spammed on each QA round.
-      if (version === 1 && !productionForm) {
+      // Skipped entirely when the flow already acked ("קיבלתי! מכין את...").
+      if (version === 1 && !productionForm && brief.ack_sent !== true) {
         const delivered = await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
           'מעולה, אני עובד על התמונה עכשיו. זה יכול לקחת רגע.', conversation.simulated);
         if (!delivered && !conversation.simulated) {
@@ -767,8 +807,10 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         }
       }
       const logoReference = await loadBrandLogoReference(database, request.brand_id as string | null);
-      const imageResult = logoReference
-        ? await generateImageWithReferences(prompt || 'תמונה ריבועית', [logoReference], { size: imageSize })
+      const inboundReferences = await loadInboundImageReferences(database, requestId);
+      const references = [logoReference, ...inboundReferences].filter(Boolean) as Array<{ base64: string; mime: string; name: string }>;
+      const imageResult = references.length
+        ? await generateImageWithReferences(prompt || 'תמונה ריבועית', references, { size: imageSize })
         : await generateImage(prompt || 'תמונה ריבועית', { size: imageSize });
       const { base64, mime: imgMime } = imageResult;
       imageBase64 = base64;
@@ -959,17 +1001,18 @@ async function deliverContentToWhatsApp(
     }
   }
 
-  const mediaCaption = caption;
-
-  // For images, text_content holds the ready-to-publish social post written at
-  // generation time. Delivered as a follow-up message right after the media so
-  // the user gets image + post text as one package. (PDF text_content is the
-  // document body and must NOT be sent.)
+  // Message economy: for images, the ready-to-publish post text rides as the
+  // media caption (one WhatsApp message = image + post text). PDF text_content
+  // is the document body and must NOT be sent as a caption. WhatsApp caps media
+  // captions (~1024 chars) — an oversized post falls back to a separate message.
+  const CAPTION_MAX = 950;
   const postText = type === 'image' && output.text_content?.trim() ? output.text_content.trim() : null;
-  async function sendPostText() {
-    if (!postText) return;
-    await sendOut(database, conversation.id, request.id, to,
-      `טקסט מוכן לפוסט:\n\n${postText}`, simulated);
+  const captionFits = !postText || postText.length <= CAPTION_MAX;
+  const mediaCaption = postText && captionFits ? postText : caption;
+  async function sendOverflowPostText() {
+    if (postText && !captionFits) {
+      await sendOut(database, conversation.id, request.id, to, postText, simulated);
+    }
   }
 
   if (productionForm) return;
@@ -983,12 +1026,12 @@ async function deliverContentToWhatsApp(
       body: mediaCaption, media_type: contentType, storage_path: path,
       twilio_message_sid: `sim-${crypto.randomUUID()}`,
     });
-    await sendPostText();
+    await sendOverflowPostText();
     return;
   }
   if (!path) {
     await sendOut(database, conversation.id, request.id, to, mediaCaption, false);
-    await sendPostText();
+    await sendOverflowPostText();
     return;
   }
 
@@ -996,24 +1039,24 @@ async function deliverContentToWhatsApp(
   const url = signed?.signedUrl;
   if (!url) {
     await sendOut(database, conversation.id, request.id, to, mediaCaption, false);
-    await sendPostText();
+    await sendOverflowPostText();
     return;
   }
   try {
-    const sid = await sendWhatsAppMedia(to, url, mediaCaption);
+    const sid = await sendWhatsAppMedia(to, url, mediaCaption.slice(0, 1000));
     await database.from('messages').insert({
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
       body: mediaCaption, media_type: contentType, storage_path: path, twilio_message_sid: sid,
     });
     // Twilio delivers media slower than plain texts (it must fetch the file),
     // so texts sent immediately after tend to arrive BEFORE the image. Give the
-    // media a head start so the order on the phone is: file → post text → menu.
+    // media a head start so the order on the phone is: image → actions menu.
     await new Promise((r) => setTimeout(r, 6000));
   } catch (e) {
     await logEvent(database, { requestId: request.id, severity: 'error', action: 'whatsapp_media_send_failed', message: String(e) });
     await sendOut(database, conversation.id, request.id, to, `${mediaCaption}\n${url}`, false);
   }
-  await sendPostText();
+  await sendOverflowPostText();
 }
 
 export async function sendOutput(requestId: string): Promise<void> {

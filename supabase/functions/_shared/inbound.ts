@@ -133,11 +133,16 @@ export async function handleInbound(
       conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
     });
     if (claimErr) return { requestIdToProcess: null };
+    // Throttle: don't repeat the signup pitch on every message (spam + cost).
+    const ctx = (conversation.flow_context ?? {}) as Record<string, unknown>;
+    const promptedAt = typeof ctx.signup_prompted_at === 'string' ? Date.parse(ctx.signup_prompted_at) : 0;
+    const shouldPrompt = !promptedAt || Date.now() - promptedAt > 6 * 3600_000;
     await database.from('conversations').update({
       last_message_at: new Date().toISOString(), timeout_warned_at: null,
+      ...(shouldPrompt ? { flow_context: { ...ctx, signup_prompted_at: new Date().toISOString() } } : {}),
     }).eq('id', conversation.id);
-    await logEvent(database, { action: 'whatsapp_unknown_number', metadata: { phone } });
-    await send(await buildSignupMessage(database));
+    await logEvent(database, { action: 'whatsapp_unknown_number', metadata: { phone, prompted: shouldPrompt } });
+    if (shouldPrompt) await send(await buildSignupMessage(database));
     return { requestIdToProcess: null };
   }
 
@@ -335,9 +340,11 @@ async function createFlowRequest(
     output_type: flow.outputType,
     created_by: userId,
     brand_id: requestBrandId,
+    // ack_sent tells the worker we already told the user we're working — it
+    // must not send its own "אני עובד על זה" preflight (message economy).
     structured_brief: isRevision
-      ? flow.brief
-      : { output_type: flow.outputType, output_type_locked: true, source: 'whatsapp_menu' },
+      ? { ...flow.brief, ack_sent: true }
+      : { output_type: flow.outputType, output_type_locked: true, source: 'whatsapp_menu', ack_sent: true },
   }).select('id').single();
   if (reqErr || !newReq) {
     await logEvent(database, { severity: 'error', action: 'flow_request_create_failed', message: String(reqErr) });
@@ -366,9 +373,16 @@ async function createFlowRequest(
     timeout_warned_at: null,
   }).eq('id', conversation.id);
 
+  // ONE ack for the whole run (the worker skips its preflight — ack_sent).
+  const ACK: Record<string, string> = {
+    image: 'קיבלתי! מכין את התמונה והפוסט — זה לוקח בערך דקה ⏳',
+    presentation: 'קיבלתי! מכין את המצגת ⏳',
+    pdf: 'קיבלתי! מכין את המסמך ⏳',
+    text: 'קיבלתי! מכין את הטקסט ⏳',
+  };
   await sendOut(
     database, conversation.id, requestId, from,
-    isRevision ? 'קיבלתי ✏️ מכין גרסה מתוקנת, זה ייקח רגע.' : templates.received,
+    isRevision ? 'קיבלתי ✏️ מכין גרסה מתוקנת, זה ייקח רגע.' : (ACK[flow.outputType] ?? ACK.text),
     simulated
   );
 
