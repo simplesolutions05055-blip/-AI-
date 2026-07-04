@@ -373,12 +373,17 @@ function ScheduleModal({
 
   return (
     <div
-      dir="ltr"
-      className="relative mt-5 w-full"
+      dir="rtl"
+      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 px-3 pb-[calc(var(--safe-bottom)+12px)] pt-4 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="תזמון לרשתות חברתיות"
+      onClick={onClose}
     >
       <div
         dir="rtl"
-        className="flex w-full flex-col overflow-hidden rounded-2xl bg-white text-right shadow-lg"
+        className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl sm:rounded-xl"
+        onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] p-3 sm:gap-3 sm:p-5">
           <div className="min-w-0">
@@ -399,7 +404,7 @@ function ScheduleModal({
           </Tooltip>
         </div>
 
-        <div className="overflow-x-hidden p-3 sm:p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5">
           <fieldset className="mb-4">
             <legend className="mb-2 block text-sm font-semibold">איפה לפרסם?</legend>
             <div className="grid gap-2 sm:grid-cols-2">
