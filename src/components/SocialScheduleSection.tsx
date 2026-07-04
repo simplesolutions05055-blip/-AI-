@@ -32,7 +32,14 @@ export type MediaItem = {
   file?: File; // present for uploads
   storagePath?: string; // present for outputs (or already-saved uploads)
   aiGenerated?: boolean; // the image produced by the AI pipeline for this very post
+  producedKey?: string; // identity of the produced slot this item mirrors (see ProducedImage)
 };
+
+// An AI image the host page produced for this post. `key` is a stable identity
+// ("main" for the page's primary image, the request id for carousel extras) so
+// that when a new version of the same image is produced, it replaces the old
+// one in the attached media instead of leaving a stale copy behind.
+export type ProducedImage = { key: string; url: string; storagePath: string };
 
 // The shape persisted to the scheduled_social_posts.media jsonb column.
 export type StoredMediaRecord = {
@@ -97,7 +104,7 @@ export default function SocialScheduleSection({
   title = 'תזמון פרסום',
   trailingAction = null,
   onScheduled,
-  producedImage = null,
+  producedImages = null,
   triggerLabel = 'תזמון לרשתות חברתיות',
   triggerClassName = '',
 }: {
@@ -109,9 +116,10 @@ export default function SocialScheduleSection({
   title?: string;
   trailingAction?: React.ReactNode;
   onScheduled?: () => void;
-  // The image this flow just produced with AI. Auto-attached to the post media
-  // when the schedule modal opens, so the user sees it will be published too.
-  producedImage?: { url: string; storagePath: string } | null;
+  // The AI images this flow produced for the post (primary + carousel extras).
+  // Auto-attached to the post media; a new version of an image replaces the old
+  // one in place, so the preview always shows the latest edit.
+  producedImages?: ProducedImage[] | null;
   triggerLabel?: string;
   triggerClassName?: string;
 } = {}) {
@@ -128,9 +136,9 @@ export default function SocialScheduleSection({
   // Media attached to the post — shared across both platform modals.
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [scheduleSaved, setScheduleSaved] = useState<string | null>(null);
-  // Seed the produced AI image once per session — if the user removes it on
-  // purpose, we don't force it back on the next open.
-  const seededProducedRef = useRef(false);
+  // Produced images the user removed on purpose — never force them back, even
+  // when a newer version of the same image arrives.
+  const removedProducedRef = useRef<Set<string>>(new Set());
 
   // Object URLs created for uploads must be revoked to avoid leaks.
   useEffect(() => {
@@ -178,26 +186,43 @@ export default function SocialScheduleSection({
     }
   }
 
+  // Keep the attached AI images in sync with what the page produced: a new
+  // version of an image replaces the old one in place (so the preview never
+  // shows a pre-edit version), fresh carousel images are appended, and images
+  // the user removed stay removed.
+  const producedSignature = (producedImages ?? []).map((p) => `${p.key}:${p.storagePath}`).join('|');
+  useEffect(() => {
+    if (!producedImages?.length) return;
+    setMedia((cur) => {
+      // Prune items whose produced slot no longer exists (the page removed it).
+      const liveKeys = new Set(producedImages.map((p) => p.key));
+      let next = cur.filter((m) => !m.producedKey || liveKeys.has(m.producedKey));
+      for (const produced of producedImages) {
+        if (removedProducedRef.current.has(produced.key)) continue;
+        const idx = next.findIndex((m) => m.producedKey === produced.key);
+        if (idx >= 0) {
+          if (next[idx].storagePath === produced.storagePath) continue;
+          next = next.map((m, i) => (i === idx ? { ...m, url: produced.url, storagePath: produced.storagePath } : m));
+        } else {
+          const item: MediaItem = {
+            id: crypto.randomUUID(),
+            url: produced.url,
+            kind: 'image',
+            source: 'output',
+            name: produced.key === 'main' ? 'התמונה שנוצרה עם AI' : 'תמונה נוספת לקרוסלה',
+            storagePath: produced.storagePath,
+            aiGenerated: true,
+            producedKey: produced.key,
+          };
+          next = produced.key === 'main' ? [item, ...next] : [...next, item];
+        }
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [producedSignature]);
+
   function openSchedule() {
-    if (producedImage && !seededProducedRef.current) {
-      seededProducedRef.current = true;
-      setMedia((cur) =>
-        cur.some((m) => m.storagePath === producedImage.storagePath)
-          ? cur
-          : [
-              {
-                id: crypto.randomUUID(),
-                url: producedImage.url,
-                kind: 'image' as const,
-                source: 'output' as const,
-                name: 'התמונה שנוצרה עם AI',
-                storagePath: producedImage.storagePath,
-                aiGenerated: true,
-              },
-              ...cur,
-            ],
-      );
-    }
     setModalOpen(true);
     void ensureCaption(platforms[0] ?? 'facebook');
   }
@@ -233,6 +258,9 @@ export default function SocialScheduleSection({
           captionError={captionError}
           media={media}
           setMedia={setMedia}
+          onMediaRemoved={(item) => {
+            if (item.producedKey) removedProducedRef.current.add(item.producedKey);
+          }}
           requestId={requestId}
           outputId={outputId}
           brandId={brandId}
@@ -263,6 +291,7 @@ function ScheduleModal({
   captionError,
   media,
   setMedia,
+  onMediaRemoved,
   requestId,
   outputId,
   brandId,
@@ -278,6 +307,7 @@ function ScheduleModal({
   captionError: string | null;
   media: MediaItem[];
   setMedia: React.Dispatch<React.SetStateAction<MediaItem[]>>;
+  onMediaRemoved?: (item: MediaItem) => void;
   requestId: string | null;
   outputId: string | null;
   brandId: string | null;
@@ -297,6 +327,8 @@ function ScheduleModal({
   const channelsLabel = platformsLabel(platforms);
   const hasPlatforms = platforms.length > 0;
   const hasAiImage = media.some((m) => m.aiGenerated);
+  // Instagram allows at most 10 items in a carousel.
+  const igTooManyItems = includesInstagram && media.length > 10;
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -316,7 +348,7 @@ function ScheduleModal({
 
   async function saveSchedule() {
     const cleanTitle = scheduleTitle.trim();
-    if (!cleanTitle || !scheduledAt || !caption.trim() || !hasPlatforms || saving) return;
+    if (!cleanTitle || !scheduledAt || !caption.trim() || !hasPlatforms || saving || igTooManyItems) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -341,7 +373,7 @@ function ScheduleModal({
       onSaved(`"${payload.schedule?.title ?? cleanTitle}" נשמר לתזמון ב${channelsLabel}.`);
       onClose();
     } catch (e) {
-      setSaveError(scheduleErrorLabel(String((e as { message?: string })?.message ?? e)));
+      setSaveError(scheduleErrorLabel(await invokeErrorMessage(e)));
     } finally {
       setSaving(false);
     }
@@ -502,7 +534,7 @@ function ScheduleModal({
             </div>
           )}
 
-          <MediaEditor media={media} setMedia={setMedia} brandId={brandId} />
+          <MediaEditor media={media} setMedia={setMedia} brandId={brandId} onRemove={onMediaRemoved} />
 
           <button
             type="button"
@@ -517,6 +549,11 @@ function ScheduleModal({
           {includesInstagram && media.length === 0 && (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
+            </div>
+          )}
+          {igTooManyItems && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              קרוסלה באינסטגרם מוגבלת ל־10 תמונות. הסירו {media.length - 10} מהמדיה כדי להמשיך.
             </div>
           )}
           {saveError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
@@ -535,7 +572,7 @@ function ScheduleModal({
           <button
             type="button"
             onClick={saveSchedule}
-            disabled={saving || !hasPlatforms || !scheduleTitle.trim() || !scheduledAt || !caption.trim() || (includesInstagram && media.length === 0)}
+            disabled={saving || !hasPlatforms || !scheduleTitle.trim() || !scheduledAt || !caption.trim() || (includesInstagram && media.length === 0) || igTooManyItems}
             className="min-h-11 min-w-0 rounded-lg bg-brand px-2 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-base"
           >
             {saving ? 'שומר...' : 'תזמון הפרסום'}
@@ -594,10 +631,12 @@ export function MediaEditor({
   media,
   setMedia,
   brandId,
+  onRemove,
 }: {
   media: MediaItem[];
   setMedia: React.Dispatch<React.SetStateAction<MediaItem[]>>;
   brandId: string | null;
+  onRemove?: (item: MediaItem) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -640,14 +679,32 @@ export function MediaEditor({
   function removeMedia(id: string) {
     setMedia((cur) => {
       const target = cur.find((m) => m.id === id);
-      if (target?.source === 'upload' && !target.storagePath) URL.revokeObjectURL(target.url);
+      if (!target) return cur;
+      if (target.source === 'upload' && !target.storagePath) URL.revokeObjectURL(target.url);
+      onRemove?.(target);
       return cur.filter((m) => m.id !== id);
+    });
+  }
+
+  // Reorder within the carousel: the display order here is the publish order.
+  function moveMedia(id: string, delta: -1 | 1) {
+    setMedia((cur) => {
+      const from = cur.findIndex((m) => m.id === id);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= cur.length) return cur;
+      const next = [...cur];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
     });
   }
 
   return (
     <>
-      <label className="mb-2 block text-sm font-semibold">מדיה לפרסום</label>
+      <label className="mb-1 block text-sm font-semibold">מדיה לפרסום</label>
+      <p className="mb-2 text-xs text-[var(--muted)]">
+        אפשר לצרף כמה תמונות — הן יפורסמו כפוסט קרוסלה לפי הסדר שכאן.
+      </p>
       <input
         ref={fileInputRef}
         type="file"
@@ -682,12 +739,17 @@ export function MediaEditor({
 
       {media.length > 0 && (
         <div className="mb-4 grid grid-cols-3 gap-2">
-          {media.map((m) => (
+          {media.map((m, idx) => (
             <div key={m.id} className="group relative aspect-square overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
               {m.kind === 'video' ? (
                 <video src={m.url} className="h-full w-full object-cover" muted />
               ) : (
                 <img src={m.url} alt={m.name} className="h-full w-full object-cover" />
+              )}
+              {media.length > 1 && (
+                <span className="absolute right-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-black/60 px-1 text-[11px] font-bold text-white">
+                  {idx + 1}
+                </span>
               )}
               <Tooltip content="הסרה">
                 <button
@@ -699,10 +761,36 @@ export function MediaEditor({
                   <CloseIcon size={12} />
                 </button>
               </Tooltip>
+              {media.length > 1 && (
+                <div className="absolute bottom-1 left-1 flex gap-1">
+                  <Tooltip content="הזזה קדימה בסדר">
+                    <button
+                      type="button"
+                      onClick={() => moveMedia(m.id, -1)}
+                      disabled={idx === 0}
+                      aria-label="הזזה קדימה בסדר"
+                      className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 disabled:opacity-40"
+                    >
+                      <ChevronIcon dir="right" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="הזזה אחורה בסדר">
+                    <button
+                      type="button"
+                      onClick={() => moveMedia(m.id, 1)}
+                      disabled={idx === media.length - 1}
+                      aria-label="הזזה אחורה בסדר"
+                      className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 disabled:opacity-40"
+                    >
+                      <ChevronIcon dir="left" />
+                    </button>
+                  </Tooltip>
+                </div>
+              )}
               {m.kind === 'video' && (
                 <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">וידאו</span>
               )}
-              {m.aiGenerated && (
+              {m.aiGenerated && m.kind !== 'video' && (
                 <span className="absolute bottom-1 right-1 rounded bg-violet-600/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                   נוצרה עם AI
                 </span>
@@ -920,7 +1008,9 @@ function PostPreviewModal({
   }, [brandId]);
 
   const images = media.filter((m) => m.kind === 'image');
-  const extraCount = images.length - 2;
+  // Carousel position; clamped so removing images never leaves it out of range.
+  const [slide, setSlide] = useState(0);
+  const activeSlide = Math.min(slide, Math.max(images.length - 1, 0));
 
   return (
     <div
@@ -984,22 +1074,52 @@ function PostPreviewModal({
               </div>
             )}
 
-            {/* The AI image(s) — full width, no padding */}
+            {/* The image(s) — full width, no padding. Two or more images render
+                as a browsable carousel, exactly like the published post. */}
             {images.length === 1 && (
               <img src={images[0].url} alt="תמונת הפוסט" className="max-h-[440px] w-full bg-black/5 object-cover" />
             )}
             {images.length >= 2 && (
-              <div className="grid grid-cols-2 gap-0.5">
-                {images.slice(0, 2).map((img, idx) => (
-                  <div key={img.id} className="relative">
-                    <img src={img.url} alt="תמונת הפוסט" className="h-[240px] w-full bg-black/5 object-cover" />
-                    {idx === 1 && extraCount > 0 && (
-                      <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-2xl font-bold text-white">
-                        +{extraCount}
-                      </span>
-                    )}
-                  </div>
-                ))}
+              <div className="relative">
+                <img
+                  src={images[activeSlide].url}
+                  alt={`תמונה ${activeSlide + 1} מתוך ${images.length}`}
+                  className="h-[340px] w-full bg-black/5 object-cover"
+                />
+                <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-xs font-semibold text-white">
+                  {activeSlide + 1}/{images.length}
+                </span>
+                {activeSlide > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSlide(activeSlide - 1)}
+                    aria-label="התמונה הקודמת"
+                    className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
+                  >
+                    <ChevronIcon dir="right" size={16} />
+                  </button>
+                )}
+                {activeSlide < images.length - 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setSlide(activeSlide + 1)}
+                    aria-label="התמונה הבאה"
+                    className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
+                  >
+                    <ChevronIcon dir="left" size={16} />
+                  </button>
+                )}
+                <div className="absolute bottom-2 left-1/2 flex -translate-x-1/2 gap-1.5">
+                  {images.map((img, idx) => (
+                    <button
+                      key={img.id}
+                      type="button"
+                      onClick={() => setSlide(idx)}
+                      aria-label={`מעבר לתמונה ${idx + 1}`}
+                      className={`h-2 w-2 rounded-full ${idx === activeSlide ? 'bg-white' : 'bg-white/50'}`}
+                    />
+                  ))}
+                </div>
               </div>
             )}
 
@@ -1038,6 +1158,11 @@ function PostPreviewModal({
               לא מצורפת תמונה — הפוסט יפורסם כטקסט בלבד.
             </p>
           )}
+          {images.length >= 2 && (
+            <p className="mt-3 text-center text-xs text-[#65676B]">
+              פוסט קרוסלה עם {images.length} תמונות — דפדפו עם החצים כדי לראות את כולן.
+            </p>
+          )}
         </div>
 
         <div className="shrink-0 border-t border-[var(--border)] bg-white p-4">
@@ -1054,14 +1179,35 @@ function PostPreviewModal({
   );
 }
 
+// supabase-js hides the function's JSON body behind error.context, so without
+// this the user sees the generic English "Edge Function returned a non-2xx
+// status code" instead of the actual reason the save failed.
+async function invokeErrorMessage(e: unknown): Promise<string> {
+  const ctx = (e as { context?: Response })?.context;
+  if (ctx && typeof ctx.clone === 'function') {
+    try {
+      const payload = (await ctx.clone().json()) as { error?: string; message?: string } | null;
+      if (payload?.error || payload?.message) return String(payload.error ?? payload.message);
+    } catch {
+      // non-JSON body — fall through to the status/message below
+    }
+    if (ctx.status === 404) return 'function_not_found';
+  }
+  return String((e as { message?: string })?.message ?? e);
+}
+
 function scheduleErrorLabel(error?: string | null): string {
   if (!error) return 'לא הצלחנו לשמור את התזמון.';
   if (error.includes('scheduled_at_must_be_future')) return 'בחרו תאריך ושעה עתידיים.';
+  if (error.includes('invalid_scheduled_at')) return 'התאריך והשעה שנבחרו אינם תקינים.';
   if (error.includes('instagram_requires_media')) return 'לאינסטגרם צריך לצרף תמונה או וידאו.';
   if (error.includes('caption_required')) return 'יש להזין כיתוב לפרסום.';
   if (error.includes('invalid_platform')) return 'פלטפורמת הפרסום לא תקינה.';
   if (error.includes('unauthorized')) return 'צריך להתחבר מחדש כדי לשמור תזמון.';
   if (error.includes('forbidden')) return 'אין הרשאה לתזמן את התוצר הזה.';
+  if (error.includes('function_not_found')) return 'שירות התזמון לא זמין כרגע — כנראה שהפונקציה עדיין לא פורסמה לסביבה. פנו לתמיכה.';
+  if (error.includes('Failed to fetch') || error.includes('Failed to send')) return 'בעיית תקשורת — בדקו את החיבור לאינטרנט ונסו שוב.';
+  if (error.includes('non-2xx')) return 'לא הצלחנו לשמור את התזמון. נסו שוב, ואם זה חוזר — פנו לתמיכה.';
   return error;
 }
 
@@ -1134,6 +1280,14 @@ function CheckIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ dir, size = 12 }: { dir: 'left' | 'right'; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {dir === 'left' ? <polyline points="15 18 9 12 15 6" /> : <polyline points="9 18 15 12 9 6" />}
     </svg>
   );
 }

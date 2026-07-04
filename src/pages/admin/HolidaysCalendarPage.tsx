@@ -66,9 +66,23 @@ function holidayTone(holiday: IsraelHoliday) {
   return 'border-[#10b981] bg-[#ecfdf5] text-[#065f46]';
 }
 
+// Publishing is manual for now (no Meta connection), so a scheduled post whose
+// time has passed needs a human: highlight it and offer copy/download/mark-done.
+function isDueForPublish(post: ScheduledSocialPost) {
+  return post.status === 'scheduled' && new Date(post.scheduled_at).getTime() <= Date.now();
+}
+
+function scheduleStatusLabel(post: ScheduledSocialPost) {
+  if (post.status === 'published') return 'פורסם';
+  if (post.status === 'failed') return 'נכשל';
+  if (post.status === 'cancelled') return 'בוטל';
+  return isDueForPublish(post) ? 'ממתין לפרסום ידני' : 'מתוזמן';
+}
+
 function scheduleTone(post: ScheduledSocialPost) {
   if (post.status === 'failed') return 'border-red-200 bg-red-50 text-red-700';
   if (post.status === 'published') return 'border-[#10b981] bg-[#ecfdf5] text-[#065f46]';
+  if (isDueForPublish(post)) return 'border-amber-300 bg-amber-50 text-amber-800';
   if (post.platform === 'facebook') return 'border-[#60a5fa] bg-[#eff6ff] text-[#1d4ed8]';
   return 'border-[#f472b6] bg-[#fdf2f8] text-[#9d174d]';
 }
@@ -137,6 +151,11 @@ export default function HolidaysCalendarPage() {
   const [deleteConfirmPostId, setDeleteConfirmPostId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Manual-publish helpers on the post details modal.
+  const [captionCopied, setCaptionCopied] = useState(false);
+  const [downloadingMedia, setDownloadingMedia] = useState(false);
+  const [markingPublishedId, setMarkingPublishedId] = useState<string | null>(null);
+  const [publishActionError, setPublishActionError] = useState<string | null>(null);
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [selectedBrandId, setSelectedBrandId] = useState('');
   const [brandsLoading, setBrandsLoading] = useState(false);
@@ -301,6 +320,12 @@ export default function HolidaysCalendarPage() {
   const selectedHolidays = selectedDate ? byDate.get(selectedDate) ?? [] : [];
   const selectedPosts = selectedDate ? postsByDate.get(selectedDate) ?? [] : [];
   const selectedPost = selectedPostId ? scheduledPosts.find((post) => post.id === selectedPostId) ?? null : null;
+
+  // A fresh details modal starts clean of the previous post's action feedback.
+  useEffect(() => {
+    setCaptionCopied(false);
+    setPublishActionError(null);
+  }, [selectedPostId]);
   const editPost = editPostId ? scheduledPosts.find((post) => post.id === editPostId) ?? null : null;
   const deleteConfirmPost = deleteConfirmPostId ? scheduledPosts.find((post) => post.id === deleteConfirmPostId) ?? null : null;
   const selectedDay = selectedDate ? Number(selectedDate.slice(8, 10)) : null;
@@ -466,6 +491,64 @@ export default function HolidaysCalendarPage() {
     setSelectedPostId(null);
     setDeleteConfirmPostId(null);
     setScheduleRefreshKey((value) => value + 1);
+  }
+
+  // ── manual publish helpers ─────────────────────────────────────────────────
+  // Until the auto-publish engine is built, someone publishes due posts by
+  // hand: copy the caption, download the media, then mark the post published.
+
+  async function copyPostCaption(post: ScheduledSocialPost) {
+    try {
+      await navigator.clipboard.writeText(post.caption);
+      setCaptionCopied(true);
+      window.setTimeout(() => setCaptionCopied(false), 1600);
+    } catch {
+      setPublishActionError('לא הצלחנו להעתיק את הכיתוב. אפשר לסמן ולהעתיק ידנית.');
+    }
+  }
+
+  async function downloadPostMedia(post: ScheduledSocialPost) {
+    if (downloadingMedia) return;
+    setDownloadingMedia(true);
+    setPublishActionError(null);
+    try {
+      const items = await hydrateStoredMedia(post.media);
+      if (items.length === 0) throw new Error('no_media');
+      for (const item of items) {
+        const res = await fetch(item.url);
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = item.name || 'media';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(objectUrl);
+      }
+    } catch {
+      setPublishActionError('לא הצלחנו להוריד את המדיה. נסו שוב.');
+    } finally {
+      setDownloadingMedia(false);
+    }
+  }
+
+  async function markPostPublished(post: ScheduledSocialPost) {
+    if (markingPublishedId) return;
+    setMarkingPublishedId(post.id);
+    setPublishActionError(null);
+    const { error: updateError } = await createSupabaseBrowserClient()
+      .from('scheduled_social_posts')
+      .update({ status: 'published' } as never)
+      .eq('id', post.id);
+    setMarkingPublishedId(null);
+    if (updateError) {
+      setPublishActionError('לא הצלחנו לעדכן את הסטטוס. נסו שוב.');
+      return;
+    }
+    setScheduledPosts((current) =>
+      current.map((item) => (item.id === post.id ? { ...item, status: 'published' as const } : item))
+    );
   }
 
   function buildProductionIdeaPrompt(date: string, holidaysForDay: IsraelHoliday[], postsForDay: ScheduledSocialPost[]) {
@@ -986,10 +1069,17 @@ export default function HolidaysCalendarPage() {
               </button>
             </div>
 
+            {isDueForPublish(selectedPost) && (
+              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+                הגיע מועד הפרסום. בשלב זה הפרסום מתבצע ידנית — העתיקו את הכיתוב, הורידו את המדיה, פרסמו
+                ב{selectedPost.platform === 'facebook' ? 'פייסבוק' : 'אינסטגרם'}, ואז סמנו כפורסם.
+              </div>
+            )}
+
             <dl className="space-y-3 rounded-lg border border-[#edf2f0] bg-[#fbfdfc] p-4 text-sm">
               <div className="grid gap-1">
                 <dt className="font-semibold text-[var(--muted)]">סטטוס</dt>
-                <dd className="font-bold">{selectedPost.status === 'scheduled' ? 'מתוזמן' : selectedPost.status}</dd>
+                <dd className="font-bold">{scheduleStatusLabel(selectedPost)}</dd>
               </div>
               <div className="grid gap-1">
                 <dt className="font-semibold text-[var(--muted)]">כיתוב לפרסום</dt>
@@ -997,7 +1087,40 @@ export default function HolidaysCalendarPage() {
               </div>
             </dl>
 
-            <div className="mt-5 grid grid-cols-2 gap-3 sm:flex sm:justify-start">
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:justify-start">
+              <button
+                type="button"
+                onClick={() => void copyPostCaption(selectedPost)}
+                className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50"
+              >
+                {captionCopied ? 'הכיתוב הועתק ✓' : 'העתקת הכיתוב'}
+              </button>
+              {(selectedPost.media?.length ?? 0) > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void downloadPostMedia(selectedPost)}
+                  disabled={downloadingMedia}
+                  className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {downloadingMedia ? 'מוריד...' : `הורדת המדיה (${selectedPost.media?.length})`}
+                </button>
+              )}
+              {selectedPost.status === 'scheduled' && (
+                <button
+                  type="button"
+                  onClick={() => void markPostPublished(selectedPost)}
+                  disabled={markingPublishedId === selectedPost.id}
+                  className="min-h-11 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                >
+                  {markingPublishedId === selectedPost.id ? 'מעדכן...' : 'סימון כפורסם'}
+                </button>
+              )}
+            </div>
+            {publishActionError && (
+              <p className="mt-2 text-sm text-red-600">{publishActionError}</p>
+            )}
+
+            <div className="mt-4 grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-4 sm:flex sm:justify-start">
               <button
                 type="button"
                 onClick={() => openEditSchedule(selectedPost)}

@@ -103,6 +103,11 @@ export default function RevisePage() {
   const [postFeedback, setPostFeedback] = useState('');
   const [postEditing, setPostEditing] = useState(false);
   const [postCopied, setPostCopied] = useState(false);
+  // Extra AI images generated for a carousel post. Each lives on its own
+  // request; all of them are attached to the schedule modal alongside the main
+  // image, in creation order.
+  const [carouselImages, setCarouselImages] = useState<Array<{ requestId: string; storagePath: string; previewUrl: string }>>([]);
+  const [carouselModalOpen, setCarouselModalOpen] = useState(false);
   // Last value persisted to the DB. Blur only saves when the text actually changed.
   const persistedPostRef = useRef('');
   // Guards the one-time auto-generation against StrictMode double-mount.
@@ -1019,30 +1024,41 @@ export default function RevisePage() {
               sent: emailSent,
             }}
             social={
-              <SocialScheduleSection
-                requestId={result?.request_id || source?.request_id || null}
-                brandId={requestBrandId}
-                title=""
-                trailingAction={
-                  <EmailSend
-                    email={customerEmail}
-                    setEmail={setCustomerEmail}
-                    onSend={() => sendEmail(result?.request_id || source?.request_id || null)}
-                    sending={sendingEmail}
-                    sent={emailSent}
-                  />
-                }
-                captionSource={
-                  postText.trim()
-                    ? { kind: 'text', text: postText.trim() }
-                    : { kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }
-                }
-                producedImage={(() => {
-                  const url = result?.previewUrl || source?.previewUrl;
-                  const storagePath = result?.storagePath || source?.storage_path;
-                  return url && storagePath ? { url, storagePath } : null;
-                })()}
-              />
+              <div className="space-y-3">
+                <CarouselImagesStrip
+                  images={carouselImages}
+                  onAdd={() => setCarouselModalOpen(true)}
+                  onRemove={(reqId) => setCarouselImages((cur) => cur.filter((img) => img.requestId !== reqId))}
+                />
+                <SocialScheduleSection
+                  requestId={result?.request_id || source?.request_id || null}
+                  brandId={requestBrandId}
+                  title=""
+                  trailingAction={
+                    <EmailSend
+                      email={customerEmail}
+                      setEmail={setCustomerEmail}
+                      onSend={() => sendEmail(result?.request_id || source?.request_id || null)}
+                      sending={sendingEmail}
+                      sent={emailSent}
+                    />
+                  }
+                  captionSource={
+                    postText.trim()
+                      ? { kind: 'text', text: postText.trim() }
+                      : { kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }
+                  }
+                  producedImages={(() => {
+                    const url = result?.previewUrl || source?.previewUrl;
+                    const storagePath = result?.storagePath || source?.storage_path;
+                    const main = url && storagePath ? [{ key: 'main', url, storagePath }] : [];
+                    return [
+                      ...main,
+                      ...carouselImages.map((img) => ({ key: img.requestId, url: img.previewUrl, storagePath: img.storagePath })),
+                    ];
+                  })()}
+                />
+              </div>
             }
             resetText="רוצים תמונה אחרת לגמרי?"
             onReset={() => navigate('/admin/production', { state: productionReturnState })}
@@ -1074,6 +1090,19 @@ export default function RevisePage() {
           brandId={requestBrandId}
           onClose={() => setImageModalOpen(false)}
           onInsert={insertAiImageIntoDocument}
+        />
+      )}
+      {carouselModalOpen && (
+        <CarouselImageModal
+          baseBrief={brief ?? {}}
+          baseRequestId={result?.request_id || source?.request_id || requestId || null}
+          brandId={requestBrandId}
+          nextIndex={carouselImages.length + 2}
+          onClose={() => setCarouselModalOpen(false)}
+          onAdd={(image) => {
+            setCarouselImages((cur) => [...cur, image]);
+            setCarouselModalOpen(false);
+          }}
         />
       )}
     </div>
@@ -1454,6 +1483,253 @@ function BriefLine({ label, value }: { label: string; value: unknown }) {
     <div>
       <dt className="font-semibold text-[var(--muted)]">{label}</dt>
       <dd className="mt-1 whitespace-pre-wrap break-words text-[var(--text)]">{String(value)}</dd>
+    </div>
+  );
+}
+
+// The carousel strip in the sidebar: extra AI images created for this post,
+// plus the button that opens the generation modal. All of these get attached
+// to the schedule modal alongside the main image.
+function CarouselImagesStrip({
+  images,
+  onAdd,
+  onRemove,
+}: {
+  images: Array<{ requestId: string; storagePath: string; previewUrl: string }>;
+  onAdd: () => void;
+  onRemove: (requestId: string) => void;
+}) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onAdd}
+        className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-violet-300 bg-violet-50/40 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50"
+      >
+        <ImageAddIcon />
+        <span>תמונה נוספת לקרוסלה (AI)</span>
+      </button>
+      <p className="mt-1.5 text-xs text-[var(--muted)]">
+        רוצים פוסט קרוסלה? צרו עוד תמונות באותו קו עיצובי — כולן יצורפו לתזמון יחד עם התמונה הראשית.
+      </p>
+      {images.length > 0 && (
+        <div className="mt-2 grid grid-cols-4 gap-2">
+          {images.map((img, idx) => (
+            <div key={img.requestId} className="relative aspect-square overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
+              <img src={img.previewUrl} alt={`תמונת קרוסלה ${idx + 2}`} className="h-full w-full object-cover" />
+              <button
+                type="button"
+                onClick={() => onRemove(img.requestId)}
+                aria-label="הסרת התמונה מהקרוסלה"
+                className="absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-xs leading-none text-white hover:bg-black/80"
+              >
+                ×
+              </button>
+              <span className="absolute bottom-1 right-1 rounded bg-violet-600/90 px-1 text-[10px] font-semibold text-white">
+                {idx + 2}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Generates an extra AI image for a carousel post: same brief as the main
+// image plus the user's instruction for what this frame should show. Runs
+// through the regular production pipeline on its own request.
+function CarouselImageModal({
+  baseBrief,
+  baseRequestId,
+  brandId,
+  nextIndex,
+  onClose,
+  onAdd,
+}: {
+  baseBrief: Brief;
+  baseRequestId: string | null;
+  brandId: string | null;
+  nextIndex: number;
+  onClose: () => void;
+  onAdd: (image: { requestId: string; storagePath: string; previewUrl: string }) => void;
+}) {
+  const [instruction, setInstruction] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ requestId: string; storagePath: string; previewUrl: string } | null>(null);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  async function generate() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const client = createSupabaseBrowserClient();
+      const note = instruction.trim();
+      const briefToUse: Brief = {
+        ...baseBrief,
+        ready: true,
+        source: 'carousel_image',
+        parent_request_id:
+          typeof baseBrief.parent_request_id === 'string' ? baseBrief.parent_request_id : baseRequestId ?? undefined,
+        admin_note: [
+          baseBrief.admin_note,
+          `תמונה מספר ${nextIndex} לפוסט קרוסלה — לשמור על אותו קו עיצובי, צבעוניות ושפה גרפית של התמונה הראשית של הפוסט.`,
+          note ? `מה להציג בתמונה הזו: ${note}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      };
+
+      setStatus('יוצרים בקשת תמונה');
+      const { data: created, error: createError } = await client.functions.invoke('create-production-request', {
+        body: { output_type: 'image', brief: briefToUse, customer_email: null, brand_id: brandId },
+      });
+      if (createError) throw createError;
+      const id = (created as { request_id?: string })?.request_id;
+      if (!id) throw new Error('לא התקבל מזהה בקשה');
+
+      setStatus('מפיקים את התמונה הנוספת');
+      const { error: processError } = await client.functions.invoke('process-request', { body: { request_id: id } });
+      if (processError) throw processError;
+
+      for (let i = 0; i < 90; i++) {
+        const [{ data: req }, { data: out }] = await Promise.all([
+          client.from('requests').select('status, structured_brief').eq('id', id).single(),
+          client
+            .from('outputs')
+            .select('storage_path')
+            .eq('request_id', id)
+            .eq('output_type', 'image')
+            .not('storage_path', 'is', null)
+            .order('version', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+        ]);
+        const path = (out as { storage_path?: string | null } | null)?.storage_path;
+        if (path) {
+          const previewUrl = await signedOutputUrl(client, path, 3600);
+          if (!previewUrl) throw new Error('נוצרה תמונה אבל לא התקבל קישור תצוגה');
+          setResult({ requestId: id, storagePath: path, previewUrl });
+          return;
+        }
+        const requestRow = req as { status?: string; structured_brief?: { last_error?: string } } | null;
+        if (requestRow?.status === 'failed' || requestRow?.status === 'needs_attention') {
+          throw new Error(requestRow.structured_brief?.last_error || 'יצירת התמונה נעצרה.');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      throw new Error('יצירת התמונה עדיין רצה. אפשר לבדוק את הסטטוס במסך התוצרים.');
+    } catch (e) {
+      setError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setBusy(false);
+      setStatus('');
+    }
+  }
+
+  return (
+    <div dir="rtl" className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl sm:rounded-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] p-4 sm:p-5">
+          <div>
+            <h2 className="text-lg font-bold">תמונה נוספת לקרוסלה</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              ניצור תמונה נוספת באותו קו עיצובי של התמונה הראשית. כתבו מה יופיע בה.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="סגירה"
+            className="text-2xl leading-none text-[var(--muted)] hover:text-black"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          <label className="mb-2 block text-sm font-semibold">מה להציג בתמונה הנוספת?</label>
+          <textarea
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            disabled={busy}
+            rows={3}
+            placeholder="למשל: אותו עיצוב, אבל עם דגש על מוקדי השירות לתושבים. אפשר גם להשאיר ריק לווריאציה חופשית."
+            className="mb-3 w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+          />
+
+          {status && (
+            <p className="mb-3 flex items-center gap-2 text-sm text-[var(--muted)]">
+              <Spinner className="h-4 w-4" />
+              <span>{status}... זה יכול לקחת עד דקה.</span>
+            </p>
+          )}
+          {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+
+          {result && (
+            <img
+              src={result.previewUrl}
+              alt="התמונה הנוספת לקרוסלה"
+              className="mb-3 max-h-[360px] w-full rounded-lg bg-gray-50 object-contain"
+            />
+          )}
+        </div>
+
+        <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-[var(--border)] bg-white p-4 sm:flex sm:justify-start sm:gap-3 sm:p-5">
+          {result ? (
+            <>
+              <button
+                type="button"
+                onClick={() => onAdd(result)}
+                className="min-h-11 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white"
+              >
+                הוספה לקרוסלה
+              </button>
+              <button
+                type="button"
+                onClick={generate}
+                disabled={busy}
+                className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+              >
+                ניסיון נוסף
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={generate}
+                disabled={busy}
+                className="min-h-11 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy ? 'מפיק תמונה...' : 'יצירת התמונה'}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={busy}
+                className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+              >
+                ביטול
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

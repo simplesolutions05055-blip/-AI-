@@ -2916,9 +2916,9 @@ function ResultCard({
                     : { kind: 'image', brief, requestId }
                   : { kind: 'text', text: plainTextFromBlocks(textBlocks) }
               }
-              producedImage={
+              producedImages={
                 output.output_type === 'image' && output.storage_path && previewUrl
-                  ? { url: previewUrl, storagePath: output.storage_path }
+                  ? [{ key: 'main', url: previewUrl, storagePath: output.storage_path }]
                   : null
               }
             />

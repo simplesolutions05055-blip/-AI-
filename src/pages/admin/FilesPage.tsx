@@ -740,7 +740,7 @@ export default function FilesPage() {
                                     outputId={file.id}
                                     brandId={file.brand_id}
                                     captionSource={{ kind: 'image', brief: file.structured_brief ?? {}, requestId: file.request_id }}
-                                    producedImage={{ url: previews[file.id], storagePath: file.storage_path }}
+                                    producedImages={[{ key: 'main', url: previews[file.id], storagePath: file.storage_path }]}
                                     triggerLabel="תזמון"
                                     triggerClassName="min-h-11 w-full justify-center px-2 py-2 text-xs"
                                   />
