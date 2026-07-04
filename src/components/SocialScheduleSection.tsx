@@ -55,6 +55,18 @@ export type StoredMediaRecord = {
 // flows so both behave identically.
 export async function uploadPendingMedia(media: MediaItem[], uploadPrefix: string): Promise<StoredMediaRecord[]> {
   const client = createSupabaseBrowserClient();
+
+  // Manual schedules (from the calendar) have no owning request, so the
+  // request-scoped outputs-bucket RLS rejects an upload under `manual/...`.
+  // Route those to the user's own `manual/<uid>/...` folder, which the
+  // per-user storage policy allows. Only resolve the uid when there is an
+  // actual device file to upload (existing outputs skip the upload entirely).
+  let prefix = uploadPrefix;
+  if (prefix === 'manual' && media.some((m) => !m.storagePath && m.file)) {
+    const { data } = await client.auth.getUser();
+    if (data.user?.id) prefix = `manual/${data.user.id}`;
+  }
+
   return Promise.all(
     media.map(async (item) => {
       if (item.storagePath) {
@@ -62,7 +74,7 @@ export async function uploadPendingMedia(media: MediaItem[], uploadPrefix: strin
       }
       if (!item.file) throw new Error('קובץ מדיה חסר');
       const safeName = item.file.name.replace(/[^\w.\-]+/g, '_').slice(-120);
-      const path = `${uploadPrefix}/social/${crypto.randomUUID()}-${safeName}`;
+      const path = `${prefix}/social/${crypto.randomUUID()}-${safeName}`;
       const { error } = await client.storage.from('outputs').upload(path, item.file, {
         contentType: item.file.type || undefined,
         upsert: false,
@@ -1196,7 +1208,7 @@ async function invokeErrorMessage(e: unknown): Promise<string> {
   return String((e as { message?: string })?.message ?? e);
 }
 
-function scheduleErrorLabel(error?: string | null): string {
+export function scheduleErrorLabel(error?: string | null): string {
   if (!error) return 'לא הצלחנו לשמור את התזמון.';
   if (error.includes('scheduled_at_must_be_future')) return 'בחרו תאריך ושעה עתידיים.';
   if (error.includes('invalid_scheduled_at')) return 'התאריך והשעה שנבחרו אינם תקינים.';
@@ -1205,6 +1217,9 @@ function scheduleErrorLabel(error?: string | null): string {
   if (error.includes('invalid_platform')) return 'פלטפורמת הפרסום לא תקינה.';
   if (error.includes('unauthorized')) return 'צריך להתחבר מחדש כדי לשמור תזמון.';
   if (error.includes('forbidden')) return 'אין הרשאה לתזמן את התוצר הזה.';
+  if (error.includes('row-level security') || error.includes('violates row-level') || error.includes('Unauthorized')) {
+    return 'אין הרשאה להעלות את קובץ המדיה. נסו לרענן את העמוד ולהתחבר מחדש, ואם זה חוזר — פנו לתמיכה.';
+  }
   if (error.includes('function_not_found')) return 'שירות התזמון לא זמין כרגע — כנראה שהפונקציה עדיין לא פורסמה לסביבה. פנו לתמיכה.';
   if (error.includes('Failed to fetch') || error.includes('Failed to send')) return 'בעיית תקשורת — בדקו את החיבור לאינטרנט ונסו שוב.';
   if (error.includes('non-2xx')) return 'לא הצלחנו לשמור את התזמון. נסו שוב, ואם זה חוזר — פנו לתמיכה.';

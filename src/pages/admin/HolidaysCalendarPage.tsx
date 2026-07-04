@@ -6,6 +6,7 @@ import SocialScheduleSection, {
   MediaEditor,
   uploadPendingMedia,
   hydrateStoredMedia,
+  scheduleErrorLabel,
   type MediaItem,
   type StoredMediaRecord,
 } from '@/components/SocialScheduleSection';
@@ -443,7 +444,7 @@ export default function HolidaysCalendarPage() {
       storedMedia = await uploadPendingMedia(editMedia, post.request_id || 'manual');
     } catch (uploadErr) {
       setSavingEditPostId(null);
-      setEditError(String((uploadErr as { message?: string })?.message ?? uploadErr));
+      setEditError(scheduleErrorLabel(String((uploadErr as { message?: string })?.message ?? uploadErr)));
       return;
     }
 
