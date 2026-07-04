@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -11,6 +11,17 @@ interface InviteBrand {
   color_palette: PaletteEntry[];
 }
 
+const SIGNUP_ERRORS: Record<string, string> = {
+  email_taken: 'כתובת המייל כבר רשומה.',
+  invalid_email: 'כתובת המייל אינה תקינה.',
+  weak_password: 'הסיסמה צריכה להכיל לפחות 8 תווים.',
+  code_cooldown: 'שלחנו קוד ממש עכשיו — המתינו כדקה לפני בקשת קוד חדש.',
+  too_many_requests: 'נשלחו יותר מדי קודים לכתובת הזו. נסו שוב בעוד שעה.',
+  code_send_failed: 'שליחת קוד האימות נכשלה. נסו שוב בעוד רגע.',
+};
+
+const RESEND_COOLDOWN_SECONDS = 60;
+
 export default function SignupPage() {
   const navigate = useNavigate();
   const supabase = createSupabaseBrowserClient();
@@ -22,6 +33,16 @@ export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Email verification step: after signup a 6-digit code is emailed; the user
+  // verifies here (verifyOtp both confirms the email and signs them in).
+  const [step, setStep] = useState<'form' | 'code'>('form');
+  const [code, setCode] = useState('');
+  // Whether the account pre-existed unverified — the password typed now is
+  // applied right after verification (verify proves address ownership).
+  const [passwordNeedsUpdate, setPasswordNeedsUpdate] = useState(false);
+  const [resendIn, setResendIn] = useState(RESEND_COOLDOWN_SECONDS);
+  const codeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Invite resolution: while we don't know yet, hold off rendering the form so
   // the brand logo/colors can come in first (avoids a generic→branded flash).
@@ -48,6 +69,29 @@ export default function SignupPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inviteToken]);
 
+  // Resend cooldown ticker (active only on the code step).
+  useEffect(() => {
+    if (step !== 'code' || resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [step, resendIn]);
+
+  async function requestCode(): Promise<boolean> {
+    // Register via the edge function: the user is created unconfirmed and a
+    // 6-digit verification code is emailed. Re-invoking for an unverified
+    // address simply re-sends a fresh code (resent: true).
+    const { data, error: fnError } = await supabase.functions.invoke('signup', {
+      body: { email: email.trim().toLowerCase(), password, invite_token: inviteToken ?? undefined },
+    });
+    const body = (data as { error?: string; verify?: boolean; resent?: boolean } | null) ?? null;
+    if (fnError || body?.error || !body?.verify) {
+      setError(SIGNUP_ERRORS[body?.error ?? ''] ?? 'ההרשמה נכשלה. נסו שוב.');
+      return false;
+    }
+    setPasswordNeedsUpdate(!!body.resent);
+    return true;
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -58,35 +102,99 @@ export default function SignupPage() {
     }
 
     setLoading(true);
-
-    // Register via the edge function (no email confirmation — the user is
-    // created pre-confirmed), then sign in straight away. When an invite token
-    // is present the function also assigns the brand + enables output creation.
-    const { data, error: fnError } = await supabase.functions.invoke('signup', {
-      body: { email: email.trim().toLowerCase(), password, invite_token: inviteToken ?? undefined },
-    });
-
-    const errorCode = (data as { error?: string } | null)?.error;
-    if (fnError || errorCode) {
-      setLoading(false);
-      setError(errorCode === 'email_taken' ? 'כתובת המייל כבר רשומה.' : 'ההרשמה נכשלה. נסו שוב.');
-      return;
-    }
-
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
+    const sent = await requestCode();
     setLoading(false);
-    if (signInError) {
-      setError('נרשמת בהצלחה, אך הכניסה נכשלה. נסו להתחבר ממסך הכניסה.');
+    if (!sent) return;
+    setCode('');
+    setResendIn(RESEND_COOLDOWN_SECONDS);
+    setStep('code');
+    setTimeout(() => codeInputRef.current?.focus(), 50);
+  }
+
+  async function onResend() {
+    if (resendIn > 0 || loading) return;
+    setError(null);
+    setLoading(true);
+    const sent = await requestCode();
+    setLoading(false);
+    if (sent) setResendIn(RESEND_COOLDOWN_SECONDS);
+  }
+
+  async function onVerify(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const cleanCode = code.replace(/\D+/g, '');
+    if (cleanCode.length !== 6) {
+      setError('הזינו את הקוד בן 6 הספרות שנשלח למייל.');
       return;
     }
+    setLoading(true);
+    const cleanEmail = email.trim().toLowerCase();
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token: cleanCode,
+      type: 'email',
+    });
+    if (verifyError) {
+      setLoading(false);
+      setError('הקוד שגוי או שפג תוקפו. אפשר לבקש קוד חדש.');
+      return;
+    }
+    // Ownership proven — align the stored password with what was typed now
+    // (matters when an old unverified signup existed with a different one).
+    if (passwordNeedsUpdate) {
+      await supabase.auth.updateUser({ password });
+    }
+    setLoading(false);
     navigate('/onboarding', { replace: true });
   }
 
   if (resolvingInvite) {
     return <main className="min-h-screen grid place-items-center text-[var(--muted)]"><Spinner /></main>;
+  }
+
+  if (step === 'code') {
+    return (
+      <main className="min-h-screen flex items-center justify-center p-4">
+        <form onSubmit={onVerify} className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-[var(--border)] p-6">
+          <h1 className="mb-1 text-xl font-semibold tracking-normal">אימות כתובת המייל</h1>
+          <p className="mb-4 text-sm text-[var(--muted)]">
+            שלחנו קוד בן 6 ספרות אל <span className="font-semibold ltr inline-block" dir="ltr">{email.trim().toLowerCase()}</span>.
+            הזינו אותו כאן כדי להשלים את ההרשמה.
+          </p>
+
+          <label className="block mb-1 text-sm font-medium" htmlFor="otp">קוד אימות</label>
+          <input
+            id="otp"
+            ref={codeInputRef}
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            dir="ltr"
+            maxLength={6}
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D+/g, ''))}
+            className="w-full mb-4 rounded-lg border border-[var(--border)] px-3 py-2 text-center text-2xl tracking-[0.5em] font-semibold"
+            placeholder="••••••"
+          />
+
+          {error && <p className="text-red-600 text-sm mb-4" role="alert">{error}</p>}
+
+          <button type="submit" disabled={loading || code.length !== 6} className="w-full bg-brand hover:bg-brand-dark text-white rounded-lg py-2 font-semibold disabled:opacity-60">
+            {loading ? 'מאמת...' : 'אימות והרשמה'}
+          </button>
+
+          <div className="mt-4 flex items-center justify-between text-sm">
+            <button type="button" onClick={onResend} disabled={resendIn > 0 || loading} className="text-brand font-semibold hover:underline disabled:text-[var(--muted)] disabled:no-underline">
+              {resendIn > 0 ? `שליחת קוד חדש (${resendIn})` : 'שליחת קוד חדש'}
+            </button>
+            <button type="button" onClick={() => { setStep('form'); setError(null); }} className="text-[var(--muted)] hover:underline">
+              חזרה
+            </button>
+          </div>
+        </form>
+      </main>
+    );
   }
 
   return (
@@ -132,7 +240,7 @@ export default function SignupPage() {
         {error && <p className="text-red-600 text-sm mb-4" role="alert">{error}</p>}
 
         <button type="submit" disabled={loading} className="w-full bg-brand hover:bg-brand-dark text-white rounded-lg py-2 font-semibold disabled:opacity-60">
-          {loading ? 'נרשם...' : 'הרשמה וכניסה'}
+          {loading ? 'שולח קוד...' : 'הרשמה'}
         </button>
 
         <p className="text-center text-sm text-[var(--muted)] mt-4">

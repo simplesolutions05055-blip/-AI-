@@ -166,7 +166,7 @@ export async function classifyPostDeliveryIntent(
   text: string,
   context: { hasImage: boolean; captionSnippet?: string | null }
 ): Promise<{
-  intent: 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'new_request' | 'unclear';
+  intent: 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'email_copy' | 'new_request' | 'unclear';
   confidence: number;
   reason: string;
   usage: ChatUsage;
@@ -177,10 +177,12 @@ export async function classifyPostDeliveryIntent(
     ? `"image_fix"   — המשתמש רוצה לשנות משהו בתמונה/גרפיקה עצמה (צבע, רקע, טקסט שמופיע בתוך התמונה, פריסה, לוגו, מידות).
 "caption_fix" — המשתמש רוצה לשנות את מלל הפוסט שמלווה את התמונה (ניסוח, אורך, טון, אימוג'ים, האשטגים).
 "schedule"    — המשתמש רוצה לתזמן/לפרסם את התוצר לרשתות (פייסבוק/אינסטגרם).
+"email_copy"  — המשתמש רוצה לקבל את התוצר לכתובת מייל ("תשלח לי למייל", "אפשר עותק במייל?").
 "new_request" — המשתמש מבקש תוצר חדש לגמרי (בריף חדש, נושא אחר).
 "unclear"     — אי אפשר לקבוע.`
     : `"content_fix" — המשתמש רוצה לשנות משהו בתוצר שנמסר (תוכן, ניסוח, מבנה, תוספות).
 "schedule"    — המשתמש רוצה לתזמן/לפרסם את התוצר לרשתות.
+"email_copy"  — המשתמש רוצה לקבל את התוצר לכתובת מייל ("תשלח לי למייל", "אפשר עותק במייל?").
 "new_request" — המשתמש מבקש תוצר חדש לגמרי (בריף חדש, נושא אחר).
 "unclear"     — אי אפשר לקבוע.`;
   const { content, usage } = await chat(
@@ -211,12 +213,12 @@ ${intents}
     { json: true, temperature: 0, model }
   );
   const allowed = context.hasImage
-    ? ['image_fix', 'caption_fix', 'schedule', 'new_request', 'unclear']
-    : ['content_fix', 'schedule', 'new_request', 'unclear'];
+    ? ['image_fix', 'caption_fix', 'schedule', 'email_copy', 'new_request', 'unclear']
+    : ['content_fix', 'schedule', 'email_copy', 'new_request', 'unclear'];
   try {
     const parsed = JSON.parse(content) as { intent?: unknown; confidence?: unknown; reason?: unknown };
     const intent = allowed.includes(String(parsed.intent))
-      ? (String(parsed.intent) as 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'new_request' | 'unclear')
+      ? (String(parsed.intent) as 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'email_copy' | 'new_request' | 'unclear')
       : 'unclear';
     const confidence = typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0;
     return { intent, confidence, reason: typeof parsed.reason === 'string' ? parsed.reason : '', usage, model };

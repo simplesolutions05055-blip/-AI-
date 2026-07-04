@@ -50,7 +50,10 @@ export default function LoginPage() {
         <label className="block mb-1 text-sm font-medium" htmlFor="email">כתובת מייל</label>
         <input id="email" type="email" dir="ltr" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mb-4 rounded-lg border border-[var(--border)] px-3 py-2 text-start" style={{ textAlign: 'left' }} />
 
-        <label className="block mb-1 text-sm font-medium" htmlFor="password">סיסמה</label>
+        <div className="mb-1 flex items-center justify-between">
+          <label className="block text-sm font-medium" htmlFor="password">סיסמה</label>
+          <Link to="/reset-password" className="text-xs text-brand font-semibold hover:underline">שכחתי סיסמה</Link>
+        </div>
         <div className="relative mb-4">
           <input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-lg border border-[var(--border)] pe-10 ps-3 py-2" />
           <button

@@ -14,8 +14,8 @@ import {
 } from './util.ts';
 import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption } from './openai.ts';
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
-import { buildPdfHtml, renderPdfBase64, type PdfBrandSettings } from './pdf.ts';
-import { buildEmailHtml, sendDeliverableEmail } from './resend.ts';
+import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
+import { loadPdfBrandSettings, sendDeliverableCopy } from './deliverableEmail.ts';
 import { matchBrandInText, buildBusinessBrainContext, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
 import { buildSkillInstructions, applyBriefSkillGate } from './skills.ts';
 import {
@@ -28,50 +28,6 @@ import {
 import { buildPostDeliveryMenu } from './flow.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
-
-async function loadPdfBrandSettings(database: DB, brandId?: string | null): Promise<PdfBrandSettings | null> {
-  if (!brandId) return null;
-  const { data: brand } = await database
-    .from('brands')
-    .select([
-      'name',
-      'logo_path',
-      'color_palette',
-      'official_name',
-      'short_name',
-      'slogan',
-      'department_name',
-      'contact_person_name',
-      'contact_person_title',
-      'address',
-      'phone',
-      'fax',
-      'email',
-      'website',
-      'legal_id',
-      'default_form_number',
-      'document_footer_text',
-      'legal_disclaimer',
-      'signature_label',
-      'title_font_family',
-      'body_font_family',
-      'document_style',
-      'show_brand_background',
-      'show_contact_footer',
-      'document_usage',
-    ].join(','))
-    .eq('id', brandId)
-    .maybeSingle();
-  if (!brand) return null;
-  let logoUrl: string | null = null;
-  const logoPath = (brand as { logo_path?: string | null }).logo_path;
-  if (logoPath) {
-    const { data: signed } = await database.storage.from('branding').createSignedUrl(logoPath, 3600);
-    logoUrl = signed?.signedUrl ?? null;
-  }
-  const { logo_path: _logoPath, ...rest } = brand as Record<string, unknown>;
-  return { ...(rest as unknown as PdfBrandSettings), logo_url: logoUrl };
-}
 
 async function recordUsage(
   database: DB,
@@ -1116,7 +1072,6 @@ export async function sendOutput(requestId: string): Promise<void> {
 
   await setStatus(database, requestId, 'sending');
   const templates = await getTemplates(database);
-  const emailSettings = (await getSetting<{ subject_rule: string; signature: string }>(database, 'email_settings')) ?? { subject_rule: 'התוצר שלך מוכן', signature: 'בברכה,\nצוות סוכן ה-AI' };
 
   const { data: output } = await database
     .from('outputs')
@@ -1144,31 +1099,7 @@ export async function sendOutput(requestId: string): Promise<void> {
       return;
     }
 
-    const title = (request.structured_brief?.goal as string) || 'התוצר שלך';
-    let filename: string;
-    let contentBase64: string;
-
-    if (output.output_type === 'image' && output.storage_path) {
-      const { data: file } = await database.storage.from('outputs').download(output.storage_path);
-      contentBase64 = encodeBase64(new Uint8Array(await file!.arrayBuffer()));
-      filename = 'image.png';
-    } else {
-      const brand = await loadPdfBrandSettings(database, request.brand_id as string | null);
-      const html = buildPdfHtml({ title, body: output.text_content ?? '', dateLabel: formatHebrewDate(new Date()), brand });
-      contentBase64 = await renderPdfBase64(html);
-      filename = 'document.pdf';
-    }
-
-    const emailHtml = buildEmailHtml(
-      `${title}\n\nמצורפת חבילת אישור לבדיקה. אם הכל תקין אפשר לאשר, ואם נדרש שינוי יש להשיב עם ההערות המדויקות בלבד.`,
-      emailSettings.signature
-    );
-    const msgId = await sendDeliverableEmail({
-      to: request.customer_email,
-      subject: emailSettings.subject_rule,
-      html: emailHtml,
-      attachments: [{ filename, contentBase64 }],
-    });
+    const msgId = await sendDeliverableCopy(database, requestId, request.customer_email as string);
 
     await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
     await logEvent(database, { requestId, action: 'approval_package_sent', metadata: { msgId } });

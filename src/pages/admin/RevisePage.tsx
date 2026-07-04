@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, plainTextFromBlocks, type RichTextBlock } from '@/lib/richText';
 import { isValidEmail } from '@/lib/format';
+import { useProfile } from '@/lib/useProfile';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
 import { fetchSocialCaption, reviseSocialCaption, saveSocialCaption } from '@/lib/social';
@@ -81,6 +82,15 @@ export default function RevisePage() {
   const [customerEmail, setCustomerEmail] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const { profile } = useProfile();
+
+  // Default the send-by-email box to the signed-in user's address, so sending
+  // to yourself is a single click. Never overrides something already typed.
+  useEffect(() => {
+    if (profile?.email) {
+      setCustomerEmail((current) => current || profile.email);
+    }
+  }, [profile?.email]);
   // Optional photo the user uploads to blend into the graphic (e.g. the mayor).
   const [referenceImage, setReferenceImage] = useState<{ file: File; previewUrl: string } | null>(null);
   // The ready-to-publish post text that accompanies an image output. Written by

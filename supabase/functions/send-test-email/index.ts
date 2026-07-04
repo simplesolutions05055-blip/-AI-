@@ -1,9 +1,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { sendDeliverableEmail, buildEmailHtml } from '../_shared/resend.ts';
+import { loadEmailBrand } from '../_shared/deliverableEmail.ts';
 
 interface Body {
   to?: string;
+  // Optional: preview the branded template of a specific brand (colors + logo).
+  brand_id?: string;
 }
 
 const corsHeaders = {
@@ -43,14 +46,22 @@ Deno.serve(async (req) => {
 
     if (callerProfile?.role !== 'admin') return json({ error: 'forbidden' });
 
-    const { to } = (await req.json()) as Body;
+    const { to, brand_id } = (await req.json()) as Body;
     if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return json({ error: 'invalid_email' });
 
+    const emailBrand = await loadEmailBrand(database, brand_id ?? null);
     const html = buildEmailHtml(
       'זהו מייל ניסיון שנשלח מהמערכת כדי לבדוק שהחיבור ל-Resend פעיל ותקין.',
       'המערכת',
+      'מייל ניסיון מהמערכת',
+      emailBrand.brand,
     );
-    const id = await sendDeliverableEmail({ to, subject: 'מייל ניסיון מהמערכת', html, attachments: [] });
+    const id = await sendDeliverableEmail({
+      to,
+      subject: 'מייל ניסיון מהמערכת',
+      html,
+      attachments: emailBrand.attachments,
+    });
 
     return json({ ok: true, id });
   } catch (e) {

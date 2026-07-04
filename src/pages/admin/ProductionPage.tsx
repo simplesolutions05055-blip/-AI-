@@ -1424,6 +1424,14 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     neutral: 'הגדרת מפתח OpenAI חד-פעמי',
   });
 
+  // Default the send-by-email box to the signed-in user's address, so sending
+  // to yourself is a single click. Never overrides something already typed.
+  useEffect(() => {
+    if (profile?.email) {
+      setForm((f) => (f.customerEmail ? f : { ...f, customerEmail: profile.email }));
+    }
+  }, [profile?.email]);
+
   // We send the free text (plus the brand's business brain + palette) to the
   // build-brief function for a full AI-analysed brief, then jump straight to the
   // brief step. We wait for brands to load so the chosen brand's colors are in.

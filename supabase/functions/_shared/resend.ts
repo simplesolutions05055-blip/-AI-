@@ -1,8 +1,18 @@
+import { renderEmailTemplate, type EmailTemplateBrand } from './emailTemplate.ts';
+
 // Resend access for Edge Functions — key from Supabase secrets.
 export interface Attachment {
   filename: string;
-  contentBase64: string;
+  contentBase64?: string;
+  path?: string;
+  contentId?: string;
 }
+
+export const PRIMEOS_LOGO_ATTACHMENT: Attachment = {
+  filename: 'primeos-logo.png',
+  path: 'https://primeos.co.il/primeos-logo.png',
+  contentId: 'primeos-logo',
+};
 
 export async function sendDeliverableEmail(p: {
   to: string;
@@ -13,8 +23,10 @@ export async function sendDeliverableEmail(p: {
   const apiKey = Deno.env.get('RESEND_API_KEY');
   if (!apiKey) throw new Error('Missing RESEND_API_KEY (Supabase secret)');
   const fromEmail = Deno.env.get('RESEND_FROM_EMAIL')!;
-  const fromName = Deno.env.get('RESEND_FROM_NAME') || 'סוכן AI';
+  const configuredFromName = Deno.env.get('RESEND_FROM_NAME')?.trim();
+  const fromName = configuredFromName && !/סוכן\s*AI/i.test(configuredFromName) ? configuredFromName : 'PrimeOS';
   const replyTo = Deno.env.get('RESEND_REPLY_TO') || undefined;
+  const attachments = withPrimeOsLogo(p.attachments, p.html);
 
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -25,7 +37,12 @@ export async function sendDeliverableEmail(p: {
       reply_to: replyTo,
       subject: p.subject,
       html: p.html,
-      attachments: p.attachments.map((a) => ({ filename: a.filename, content: a.contentBase64 })),
+      attachments: attachments.map((a) => ({
+        filename: a.filename,
+        ...(a.contentBase64 ? { content: a.contentBase64 } : {}),
+        ...(a.path ? { path: a.path } : {}),
+        ...(a.contentId ? { content_id: a.contentId } : {}),
+      })),
     }),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${await res.text()}`);
@@ -33,12 +50,26 @@ export async function sendDeliverableEmail(p: {
   return data.id ?? '';
 }
 
-export function buildEmailHtml(bodyText: string, signature: string): string {
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<!doctype html><html lang="he" dir="rtl"><body style="font-family:Assistant,Heebo,Arial,sans-serif;line-height:1.6;text-align:right;direction:rtl;color:#1a1a1a">
-<div style="max-width:600px;margin:0 auto;padding:24px">
-<p>${esc(bodyText).replace(/\n/g, '<br>')}</p>
-<hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-<p style="color:#666;font-size:14px">${esc(signature).replace(/\n/g, '<br>')}</p>
-</div></body></html>`;
+export function buildEmailHtml(
+  bodyText: string,
+  signature: string,
+  title = 'התוצר שלך מוכן',
+  brand?: EmailTemplateBrand,
+): string {
+  return renderEmailTemplate({
+    title,
+    preheader: bodyText,
+    bodyText,
+    signature,
+    brand,
+  });
+}
+
+// Attach the PrimeOS logo only when the HTML actually references it — an
+// unreferenced inline attachment shows up as a stray file in Gmail (brand
+// emails use cid:brand-logo, so the PrimeOS logo must stay out of them).
+function withPrimeOsLogo(attachments: Attachment[], html: string): Attachment[] {
+  if (!html.includes(`cid:${PRIMEOS_LOGO_ATTACHMENT.contentId}`)) return attachments;
+  if (attachments.some((a) => a.contentId === PRIMEOS_LOGO_ATTACHMENT.contentId)) return attachments;
+  return [PRIMEOS_LOGO_ATTACHMENT, ...attachments];
 }

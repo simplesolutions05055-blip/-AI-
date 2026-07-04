@@ -9,8 +9,9 @@
 import { type DB } from './db.ts';
 import { sendWhatsAppMedia } from './twilio.ts';
 import { generateSocialCaption, classifyPostDeliveryIntent } from './openai.ts';
-import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly } from './util.ts';
+import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail } from './util.ts';
 import { normalizeHe } from './brand.ts';
+import { sendDeliverableCopy } from './deliverableEmail.ts';
 
 // ── conversation row shape (new flow columns) ────────────────────────────────
 export type FlowConversation = {
@@ -158,7 +159,8 @@ export function buildPostDeliveryMenu(hasImage: boolean): string {
       '1️⃣ לתקן את התמונה עם AI ✏️',
       '2️⃣ לתקן את טקסט הפוסט 📝',
       '3️⃣ לתזמן פרסום 📅',
-      '4️⃣ תוצר חדש ✨',
+      '4️⃣ לקבל את התוצר במייל 📧',
+      '5️⃣ תוצר חדש ✨',
       '',
       'אפשר להשיב במספר, או פשוט לכתוב מה לשנות — ואני כבר אבין 🙂',
     ].join('\n');
@@ -168,7 +170,8 @@ export function buildPostDeliveryMenu(hasImage: boolean): string {
     '',
     '1️⃣ לתקן את התוצר ✏️',
     '2️⃣ לתזמן פרסום 📅',
-    '3️⃣ תוצר חדש ✨',
+    '3️⃣ לקבל את התוצר במייל 📧',
+    '4️⃣ תוצר חדש ✨',
     '',
     'אפשר להשיב במספר, או פשוט לכתוב מה לשנות — ואני כבר אבין 🙂',
   ].join('\n');
@@ -211,10 +214,10 @@ export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'p
   return null;
 }
 
-type PostDeliveryAction = 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'new' | 'fix_freetext';
+type PostDeliveryAction = 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'email_copy' | 'new' | 'fix_freetext';
 // Deterministic parse of the flat post-delivery menu. Numbering differs by
-// output: image menus have 4 options (image fix / caption fix / schedule /
-// new); other outputs have 3 (fix / schedule / new).
+// output: image menus have 5 options (image fix / caption fix / schedule /
+// email / new); other outputs have 4 (fix / schedule / email / new).
 function parsePostDeliveryAction(text: string, hasImage: boolean): PostDeliveryAction | null {
   const t = norm(text);
   if (!t || t.length > 30) return null;
@@ -222,14 +225,16 @@ function parsePostDeliveryAction(text: string, hasImage: boolean): PostDeliveryA
     if (/^1\.?$/.test(t) || /(תמונה|גרפיק|עיצוב)/.test(t)) return 'image_fix';
     if (/^2\.?$/.test(t) || /(טקסט|מלל|כיתוב|פוסט)/.test(t)) return 'caption_fix';
     if (/^3\.?$/.test(t) || /(תזמון|לתזמן|פרסום|תזמן)/.test(t)) return 'schedule';
-    if (/^4\.?$/.test(t) || /(חדש|עוד אחד|תפריט)/.test(t)) return 'new';
+    if (/^4\.?$/.test(t) || /(מייל|אימייל|דוא"ל|email)/.test(t)) return 'email_copy';
+    if (/^5\.?$/.test(t) || /(חדש|עוד אחד|תפריט)/.test(t)) return 'new';
     // Generic "fix" on an image — ambiguous target; ask them to just describe it.
     if (/(תיקון|לתקן|תקן|עריכה|לערוך|שינוי|לשנות)/.test(t)) return 'fix_freetext';
     return null;
   }
   if (/^1\.?$/.test(t) || /(תיקון|לתקן|תקן|עריכה|לערוך|שינוי|לשנות)/.test(t)) return 'content_fix';
   if (/^2\.?$/.test(t) || /(תזמון|לתזמן|פרסום|תזמן)/.test(t)) return 'schedule';
-  if (/^3\.?$/.test(t) || /(חדש|עוד אחד|תפריט)/.test(t)) return 'new';
+  if (/^3\.?$/.test(t) || /(מייל|אימייל|דוא"ל|email)/.test(t)) return 'email_copy';
+  if (/^4\.?$/.test(t) || /(חדש|עוד אחד|תפריט)/.test(t)) return 'new';
   return null;
 }
 
@@ -601,6 +606,47 @@ async function startCaptionFix(
   return { kind: 'handled', background };
 }
 
+// The signed-in profile's email, for the "אשלח ל-X?" suggestion.
+async function profileEmail(database: DB, userId: string | null): Promise<string | null> {
+  if (!userId) return null;
+  const { data } = await database
+    .from('profiles')
+    .select('email')
+    .eq('id', userId)
+    .maybeSingle();
+  const email = (data?.email as string | null) ?? null;
+  return email && isValidEmail(email) ? email : null;
+}
+
+// Email the delivered output (brand-styled, attachment included) to `email`.
+// The PDF render / storage download can take a few seconds — runs in the
+// returned background task; the conversation returns to the actions menu.
+async function startEmailCopy(
+  database: DB,
+  conversation: FlowConversation,
+  send: SendFn,
+  requestId: string,
+  email: string
+): Promise<FlowResult> {
+  await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
+  const background = async () => {
+    try {
+      await sendDeliverableCopy(database, requestId, email);
+      await send(`נשלח ל-${email} 📧 שווה לבדוק גם בספאם אם לא רואים אותו.`);
+    } catch (e) {
+      await logEvent(database, {
+        requestId,
+        severity: 'error',
+        action: 'whatsapp_email_copy_failed',
+        message: String(e),
+      });
+      await send('לא הצלחתי לשלוח את המייל 😕 נסו שוב עוד רגע.');
+    }
+    await sendPostDeliveryMenu(database, conversation, send, requestId);
+  };
+  return { kind: 'handled', background };
+}
+
 // Build a ready revision request for a text/pdf/presentation deliverable.
 async function buildRevisionResult(
   database: DB,
@@ -733,11 +779,18 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const output = deliveredReqId ? await latestOutput(database, deliveredReqId) : null;
       const hasImage = output?.output_type === 'image';
 
-      // Attachments and email replies belong to the legacy flow (new brief /
-      // "email me a copy").
-      if (numMedia > 0 || /@/.test(text)) {
+      // Attachments belong to the legacy flow (a new brief with media).
+      if (numMedia > 0) {
         await setFlow(database, conversation.id, { flow_state: null });
         return { kind: 'not_handled' };
+      }
+
+      // A bare email address right after delivery means "send it to this
+      // address" — deliver the branded email copy directly.
+      const typedEmail = extractEmail(text);
+      if (typedEmail && isValidEmail(typedEmail) && deliveredReqId) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        return await startEmailCopy(database, conversation, send, deliveredReqId, typedEmail);
       }
 
       // Greeting / thanks — no LLM call, just re-show the actions once.
@@ -778,7 +831,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
               // createFlowRequest claims the message onto the revision request.
               return await buildRevisionResult(database, deliveredReqId, text);
             }
-            if (intent.intent === 'image_fix' || intent.intent === 'caption_fix' || intent.intent === 'schedule') {
+            if (intent.intent === 'image_fix' || intent.intent === 'caption_fix' || intent.intent === 'schedule' || intent.intent === 'email_copy') {
               action = intent.intent;
             }
           }
@@ -838,6 +891,29 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
 
+      if (action === 'email_copy') {
+        // Known user → offer their profile address for one-tap confirmation;
+        // unknown → ask for an address.
+        const suggested = await profileEmail(database, identity.userId);
+        if (suggested) {
+          const delivered = await send(
+            `אשלח את התוצר ל-${suggested} 📧\nהשיבו כן לאישור, או כתבו כתובת מייל אחרת.`
+          );
+          if (delivered) {
+            await setFlow(database, conversation.id, {
+              flow_state: 'awaiting_email_confirm',
+              flow_context: { email: suggested },
+            });
+          }
+        } else {
+          const delivered = await send('לאיזו כתובת מייל לשלוח את התוצר? 📧');
+          if (delivered) {
+            await setFlow(database, conversation.id, { flow_state: 'awaiting_email_address', flow_context: {} });
+          }
+        }
+        return { kind: 'handled' };
+      }
+
       // action === 'schedule'
       const hasMedia = Boolean(output.storage_path && (output.mime_type ?? '').startsWith('image/'));
       const caption = (output.text_content ?? '').trim();
@@ -875,6 +951,46 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       return await startCaptionFix(database, conversation, send, requestId, text);
+    }
+
+    // ── email copy: confirm the suggested (profile) address ──────────────────
+    case 'awaiting_email_confirm': {
+      if (!text) return { kind: 'not_handled' };
+      if (await handleFixCancel(database, conversation, send, text, messageSid)) return { kind: 'handled' };
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      const requestId = conversation.last_delivered_request_id;
+      if (!requestId) {
+        await showMainMenu(database, conversation, identity, send);
+        return { kind: 'handled' };
+      }
+      const suggested = typeof ctx.email === 'string' ? ctx.email : null;
+      const typed = extractEmail(text);
+      if (typed && isValidEmail(typed)) {
+        return await startEmailCopy(database, conversation, send, requestId, typed);
+      }
+      if (isYesText(text) && suggested) {
+        return await startEmailCopy(database, conversation, send, requestId, suggested);
+      }
+      await send('השיבו כן לאישור, כתבו כתובת מייל אחרת, או "תפריט" לביטול.');
+      return { kind: 'handled' };
+    }
+
+    // ── email copy: collect an address (unidentified user / no profile email) ─
+    case 'awaiting_email_address': {
+      if (!text) return { kind: 'not_handled' };
+      if (await handleFixCancel(database, conversation, send, text, messageSid)) return { kind: 'handled' };
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      const requestId = conversation.last_delivered_request_id;
+      if (!requestId) {
+        await showMainMenu(database, conversation, identity, send);
+        return { kind: 'handled' };
+      }
+      const typed = extractEmail(text);
+      if (typed && isValidEmail(typed)) {
+        return await startEmailCopy(database, conversation, send, requestId, typed);
+      }
+      await send('זו לא נראית כתובת מייל תקינה 🙂 כתבו כתובת כמו name@example.com, או "תפריט" לביטול.');
+      return { kind: 'handled' };
     }
 
     // ── fix a text/pdf/presentation deliverable → revision request ──────────
