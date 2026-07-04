@@ -9,6 +9,7 @@ import type { OutputType } from '@/types/db';
 import { parseRichText, exportRichTextPdf, exportRichTextDocx, RichTextPreview } from '@/lib/richText';
 import { Spinner } from '@/components/ui/Spinner';
 import { alertDialog, confirmDialog } from '@/lib/dialog';
+import SocialScheduleSection from '@/components/SocialScheduleSection';
 
 const ico = 'h-4 w-4 shrink-0';
 const EyeIcon = () => (
@@ -59,6 +60,8 @@ interface FileRow {
   creator_id: string | null;
   request_source: string | null;
   brand_logo_url: string | null;
+  brand_id: string | null;
+  structured_brief: Record<string, unknown> | null;
 }
 
 const TYPE_ICON: Record<OutputType, string> = {
@@ -189,7 +192,7 @@ export default function FilesPage() {
         .order('created_at', { ascending: false })
         // Admins must see every תוצר; cap at Supabase's default max-rows ceiling.
         .limit(1000);
-      const rawRows = (data ?? []) as Omit<FileRow, 'creator' | 'creator_id' | 'request_source' | 'brand_logo_url'>[];
+      const rawRows = (data ?? []) as Omit<FileRow, 'creator' | 'creator_id' | 'request_source' | 'brand_logo_url' | 'brand_id' | 'structured_brief'>[];
 
       // The admin currently using the site — credited for simulator outputs.
       const { data: auth } = await client.auth.getUser();
@@ -202,6 +205,8 @@ export default function FilesPage() {
       const creatorIdByRequest: Record<string, string | null> = {};
       const sourceByRequest: Record<string, string | null> = {};
       const parentByRequest: Record<string, string | null> = {};
+      const brandIdByRequest: Record<string, string | null> = {};
+      const briefByRequest: Record<string, Record<string, unknown> | null> = {};
       // request -> brand logo path, so document exports carry the brand logo.
       const brandPathByRequest: Record<string, string | null> = {};
       if (requestIds.length > 0) {
@@ -211,11 +216,10 @@ export default function FilesPage() {
           .in('id', requestIds);
         const createdByIds = new Set<string>();
         const brandIds = new Set<string>();
-        const brandIdByRequest: Record<string, string | null> = {};
         const requestRows = (reqs ?? []) as Array<{
           id: string;
           customer_email: string | null;
-          structured_brief: { source?: string | null; parent_request_id?: string | null } | null;
+          structured_brief: (Record<string, unknown> & { source?: string | null; parent_request_id?: string | null }) | null;
           brand_id: string | null;
           created_by: string | null;
           conversations:
@@ -250,6 +254,7 @@ export default function FilesPage() {
             : sender || req.customer_email || 'לא ידוע';
           sourceByRequest[req.id] = requestSource;
           brandIdByRequest[req.id] = req.brand_id ?? null;
+          briefByRequest[req.id] = req.structured_brief ?? null;
           if (req.brand_id) brandIds.add(req.brand_id);
         }
 
@@ -289,6 +294,8 @@ export default function FilesPage() {
           creator_id: creatorIdByRequest[r.request_id] ?? null,
           request_source: sourceByRequest[r.request_id] ?? null,
           brand_logo_url: logoPath ? signedLogoByPath[logoPath] ?? null : null,
+          brand_id: brandIdByRequest[r.request_id] ?? null,
+          structured_brief: briefByRequest[r.request_id] ?? null,
         };
       });
 
@@ -389,6 +396,10 @@ export default function FilesPage() {
     return isAdmin || (file.request_source === 'user_upload' && file.creator_id === profile?.id);
   }
 
+  function canScheduleFile(file: FileRow) {
+    return file.output_type === 'image' || file.output_type === 'text';
+  }
+
   const visibleFiles = files.filter((file) => {
     const matchesSource =
       sourceFilter === 'quote'
@@ -465,6 +476,8 @@ export default function FilesPage() {
         request_source: 'user_upload',
         brand_logo_url: null,
         creator_id: profile?.id ?? null,
+        brand_id: null,
+        structured_brief: { source: 'user_upload', title: file.file_name },
       }));
       const signedPairs = await Promise.all(
         rows.map(async (row) => {
@@ -678,44 +691,60 @@ export default function FilesPage() {
                             {formatHebrewDateTime(file.created_at)}
                           </div>
                           {file.storage_path ? (
-                            <div className="mt-2 grid grid-cols-3 gap-1.5">
-                              <Tooltip content="צפייה">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void openViewer(file);
-                                  }}
-                                  aria-label="צפייה"
-                                  className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
-                                >
-                                  <EyeIcon />
-                                </button>
-                              </Tooltip>
-                              <Tooltip content="הורדה">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    download(file.storage_path as string);
-                                  }}
-                                  aria-label="הורדה"
-                                  className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
-                                >
-                                  <DownloadIcon />
-                                </button>
-                              </Tooltip>
-                              {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
-                                <Tooltip content="שיפור / עריכה">
+                            <div className="mt-2 space-y-1.5">
+                              <div className="grid grid-cols-3 gap-1.5">
+                                <Tooltip content="צפייה">
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      navigate(`/admin/files/${file.request_id}/revise`);
+                                      void openViewer(file);
                                     }}
-                                    aria-label="שיפור / עריכה"
-                                    className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-brand text-brand hover:bg-brand/5"
+                                    aria-label="צפייה"
+                                    className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-brand px-2 py-2 text-xs font-semibold text-white hover:opacity-90"
                                   >
-                                    <EditIcon />
+                                    <EyeIcon />
                                   </button>
                                 </Tooltip>
+                                <Tooltip content="הורדה">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      download(file.storage_path as string);
+                                    }}
+                                    aria-label="הורדה"
+                                    className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
+                                  >
+                                    <DownloadIcon />
+                                  </button>
+                                </Tooltip>
+                                {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
+                                  <Tooltip content="שיפור / עריכה">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigate(`/admin/files/${file.request_id}/revise`);
+                                      }}
+                                      aria-label="שיפור / עריכה"
+                                      className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-brand text-brand hover:bg-brand/5"
+                                    >
+                                      <EditIcon />
+                                    </button>
+                                  </Tooltip>
+                                )}
+                              </div>
+                              {canScheduleFile(file) && file.output_type === 'image' && previews[file.id] && (
+                                <div onClick={(e) => e.stopPropagation()}>
+                                  <SocialScheduleSection
+                                    title=""
+                                    requestId={file.request_id}
+                                    outputId={file.id}
+                                    brandId={file.brand_id}
+                                    captionSource={{ kind: 'image', brief: file.structured_brief ?? {}, requestId: file.request_id }}
+                                    producedImage={{ url: previews[file.id], storagePath: file.storage_path }}
+                                    triggerLabel="תזמון"
+                                    triggerClassName="min-h-11 w-full justify-center px-2 py-2 text-xs"
+                                  />
+                                </div>
                               )}
                             </div>
                           ) : (
@@ -774,6 +803,19 @@ export default function FilesPage() {
                                       <DocxIcon />
                                     </button>
                                   </Tooltip>
+                                </div>
+                              )}
+                              {canScheduleFile(file) && file.text_content && (
+                                <div onClick={(e) => e.stopPropagation()}>
+                                  <SocialScheduleSection
+                                    title=""
+                                    requestId={file.request_id}
+                                    outputId={file.id}
+                                    brandId={file.brand_id}
+                                    captionSource={{ kind: 'text', text: file.text_content }}
+                                    triggerLabel="תזמון"
+                                    triggerClassName="min-h-11 w-full justify-center px-2 py-2 text-xs"
+                                  />
                                 </div>
                               )}
                             </div>

@@ -553,17 +553,19 @@ export default function HolidaysCalendarPage() {
           )}
         </div>
         {hasEvents && (
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              goToProductionIdea(date, dayHolidays, dayPosts);
-            }}
-            className="mt-auto inline-flex min-h-7 w-full items-center justify-center gap-1 rounded-md border border-[#bfdbfe] bg-white/80 px-2 py-1 text-[11px] font-bold text-[#1d4ed8] transition hover:bg-[#eff6ff]"
-          >
-            <Lightbulb className="h-3.5 w-3.5" />
-            קבלו רעיון
-          </button>
+          <div className="mt-auto w-full pt-2">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                goToProductionIdea(date, dayHolidays, dayPosts);
+              }}
+              className="inline-flex min-h-7 w-full items-center justify-center gap-1 rounded-md border border-[#bfdbfe] bg-white/80 px-2 py-1 text-[11px] font-bold text-[#1d4ed8] transition hover:bg-[#eff6ff]"
+            >
+              <Lightbulb className="h-3.5 w-3.5" />
+              קבלו רעיון
+            </button>
+          </div>
         )}
       </div>
     );

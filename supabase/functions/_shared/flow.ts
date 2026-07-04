@@ -9,7 +9,7 @@
 import { type DB } from './db.ts';
 import { sendWhatsAppMedia } from './twilio.ts';
 import { generateSocialCaption, classifyPostDeliveryIntent } from './openai.ts';
-import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail } from './util.ts';
+import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail, MAX_MEDIA_BYTES } from './util.ts';
 import { normalizeHe } from './brand.ts';
 import { sendDeliverableCopy } from './deliverableEmail.ts';
 
@@ -133,8 +133,8 @@ export function buildMainMenu(displayName: string): string {
     `היי${displayName ? ` ${displayName}` : ''}, מה תרצה להכין היום? 👋`,
     '',
     '1️⃣ תמונה / פוסט',
-    '2️⃣ מצגת',
-    '3️⃣ מסמך',
+    '2️⃣ מסמך',
+    '3️⃣ תזמון פוסט לרשתות 📅',
     '',
     'אפשר להשיב במספר (1/2/3) או במילה.',
   ].join('\n');
@@ -149,10 +149,16 @@ export const BRIEF_PROMPTS: Record<string, string> = {
     'מעולה, מסמך 📄\nכתבו את נושא המסמך, מטרתו ומה חייב להופיע בו. אפשר גם לצרף קובץ עם חומר גלם.',
 };
 
+// Scheduling to social networks applies only to images and post texts —
+// documents/presentations (PDF files) cannot be published as social posts.
+export function canScheduleOutput(outputType: string | null | undefined): boolean {
+  return outputType === 'image' || outputType === 'text' || outputType == null;
+}
+
 // One flat actions message after delivery — image outputs expose both fix
 // paths directly; the user can also just write what to change (AI-classified).
-export function buildPostDeliveryMenu(hasImage: boolean): string {
-  if (hasImage) {
+export function buildPostDeliveryMenu(outputType: string | null | undefined): string {
+  if (outputType === 'image') {
     return [
       'מה תרצה לעשות עכשיו?',
       '',
@@ -161,6 +167,17 @@ export function buildPostDeliveryMenu(hasImage: boolean): string {
       '3️⃣ לתזמן פרסום 📅',
       '4️⃣ לקבל את התוצר במייל 📧',
       '5️⃣ תוצר חדש ✨',
+      '',
+      'אפשר להשיב במספר, או פשוט לכתוב מה לשנות — ואני כבר אבין 🙂',
+    ].join('\n');
+  }
+  if (!canScheduleOutput(outputType)) {
+    return [
+      'מה תרצה לעשות עכשיו?',
+      '',
+      '1️⃣ לתקן את התוצר ✏️',
+      '2️⃣ לקבל את התוצר במייל 📧',
+      '3️⃣ תוצר חדש ✨',
       '',
       'אפשר להשיב במספר, או פשוט לכתוב מה לשנות — ואני כבר אבין 🙂',
     ].join('\n');
@@ -188,6 +205,48 @@ const SCHEDULE_PLATFORM_MENU = [
 const SCHEDULE_DATETIME_PROMPT =
   'מתי לפרסם? כתבו תאריך ושעה, למשל:\n25/12 18:00\nאו: מחר 10:00 / היום 18:30';
 
+// ── standalone "schedule a post" flow (main menu option 3) ──────────────────
+const SCHEDULE_SOURCE_MENU = [
+  'מאיפה התוכן לפוסט? 📅',
+  '',
+  "1️⃣ אכתוב טקסט ואצרף תמונה כאן בצ'אט",
+  '2️⃣ תוצר קיים שלי מהאתר',
+  '',
+  'אפשר להשיב במספר, או "בטל" לחזרה לתפריט.',
+].join('\n');
+
+function parseScheduleSourceChoice(text: string): 'chat' | 'site' | null {
+  const t = norm(text);
+  if (!t || t.length > 40) return null;
+  if (/^1\.?$/.test(t) || /(כאן|צ'?אט|אכתוב|לכתוב|וואטסאפ|whatsapp)/.test(t)) return 'chat';
+  if (/^2\.?$/.test(t) || /(אתר|תוצר|קיים|מוכן|מהמערכת)/.test(t)) return 'site';
+  return null;
+}
+
+async function buildScheduleFromSiteMessage(database: DB): Promise<string> {
+  const site = await getSettingOr<{ url: string }>(database, 'site_url', {
+    url: 'https://ai-mggo.vercel.app',
+  });
+  const base = (site.url ?? '').replace(/\/+$/, '');
+  return [
+    'מעולה! כל התוצרים שלכם מחכים כאן:',
+    `${base}/admin/files`,
+    '',
+    'מאתרים את התוצר שרוצים לפרסם ולוחצים על כפתור התזמון 📅 שבכרטיס שלו — בוחרים רשת, תאריך ושעה, וזה מתוזמן.',
+    'וכשתרצו אותי שוב — פשוט כתבו לי כאן 🙂',
+  ].join('\n');
+}
+
+function customPostContentPrompt(platforms: string[]): string {
+  return [
+    'עכשיו שלחו לי את תוכן הפוסט 📝',
+    'אפשר טקסט + תמונה (או וידאו) באותה הודעה.',
+    platforms.includes('instagram')
+      ? 'שימו לב: לפרסום באינסטגרם חובה לצרף תמונה או וידאו.'
+      : 'אפשר גם פוסט של טקסט בלבד — פשוט שלחו רק טקסט.',
+  ].join('\n');
+}
+
 export async function buildSignupMessage(database: DB): Promise<string> {
   const site = await getSettingOr<{ url: string }>(database, 'site_url', {
     url: 'https://ai-mggo.vercel.app',
@@ -205,23 +264,26 @@ function norm(text: string): string {
   return normalizeHe(text);
 }
 
-export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'pdf' | null {
+export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'pdf' | 'schedule_post' | null {
   const t = norm(text);
   if (!t || t.length > 30) return null;
+  // Schedule keywords win over the generic "פוסט" (which alone means option 1).
+  if (/^3\.?$/.test(t) || /(תזמון|לתזמן|תזמן|פרסום|לפרסם|schedule)/.test(t)) return 'schedule_post';
   if (/^1\.?$/.test(t) || /(תמונה|פוסט|גרפיק|image|post)/.test(t)) return 'image';
-  if (/^2\.?$/.test(t) || /(מצגת|presentation|שקפים)/.test(t)) return 'presentation';
-  if (/^3\.?$/.test(t) || /(מסמך|document|pdf|מכתב)/.test(t)) return 'pdf';
+  if (/^2\.?$/.test(t) || /(מסמך|document|pdf|מכתב)/.test(t)) return 'pdf';
+  if (/(מצגת|presentation|שקפים)/.test(t)) return 'presentation';
   return null;
 }
 
 type PostDeliveryAction = 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'email_copy' | 'new' | 'fix_freetext';
 // Deterministic parse of the flat post-delivery menu. Numbering differs by
 // output: image menus have 5 options (image fix / caption fix / schedule /
-// email / new); other outputs have 4 (fix / schedule / email / new).
-function parsePostDeliveryAction(text: string, hasImage: boolean): PostDeliveryAction | null {
+// email / new); text outputs have 4 (fix / schedule / email / new); documents
+// and presentations have 3 (fix / email / new — no social scheduling).
+function parsePostDeliveryAction(text: string, outputType: string | null | undefined): PostDeliveryAction | null {
   const t = norm(text);
   if (!t || t.length > 30) return null;
-  if (hasImage) {
+  if (outputType === 'image') {
     if (/^1\.?$/.test(t) || /(תמונה|גרפיק|עיצוב)/.test(t)) return 'image_fix';
     if (/^2\.?$/.test(t) || /(טקסט|מלל|כיתוב|פוסט)/.test(t)) return 'caption_fix';
     if (/^3\.?$/.test(t) || /(תזמון|לתזמן|פרסום|תזמן)/.test(t)) return 'schedule';
@@ -229,6 +291,14 @@ function parsePostDeliveryAction(text: string, hasImage: boolean): PostDeliveryA
     if (/^5\.?$/.test(t) || /(חדש|עוד אחד|תפריט)/.test(t)) return 'new';
     // Generic "fix" on an image — ambiguous target; ask them to just describe it.
     if (/(תיקון|לתקן|תקן|עריכה|לערוך|שינוי|לשנות)/.test(t)) return 'fix_freetext';
+    return null;
+  }
+  if (!canScheduleOutput(outputType)) {
+    if (/^1\.?$/.test(t) || /(תיקון|לתקן|תקן|עריכה|לערוך|שינוי|לשנות)/.test(t)) return 'content_fix';
+    if (/^2\.?$/.test(t) || /(מייל|אימייל|דוא"ל|email)/.test(t)) return 'email_copy';
+    if (/^3\.?$/.test(t) || /(חדש|עוד אחד|תפריט)/.test(t)) return 'new';
+    // A schedule request on a non-schedulable output — the handler explains why.
+    if (/(תזמון|לתזמן|פרסום|תזמן)/.test(t)) return 'schedule';
     return null;
   }
   if (/^1\.?$/.test(t) || /(תיקון|לתקן|תקן|עריכה|לערוך|שינוי|לשנות)/.test(t)) return 'content_fix';
@@ -348,22 +418,26 @@ export function parseScheduleDateTime(
   return { at, label };
 }
 
-function extractDatePartsFromBrief(brief: Record<string, unknown>): { y: number; mo: number; d: number; label: string } | null {
-  const candidates: string[] = [];
-  for (const key of ['event_date', 'date', 'scheduled_date', 'deadline', 'goal']) {
-    const value = brief[key];
-    if (typeof value === 'string') candidates.push(value);
-  }
-  const mustInclude = brief.must_include;
-  if (Array.isArray(mustInclude)) candidates.push(...mustInclude.map(String));
-  const text = candidates.join('\n').replace(/[.\-]/g, '/');
-  const m = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+type SuggestedScheduleDate = { y: number; mo: number; d: number; label: string };
+
+function extractDatePartsFromText(text: string): SuggestedScheduleDate | null {
+  const normalized = text.replace(/[.\-]/g, '/');
+  const m = normalized.match(/(?:^|[^\d])(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?!\d)/);
   if (!m) return null;
   const d = parseInt(m[1], 10);
   const mo = parseInt(m[2], 10);
-  let y = parseInt(m[3], 10);
-  if (y < 100) y += 2000;
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+
+  let y: number;
+  if (m[3]) {
+    y = parseInt(m[3], 10);
+    if (y < 100) y += 2000;
+  } else {
+    const now = datePartsInIsrael(new Date());
+    y = now.y;
+    if (israelLocalToUtc(y, mo, d, 23, 59).getTime() <= Date.now()) y += 1;
+  }
+
   return {
     y,
     mo,
@@ -372,25 +446,40 @@ function extractDatePartsFromBrief(brief: Record<string, unknown>): { y: number;
   };
 }
 
+function extractDatePartsFromBrief(brief: Record<string, unknown>): SuggestedScheduleDate | null {
+  const candidates: string[] = [];
+  for (const key of ['event_date', 'date', 'scheduled_date', 'deadline', 'goal', 'topic', 'title']) {
+    const value = brief[key];
+    if (typeof value === 'string') candidates.push(value);
+  }
+  const mustInclude = brief.must_include;
+  if (Array.isArray(mustInclude)) candidates.push(...mustInclude.map(String));
+  return extractDatePartsFromText(candidates.join('\n'));
+}
+
 async function buildScheduleDateTimePrompt(database: DB, requestId: string | null): Promise<{
   prompt: string;
-  suggestedDate: { y: number; mo: number; d: number; label: string } | null;
+  suggestedDate: SuggestedScheduleDate | null;
 }> {
   if (!requestId) return { prompt: SCHEDULE_DATETIME_PROMPT, suggestedDate: null };
-  const { data: req } = await database
-    .from('requests')
-    .select('structured_brief')
-    .eq('id', requestId)
-    .maybeSingle();
+  const [{ data: req }, output] = await Promise.all([
+    database
+      .from('requests')
+      .select('structured_brief')
+      .eq('id', requestId)
+      .maybeSingle(),
+    latestOutput(database, requestId),
+  ]);
   const brief = (req?.structured_brief ?? {}) as Record<string, unknown>;
-  const suggestedDate = extractDatePartsFromBrief(brief);
+  const suggestedDate = extractDatePartsFromText(output?.text_content ?? '') ?? extractDatePartsFromBrief(brief);
   if (!suggestedDate) return { prompt: SCHEDULE_DATETIME_PROMPT, suggestedDate: null };
+  const exampleDate = `${String(suggestedDate.d).padStart(2, '0')}/${String(suggestedDate.mo).padStart(2, '0')}`;
   return {
     suggestedDate,
     prompt: [
-      `מתי לפרסם? לפי הבריף האירוע בתאריך ${suggestedDate.label}.`,
-      'אפשר לכתוב רק שעה לאותו תאריך, למשל: 10:00',
-      'או לכתוב תאריך ושעה אחרים, למשל: 05/07 18:00.',
+      'מתי לפרסם? כתבו תאריך ושעה, למשל:',
+      `${exampleDate} 18:00`,
+      'או: מחר 10:00 / היום 18:30',
     ].join('\n'),
   };
 }
@@ -490,6 +579,87 @@ async function sendMediaOut(
   });
 }
 
+// ── custom-post media (schedule flow uploads, no request attached) ──────────
+export type RawInboundMedia = { bytes: Uint8Array; contentType: string; filename?: string | null };
+
+// The jsonb shape scheduled_social_posts.media expects (same as the site's
+// SocialScheduleSection StoredMediaRecord).
+type CustomPostMedia = {
+  kind: 'image' | 'video';
+  source: 'upload';
+  name: string;
+  storage_path: string;
+  mime_type: string;
+};
+
+function socialMediaExt(mime: string): string {
+  const map: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
+    'video/3gpp': '3gp',
+  };
+  return map[mime] ?? 'bin';
+}
+
+// Store user-sent photos/videos for a scheduled post in the outputs bucket —
+// the same bucket the site's schedule modal uploads to, so the publish worker
+// treats both identically. No AI describe pass here (pure passthrough).
+async function storeCustomPostMedia(
+  database: DB,
+  conversation: FlowConversation,
+  items: RawInboundMedia[]
+): Promise<{ stored: CustomPostMedia[]; rejectedCount: number }> {
+  const stored: CustomPostMedia[] = [];
+  let rejectedCount = 0;
+  for (const item of items) {
+    const mime = (item.contentType || '').split(';')[0].trim().toLowerCase();
+    const kind = mime.startsWith('image/') ? 'image' as const : mime.startsWith('video/') ? 'video' as const : null;
+    if (!kind || item.bytes.byteLength > MAX_MEDIA_BYTES) {
+      rejectedCount++;
+      continue;
+    }
+    const path = `social/whatsapp/${conversation.id}/${crypto.randomUUID()}.${socialMediaExt(mime)}`;
+    const { error } = await database.storage.from('outputs').upload(path, item.bytes, { contentType: mime, upsert: false });
+    if (error) {
+      await logEvent(database, { severity: 'error', action: 'whatsapp_schedule_media_upload_failed', message: String(error) });
+      rejectedCount++;
+      continue;
+    }
+    stored.push({
+      kind,
+      source: 'upload',
+      name: item.filename || `whatsapp-${kind}`,
+      storage_path: path,
+      mime_type: mime,
+    });
+  }
+  return { stored, rejectedCount };
+}
+
+// Cancel out of the standalone schedule flow → back to the main menu (there is
+// no delivered request to fall back to).
+async function handleCustomScheduleCancel(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  send: SendFn,
+  text: string,
+  messageSid: string
+): Promise<boolean> {
+  const t = norm(text);
+  const isCancel = isNoText(text) || /^(תפריט|חזור|חזרה|back|menu)\.?$/.test(t);
+  if (!isCancel) return false;
+  if (!(await claimMessage(database, conversation.id, text, messageSid))) return true;
+  await send('ביטלתי את תזמון הפוסט.');
+  await showMainMenu(database, conversation, identity, send);
+  return true;
+}
+
 // "בטל" / "תפריט" while a fix is awaited must NOT become fix feedback (an
 // image edit with the prompt "בטל" would burn money on garbage). Returns true
 // when the message was a cancel and was fully handled here.
@@ -518,7 +688,47 @@ async function sendPostDeliveryMenu(
 ): Promise<void> {
   const reqId = requestIdOverride ?? conversation.last_delivered_request_id ?? null;
   const output = reqId ? await latestOutput(database, reqId) : null;
-  await send(buildPostDeliveryMenu(output?.output_type === 'image'));
+  await send(buildPostDeliveryMenu(output?.output_type));
+}
+
+async function requestHasEmailCopy(database: DB, requestId: string): Promise<boolean> {
+  const { data } = await database
+    .from('logs')
+    .select('id')
+    .eq('request_id', requestId)
+    .eq('action', 'deliverable_email_sent')
+    .limit(1)
+    .maybeSingle();
+  return Boolean(data);
+}
+
+async function requestHasScheduledPost(database: DB, requestId: string): Promise<boolean> {
+  const { data } = await database
+    .from('scheduled_social_posts')
+    .select('id')
+    .eq('request_id', requestId)
+    .limit(1)
+    .maybeSingle();
+  return Boolean(data);
+}
+
+async function sendNextStepAfterShareAction(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  send: SendFn,
+  requestId: string
+): Promise<void> {
+  const [sentByEmail, scheduled] = await Promise.all([
+    requestHasEmailCopy(database, requestId),
+    requestHasScheduledPost(database, requestId),
+  ]);
+  if (sentByEmail && scheduled) {
+    await send('סיימנו עם התוצר הזה: הוא נשלח במייל וגם תוזמן לפרסום. נתחיל תוצר חדש.');
+    await showMainMenu(database, conversation, identity, send);
+    return;
+  }
+  await sendPostDeliveryMenu(database, conversation, send, requestId);
 }
 
 // Kick off an AI image edit for the last delivered image. Sends the ack now;
@@ -541,7 +751,7 @@ async function startImageFix(
         flow_state: 'post_delivery',
         last_delivered_request_id: edited.requestId,
       });
-      await send(buildPostDeliveryMenu(true));
+      await send(buildPostDeliveryMenu('image'));
     } catch (e) {
       await logEvent(database, {
         requestId: sourceRequestId,
@@ -624,6 +834,7 @@ async function profileEmail(database: DB, userId: string | null): Promise<string
 async function startEmailCopy(
   database: DB,
   conversation: FlowConversation,
+  identity: Identity,
   send: SendFn,
   requestId: string,
   email: string
@@ -642,7 +853,7 @@ async function startEmailCopy(
       });
       await send('לא הצלחתי לשלוח את המייל 😕 נסו שוב עוד רגע.');
     }
-    await sendPostDeliveryMenu(database, conversation, send, requestId);
+    await sendNextStepAfterShareAction(database, conversation, identity, send, requestId);
   };
   return { kind: 'handled', background };
 }
@@ -698,6 +909,10 @@ export type FlowOpts = {
   messageSid: string;
   numMedia: number;
   send: SendFn;
+  // Download the raw attachments of THIS message (channel-specific: Twilio
+  // fetch / simulator base64). Used by the standalone schedule-post flow, which
+  // stores the file as-is instead of running the brief media pipeline.
+  fetchRawMedia?: () => Promise<RawInboundMedia[]>;
 };
 
 export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<FlowResult> {
@@ -712,6 +927,18 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
     // ── main menu: pick deliverable type ────────────────────────────────────
     case 'main_menu': {
       const choice = numMedia === 0 ? parseMainMenuChoice(text) : null;
+      if (choice === 'schedule_post') {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        const delivered = await send(SCHEDULE_SOURCE_MENU);
+        if (delivered) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'schedule_source',
+            selected_output_type: null,
+            flow_context: {},
+          });
+        }
+        return { kind: 'handled' };
+      }
       if (choice) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
         const delivered = await send(BRIEF_PROMPTS[choice]);
@@ -744,6 +971,19 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       const choice = numMedia === 0 ? parseMainMenuChoice(text) : null;
+      // Changed their mind — they want to schedule a post, not write a brief.
+      if (choice === 'schedule_post') {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        const delivered = await send(SCHEDULE_SOURCE_MENU);
+        if (delivered) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'schedule_source',
+            selected_output_type: null,
+            flow_context: {},
+          });
+        }
+        return { kind: 'handled' };
+      }
       // Re-tapping the same option (double-click / impatience) must not become
       // a garbage brief like "1" — just re-show the prompt.
       if (choice && choice === conversation.selected_output_type) {
@@ -790,17 +1030,17 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const typedEmail = extractEmail(text);
       if (typedEmail && isValidEmail(typedEmail) && deliveredReqId) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        return await startEmailCopy(database, conversation, send, deliveredReqId, typedEmail);
+        return await startEmailCopy(database, conversation, identity, send, deliveredReqId, typedEmail);
       }
 
       // Greeting / thanks — no LLM call, just re-show the actions once.
       if (isGreetingOnly(text) || /^(תודה|מעולה|אחלה|סבבה|וואו|יפה|מושלם|👍|🙏|❤️)+!?$/.test(norm(text))) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send(buildPostDeliveryMenu(hasImage));
+        await send(buildPostDeliveryMenu(output?.output_type));
         return { kind: 'handled' };
       }
 
-      let action: PostDeliveryAction | null = parsePostDeliveryAction(text, hasImage);
+      let action: PostDeliveryAction | null = parsePostDeliveryAction(text, output?.output_type);
 
       // Free text → let AI decide what the user wants to do with the output.
       if (!action && text.trim().length >= 3) {
@@ -848,7 +1088,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
 
       if (!action) {
-        await send(buildPostDeliveryMenu(hasImage));
+        await send(buildPostDeliveryMenu(output?.output_type));
         return { kind: 'handled' };
       }
 
@@ -864,7 +1104,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
 
       // The user typed a fix request directly (AI-classified) → act on it now.
-      const isDirectFeedback = parsePostDeliveryAction(text, hasImage) === null;
+      const isDirectFeedback = parsePostDeliveryAction(text, output.output_type) === null;
 
       if (action === 'image_fix') {
         if (isDirectFeedback) return await startImageFix(database, conversation, identity, send, deliveredReqId, text);
@@ -915,11 +1155,18 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
 
       // action === 'schedule'
+      // Documents/presentations are not social-postable (decision: only images
+      // and post texts can be scheduled).
+      if (!canScheduleOutput(output.output_type)) {
+        await send('את התוצר הזה אי אפשר לתזמן לרשתות חברתיות 🙂 תזמון זמין לתמונות ולפוסטים בלבד.');
+        await send(buildPostDeliveryMenu(output.output_type));
+        return { kind: 'handled' };
+      }
       const hasMedia = Boolean(output.storage_path && (output.mime_type ?? '').startsWith('image/'));
       const caption = (output.text_content ?? '').trim();
       if (!caption && !hasMedia) {
         await send('לתוצר הזה אין תוכן שאפשר לתזמן לרשתות. אפשר לתקן אותו או ליצור תוצר חדש.');
-        await send(buildPostDeliveryMenu(hasImage));
+        await send(buildPostDeliveryMenu(output.output_type));
         return { kind: 'handled' };
       }
       const delivered = await send(SCHEDULE_PLATFORM_MENU);
@@ -966,10 +1213,10 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const suggested = typeof ctx.email === 'string' ? ctx.email : null;
       const typed = extractEmail(text);
       if (typed && isValidEmail(typed)) {
-        return await startEmailCopy(database, conversation, send, requestId, typed);
+        return await startEmailCopy(database, conversation, identity, send, requestId, typed);
       }
       if (isYesText(text) && suggested) {
-        return await startEmailCopy(database, conversation, send, requestId, suggested);
+        return await startEmailCopy(database, conversation, identity, send, requestId, suggested);
       }
       await send('השיבו כן לאישור, כתבו כתובת מייל אחרת, או "תפריט" לביטול.');
       return { kind: 'handled' };
@@ -987,7 +1234,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       const typed = extractEmail(text);
       if (typed && isValidEmail(typed)) {
-        return await startEmailCopy(database, conversation, send, requestId, typed);
+        return await startEmailCopy(database, conversation, identity, send, requestId, typed);
       }
       await send('זו לא נראית כתובת מייל תקינה 🙂 כתבו כתובת כמו name@example.com, או "תפריט" לביטול.');
       return { kind: 'handled' };
@@ -1005,6 +1252,146 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       // Caller creates the queued revision request + claims the message.
       return await buildRevisionResult(database, requestId, text);
+    }
+
+    // ── standalone schedule flow: source → platform → content → datetime ─────
+    case 'schedule_source': {
+      if (numMedia === 0 && (await handleCustomScheduleCancel(database, conversation, identity, send, text, messageSid))) {
+        return { kind: 'handled' };
+      }
+      const choice = numMedia === 0 ? parseScheduleSourceChoice(text) : null;
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (choice === 'site') {
+        await send(await buildScheduleFromSiteMessage(database));
+        await setFlow(database, conversation.id, { flow_state: 'main_menu', flow_context: {} });
+        await logEvent(database, {
+          action: 'whatsapp_schedule_site_redirect',
+          metadata: { user_id: identity.userId },
+        });
+        return { kind: 'handled' };
+      }
+      if (choice === 'chat') {
+        const delivered = await send(SCHEDULE_PLATFORM_MENU);
+        if (delivered) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'schedule_new_platform',
+            flow_context: { custom_post: true },
+          });
+        }
+        return { kind: 'handled' };
+      }
+      await send(SCHEDULE_SOURCE_MENU);
+      return { kind: 'handled' };
+    }
+
+    case 'schedule_new_platform': {
+      if (numMedia === 0 && (await handleCustomScheduleCancel(database, conversation, identity, send, text, messageSid))) {
+        return { kind: 'handled' };
+      }
+      const platforms = numMedia === 0 ? parsePlatformChoice(text) : null;
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (!platforms) {
+        await send(SCHEDULE_PLATFORM_MENU);
+        return { kind: 'handled' };
+      }
+      const delivered = await send(customPostContentPrompt(platforms));
+      if (delivered) {
+        await setFlow(database, conversation.id, {
+          flow_state: 'schedule_new_content',
+          flow_context: { custom_post: true, platforms },
+        });
+      }
+      return { kind: 'handled' };
+    }
+
+    // Collect the post's text + media. Both can arrive in ONE message (text +
+    // attached photo); whichever is missing gets asked for explicitly.
+    case 'schedule_new_content': {
+      if (numMedia === 0 && (await handleCustomScheduleCancel(database, conversation, identity, send, text, messageSid))) {
+        return { kind: 'handled' };
+      }
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+
+      const platforms = (ctx.platforms as string[] | undefined) ?? ['facebook'];
+      const igSelected = platforms.includes('instagram');
+      let caption = typeof ctx.caption === 'string' ? ctx.caption : '';
+      let media = Array.isArray(ctx.media) ? (ctx.media as CustomPostMedia[]) : [];
+      let skipMedia = ctx.skip_media === true;
+
+      if (numMedia > 0) {
+        if (!opts.fetchRawMedia) {
+          await send('לא הצלחתי לקרוא את הקובץ ששלחת 😕 נסו לשלוח שוב.');
+        } else {
+          try {
+            const raw = await opts.fetchRawMedia();
+            const { stored, rejectedCount } = await storeCustomPostMedia(database, conversation, raw);
+            media = [...media, ...stored].slice(0, 10);
+            if (rejectedCount > 0) {
+              await send('חלק מהקבצים לא מתאימים לפרסום (תמונה או וידאו עד 10MB) ולא צורפו.');
+            }
+          } catch (e) {
+            await logEvent(database, {
+              severity: 'error',
+              action: 'whatsapp_schedule_media_failed',
+              message: String(e),
+            });
+            await send('משהו השתבש בקליטת הקובץ 😕 נסו לשלוח אותו שוב.');
+          }
+        }
+      }
+
+      const saidNoImage = /^(בלי תמונה|ללא תמונה|אין תמונה|בלי|דלג|skip)\.?$/.test(norm(text));
+      if (saidNoImage && media.length === 0) {
+        if (igSelected) {
+          await send('לפרסום באינסטגרם חובה לצרף תמונה או וידאו 🙂 שלחו קובץ, או כתבו "בטל" לביטול.');
+          await setFlow(database, conversation.id, { flow_context: { ...ctx, caption, media } });
+          return { kind: 'handled' };
+        }
+        skipMedia = true;
+      } else if (text.trim() && !saidNoImage) {
+        caption = caption ? `${caption}\n${text.trim()}` : text.trim();
+      }
+
+      const newCtx = { ...ctx, caption, media, skip_media: skipMedia };
+
+      if (!caption.trim()) {
+        await setFlow(database, conversation.id, { flow_context: newCtx });
+        await send(
+          media.length > 0
+            ? 'קיבלתי את המדיה 👍 עכשיו כתבו את הטקסט של הפוסט 📝'
+            : 'כתבו את הטקסט של הפוסט 📝 (אפשר לצרף גם תמונה באותה הודעה)'
+        );
+        return { kind: 'handled' };
+      }
+      if (media.length === 0 && !skipMedia) {
+        await setFlow(database, conversation.id, { flow_context: newCtx });
+        await send(
+          igSelected
+            ? 'קיבלתי את הטקסט 👍 עכשיו שלחו את התמונה או הווידאו לפוסט (חובה לאינסטגרם) 📷'
+            : 'קיבלתי את הטקסט 👍 יש תמונה או וידאו לפוסט? שלחו כאן, או כתבו "בלי תמונה" להמשך בלי מדיה 📷'
+        );
+        return { kind: 'handled' };
+      }
+
+      // Text + media (or an explicit skip) are in — ask when to publish.
+      const suggestedDate = extractDatePartsFromText(caption);
+      const prompt = suggestedDate
+        ? [
+            'מתי לפרסם? כתבו תאריך ושעה, למשל:',
+            `${String(suggestedDate.d).padStart(2, '0')}/${String(suggestedDate.mo).padStart(2, '0')} 18:00`,
+            'או: מחר 10:00 / היום 18:30',
+          ].join('\n')
+        : SCHEDULE_DATETIME_PROMPT;
+      const delivered = await send(prompt);
+      if (delivered) {
+        await setFlow(database, conversation.id, {
+          flow_state: 'schedule_datetime',
+          flow_context: { ...newCtx, suggested_date: suggestedDate },
+        });
+      } else {
+        await setFlow(database, conversation.id, { flow_context: newCtx });
+      }
+      return { kind: 'handled' };
     }
 
     // ── schedule: platform → datetime → confirm ──────────────────────────────
@@ -1043,8 +1430,12 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       if (isNoText(text)) {
         await send('ביטלתי את התזמון.');
-        await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
-        await sendPostDeliveryMenu(database, conversation, send);
+        if (ctx.custom_post === true) {
+          await showMainMenu(database, conversation, identity, send);
+        } else {
+          await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
+          await sendPostDeliveryMenu(database, conversation, send);
+        }
         return { kind: 'handled' };
       }
       const suggestedDate = (ctx.suggested_date ?? null) as { y: number; mo: number; d: number; label?: string } | null;
@@ -1077,14 +1468,76 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       if (isNoText(text)) {
         await send('ביטלתי את התזמון.');
-        await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
-        await sendPostDeliveryMenu(database, conversation, send);
+        if (ctx.custom_post === true) {
+          await showMainMenu(database, conversation, identity, send);
+        } else {
+          await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
+          await sendPostDeliveryMenu(database, conversation, send);
+        }
         return { kind: 'handled' };
       }
       if (!isYesText(text)) {
         await send('השיבו כן לאישור התזמון, או לא לביטול.');
         return { kind: 'handled' };
       }
+
+      // Standalone custom post — no request/output behind it, everything lives
+      // in flow_context (caption + uploaded media + platforms).
+      if (ctx.custom_post === true) {
+        const caption = String(ctx.caption ?? '').trim();
+        const media = Array.isArray(ctx.media) ? ctx.media : [];
+        const customPlatforms = ((ctx.platforms as string[] | undefined) ?? ['facebook']).filter(
+          (p): p is 'facebook' | 'instagram' => p === 'facebook' || p === 'instagram'
+        );
+        const customAtIso = ctx.schedule_at as string | undefined;
+        const customLabel = (ctx.schedule_label as string | undefined) ?? '';
+        if (!caption || !customAtIso) {
+          await send('משהו השתבש בתזמון, בואו ננסה שוב.');
+          await showMainMenu(database, conversation, identity, send);
+          return { kind: 'handled' };
+        }
+        try {
+          const { error } = await database.from('scheduled_social_posts').insert(
+            customPlatforms.map((platform) => ({
+              request_id: null,
+              output_id: null,
+              brand_id: identity.brandId,
+              title: caption.split('\n')[0].slice(0, 160) || null,
+              platform,
+              caption: caption.slice(0, 5000),
+              scheduled_at: customAtIso,
+              media,
+              status: 'scheduled',
+              created_by: identity.userId,
+            }))
+          );
+          if (error) throw error;
+          await logEvent(database, {
+            action: 'whatsapp_custom_post_scheduled',
+            metadata: {
+              platforms: customPlatforms,
+              scheduled_at: customAtIso,
+              user_id: identity.userId,
+              media_count: media.length,
+            },
+          });
+          const platformsLabel = customPlatforms
+            .map((p) => (p === 'facebook' ? 'פייסבוק' : 'אינסטגרם'))
+            .join(' + ');
+          await send(`נקבע! 📅 הפוסט תוזמן ל${platformsLabel} ב-${customLabel}. אפשר לראות ולנהל אותו בלוח התזמונים באתר.`);
+          await showMainMenu(database, conversation, identity, send);
+        } catch (e) {
+          await logEvent(database, {
+            severity: 'error',
+            action: 'whatsapp_custom_schedule_failed',
+            message: String(e),
+          });
+          // State stays on schedule_confirm so another "כן" can retry.
+          await send('לא הצלחתי לשמור את התזמון 😕 השיבו כן לניסיון נוסף, או לא לביטול.');
+        }
+        return { kind: 'handled' };
+      }
+
       const requestId = conversation.last_delivered_request_id;
       const platforms = ((ctx.platforms as string[] | undefined) ?? ['facebook']).filter(
         (p): p is 'facebook' | 'instagram' => p === 'facebook' || p === 'instagram'
@@ -1097,6 +1550,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await sendPostDeliveryMenu(database, conversation, send);
         return { kind: 'handled' };
       }
+      let scheduled = false;
       try {
         const output = await latestOutput(database, requestId);
         const { data: req } = await database
@@ -1141,6 +1595,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
           .map((p) => (p === 'facebook' ? 'פייסבוק' : 'אינסטגרם'))
           .join(' + ');
         await send(`נקבע! 📅 הפוסט תוזמן ל${platformLabel} ב-${label}. אפשר לראות ולנהל אותו בלוח התזמונים באתר.`);
+        scheduled = true;
       } catch (e) {
         await logEvent(database, {
           requestId,
@@ -1151,7 +1606,11 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await send('לא הצלחתי לשמור את התזמון 😕 נסו שוב עוד רגע.');
       }
       await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
-      await sendPostDeliveryMenu(database, conversation, send);
+      if (scheduled) {
+        await sendNextStepAfterShareAction(database, conversation, identity, send, requestId);
+      } else {
+        await sendPostDeliveryMenu(database, conversation, send);
+      }
       return { kind: 'handled' };
     }
 

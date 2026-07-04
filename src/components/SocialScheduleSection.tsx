@@ -98,6 +98,8 @@ export default function SocialScheduleSection({
   trailingAction = null,
   onScheduled,
   producedImage = null,
+  triggerLabel = 'תזמון לרשתות חברתיות',
+  triggerClassName = '',
 }: {
   captionSource?: CaptionSource;
   requestId?: string | null;
@@ -110,6 +112,8 @@ export default function SocialScheduleSection({
   // The image this flow just produced with AI. Auto-attached to the post media
   // when the schedule modal opens, so the user sees it will be published too.
   producedImage?: { url: string; storagePath: string } | null;
+  triggerLabel?: string;
+  triggerClassName?: string;
 } = {}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [platforms, setPlatforms] = useState<SocialPlatform[]>(['facebook', 'instagram']);
@@ -210,11 +214,11 @@ export default function SocialScheduleSection({
         <button
           type="button"
           onClick={openSchedule}
-          className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"
+          className={`inline-flex min-h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50 ${triggerClassName}`}
         >
           <FacebookIcon />
           <InstagramIcon />
-          <span>תזמון לרשתות חברתיות</span>
+          <span>{triggerLabel}</span>
         </button>
         {trailingAction}
       </div>

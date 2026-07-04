@@ -29,6 +29,12 @@ import { buildPostDeliveryMenu } from './flow.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
+const POST_DELIVERY_MENU_DELAY_MS = 10_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function recordUsage(
   database: DB,
   requestId: string,
@@ -946,8 +952,9 @@ async function deliverOutput(database: DB, requestId: string): Promise<void> {
   // (fix with AI / schedule to social / new deliverable).
   await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
   await logEvent(database, { requestId, action: 'delivered_whatsapp_only' });
+  await sleep(POST_DELIVERY_MENU_DELAY_MS);
   await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-    buildPostDeliveryMenu(output.output_type === 'image'), conversation.simulated);
+    buildPostDeliveryMenu(output.output_type), conversation.simulated);
   await database.from('conversations').update({
     status: 'active', current_request_id: null,
     flow_state: 'post_delivery', last_delivered_request_id: requestId,
@@ -1090,7 +1097,8 @@ export async function sendOutput(requestId: string): Promise<void> {
       await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
       await logEvent(database, { requestId, action: 'email_sent', message: 'simulated (skipped Resend)' });
       await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, true);
-      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, buildPostDeliveryMenu(output.output_type === 'image'), true);
+      await sleep(POST_DELIVERY_MENU_DELAY_MS);
+      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, buildPostDeliveryMenu(output.output_type), true);
       await database.from('conversations').update({
         status: 'active', current_request_id: null,
         flow_state: 'post_delivery', last_delivered_request_id: requestId,
@@ -1108,7 +1116,8 @@ export async function sendOutput(requestId: string): Promise<void> {
       return;
     }
     await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, conversation.simulated);
-    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, buildPostDeliveryMenu(output.output_type === 'image'), conversation.simulated);
+    await sleep(POST_DELIVERY_MENU_DELAY_MS);
+    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, buildPostDeliveryMenu(output.output_type), conversation.simulated);
     await database.from('conversations').update({
       status: 'active', current_request_id: null,
       flow_state: 'post_delivery', last_delivered_request_id: requestId,
