@@ -5,6 +5,7 @@
 import { db } from '../_shared/db.ts';
 import { editImage } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateImageCost } from '../_shared/util.ts';
+import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from '../_shared/abuseGuard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -61,6 +62,13 @@ Deno.serve(async (req) => {
       .eq('id', sourceRequestId)
       .single();
     const sourceBrief = (sourceReq?.structured_brief ?? {}) as Record<string, unknown>;
+    const actor = await loadRequestActor(database, sourceRequestId);
+    await enforceRequestCost(database, sourceRequestId);
+    await enforceAiLimit(database, actor, {
+      kind: 'generation',
+      promptChars: feedback.length + JSON.stringify(sourceBrief).length,
+      estimatedCost: estimateImageCost(1),
+    });
 
     // Pull the source bytes from storage and base64-encode for OpenAI.
     const { data: file, error: dlError } = await database.storage.from('outputs').download(output.storage_path);
@@ -185,6 +193,9 @@ Deno.serve(async (req) => {
       mime: edited.mime,
     });
   } catch (e) {
+    if (e instanceof AbuseGuardError) {
+      return json({ error: e.message, code: e.code }, e.status);
+    }
     await logEvent(database, { severity: 'error', action: 'image_edit_failed', message: String(e) });
     return json({ error: String(e) }, 500);
   }

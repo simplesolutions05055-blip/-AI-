@@ -8,6 +8,7 @@ import {
   estimateTextCost,
   estimateTranscriptionCost,
 } from '../_shared/util.ts';
+import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor, abuseSettings } from '../_shared/abuseGuard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -37,6 +38,20 @@ Deno.serve(async (req) => {
         status: 413,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+    const settings = await abuseSettings(database);
+    if (base64.length * 0.75 > settings.max_upload_bytes) {
+      return new Response(JSON.stringify({ error: 'file exceeds production upload limit' }), {
+        status: 413,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    if (kind === 'audio' || kind === 'image') {
+      const actor = requestId
+        ? await loadRequestActor(database, requestId)
+        : { ip: req.headers.get('x-forwarded-for') ?? req.headers.get('cf-connecting-ip') };
+      if (requestId) await enforceRequestCost(database, requestId);
+      await enforceAiLimit(database, actor, { kind: 'media', estimatedCost: kind === 'audio' ? estimateTranscriptionCost() : undefined });
     }
 
     const aiModels = await getSetting<{
@@ -87,6 +102,12 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
+    if (error instanceof AbuseGuardError) {
+      return new Response(JSON.stringify({ error: error.message, code: error.code }), {
+        status: error.status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     await logEvent(database, {
       severity: 'error',
       action: 'simulator_upload_failed',

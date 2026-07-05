@@ -10,6 +10,7 @@ import { getActiveSystemPrompt } from '../_shared/util.ts';
 import { buildSkillInstructions } from '../_shared/skills.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 import { analyzeBrief } from '../_shared/openai.ts';
+import { AbuseGuardError, enforceAiLimit, rejectClientOpenAiKeyIfDisabled } from '../_shared/abuseGuard.ts';
 
 interface Body {
   free_text?: string;
@@ -52,6 +53,7 @@ Deno.serve(async (req) => {
     if (!userId) return json({ error: 'unauthorized' }, 401);
 
     const database = db();
+    await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
     const { data: profile } = await database.from('profiles').select('role').eq('id', userId).maybeSingle();
     const isAdmin = profile?.role === 'admin';
 
@@ -104,6 +106,11 @@ Deno.serve(async (req) => {
       '\n\n' +
       (await buildSkillInstructions(database, 'brief', { clientType: brand?.client_type ?? null }));
 
+    await enforceAiLimit(database, { userId, brandId: brand_id ?? null }, {
+      kind: 'utility',
+      promptChars: transcript.length + systemPrompt.length,
+    });
+
     // roundsRemaining = 0 forces the analyser to mark the brief ready in one pass
     // (no follow-up questions — this is a one-shot, form-free entry point).
     const { brief } = await analyzeBrief(systemPrompt, transcript, 0, overrideKey);
@@ -111,6 +118,7 @@ Deno.serve(async (req) => {
     const result = finalizeBrief(brief, output_type, text, brand);
     return json({ brief: result });
   } catch (e) {
+    if (e instanceof AbuseGuardError) return json({ error: e.message, code: e.code }, e.status);
     const msg = String(e);
     // OpenAI ran out of quota/billing — surface a specific code so the client can
     // raise a clear "OpenAI credit ran out" alert instead of a generic failure.

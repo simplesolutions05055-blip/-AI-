@@ -1,6 +1,7 @@
 import { db } from '../_shared/db.ts';
 import { generateImage } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateImageCost } from '../_shared/util.ts';
+import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from '../_shared/abuseGuard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,6 +22,17 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'prompt required' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    if (requestId) {
+      const actor = await loadRequestActor(database, requestId);
+      await enforceRequestCost(database, requestId);
+      await enforceAiLimit(database, actor, { kind: 'generation', promptChars: prompt.length, estimatedCost: estimateImageCost(1) });
+    } else {
+      await enforceAiLimit(database, { ip: req.headers.get('x-forwarded-for') ?? req.headers.get('cf-connecting-ip') }, {
+        kind: 'generation',
+        promptChars: prompt.length,
+        estimatedCost: estimateImageCost(1),
       });
     }
 
@@ -61,6 +73,12 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
+    if (error instanceof AbuseGuardError) {
+      return new Response(JSON.stringify({ error: error.message, code: error.code }), {
+        status: error.status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     await logEvent(database, {
       severity: 'error',
       action: 'simulator_image_generation_failed',

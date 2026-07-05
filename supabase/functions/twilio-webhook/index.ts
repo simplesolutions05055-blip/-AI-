@@ -12,6 +12,7 @@ import {
 import { processRequest } from '../_shared/worker.ts';
 import { findOrCreateConversation, handleInbound, type MediaResult } from '../_shared/inbound.ts';
 import { processInboundMediaItem, type InboundMediaProcessResult } from '../_shared/inbound_media.ts';
+import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
 
 function twiml() {
   return new Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
@@ -81,20 +82,32 @@ Deno.serve(async (req) => {
     return twiml();
   }
 
-  // rate limit (messages / 24h)
-  const limits = await getSettingOr<{ messages_per_24h: number }>(database, 'rate_limits', { messages_per_24h: 50 });
-  const since = new Date(Date.now() - 86400000).toISOString();
-  const { count } = await database
-    .from('rate_limit_events')
-    .select('id', { count: 'exact', head: true })
-    .eq('phone_number', phone)
-    .eq('event_type', 'message')
-    .gte('created_at', since);
-  if ((count ?? 0) >= limits.messages_per_24h) {
-    await logEvent(database, { severity: 'warning', action: 'rate_limited_message', metadata: { phone } });
-    return twiml();
+  try {
+    await enforceMessageLimit(database, { phone, ip: req.headers.get('x-forwarded-for') });
+  } catch (e) {
+    if (e instanceof AbuseGuardError) {
+      await logEvent(database, { severity: 'warning', action: 'rate_limited_message', metadata: { phone, code: e.code } });
+      return twiml();
+    }
+    throw e;
   }
-  await database.from('rate_limit_events').insert({ phone_number: phone, event_type: 'message' });
+
+  // Backward-compatible legacy daily limit, kept as an extra ceiling for the
+  // existing `rate_limits` setting that admins may already use.
+  const limits = await getSettingOr<{ messages_per_24h: number }>(database, 'rate_limits', { messages_per_24h: 80 });
+  if (limits.messages_per_24h > 0) {
+    const since = new Date(Date.now() - 86400000).toISOString();
+    const { count } = await database
+      .from('rate_limit_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('phone_number', `phone:${phone}`)
+      .eq('event_type', 'message_day')
+      .gte('created_at', since);
+    if ((count ?? 0) > limits.messages_per_24h) {
+      await logEvent(database, { severity: 'warning', action: 'rate_limited_message_legacy', metadata: { phone } });
+      return twiml();
+    }
+  }
 
   const conversation = await findOrCreateConversation(database, from, false);
   if (!conversation) return twiml();

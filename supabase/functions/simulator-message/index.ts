@@ -9,6 +9,7 @@ import { processRequest } from '../_shared/worker.ts';
 import { findOrCreateConversation, handleInbound } from '../_shared/inbound.ts';
 import { getSettingOr, getTemplates, logEvent } from '../_shared/util.ts';
 import { processInboundMediaItem } from '../_shared/inbound_media.ts';
+import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -45,6 +46,17 @@ Deno.serve(async (req) => {
     if (!text.trim() && uploaded.length === 0) return json({ error: 'body or attachment required' }, 400);
 
     const from = `simulator:${sessionId}`;
+    try {
+      await enforceMessageLimit(database, {
+        sessionId,
+        phone: from,
+        ip: req.headers.get('x-forwarded-for') ?? req.headers.get('cf-connecting-ip'),
+      });
+    } catch (e) {
+      if (e instanceof AbuseGuardError) return json({ error: e.message, code: e.code }, e.status);
+      throw e;
+    }
+
     const conversation = await findOrCreateConversation(database, from, true);
     if (!conversation) return json({ error: 'conversation failed' }, 500);
 

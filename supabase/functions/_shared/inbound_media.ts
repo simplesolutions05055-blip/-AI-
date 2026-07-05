@@ -12,6 +12,7 @@ import {
   estimateTranscriptionCost,
   estimateTextCost,
 } from './util.ts';
+import { AbuseGuardError, abuseSettings, enforceAiLimit, enforceRequestCost, loadRequestActor } from './abuseGuard.ts';
 
 export type InboundMediaItem = {
   bytes: Uint8Array;
@@ -54,8 +55,16 @@ export async function processInboundMediaItem(
     if (bytes.byteLength > MAX_MEDIA_BYTES) {
       return { text: '', storagePath: null, mediaType: null, rejected: true };
     }
+    const limits = await abuseSettings(database);
+    if (bytes.byteLength > limits.max_upload_bytes) {
+      await logEvent(database, { requestId, severity: 'warning', action: 'media_rejected_abuse_guard_size', metadata: { bytes: bytes.byteLength, max: limits.max_upload_bytes } });
+      return { text: '', storagePath: null, mediaType: null, rejected: true };
+    }
 
     if (ct.startsWith('audio/')) {
+      const actor = await loadRequestActor(database, requestId);
+      await enforceRequestCost(database, requestId);
+      await enforceAiLimit(database, actor, { kind: 'media', estimatedCost: estimateTranscriptionCost() });
       const aiModels = await getSetting<{ transcribe_model?: string }>(database, 'ai_models');
       const model = aiModels?.transcribe_model || 'gpt-4o-transcribe';
       const { text } = await transcribeAudio(encodeBase64(bytes), contentType, filename || 'audio', { model });
@@ -85,6 +94,9 @@ export async function processInboundMediaItem(
 
     if (ct.startsWith('image/')) {
       try {
+        const actor = await loadRequestActor(database, requestId);
+        await enforceRequestCost(database, requestId);
+        await enforceAiLimit(database, actor, { kind: 'media' });
         const aiModels = await getSetting<{ vision_model?: string }>(database, 'ai_models');
         const model = aiModels?.vision_model || 'gpt-4o';
         const { text, usage } = await describeImage(encodeBase64(bytes), contentType, { model });
@@ -116,6 +128,10 @@ export async function processInboundMediaItem(
     }
     return { text: '[צורף מסמך שלא הצלחנו לקרוא את תוכנו]', storagePath, mediaType: contentType, rejected: false };
   } catch (e) {
+    if (e instanceof AbuseGuardError) {
+      await logEvent(database, { requestId, severity: 'warning', action: 'media_blocked_by_abuse_guard', message: e.message, metadata: { code: e.code } });
+      return { text: '', storagePath: null, mediaType: null, rejected: true };
+    }
     await logEvent(database, { requestId, severity: 'error', action: 'media_failed', message: String(e) });
     return { text: '', storagePath: null, mediaType: null, rejected: false };
   }

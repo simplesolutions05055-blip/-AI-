@@ -11,7 +11,17 @@ import { sendWhatsAppMedia } from './twilio.ts';
 import { generateSocialCaption, classifyPostDeliveryIntent } from './openai.ts';
 import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail, MAX_MEDIA_BYTES } from './util.ts';
 import { normalizeHe } from './brand.ts';
-import { sendDeliverableCopy } from './deliverableEmail.ts';
+import { sendDeliverableCopy, loadPdfBrandSettings } from './deliverableEmail.ts';
+import { renderDocxBase64 } from './docx.ts';
+import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from './abuseGuard.ts';
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+function decodeBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
 
 // ── conversation row shape (new flow columns) ────────────────────────────────
 export type FlowConversation = {
@@ -140,13 +150,19 @@ export function buildMainMenu(displayName: string): string {
   ].join('\n');
 }
 
+// WhatsApp/Twilio silently drops inbound messages over ~1600 chars (warning
+// 21617 — the webhook is never even called, so we can't react after the fact).
+// The only defense is warning up front: long material must arrive as a file.
+const LONG_TEXT_WARNING =
+  '⚠️ שימו לב: וואטסאפ חוסם הודעות טקסט ארוכות (מעל ~1,500 תווים) — הן לא מגיעות אליי בכלל. חומר ארוך שלחו כקובץ מצורף (PDF / Word) 📎';
+
 export const BRIEF_PROMPTS: Record<string, string> = {
   image:
-    'מעולה, תמונה/פוסט 🖼️\nתארו מה אתם צריכים — למשל: "גרפיקה לאירוע יזום, כיכר העירייה, כותרת: הצטרפו לחגיגה!".\nאפשר גם לצרף קובץ (תמונה / PDF / Word) עם החומרים.',
+    `מעולה, תמונה/פוסט 🖼️\nתארו מה אתם צריכים — למשל: "גרפיקה לאירוע יזום, כיכר העירייה, כותרת: הצטרפו לחגיגה!".\nאפשר גם לצרף קובץ (תמונה / PDF / Word) עם החומרים.\n\n${LONG_TEXT_WARNING}`,
   presentation:
-    'מעולה, מצגת 📊\nכתבו את נושא המצגת, המטרה וכמה נקודות עיקריות. אפשר גם לצרף קובץ עם תוכן.',
+    `מעולה, מצגת 📊\nכתבו את נושא המצגת, המטרה וכמה נקודות עיקריות. אפשר גם לצרף קובץ עם תוכן.\n\n${LONG_TEXT_WARNING}`,
   pdf:
-    'מעולה, מסמך 📄\nכתבו את נושא המסמך, מטרתו ומה חייב להופיע בו. אפשר גם לצרף קובץ עם חומר גלם.',
+    `מעולה, מסמך 📄\nכתבו את נושא המסמך, מטרתו ומה חייב להופיע בו. אפשר גם לצרף קובץ עם חומר גלם.\n\n${LONG_TEXT_WARNING}`,
 };
 
 // Scheduling to social networks applies only to images and post texts —
@@ -176,8 +192,9 @@ export function buildPostDeliveryMenu(outputType: string | null | undefined): st
       'מה תרצה לעשות עכשיו?',
       '',
       '1️⃣ לתקן את התוצר ✏️',
-      '2️⃣ לקבל את התוצר במייל 📧',
-      '3️⃣ תוצר חדש ✨',
+      '2️⃣ לקבל כקובץ Word 📄',
+      '3️⃣ לקבל את התוצר במייל 📧',
+      '4️⃣ תוצר חדש ✨',
       '',
       'אפשר להשיב במספר, או פשוט לכתוב מה לשנות — ואני כבר אבין 🙂',
     ].join('\n');
@@ -275,7 +292,7 @@ export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'p
   return null;
 }
 
-type PostDeliveryAction = 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'email_copy' | 'new' | 'fix_freetext';
+type PostDeliveryAction = 'image_fix' | 'caption_fix' | 'content_fix' | 'schedule' | 'email_copy' | 'docx_copy' | 'new' | 'fix_freetext';
 // Deterministic parse of the flat post-delivery menu. Numbering differs by
 // output: image menus have 5 options (image fix / caption fix / schedule /
 // email / new); text outputs have 4 (fix / schedule / email / new); documents
@@ -295,8 +312,9 @@ function parsePostDeliveryAction(text: string, outputType: string | null | undef
   }
   if (!canScheduleOutput(outputType)) {
     if (/^1\.?$/.test(t) || /(תיקון|לתקן|תקן|עריכה|לערוך|שינוי|לשנות)/.test(t)) return 'content_fix';
-    if (/^2\.?$/.test(t) || /(מייל|אימייל|דוא"ל|email)/.test(t)) return 'email_copy';
-    if (/^3\.?$/.test(t) || /(חדש|עוד אחד|תפריט)/.test(t)) return 'new';
+    if (/^2\.?$/.test(t) || /(word|וורד|docx|דוקס|דוק"?ס|קובץ)/.test(t)) return 'docx_copy';
+    if (/^3\.?$/.test(t) || /(מייל|אימייל|דוא"ל|email)/.test(t)) return 'email_copy';
+    if (/^4\.?$/.test(t) || /(חדש|עוד אחד|תפריט)/.test(t)) return 'new';
     // A schedule request on a non-schedulable output — the handler explains why.
     if (/(תזמון|לתזמן|פרסום|תזמן)/.test(t)) return 'schedule';
     return null;
@@ -784,6 +802,9 @@ async function startCaptionFix(
         .select('structured_brief')
         .eq('id', requestId)
         .single();
+      const actor = await loadRequestActor(database, requestId);
+      await enforceRequestCost(database, requestId);
+      await enforceAiLimit(database, actor, { kind: 'utility', promptChars: feedback.length });
       const { text: newCaption, usage } = await generateSocialCaption(
         req?.structured_brief ?? {},
         'facebook',
@@ -803,6 +824,11 @@ async function startCaptionFix(
       await send(`טקסט מעודכן לפוסט:\n\n${newCaption}`);
       await sendPostDeliveryMenu(database, conversation, send, requestId);
     } catch (e) {
+      if (e instanceof AbuseGuardError) {
+        await send(e.message);
+        await sendPostDeliveryMenu(database, conversation, send, requestId);
+        return;
+      }
       await logEvent(database, {
         requestId,
         severity: 'error',
@@ -854,6 +880,51 @@ async function startEmailCopy(
       await send('לא הצלחתי לשלוח את המייל 😕 נסו שוב עוד רגע.');
     }
     await sendNextStepAfterShareAction(database, conversation, identity, send, requestId);
+  };
+  return { kind: 'handled', background };
+}
+
+// Convert the document deliverable to a branded Word file and send it as a
+// WhatsApp attachment. The DOCX is rendered by the Vercel endpoint so it is
+// identical to the site's export. Heavy work runs in the background task.
+async function startDocxCopy(
+  database: DB,
+  conversation: FlowConversation,
+  send: SendFn,
+  requestId: string
+): Promise<FlowResult> {
+  await send('מכין את הקובץ ב-Word 📄 רגע אחד...');
+  await setFlow(database, conversation.id, { flow_state: 'post_delivery' });
+  const background = async () => {
+    try {
+      const output = await latestOutput(database, requestId);
+      const text = (output?.text_content ?? '').trim();
+      if (!output || !text) {
+        await send('אין תוכן טקסטואלי להמיר ל-Word בתוצר הזה 🤔');
+        await sendPostDeliveryMenu(database, conversation, send, requestId);
+        return;
+      }
+      const { data: req } = await database
+        .from('requests')
+        .select('brand_id')
+        .eq('id', requestId)
+        .maybeSingle();
+      const brand = await loadPdfBrandSettings(database, (req?.brand_id as string | null) ?? null);
+      const b64 = await renderDocxBase64(text, brand?.logo_url ?? null);
+      const path = `${requestId}/v${output.version}.docx`;
+      await database.storage.from('outputs').upload(path, decodeBase64(b64), { contentType: DOCX_MIME, upsert: true });
+      await sendMediaOut(database, conversation, requestId, path, DOCX_MIME, 'המסמך שלך בפורמט Word 📄');
+      await sendPostDeliveryMenu(database, conversation, send, requestId);
+    } catch (e) {
+      await logEvent(database, {
+        requestId,
+        severity: 'error',
+        action: 'whatsapp_docx_copy_failed',
+        message: String(e),
+      });
+      await send('לא הצלחתי להכין את קובץ ה-Word 😕 נסו שוב עוד רגע.');
+      await sendPostDeliveryMenu(database, conversation, send, requestId);
+    }
   };
   return { kind: 'handled', background };
 }
@@ -1045,6 +1116,9 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // Free text → let AI decide what the user wants to do with the output.
       if (!action && text.trim().length >= 3) {
         try {
+          const actor = deliveredReqId ? await loadRequestActor(database, deliveredReqId) : { phone: conversation.whatsapp_from };
+          if (deliveredReqId) await enforceRequestCost(database, deliveredReqId);
+          await enforceAiLimit(database, actor, { kind: 'utility', promptChars: text.length });
           const intent = await classifyPostDeliveryIntent(text, {
             hasImage,
             captionSnippet: output?.text_content ?? null,
@@ -1076,6 +1150,10 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
             }
           }
         } catch (e) {
+          if (e instanceof AbuseGuardError) {
+            await send(e.message);
+            return { kind: 'handled' };
+          }
           await logEvent(database, {
             requestId: deliveredReqId,
             severity: 'warning',
@@ -1129,6 +1207,10 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (action === 'fix_freetext') {
         await send('כתבו פשוט מה לשנות — בתמונה או בטקסט הפוסט — ואני כבר אבין לבד 🙂');
         return { kind: 'handled' };
+      }
+
+      if (action === 'docx_copy') {
+        return await startDocxCopy(database, conversation, send, deliveredReqId);
       }
 
       if (action === 'email_copy') {

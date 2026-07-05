@@ -26,6 +26,13 @@ import {
   maybeLockTemplate,
 } from './learning.ts';
 import { buildPostDeliveryMenu } from './flow.ts';
+import {
+  AbuseGuardError,
+  enforceAiLimit,
+  enforcePromptLength,
+  enforceRequestCost,
+  loadRequestActor,
+} from './abuseGuard.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
@@ -437,13 +444,35 @@ export async function processRequest(
     }
   }
 
+  try {
+    const actor = await loadRequestActor(database, requestId);
+    await enforceRequestCost(database, requestId);
+    await enforceAiLimit(database, actor, { kind: 'generation' });
+  } catch (e) {
+    if (e instanceof AbuseGuardError) {
+      await logEvent(database, { requestId, severity: 'warning', action: 'process_blocked_by_abuse_guard', message: e.message, metadata: { code: e.code } });
+      await database.from('requests').update({ status: 'needs_attention' }).eq('id', requestId);
+      return;
+    }
+    throw e;
+  }
+
   // Acquire the processing lock so two workers can't run this request at once.
   if (!(await acquireLock(database, requestId))) {
     await logEvent(database, { requestId, action: 'process_skipped_locked' });
     return;
   }
   try {
-    await runRequestPipeline(database, requestId, trigger);
+    try {
+      await runRequestPipeline(database, requestId, trigger);
+    } catch (e) {
+      if (e instanceof AbuseGuardError) {
+        await logEvent(database, { requestId, severity: 'warning', action: 'process_blocked_by_abuse_guard', message: e.message, metadata: { code: e.code } });
+        await database.from('requests').update({ status: 'needs_attention' }).eq('id', requestId);
+        return;
+      }
+      throw e;
+    }
   } finally {
     await releaseLock(database, requestId);
   }
@@ -462,6 +491,12 @@ async function runRequestPipeline(
   if (!request) return;
 
   const conversation = request.conversations as Conv;
+  await enforcePromptLength(database, {
+    requestId,
+    userId: (request.created_by as string | null) ?? null,
+    brandId: (request.brand_id as string | null) ?? null,
+    phone: conversation.whatsapp_from,
+  }, JSON.stringify(request.structured_brief ?? {}).length);
   const waFrom = conversation.whatsapp_from;
   const systemPrompt = await getActiveSystemPrompt(database);
   const templates = await getTemplates(database);

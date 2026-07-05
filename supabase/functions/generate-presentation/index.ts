@@ -2,6 +2,13 @@ import { db } from '../_shared/db.ts';
 import { generatePresentationOutline, generateDeckSlides, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost } from '../_shared/util.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
+import {
+  AbuseGuardError,
+  enforceAiLimit,
+  enforceRequestCost,
+  loadRequestActor,
+  rejectClientOpenAiKeyIfDisabled,
+} from '../_shared/abuseGuard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,6 +29,19 @@ Deno.serve(async (req) => {
   try {
     const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
+    await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
+    if (save_only !== true) {
+      const promptChars = JSON.stringify({ brief, prompts, current_caption, feedback }).length;
+      const actor = requestId
+        ? await loadRequestActor(database, requestId)
+        : { ip: req.headers.get('x-forwarded-for') ?? req.headers.get('cf-connecting-ip') };
+      if (requestId) await enforceRequestCost(database, requestId);
+      await enforceAiLimit(database, actor, {
+        kind: format === 'images' ? 'generation' : 'utility',
+        promptChars,
+        estimatedCost: format === 'images' ? estimateImageCost(Array.isArray(prompts) ? Math.min(prompts.length, 3) : 1) : undefined,
+      });
+    }
 
     // 'images' mode: generate up to 3 AI images from explicit prompts (built by
     // the client from the deck's slides + brand palette) and return them as
@@ -399,6 +419,12 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
+    if (error instanceof AbuseGuardError) {
+      return new Response(JSON.stringify({ error: error.message, code: error.code }), {
+        status: error.status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     await logEvent(database, {
       severity: 'error',
       action: 'simulator_presentation_failed',

@@ -4,6 +4,7 @@
 import { type DB } from './db.ts';
 import { getSetting, logEvent, formatHebrewDate } from './util.ts';
 import { buildPdfHtml, renderPdfBase64, type PdfBrandSettings } from './pdf.ts';
+import { renderDocxBase64 } from './docx.ts';
 import { buildEmailHtml, sendDeliverableEmail, type Attachment } from './resend.ts';
 
 export interface EmailSettings {
@@ -139,28 +140,28 @@ export async function sendDeliverableCopy(database: DB, requestId: string, to: s
   const title = (brief.goal as string) || 'התוצר שלך';
   const emailSettings = await getEmailSettings(database);
 
-  let deliverableAttachment: Attachment | null = null;
+  const deliverableAttachments: Attachment[] = [];
   if (output.output_type === 'image' && output.storage_path) {
     const { data: file } = await database.storage.from('outputs').download(output.storage_path);
     if (!file) throw new Error('output file missing from storage');
-    deliverableAttachment = {
+    deliverableAttachments.push({
       filename: 'image.png',
       contentBase64: encodeBase64(new Uint8Array(await file.arrayBuffer())),
-    };
+    });
   } else {
-    // Document outputs ride as a rendered PDF when the render endpoint is up.
-    // The renderer is external (APP_URL/api/internal/render-pdf) — when it is
-    // missing/down we degrade gracefully: full text in the email body instead
-    // of failing the whole send.
+    // Document outputs ride as a rendered PDF + Word file when the render
+    // endpoints are up. The renderers are external (APP_URL/api/internal/*) —
+    // when one is missing/down we degrade gracefully (independent try/catch per
+    // format) so a failure never blocks the send or the other attachment.
+    const brand = await loadPdfBrandSettings(database, request.brand_id as string | null);
     try {
-      const brand = await loadPdfBrandSettings(database, request.brand_id as string | null);
       const html = buildPdfHtml({
         title,
         body: output.text_content ?? '',
         dateLabel: formatHebrewDate(new Date()),
         brand,
       });
-      deliverableAttachment = { filename: 'document.pdf', contentBase64: await renderPdfBase64(html) };
+      deliverableAttachments.push({ filename: 'document.pdf', contentBase64: await renderPdfBase64(html) });
     } catch (e) {
       await logEvent(database, {
         requestId,
@@ -169,7 +170,23 @@ export async function sendDeliverableCopy(database: DB, requestId: string, to: s
         message: String(e),
       });
     }
+    if (output.text_content?.trim()) {
+      try {
+        deliverableAttachments.push({
+          filename: 'document.docx',
+          contentBase64: await renderDocxBase64(output.text_content, brand?.logo_url ?? null),
+        });
+      } catch (e) {
+        await logEvent(database, {
+          requestId,
+          severity: 'warning',
+          action: 'email_docx_render_unavailable',
+          message: String(e),
+        });
+      }
+    }
   }
+  const deliverableAttachment = deliverableAttachments.length > 0;
 
   // The title already renders as the email heading — the body holds only the
   // content itself.
@@ -179,7 +196,10 @@ export async function sendDeliverableCopy(database: DB, requestId: string, to: s
     if (output.text_content?.trim()) bodyLines.push('טקסט מוצע לפוסט:', output.text_content.trim(), '');
     bodyLines.push('התמונה המלאה מצורפת למייל זה.');
   } else if (deliverableAttachment) {
-    bodyLines.push('התוצר המלא מצורף למייל זה כקובץ PDF.');
+    const hasPdf = deliverableAttachments.some((a) => a.filename.endsWith('.pdf'));
+    const hasDocx = deliverableAttachments.some((a) => a.filename.endsWith('.docx'));
+    const formats = [hasPdf ? 'PDF' : null, hasDocx ? 'Word' : null].filter(Boolean).join(' ו-');
+    bodyLines.push(`התוצר המלא מצורף למייל זה כקובץ ${formats}.`);
   } else if (output.text_content?.trim()) {
     bodyLines.push(output.text_content.trim());
   } else {
@@ -191,7 +211,7 @@ export async function sendDeliverableCopy(database: DB, requestId: string, to: s
     to,
     subject: emailSettings.subject_rule,
     html: emailHtml,
-    attachments: [...emailBrand.attachments, ...(deliverableAttachment ? [deliverableAttachment] : [])],
+    attachments: [...emailBrand.attachments, ...deliverableAttachments],
   });
   await logEvent(database, {
     requestId,

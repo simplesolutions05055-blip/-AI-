@@ -2,6 +2,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { matchBrandInText, type BrandRow } from '../_shared/brand.ts';
 import { assertCanProduce, PermissionError } from '../_shared/output_permissions.ts';
+import {
+  AbuseGuardError,
+  enforceParallelRequestLimit,
+  enforcePromptLength,
+} from '../_shared/abuseGuard.ts';
 
 type OutputType = 'text' | 'image' | 'pdf' | 'presentation';
 
@@ -26,7 +31,11 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json() as Body;
     const database = db();
+    const createdBy = await resolveUserId(req);
     if (body.request_id) {
+      if (!createdBy) return json({ error: 'login required' }, 401);
+      const allowed = await canMutateRequest(database, body.request_id, createdBy);
+      if (!allowed) return json({ error: 'forbidden' }, 403);
       const { error } = await database
         .from('requests')
         .update({ customer_email: cleanEmail(body.customer_email) })
@@ -44,8 +53,9 @@ Deno.serve(async (req) => {
     // Resolve the producing system user from their JWT (best-effort): used to
     // attribute the request on the dashboard's per-user breakdown. The form is
     // admin-gated, so a token is normally present.
-    const createdBy = await resolveUserId(req);
     await assertCanProduce(database, createdBy, body.output_type);
+    await enforcePromptLength(database, { userId: createdBy, brandId: body.brand_id ?? null }, JSON.stringify(body.brief ?? {}).length);
+    await enforceParallelRequestLimit(database, { userId: createdBy, brandId: body.brand_id ?? null });
 
     const { data: conversation, error: convError } = await database
       .from('conversations')
@@ -92,6 +102,9 @@ Deno.serve(async (req) => {
 
     return json({ request_id: requestRow.id });
   } catch (e) {
+    if (e instanceof AbuseGuardError) {
+      return json({ error: e.message, code: e.code }, e.status);
+    }
     if (e instanceof PermissionError) {
       return json({ error: 'אין הרשאה להפיק את סוג התוצר הזה' }, 403);
     }
@@ -116,6 +129,17 @@ async function resolveUserId(req: Request): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function canMutateRequest(database: ReturnType<typeof db>, requestId: string, userId: string): Promise<boolean> {
+  const { data: profile } = await database.from('profiles').select('role').eq('id', userId).maybeSingle();
+  if (profile?.role === 'admin') return true;
+  const { data: request } = await database
+    .from('requests')
+    .select('created_by')
+    .eq('id', requestId)
+    .maybeSingle();
+  return request?.created_by === userId;
 }
 
 function json(payload: unknown, status = 200): Response {
