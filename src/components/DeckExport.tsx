@@ -388,25 +388,25 @@ export default function DeckExport({
             בחר פורמט: PowerPoint שניתן לעריכה או PDF משיתוף. שניהם כוללים את כל צבעי המותג, הלוגו, והתמונות שבחרת.
           </p>
         </div>
+        {/* In an RTL container the first item lands on the right, so PPTX
+            (primary) is authored first → renders on the right per reading gravity. */}
         <div className="grid grid-cols-2 gap-3 sm:flex sm:gap-3">
-          {/* Primary (PPTX) — appears on the right in RTL */}
           <button
             onClick={downloadPptx}
             disabled={downloadPptxLoading}
-            className="order-2 sm:order-2 flex-1 rounded-lg bg-brand px-4 py-3 font-semibold text-white hover:bg-brand/90 disabled:opacity-50 transition"
+            className="flex-1 rounded-lg bg-brand px-4 py-3 font-semibold text-white hover:bg-brand/90 disabled:opacity-50 transition"
           >
             <div className="text-sm font-bold">הורדת PPTX</div>
-            <div className="text-[11px] opacity-90">עריך בקלות</div>
+            <div className="text-[11px] opacity-90">לעריכה</div>
             {downloadPptxLoading && <div className="text-[11px] mt-1">בונה…</div>}
           </button>
-          {/* Secondary (PDF) — appears on the left in RTL */}
           <button
             onClick={downloadPdf}
             disabled={downloadPdfLoading}
-            className="order-1 sm:order-1 flex-1 rounded-lg border-2 border-brand px-4 py-3 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
+            className="flex-1 rounded-lg border-2 border-brand px-4 py-3 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
           >
             <div className="text-sm font-bold">הורדת PDF</div>
-            <div className="text-[11px] opacity-80">שתף בקלות</div>
+            <div className="text-[11px] opacity-80">לשיתוף</div>
             {downloadPdfLoading && <div className="text-[11px] mt-1">בונה…</div>}
           </button>
         </div>
@@ -420,11 +420,11 @@ export default function DeckExport({
           className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-3 text-right font-semibold text-brand hover:bg-blue-50/30 transition"
           aria-expanded={notebookLmOpen}
         >
-          <span className="text-lg leading-none">{notebookLmOpen ? '▼' : '▶'}</span>
-          <div className="flex-1 text-left">
+          <div className="flex-1 text-right">
             <div className="font-bold">עבוד עם NotebookLM</div>
             <div className="text-[11px] text-[var(--muted)] font-normal">צור מצגת Google Slides יפה בעזרת AI</div>
           </div>
+          <span className="text-lg leading-none">{notebookLmOpen ? '▼' : '◀'}</span>
         </button>
 
         {notebookLmOpen && (
@@ -523,11 +523,13 @@ export default function DeckExport({
           className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-3 text-right font-semibold text-[var(--muted)] hover:text-black hover:bg-gray-50/30 transition"
           aria-expanded={showDeveloperOptions}
         >
-          <span className="text-lg leading-none">{showDeveloperOptions ? '▼' : '▶'}</span>
-          <div className="flex-1 text-left">
-            <div className="font-bold">🔧 ל-מפתחים</div>
-            <div className="text-[11px] text-[var(--muted)] font-normal">JSON ו-API integrations</div>
+          <div className="flex-1 text-right">
+            <div className="font-bold">למפתחים 🔧</div>
+            <div className="text-[11px] text-[var(--muted)] font-normal">
+              JSON ל-<span dir="ltr">API</span> ואינטגרציות
+            </div>
           </div>
+          <span className="text-lg leading-none">{showDeveloperOptions ? '▼' : '◀'}</span>
         </button>
 
         {showDeveloperOptions && (
@@ -542,7 +544,7 @@ export default function DeckExport({
                 disabled={busy !== null}
                 className="w-full rounded-lg border border-brand px-4 py-2.5 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
               >
-                {busy === 'gamma' ? 'בונה JSON…' : 'צפה בـ JSON'}
+                {busy === 'gamma' ? 'בונה JSON…' : 'צפה ב-JSON'}
               </button>
             </div>
           </div>
