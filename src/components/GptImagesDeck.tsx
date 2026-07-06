@@ -260,6 +260,8 @@ export default function GptImagesDeck({
           slides: slideText,
           approvedSlideIndexes: selectedSlideIndexes,
           generateMissingImages: true,
+          fullSlide: mode === 'fullslide',
+          deckMode: mode,
           emails: validEmails,
           mode,
         },

@@ -91,7 +91,11 @@ Deno.serve(async (req) => {
     const generateMissingImages = payload?.generateMissingImages === true;
     // 'fullslide' = each slide is one full-bleed GPT image (no text boxes);
     // 'template' = image beside editable text (default).
-    const deckMode: 'template' | 'fullslide' = payload?.mode === 'fullslide' ? 'fullslide' : 'template';
+    const modeValue = String(payload?.mode || payload?.deckMode || '').toLowerCase();
+    const deckMode: 'template' | 'fullslide' =
+      payload?.fullSlide === true || modeValue === 'fullslide' || modeValue.includes('notebook')
+        ? 'fullslide'
+        : 'template';
     if (slides.length < 1) return json({ error: 'slides_required' }, 400);
     if (deckMode === 'fullslide') {
       if (!approvedSlideIndexes.length) return json({ error: 'no_approved_slides' }, 400);
@@ -99,6 +103,20 @@ Deno.serve(async (req) => {
 
     const jobId = crypto.randomUUID();
     await writeJob(database, jobId, { status: 'running', total: validEmails.length, message: 'המשימה נפתחה בשרת.' });
+    await logEvent(database, {
+      requestId,
+      action: 'deck_email_started',
+      metadata: {
+        jobId,
+        mode: deckMode,
+        rawMode: payload?.mode ?? null,
+        deckMode: payload?.deckMode ?? null,
+        fullSlide: payload?.fullSlide === true,
+        slides: slides.length,
+        selected: approvedSlideIndexes.length,
+        emails: validEmails.length,
+      },
+    });
 
     // Fire-and-forget: the job continues after we return, even if the browser
     // that started it is closed.
@@ -138,7 +156,7 @@ async function runJob(
   //    from storage as data URLs and attached to their slide. If the browser
   //    did not pre-generate them, this worker creates the missing images here.
   await writeJob(database, jobId, { status: 'running', total: p.emails.length, message: 'בודקים תמונות קיימות לשקפים שנבחרו.' });
-  const imagesBySlide = await loadApprovedImages(database, p.requestId, p.approvedSlideIndexes);
+  const imagesBySlide = await loadApprovedImages(database, p.requestId, p.approvedSlideIndexes, p.mode);
   const reusedCount = imagesBySlide.size;
 
   let generatedCount = 0;
@@ -174,7 +192,7 @@ async function runJob(
   //    Vercel render endpoint + INTERNAL_API_SECRET; if that's misconfigured we
   //    still deliver the PPTX rather than failing the whole job.
   let pptxBase64: string;
-  let pdfHtml: string;
+  let pdfHtml: string | null;
   await writeJob(database, jobId, {
     status: 'running',
     total: p.emails.length,
@@ -186,7 +204,10 @@ async function runJob(
     // Each approved slide is one full-bleed image, in slide order.
     const fullImages = [...imagesBySlide.entries()].sort((a, b) => a[0] - b[0]).map(([, url]) => url);
     pptxBase64 = await buildFullSlidePptxBase64(fullImages);
-    pdfHtml = buildFullSlideHtml(fullImages);
+    // Full-slide PDFs can exceed the render endpoint payload limit because every
+    // page is a high-quality base64 image. Deliver the PPTX reliably; the deck
+    // itself still contains the full-bleed AI slides.
+    pdfHtml = null;
   } else {
     const slides = p.slides.map((s, i) => ({ ...s, aiImage: imagesBySlide.get(i) ?? null }));
     pptxBase64 = await buildPptxBase64(p.brief, brand, slides);
@@ -194,11 +215,13 @@ async function runJob(
   }
   let pdfBase64: string | null = null;
   let pdfError: string | null = null;
-  try {
-    pdfBase64 = await renderPdfBase64(pdfHtml);
-  } catch (e) {
-    pdfError = String(e);
-    await logEvent(database, { requestId: p.requestId, severity: 'warning', action: 'deck_email_pdf_failed', message: pdfError });
+  if (pdfHtml) {
+    try {
+      pdfBase64 = await renderPdfBase64(pdfHtml);
+    } catch (e) {
+      pdfError = String(e);
+      await logEvent(database, { requestId: p.requestId, severity: 'warning', action: 'deck_email_pdf_failed', message: pdfError });
+    }
   }
 
   // Persist the built files under the job folder — a fallback download if email
@@ -293,18 +316,22 @@ async function loadApprovedImages(
   database: Database,
   requestId: string | null,
   approvedSlideIndexes: number[],
+  mode: 'template' | 'fullslide',
 ): Promise<Map<number, string>> {
   const out = new Map<number, string>();
   if (!requestId || !approvedSlideIndexes.length) return out;
   const { data } = await database
     .from('deck_ai_images')
-    .select('slide_index, storage_path, mime_type, created_at')
+    .select('slide_index, storage_path, mime_type, prompt, created_at')
     .eq('request_id', requestId)
     .order('created_at', { ascending: false });
-  const rows = (data as Array<{ slide_index: number; storage_path: string; mime_type: string | null }>) ?? [];
+  const rows = (data as Array<{ slide_index: number; storage_path: string; mime_type: string | null; prompt: string | null }>) ?? [];
   const wanted = new Set(approvedSlideIndexes);
   for (const r of rows) {
     if (!wanted.has(r.slide_index) || out.has(r.slide_index)) continue; // newest first → keep first seen
+    const isFullSlideImage = String(r.prompt || '').includes('צור שקופית מצגת שלמה');
+    if (mode === 'fullslide' && !isFullSlideImage) continue;
+    if (mode === 'template' && isFullSlideImage) continue;
     const { data: file } = await database.storage.from(BUCKET).download(r.storage_path);
     if (!file) continue;
     const bytes = new Uint8Array(await file.arrayBuffer());
