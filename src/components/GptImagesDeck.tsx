@@ -81,11 +81,39 @@ export default function GptImagesDeck({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewSlides, setPreviewSlides] = useState<PreviewSlide[]>([]);
+  const [hasSavedDeckImages, setHasSavedDeckImages] = useState(false);
 
   // Prefill the first recipient with the user's own email once the profile loads.
   useEffect(() => {
     if (profile?.email) setEmails((prev) => (prev.length === 1 && !prev[0] ? [profile.email] : prev));
   }, [profile?.email]);
+
+  useEffect(() => {
+    if (!requestId) return;
+    let alive = true;
+    fetchPersistedDeckImages(requestId)
+      .then((rows) => {
+        if (alive) setHasSavedDeckImages(rows.length > 0);
+      })
+      .catch(() => {
+        if (alive) setHasSavedDeckImages(false);
+      });
+    return () => { alive = false; };
+  }, [requestId, costRefresh]);
+
+  useEffect(() => {
+    if (!requestId) return;
+    const params = new URLSearchParams(window.location.search);
+    const jobId = params.get('gptDeckJob');
+    const openDeck = params.get('gptDeck') === '1';
+    if (jobId) {
+      setEmailJobId(jobId);
+      setEmailJobStatus('running');
+      setProgressText('בודקים את מצב המצגת שנוצרה...');
+    } else if (openDeck) {
+      void loadPreviewSlides();
+    }
+  }, [requestId]);
 
   const deckBrief = useMemo<Record<string, any>>(() => {
     const b = (brief ?? {}) as Record<string, any>;
@@ -315,7 +343,7 @@ export default function GptImagesDeck({
       setEmailError('יש להזין לפחות כתובת מייל תקינה אחת.');
       return;
     }
-    if (!rangeInput.trim()) {
+    if (!rangeInput.trim() && !previewSlides.length) {
       setEmailError('יש לבחור אילו שקפים להפיק, למשל 1-3.');
       return;
     }
@@ -329,7 +357,9 @@ export default function GptImagesDeck({
       const deck = slides ?? (await buildDeckSlides(fullBrief, requestId, outlineText));
       if (!deck.length) throw new Error('לא נמצא תוכן שקפים להפקה');
       setSlides(deck);
-      const selectedSlideIndexes = parseSlideRange(rangeInput, deck.length);
+      const selectedSlideIndexes = rangeInput.trim()
+        ? parseSlideRange(rangeInput, deck.length)
+        : previewSlides.map((slide) => slide.index).sort((a, b) => a - b);
       if (!selectedSlideIndexes.length) {
         throw new Error(`טווח שקפים לא תקין. יש ${deck.length} שקפים — אפשר לכתוב למשל "1-${Math.min(5, deck.length)}" או "1,3".`);
       }
@@ -378,12 +408,17 @@ export default function GptImagesDeck({
     const id = setInterval(async () => {
       const { data } = await db.functions.invoke('deck-email', { body: { action: 'status', jobId: emailJobId } });
       if (!alive) return;
-      const st = data as { status?: string; error?: string | null; sentTo?: string[]; pdf?: boolean; message?: string | null } | null;
+      const st = data as { status?: string; error?: string | null; sentTo?: string[]; pdf?: boolean; message?: string | null; selectedSlideIndexes?: number[] } | null;
       if (st?.message) setProgressText(st.message);
+      if (!rangeInput.trim() && Array.isArray(st?.selectedSlideIndexes) && st.selectedSlideIndexes.length) {
+        setRangeInput(st.selectedSlideIndexes.map((idx) => idx + 1).join(','));
+      }
       if (st?.status === 'done') {
         setEmailJobStatus('done');
         setEmailSentTo(st.sentTo ?? []);
         setEmailPdfOk(st.pdf !== false);
+        setHasSavedDeckImages(true);
+        void loadPreviewSlides();
       } else if (st?.status === 'error') {
         setEmailJobStatus('error');
         setEmailError(st.error || 'ההפקה נכשלה בשרת.');
@@ -517,6 +552,16 @@ export default function GptImagesDeck({
             <p>{progressText || 'השרת מכין את תוכן השקפים, יוצר תמונות AI, בונה את המצגת וישלח אותה למיילים בסיום. אפשר להמשיך לגלול ולעבוד באתר.'}</p>
           </div>
         )}
+        {(hasSavedDeckImages || previewSlides.length > 0) && emailJobStatus !== 'running' && (
+          <button
+            type="button"
+            onClick={loadPreviewSlides}
+            disabled={previewLoading}
+            className="mt-3 w-full rounded-lg border border-brand px-4 py-2.5 text-sm font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+          >
+            {previewLoading ? 'טוען שקפים…' : 'צפייה ועריכת מצגת AI שקף־שקף'}
+          </button>
+        )}
         {emailJobStatus === 'done' && (
           <div className="mt-3 rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-800">
             <p className="font-semibold">נשלח בהצלחה{emailSentTo.length ? ` ל-${emailSentTo.length} נמענים` : ''}: {emailSentTo.join(', ')}</p>
@@ -541,14 +586,24 @@ export default function GptImagesDeck({
               <div className="text-sm font-bold">צפייה ועריכת המצגת</div>
               <p className="text-xs text-[var(--muted)]">גללו שקף־שקף. כתבו שינוי לשקף ספציפי כדי ליצור אותו מחדש כתמונה מלאה.</p>
             </div>
-            <button
-              type="button"
-              onClick={downloadPreviewPptx}
-              disabled={!previewSlides.length || regenBusy !== null}
-              className="rounded-lg border border-brand px-3 py-2 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
-            >
-              הורדת PPTX מעודכן
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={startEmailJob}
+                disabled={!previewSlides.length || regenBusy !== null || emailStarting || emailJobStatus === 'running' || !validEmails.length}
+                className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
+              >
+                שליחת מצגת מעודכנת למייל
+              </button>
+              <button
+                type="button"
+                onClick={downloadPreviewPptx}
+                disabled={!previewSlides.length || regenBusy !== null}
+                className="rounded-lg border border-brand px-3 py-2 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+              >
+                הורדת PPTX מעודכן
+              </button>
+            </div>
           </div>
           <div className="space-y-4">
             {previewSlides.map((slide) => {

@@ -47,6 +47,7 @@ interface JobState {
   total?: number;
   generated?: number;
   reused?: number;
+  selectedSlideIndexes?: number[];
   pdf?: boolean; // false when the PDF step failed and only the PPTX was sent
   pdfError?: string | null;
 }
@@ -102,7 +103,7 @@ Deno.serve(async (req) => {
     }
 
     const jobId = crypto.randomUUID();
-    await writeJob(database, jobId, { status: 'running', total: validEmails.length, message: 'המשימה נפתחה בשרת.' });
+    await writeJob(database, jobId, { status: 'running', total: validEmails.length, selectedSlideIndexes: approvedSlideIndexes, message: 'המשימה נפתחה בשרת.' });
     await logEvent(database, {
       requestId,
       action: 'deck_email_started',
@@ -239,8 +240,13 @@ async function runJob(
   // 4) Email each recipient individually (so addresses aren't exposed to one
   //    another) with whatever built successfully.
   const filesLine = pdfBase64 ? 'כקובץ PowerPoint (PPTX) וכ-PDF' : 'כקובץ PowerPoint (PPTX)';
+  const editUrl = buildDeckEditUrl(p.requestId, jobId);
   const html = buildEmailHtml(
-    `המצגת "${topic}" מוכנה ומצורפת כאן ${filesLine}.`,
+    [
+      `המצגת "${topic}" מוכנה ומצורפת כאן ${filesLine}.`,
+      editUrl ? `לצפייה ועריכה של המצגת שקף־שקף:\n${editUrl}` : '',
+      'אפשר לפתוח את הקישור, לגלול בין השקפים, לערוך שקף ספציפי עם AI ולייצא PPTX מעודכן.',
+    ].filter(Boolean).join('\n\n'),
     brand?.name ? `בברכה,\n${brand.name}` : 'בברכה',
     'המצגת שלך מוכנה',
   );
@@ -258,7 +264,7 @@ async function runJob(
     }
   }
 
-  await writeJob(database, jobId, { status: 'done', sentTo, total: p.emails.length, pdf: !!pdfBase64, pdfError, generated: generatedCount, reused: reusedCount, message: 'ההפקה הסתיימה והמיילים נשלחו.' });
+  await writeJob(database, jobId, { status: 'done', sentTo, total: p.emails.length, selectedSlideIndexes: p.approvedSlideIndexes, pdf: !!pdfBase64, pdfError, generated: generatedCount, reused: reusedCount, message: 'ההפקה הסתיימה והמיילים נשלחו.' });
   await logEvent(database, {
     requestId: p.requestId,
     action: 'deck_email_sent',
@@ -266,11 +272,18 @@ async function runJob(
   });
 }
 
+function buildDeckEditUrl(requestId: string | null, jobId: string): string | null {
+  if (!requestId) return null;
+  const base = (Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || 'https://primeos.co.il').replace(/\/+$/, '');
+  return `${base}/admin/files/${encodeURIComponent(requestId)}/revise?gptDeck=1&gptDeckJob=${encodeURIComponent(jobId)}`;
+}
+
 // ── job state (small JSON blob in the outputs bucket) ──
 async function writeJob(database: Database, jobId: string, state: JobState) {
+  const existing = await readJob(database, jobId);
   await database.storage
     .from(BUCKET)
-    .upload(jobPath(jobId), new Blob([JSON.stringify(state)], { type: 'application/json' }), { upsert: true });
+    .upload(jobPath(jobId), new Blob([JSON.stringify({ ...(existing ?? {}), ...state })], { type: 'application/json' }), { upsert: true });
 }
 async function readJob(database: Database, jobId: string): Promise<JobState | null> {
   const { data } = await database.storage.from(BUCKET).download(jobPath(jobId));

@@ -166,8 +166,15 @@ function formatTextBlock(value: string): string {
   if (!escaped) return '';
   return escaped
     .split(/\n{2,}/)
-    .map((paragraph) => `<p style="margin:0 0 14px;">${paragraph.replace(/\n/g, '<br>')}</p>`)
+    .map((paragraph) => `<p style="margin:0 0 14px;">${linkify(paragraph).replace(/\n/g, '<br>')}</p>`)
     .join('');
+}
+
+function linkify(value: string): string {
+  return value.replace(
+    /(https?:\/\/[^\s<]+)/g,
+    (url) => `<a href="${url}" style="color:${PRIMEOS_PRIMARY};font-weight:700;text-decoration:underline;">${url}</a>`,
+  );
 }
 
 function escapeHtml(value: string): string {
