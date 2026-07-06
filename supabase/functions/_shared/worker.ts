@@ -16,6 +16,7 @@ import { analyzeBrief, generateText, generateDocumentText, generatePresentationO
 import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { loadPdfBrandSettings, sendDeliverableCopy } from './deliverableEmail.ts';
+import { deliverableTitle } from './deliverableTitle.ts';
 import { matchBrandInText, buildBusinessBrainContext, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
 import { buildSkillInstructions, applyBriefSkillGate } from './skills.ts';
 import {
@@ -1009,7 +1010,7 @@ async function deliverContentToWhatsApp(
   const type = output.output_type;
   // Clean delivery: just the deliverable with a short title. No brand-color
   // footer — the post-delivery actions message invites changes instead.
-  const caption = ((request.structured_brief?.goal as string) || 'התוצר שלך').slice(0, 200);
+  const caption = deliverableTitle(request.structured_brief, type);
 
   if (type === 'text' || type === 'presentation') {
     const textBody = output.text_content ?? '(לא נוצר תוכן)';

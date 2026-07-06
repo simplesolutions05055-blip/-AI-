@@ -6,6 +6,7 @@ import { getSetting, logEvent, formatHebrewDate } from './util.ts';
 import { buildPdfHtml, renderPdfBase64, type PdfBrandSettings } from './pdf.ts';
 import { renderDocxBase64 } from './docx.ts';
 import { buildEmailHtml, sendDeliverableEmail, type Attachment } from './resend.ts';
+import { deliverableSubject, deliverableTitle } from './deliverableTitle.ts';
 
 export interface EmailSettings {
   subject_rule: string;
@@ -137,7 +138,8 @@ export async function sendDeliverableCopy(database: DB, requestId: string, to: s
   if (!output) throw new Error('no output to send');
 
   const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
-  const title = (brief.goal as string) || 'התוצר שלך';
+  const title = deliverableTitle(brief, output.output_type as string | null);
+  const subject = deliverableSubject(title, output.output_type as string | null);
   const emailSettings = await getEmailSettings(database);
 
   const deliverableAttachments: Attachment[] = [];
@@ -209,7 +211,7 @@ export async function sendDeliverableCopy(database: DB, requestId: string, to: s
 
   const msgId = await sendDeliverableEmail({
     to,
-    subject: emailSettings.subject_rule,
+    subject,
     html: emailHtml,
     attachments: [...emailBrand.attachments, ...deliverableAttachments],
   });

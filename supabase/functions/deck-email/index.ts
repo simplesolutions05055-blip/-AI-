@@ -20,6 +20,7 @@ import { generateImage, generateImageWithReferences } from '../_shared/openai.ts
 import { cropBytesTo16by9 } from '../_shared/image.ts';
 import { renderPdfBase64 } from '../_shared/pdf.ts';
 import { sendDeliverableEmail, buildEmailHtml } from '../_shared/resend.ts';
+import { deliverableSubject, deliverableTitle } from '../_shared/deliverableTitle.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -188,7 +189,7 @@ async function runJob(
     throw new Error('לא נמצאו תמונות לכל השקפים שנבחרו.');
   }
 
-  const topic = String(p.brief.topic || p.brief.goal || 'מצגת');
+  const topic = deliverableTitle(p.brief, 'presentation', 'מצגת');
   const safeName = topic.slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'presentation';
 
   // 3) Build the PPTX (always) and the PDF (best-effort). The PDF depends on the
@@ -243,14 +244,15 @@ async function runJob(
   //    another) with whatever built successfully.
   const filesLine = pdfBase64 ? 'כקובץ PowerPoint (PPTX) וכ-PDF' : 'כקובץ PowerPoint (PPTX)';
   const editUrl = buildDeckEditUrl(p.requestId, jobId);
+  const subject = deliverableSubject(topic, 'presentation');
   const html = buildEmailHtml(
     [
-      `המצגת "${topic}" מוכנה ומצורפת כאן ${filesLine}.`,
+      `המצגת ${topic} מוכנה ומצורפת כאן ${filesLine}.`,
       editUrl ? `לצפייה ועריכה של המצגת שקף־שקף:\n${editUrl}` : '',
       'אפשר לפתוח את הקישור, לגלול בין השקפים, לערוך שקף ספציפי עם AI ולייצא PPTX מעודכן.',
     ].filter(Boolean).join('\n\n'),
     brand?.name ? `בברכה,\n${brand.name}` : 'בברכה',
-    'המצגת שלך מוכנה',
+    topic,
   );
   const attachments = [
     { filename: `${safeName}.pptx`, contentBase64: pptxBase64 },
@@ -259,7 +261,7 @@ async function runJob(
   const sentTo: string[] = [];
   for (const to of p.emails) {
     try {
-      await sendDeliverableEmail({ to, subject: `המצגת "${topic.replace(/\n/g, ' ')}" מוכנה`, html, attachments });
+      await sendDeliverableEmail({ to, subject, html, attachments });
       sentTo.push(to);
     } catch (e) {
       await logEvent(database, { requestId: p.requestId, severity: 'warning', action: 'deck_email_recipient_failed', message: `${to}: ${String(e)}` });
