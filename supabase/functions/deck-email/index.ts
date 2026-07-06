@@ -50,6 +50,7 @@ interface JobState {
   selectedSlideIndexes?: number[];
   pdf?: boolean; // false when the PDF step failed and only the PPTX was sent
   pdfError?: string | null;
+  mode?: 'template' | 'fullslide'; // which mode generated this deck
 }
 
 function json(body: unknown, status = 200) {
@@ -264,7 +265,7 @@ async function runJob(
     }
   }
 
-  await writeJob(database, jobId, { status: 'done', sentTo, total: p.emails.length, selectedSlideIndexes: p.approvedSlideIndexes, pdf: !!pdfBase64, pdfError, generated: generatedCount, reused: reusedCount, message: 'ההפקה הסתיימה והמיילים נשלחו.' });
+  await writeJob(database, jobId, { status: 'done', sentTo, total: p.emails.length, selectedSlideIndexes: p.approvedSlideIndexes, pdf: !!pdfBase64, pdfError, generated: generatedCount, reused: reusedCount, mode: p.mode, message: 'ההפקה הסתיימה והמיילים נשלחו.' });
   await logEvent(database, {
     requestId: p.requestId,
     action: 'deck_email_sent',
