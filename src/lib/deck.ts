@@ -64,36 +64,6 @@ function imageSize(src: string): Promise<{ w: number; h: number }> {
   });
 }
 
-// Center-crop an image to a 16:9 aspect ratio via canvas, returning a PNG data
-// URL. Full-slide deck images should already be 16:9 (the server crops them),
-// but legacy/edge cases (3:2 gpt-image-1 output) are normalized here so a
-// full-bleed placement never stretches the image on the 16:9 slide.
-async function coverTo16by9(dataUrl: string): Promise<string> {
-  const target = 16 / 9;
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const im = new Image();
-    im.onload = () => resolve(im);
-    im.onerror = reject;
-    im.src = dataUrl;
-  });
-  const iw = img.naturalWidth;
-  const ih = img.naturalHeight;
-  if (!iw || !ih || Math.abs(iw / ih - target) < 0.003) return dataUrl;
-  let ow = iw;
-  let oh = ih;
-  if (iw / ih > target) ow = Math.round(ih * target);
-  else oh = Math.round(iw / target);
-  const sx = Math.round((iw - ow) / 2);
-  const sy = Math.round((ih - oh) / 2);
-  const canvas = document.createElement('canvas');
-  canvas.width = ow;
-  canvas.height = oh;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return dataUrl;
-  ctx.drawImage(img, sx, sy, ow, oh, 0, 0, ow, oh);
-  return canvas.toDataURL('image/png');
-}
-
 // Fit (natW × natH) inside a box, preserving aspect ratio (letterbox, no stretch).
 function fitBox(natW: number | undefined, natH: number | undefined, boxW: number, boxH: number): { w: number; h: number } {
   const ar = natW && natH ? natW / natH : boxW / boxH;
@@ -1197,7 +1167,7 @@ function buildFullSlideImagePrompt(brief: any, slide: DeckSlide, palette: string
   if (brief?.topic || brief?.goal) lines.push(`נושא המצגת: ${brief?.topic || brief?.goal}.`);
   lines.push(
     `עיצוב מודרני, נקי ויוקרתי${palette ? `, בהשראת צבעי המותג הבאים כהנחיית סגנון פנימית בלבד: ${palette}` : ''}.`,
-    'חשוב: המודל מפיק תמונה רחבה שתיחתך למסגרת 16:9 של מצגת. שמור את כל הטקסט, הלוגואים והאלמנטים החשובים באזור המרכזי הבטוח; השאר שוליים נקיים למעלה ולמטה.',
+    'חשוב: התמונה תוצב במצגת בלי חיתוך ובלי מתיחה. בנה קומפוזיציה מאוזנת, עם שוליים פנימיים נקיים וטקסט שאינו צמוד לקצוות.',
     'חשוב מאוד: כל הטקסט חייב להיות בעברית תקנית ומדויקת בדיוק כפי שנמסר, מיושר לימין, קריא וחד. אל תמציא אותיות ואל תשבש מילים.',
     'אסור להציג על השקף שמות צבעים, קודי צבע, פלטת צבעים, הנחיות עיצוב, מפרט עיצובי או הסברים על העיצוב. השקף חייב להציג רק את תוכן המצגת לקהל.',
     slideNumber === 1 ? 'זהו שקף הפתיחה — כותרת גדולה ובולטת.' : 'שקף תוכן — הדגש את הנקודות בצורה ברורה וקריאה.',
@@ -1236,12 +1206,12 @@ export async function generateGptImagesForSlides(
 
   const db = createSupabaseBrowserClient();
   const { data, error } = await db.functions.invoke('generate-presentation', {
-    // Full slides need a wide 16:9 high-quality canvas so the baked Hebrew is
-    // crisp. gpt-image-1 tops out at 1536x1024 (3:2), so the server crops each
-    // full-slide image to 16:9 (cropTo16by9) to match the slide exactly.
+    // gpt-image-1 does not support a true 16:9 size; landscape output is 3:2.
+    // Keep the original image and place it with contain in PPTX/PDF so it is
+    // never stretched or cropped.
     body: {
       format: 'images', brief, requestId, prompts, slideIndexes: valid, captions,
-      ...(fullSlide ? { imageSize: '1536x1024', imageQuality: 'high', cropTo16by9: true } : {}),
+      ...(fullSlide ? { imageSize: '1536x1024', imageQuality: 'high' } : {}),
     },
   });
   if (error) throw error;
@@ -1532,7 +1502,7 @@ export async function renderGptDeckToPdf(
   }
 }
 
-// ── Full-slide mode: each slide IS one GPT image covering the whole frame
+// ── Full-slide mode: each slide IS one GPT image placed inside the frame
 // (NotebookLM-style, text baked in). The deck is just a container — no text
 // boxes, no template. `slideImages` are ordered by slide. ──
 export async function renderFullSlideDeckToPptx(slideImages: DeckImage[]): Promise<Blob> {
@@ -1543,10 +1513,9 @@ export async function renderFullSlideDeckToPptx(slideImages: DeckImage[]): Promi
   pptx.rtlMode = true;
   for (const img of slideImages) {
     const s = pptx.addSlide();
-    // Normalize to 16:9 first so the full-bleed placement never stretches a
-    // non-16:9 source (pptxgenjs 'cover' can't crop without natural dims).
-    const data = await coverTo16by9(img.dataUrl);
-    s.addImage({ data, x: 0, y: 0, w: 13.33, h: 7.5 });
+    const nat = img.natW && img.natH ? { w: img.natW, h: img.natH } : await imageSize(img.dataUrl);
+    const box = fitBox(nat.w, nat.h, 13.33, 7.5);
+    s.addImage({ data: img.dataUrl, x: (13.33 - box.w) / 2, y: (7.5 - box.h) / 2, w: box.w, h: box.h });
   }
   return (await pptx.write({ outputType: 'blob' })) as Blob;
 }
@@ -1556,8 +1525,10 @@ export async function renderFullSlideDeckToPdf(slideImages: DeckImage[]): Promis
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [W, H] });
   for (let i = 0; i < slideImages.length; i++) {
     if (i > 0) pdf.addPage([W, H], 'landscape');
-    const data = await coverTo16by9(slideImages[i].dataUrl);
-    pdf.addImage(data, 'PNG', 0, 0, W, H);
+    const img = slideImages[i];
+    const nat = img.natW && img.natH ? { w: img.natW, h: img.natH } : await imageSize(img.dataUrl);
+    const box = fitBox(nat.w, nat.h, W, H);
+    pdf.addImage(img.dataUrl, 'PNG', (W - box.w) / 2, (H - box.h) / 2, box.w, box.h);
   }
   return pdf.output('blob');
 }

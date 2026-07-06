@@ -9,7 +9,6 @@ import {
   loadRequestActor,
   rejectClientOpenAiKeyIfDisabled,
 } from '../_shared/abuseGuard.ts';
-import { cropBytesTo16by9 } from '../_shared/image.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -32,7 +31,7 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, cropTo16by9, slide, slideNumber, instruction } = await req.json();
+    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, slide, slideNumber, instruction } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
     await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
     if (save_only !== true) {
@@ -86,14 +85,10 @@ Deno.serve(async (req) => {
               size: effSize,
               quality: effQuality,
             });
-        // Full-slide deck images come back as 1536x1024 (3:2); crop to 16:9 so
-        // they fill the 16:9 slide without stretching in PPTX/PDF.
-        let outBase64 = generated.base64;
-        let mime = generated.mime || 'image/png';
-        if (cropTo16by9 === true) {
-          outBase64 = encodeBase64(await cropBytesTo16by9(decodeBase64(generated.base64)));
-          mime = 'image/png';
-        }
+        // Keep the generated image as-is. Full-slide deck images are placed
+        // with "contain" later so they are never stretched or destructively cropped.
+        const outBase64 = generated.base64;
+        const mime = generated.mime || 'image/png';
         let storagePath: string | null = null;
         if (requestId) {
           try {

@@ -17,7 +17,7 @@ import PptxGenJS from 'npm:pptxgenjs@4.0.1';
 import { db } from '../_shared/db.ts';
 import { getSetting, imageUnitCost, logEvent, recordUsageAndCost } from '../_shared/util.ts';
 import { generateImage, generateImageWithReferences } from '../_shared/openai.ts';
-import { cropBytesTo16by9 } from '../_shared/image.ts';
+import { imageDimensions } from '../_shared/image.ts';
 import { renderPdfBase64 } from '../_shared/pdf.ts';
 import { sendDeliverableEmail, buildEmailHtml } from '../_shared/resend.ts';
 import { deliverableReadyHeading, deliverableSubject, deliverableTitle } from '../_shared/deliverableTitle.ts';
@@ -217,6 +217,13 @@ async function runJob(
     pptxBase64 = await buildPptxBase64(p.brief, brand, slides);
     pdfHtml = buildDeckHtml(p.brief, brand, slides);
   }
+  await writeJob(database, jobId, {
+    status: 'running',
+    total: p.emails.length,
+    message: 'מצגת PPTX נבנתה. שומרים קבצים ושולחים מיילים.',
+    generated: generatedCount,
+    reused: reusedCount,
+  });
   let pdfBase64: string | null = null;
   let pdfError: string | null = null;
   if (pdfHtml) {
@@ -231,13 +238,15 @@ async function runJob(
   // Persist the built files under the job folder — a fallback download if email
   // delivery has issues. Storage keys must be ASCII, so use fixed names here
   // (the email attachment keeps the nice Hebrew filename).
-  await database.storage.from(BUCKET).upload(`deck-email-jobs/${jobId}/deck.pptx`, decodeBase64(pptxBase64), {
+  const { error: pptxUploadError } = await database.storage.from(BUCKET).upload(`deck-email-jobs/${jobId}/deck.pptx`, decodeBase64(pptxBase64), {
     contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', upsert: true,
   });
+  if (pptxUploadError) throw pptxUploadError;
   if (pdfBase64) {
-    await database.storage.from(BUCKET).upload(`deck-email-jobs/${jobId}/deck.pdf`, decodeBase64(pdfBase64), {
+    const { error: pdfUploadError } = await database.storage.from(BUCKET).upload(`deck-email-jobs/${jobId}/deck.pdf`, decodeBase64(pdfBase64), {
       contentType: 'application/pdf', upsert: true,
     });
+    if (pdfUploadError) throw pdfUploadError;
   }
 
   // 4) Email each recipient individually (so addresses aren't exposed to one
@@ -352,14 +361,8 @@ async function loadApprovedImages(
     if (mode === 'template' && isFullSlideImage) continue;
     const { data: file } = await database.storage.from(BUCKET).download(r.storage_path);
     if (!file) continue;
-    let bytes = new Uint8Array(await file.arrayBuffer());
-    let mime = r.mime_type || 'image/png';
-    // Legacy full-slide images may have been stored as 1536x1024 (3:2). Crop
-    // when loading them so reused images are also exact 16:9 and never stretch.
-    if (mode === 'fullslide') {
-      bytes = await cropBytesTo16by9(bytes);
-      mime = 'image/png';
-    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const mime = r.mime_type || 'image/png';
     out.set(r.slide_index, `data:${mime};base64,${encodeBase64(bytes)}`);
   }
   return out;
@@ -397,14 +400,8 @@ async function generateMissingSlideImages(
       ? await generateImageWithReferences(prompt, [logoReference], { model: aiModelsImg?.image_model, size, quality })
       : await generateImage(prompt, { model: aiModelsImg?.image_model, size, quality });
 
-    // Full-slide images are generated at 1536x1024 (3:2) but the slide is 16:9;
-    // crop to 16:9 at the source so they fill the slide without stretching.
-    let bytes = decodeBase64(image.base64);
-    let mime = image.mime || 'image/png';
-    if (p.mode === 'fullslide') {
-      bytes = await cropBytesTo16by9(bytes);
-      mime = 'image/png';
-    }
+    const bytes = decodeBase64(image.base64);
+    const mime = image.mime || 'image/png';
     const dataUrl = `data:${mime};base64,${encodeBase64(bytes)}`;
 
     if (p.requestId) {
@@ -507,7 +504,7 @@ function buildFullSlideImagePrompt(brief: Record<string, unknown>, slide: DeckSl
   if (brief?.topic || brief?.goal) lines.push(`נושא המצגת: ${brief?.topic || brief?.goal}.`);
   lines.push(
     `עיצוב מודרני, נקי ויוקרתי${palette ? `, בהשראת צבעי המותג הבאים כהנחיית סגנון פנימית בלבד: ${palette}` : ''}.`,
-    'חשוב: המודל מפיק תמונה רחבה שתיחתך למסגרת 16:9 של מצגת. שמור את כל הטקסט, הלוגואים והאלמנטים החשובים באזור המרכזי הבטוח; השאר שוליים נקיים למעלה ולמטה.',
+    'חשוב: התמונה תוצב במצגת בלי חיתוך ובלי מתיחה. בנה קומפוזיציה מאוזנת, עם שוליים פנימיים נקיים וטקסט שאינו צמוד לקצוות.',
     'חשוב מאוד: כל הטקסט חייב להיות בעברית תקנית ומדויקת בדיוק כפי שנמסר, מיושר לימין, קריא וחד. אל תמציא אותיות ואל תשבש מילים.',
     'אסור להציג על השקף שמות צבעים, קודי צבע, פלטת צבעים, הנחיות עיצוב, מפרט עיצובי או הסברים על העיצוב. השקף חייב להציג רק את תוכן המצגת לקהל.',
     slideNumber === 1 ? 'זהו שקף הפתיחה — כותרת גדולה ובולטת.' : 'שקף תוכן — הדגש את הנקודות בצורה ברורה וקריאה.',
@@ -689,7 +686,8 @@ function buildDeckHtml(
 }
 
 // ── Full-slide mode: the GPT image already contains the complete slide design
-// and Hebrew text. The server only wraps each image as one full-bleed page.
+// and Hebrew text. We preserve the generated aspect ratio and place it with
+// contain on a 16:9 slide, avoiding both stretching and destructive cropping.
 async function buildFullSlidePptxBase64(slideImages: string[]): Promise<string> {
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: 'WIDE', width: 13.33, height: 7.5 });
@@ -698,12 +696,15 @@ async function buildFullSlidePptxBase64(slideImages: string[]): Promise<string> 
 
   for (const img of slideImages) {
     const slide = pptx.addSlide();
+    const bytes = dataUrlToBytes(img);
+    const dims = await imageDimensions(bytes);
+    const box = containBox(dims.width, dims.height, 13.33, 7.5);
     slide.addImage({
       data: img,
-      x: 0,
-      y: 0,
-      w: 13.33,
-      h: 7.5,
+      x: box.x,
+      y: box.y,
+      w: box.w,
+      h: box.h,
     });
   }
 
@@ -721,9 +722,25 @@ function buildFullSlideHtml(slideImages: string[]): string {
     *{box-sizing:border-box}
     html,body{margin:0;padding:0;background:#fff}
     .gd-full-slide{width:${W}px;height:${H}px;overflow:hidden;page-break-after:always;background:#fff}
-    .gd-full-slide img{width:100%;height:100%;object-fit:cover;display:block}
+    .gd-full-slide img{width:100%;height:100%;object-fit:contain;display:block}
   `;
   return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><style>${css}</style></head><body>${pages}</body></html>`;
+}
+
+function containBox(natW: number, natH: number, boxW: number, boxH: number): { x: number; y: number; w: number; h: number } {
+  const ratio = natW && natH ? natW / natH : boxW / boxH;
+  const boxRatio = boxW / boxH;
+  if (ratio > boxRatio) {
+    const h = boxW / ratio;
+    return { x: 0, y: (boxH - h) / 2, w: boxW, h };
+  }
+  const w = boxH * ratio;
+  return { x: (boxW - w) / 2, y: 0, w, h: boxH };
+}
+
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const b64 = dataUrl.includes(',') ? dataUrl.split(',').pop() || '' : dataUrl;
+  return decodeBase64(b64);
 }
 
 function encodeBase64(bytes: Uint8Array): string {
