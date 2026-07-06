@@ -84,12 +84,11 @@ export default function DeckExport({
   const [notebookLmOpen, setNotebookLmOpen] = useState(false);
   const [pickedImages, setPickedImages] = useState<DeckImage[] | null>(initialPickedImages ?? null);
   const [pickedKeys, setPickedKeys] = useState<string[]>(initialPickedKeys ?? []);
-  // Export tabs: switch between template PPTX, fullslide PPTX, JSON, and NotebookLM brief
-  const [exportTab, setExportTab] = useState<'template' | 'fullslide' | 'json' | 'notebook'>('template');
-  const [templatePptxLoading, setTemplatePptxLoading] = useState(false);
-  const [templatePdfLoading, setTemplatePdfLoading] = useState(false);
-  const [fullslidePptxLoading, setFullslidePptxLoading] = useState(false);
-  const [fullslidePdfLoading, setFullslidePdfLoading] = useState(false);
+  // Simple action states for primary download buttons
+  const [downloadPptxLoading, setDownloadPptxLoading] = useState(false);
+  const [downloadPdfLoading, setDownloadPdfLoading] = useState(false);
+  // UI state for secondary/tertiary sections
+  const [showDeveloperOptions, setShowDeveloperOptions] = useState(false);
   // Cache the fully-resolved deck (slides + AI images + brand pack) keyed by the
   // AI-image count, so a follow-up PDF reuses the EXACT same images & positions
   // produced for the PPTX (and vice versa) without regenerating.
@@ -164,60 +163,33 @@ export default function DeckExport({
     return json;
   }
 
-  // Helper: build and download/email template PPTX
-  async function downloadTemplatePptx() {
-    setTemplatePptxLoading(true);
+  // Primary action: download presentation as PPTX
+  async function downloadPptx() {
+    setDownloadPptxLoading(true);
     try {
       const { deckBrief, brand, images, slides } = await prepareDeck();
       const blob = await renderDeckToPptx(deckBrief, brand, images, slides);
       const safeName = String(deckBrief.topic || deckBrief.goal || 'presentation').slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'presentation';
-      downloadBlob(blob, `${safeName} - Template.pptx`);
+      downloadBlob(blob, `${safeName}.pptx`);
     } catch (e) {
       setError(String((e as { message?: string })?.message ?? e));
     } finally {
-      setTemplatePptxLoading(false);
+      setDownloadPptxLoading(false);
     }
   }
 
-  async function downloadTemplatePdf() {
-    setTemplatePdfLoading(true);
+  // Primary action: download presentation as PDF
+  async function downloadPdf() {
+    setDownloadPdfLoading(true);
     try {
       const { deckBrief, brand, images, slides } = await prepareDeck();
       const blob = await renderDeckToPdf(deckBrief, brand, images, slides);
       const safeName = String(deckBrief.topic || deckBrief.goal || 'presentation').slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'presentation';
-      downloadBlob(blob, `${safeName} - Template.pdf`);
+      downloadBlob(blob, `${safeName}.pdf`);
     } catch (e) {
       setError(String((e as { message?: string })?.message ?? e));
     } finally {
-      setTemplatePdfLoading(false);
-    }
-  }
-
-  // Helper: for fullslide mode, generate PPTX from already-saved full-slide images
-  async function downloadFullslidePptx() {
-    setFullslidePptxLoading(true);
-    try {
-      // TODO: implement fullslide PPTX download from saved deck_ai_images
-      // For now, placeholder that alerts user
-      await alertDialog('FullSlide PPTX download coming soon');
-    } catch (e) {
-      setError(String((e as { message?: string })?.message ?? e));
-    } finally {
-      setFullslidePptxLoading(false);
-    }
-  }
-
-  // Helper: for fullslide mode, generate PDF from already-saved full-slide images
-  async function downloadFullslidePdf() {
-    setFullslidePdfLoading(true);
-    try {
-      // TODO: implement fullslide PDF download from saved deck_ai_images
-      // For now, placeholder that alerts user
-      await alertDialog('FullSlide PDF download coming soon');
-    } catch (e) {
-      setError(String((e as { message?: string })?.message ?? e));
-    } finally {
-      setFullslidePdfLoading(false);
+      setDownloadPdfLoading(false);
     }
   }
 
@@ -408,106 +380,50 @@ export default function DeckExport({
           user-chosen slide range, with an approval modal + cost panel. */}
       <GptImagesDeck brief={brief} requestId={requestId} outlineText={outlineText} brandId={brandId} />
 
-      {/* Export tabs: view and download different deck types */}
-      <div className="mb-5 border-b border-[var(--border)] pb-0">
-        <div className="flex gap-1 overflow-x-auto">
-          {[
-            { key: 'template' as const, label: 'Template PPTX' },
-            { key: 'fullslide' as const, label: 'FullSlide PPTX' },
-            { key: 'json' as const, label: 'JSON/API' },
-            { key: 'notebook' as const, label: 'NotebookLM' },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setExportTab(tab.key)}
-              className={`px-4 py-3 text-sm font-semibold border-b-2 transition ${
-                exportTab === tab.key
-                  ? 'border-brand text-brand'
-                  : 'border-transparent text-[var(--muted)] hover:text-black'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+      {/* PRIMARY SECTION: Download your presentation */}
+      <div className="mb-6 rounded-lg border border-[var(--border)] bg-gray-50/40 p-4">
+        <div className="mb-3">
+          <div className="text-base font-bold text-brand mb-1">הורדת המצגת שלך</div>
+          <p className="text-xs text-[var(--muted)]">
+            בחר פורמט: PowerPoint שניתן לעריכה או PDF משיתוף. שניהם כוללים את כל צבעי המותג, הלוגו, והתמונות שבחרת.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:flex sm:gap-3">
+          <button
+            onClick={downloadPptx}
+            disabled={downloadPptxLoading}
+            className="flex-1 rounded-lg bg-brand px-4 py-3 font-semibold text-white hover:bg-brand/90 disabled:opacity-50 transition"
+          >
+            <div className="text-sm font-bold">הורדת PPTX</div>
+            <div className="text-[11px] opacity-90">עריך בקלות</div>
+            {downloadPptxLoading && <div className="text-[11px] mt-1">בונה…</div>}
+          </button>
+          <button
+            onClick={downloadPdf}
+            disabled={downloadPdfLoading}
+            className="flex-1 rounded-lg border-2 border-brand px-4 py-3 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
+          >
+            <div className="text-sm font-bold">הורדת PDF</div>
+            <div className="text-[11px] opacity-80">שתף בקלות</div>
+            {downloadPdfLoading && <div className="text-[11px] mt-1">בונה…</div>}
+          </button>
         </div>
       </div>
 
-      {/* Template PPTX/PDF downloads */}
-      {exportTab === 'template' && (
-        <div className="mb-5 border-b border-[var(--border)] pb-4">
-          <div className="text-sm font-semibold mb-3">הורדה / שליחה במייל</div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={downloadTemplatePptx}
-              disabled={templatePptxLoading}
-              className="flex-1 min-w-[150px] rounded-lg bg-brand px-4 py-2.5 font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
-            >
-              {templatePptxLoading ? 'בונה PPTX…' : 'הורדת PPTX'}
-            </button>
-            <button
-              onClick={downloadTemplatePdf}
-              disabled={templatePdfLoading}
-              className="flex-1 min-w-[150px] rounded-lg border border-brand px-4 py-2.5 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
-            >
-              {templatePdfLoading ? 'בונה PDF…' : 'הורדת PDF'}
-            </button>
+      {/* SECONDARY SECTION: NotebookLM workflow (collapsible) */}
+      <div className="mb-6">
+        <button
+          type="button"
+          onClick={() => setNotebookLmOpen((open) => !open)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-3 text-right font-semibold text-brand hover:bg-blue-50/30 transition"
+          aria-expanded={notebookLmOpen}
+        >
+          <span className="text-lg leading-none">{notebookLmOpen ? '▼' : '▶'}</span>
+          <div className="flex-1 text-left">
+            <div className="font-bold">עבוד עם NotebookLM</div>
+            <div className="text-[11px] text-[var(--muted)] font-normal">צור מצגת Google Slides יפה בעזרת AI</div>
           </div>
-        </div>
-      )}
-
-      {/* FullSlide PPTX/PDF downloads from saved images */}
-      {exportTab === 'fullslide' && (
-        <div className="mb-5 border-b border-[var(--border)] pb-4">
-          <div className="text-sm font-semibold mb-3">הורדה / שליחה במייל</div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={downloadFullslidePptx}
-              disabled={fullslidePptxLoading}
-              className="flex-1 min-w-[150px] rounded-lg bg-brand px-4 py-2.5 font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
-            >
-              {fullslidePptxLoading ? 'בונה PPTX…' : 'הורדת PPTX'}
-            </button>
-            <button
-              onClick={downloadFullslidePdf}
-              disabled={fullslidePdfLoading}
-              className="flex-1 min-w-[150px] rounded-lg border border-brand px-4 py-2.5 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
-            >
-              {fullslidePdfLoading ? 'בונה PDF…' : 'הורדת PDF'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* JSON/API */}
-      {exportTab === 'json' && (
-        <div className="mb-5 border-b border-[var(--border)] pb-4">
-          <div className="text-sm font-semibold mb-1">תוכן המצגת ל-API (JSON)</div>
-          <p className="text-xs text-[var(--muted)] mb-2">
-            מכין קובץ טקסט מסודר עם תוכן השקפים. אפשר להעתיק אותו ולהדביק ב-Gemini או ב-Gamma כדי ליצור מצגת.
-            שימו לב: זה כולל תוכן בלבד, בלי תמונות.
-          </p>
-          <button
-            onClick={previewGammaJson}
-            disabled={busy !== null}
-            className="w-full rounded-lg border border-brand px-4 py-2.5 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
-          >
-            {busy === 'gamma' ? 'בונה JSON…' : 'הצגת ה-JSON ל-API'}
-          </button>
-        </div>
-      )}
-
-      {/* NotebookLM */}
-      {exportTab === 'notebook' && (
-        <div>
-          <button
-            type="button"
-            onClick={() => setNotebookLmOpen((open) => !open)}
-            className="flex w-full items-center justify-between gap-3 rounded-lg border border-brand px-4 py-2.5 text-right font-semibold text-brand hover:bg-brand/5"
-            aria-expanded={notebookLmOpen}
-          >
-            <span>NotebookLM - בריף, הנחיות והעלאת קובץ</span>
-            <span className="text-lg leading-none">{notebookLmOpen ? '−' : '+'}</span>
-          </button>
+        </button>
 
         {notebookLmOpen && (
           <div className="mt-3 border-t border-[var(--border)] pt-4">
@@ -595,8 +511,41 @@ export default function DeckExport({
             </div>
           </div>
         )}
-        </div>
-      )}
+      </div>
+
+      {/* TERTIARY SECTION: Developer options (hidden by default) */}
+      <div className="mb-6">
+        <button
+          type="button"
+          onClick={() => setShowDeveloperOptions(!showDeveloperOptions)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-3 text-right font-semibold text-[var(--muted)] hover:text-black hover:bg-gray-50/30 transition"
+          aria-expanded={showDeveloperOptions}
+        >
+          <span className="text-lg leading-none">{showDeveloperOptions ? '▼' : '▶'}</span>
+          <div className="flex-1 text-left">
+            <div className="font-bold">🔧 ל-מפתחים</div>
+            <div className="text-[11px] text-[var(--muted)] font-normal">JSON ו-API integrations</div>
+          </div>
+        </button>
+
+        {showDeveloperOptions && (
+          <div className="mt-3 rounded-lg border border-[var(--border)] bg-gray-50/40 p-4">
+            <div className="mb-4">
+              <div className="text-sm font-semibold mb-2">תוכן המצגת ל-API (JSON)</div>
+              <p className="text-xs text-[var(--muted)] mb-3">
+                קבל JSON מובנה עם תוכן כל שקופית. אפשר להשתמש ב-Gamma, Gemini, או כל כלי אחר שתומך בJSON.
+              </p>
+              <button
+                onClick={previewGammaJson}
+                disabled={busy !== null}
+                className="w-full rounded-lg border border-brand px-4 py-2.5 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
+              >
+                {busy === 'gamma' ? 'בונה JSON…' : 'צפה בـ JSON'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       {(busy === 'pdf' || busy === 'pptx' || busy === 'brief') && (
