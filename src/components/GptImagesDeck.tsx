@@ -15,6 +15,7 @@ import {
   type DeckBrand,
   type DeckImage,
   type DeckSlide,
+  type PersistedDeckImage,
 } from '@/lib/deck';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
@@ -33,6 +34,12 @@ interface SlideImageState {
   prompt: string | null;
   approved: boolean;
   fromCache: boolean; // reused from deck_ai_images — no new generation cost
+}
+
+interface PreviewSlide {
+  index: number;
+  image: DeckImage;
+  row: PersistedDeckImage;
 }
 
 export default function GptImagesDeck({
@@ -71,6 +78,9 @@ export default function GptImagesDeck({
   const [emailSentTo, setEmailSentTo] = useState<string[]>([]);
   const [emailPdfOk, setEmailPdfOk] = useState(true);
   const [emailStarting, setEmailStarting] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewSlides, setPreviewSlides] = useState<PreviewSlide[]>([]);
 
   // Prefill the first recipient with the user's own email once the profile loads.
   useEffect(() => {
@@ -176,6 +186,85 @@ export default function GptImagesDeck({
 
   const approvedCount = Object.values(slideImages).filter((s) => s.approved).length;
   const slidesReady = Object.keys(slideImages).length > 0;
+
+  async function loadPreviewSlides() {
+    if (!requestId) {
+      setError('אין מזהה בקשה לטעינת שקפי המצגת.');
+      return;
+    }
+    setPreviewLoading(true);
+    setError(null);
+    try {
+      const selected = slides?.length ? parseSlideRange(rangeInput, slides.length) : [];
+      const wanted = selected.length ? new Set(selected) : null;
+      const persisted = await fetchPersistedDeckImages(requestId);
+      const newestBySlide = new Map<number, PersistedDeckImage>();
+      for (const row of persisted) {
+        if (wanted && !wanted.has(row.slideIndex)) continue;
+        if (!newestBySlide.has(row.slideIndex)) newestBySlide.set(row.slideIndex, row);
+      }
+      const loaded: PreviewSlide[] = [];
+      for (const row of [...newestBySlide.values()].sort((a, b) => a.slideIndex - b.slideIndex)) {
+        loaded.push({ index: row.slideIndex, row, image: await loadPersistedDeckImage(row) });
+      }
+      if (!loaded.length) throw new Error('לא נמצאו שקפים שנוצרו למצגת הזו.');
+      setPreviewSlides(loaded);
+      setPreviewOpen(true);
+    } catch (e) {
+      setError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function regeneratePreviewSlide(idx: number) {
+    if (regenBusy !== null) return;
+    setRegenBusy(idx);
+    setError(null);
+    try {
+      const resolved = await resolveBrand();
+      const fullBrief = { ...deckBrief, brand_id: resolved.id ?? deckBrief.brand_id };
+      const deck = slides ?? (await buildDeckSlides(fullBrief, requestId, outlineText));
+      if (!deck.length) throw new Error('לא נמצא תוכן שקפים לעריכה');
+      setSlides(deck);
+      const note = feedbacks[idx]?.trim();
+      if (!note) throw new Error('כתבו מה לשנות בשקף.');
+      const out = await generateGptImagesForSlides(fullBrief, deck, [idx], requestId, resolved.brand, { [idx]: note }, true);
+      if (!out.length) throw new Error('לא התקבלה תמונת שקף חדשה');
+      const generated = out[0];
+      setPreviewSlides((prev) =>
+        prev.map((slide) =>
+          slide.index === idx
+            ? {
+                ...slide,
+                image: generated.image,
+                row: {
+                  ...slide.row,
+                  caption: generated.image.caption,
+                  previewUrl: generated.image.dataUrl,
+                },
+              }
+            : slide,
+        ),
+      );
+      setFeedbacks((prev) => ({ ...prev, [idx]: '' }));
+      setCostRefresh((n) => n + 1);
+    } catch (e) {
+      setError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setRegenBusy(null);
+    }
+  }
+
+  async function downloadPreviewPptx() {
+    if (!previewSlides.length) return;
+    const safeName =
+      String(deckBrief?.topic || deckBrief?.goal || 'מצגת')
+        .slice(0, 40)
+        .replace(/[\\/:*?"<>|]/g, '') || 'presentation';
+    const blob = await renderFullSlideDeckToPptx(previewSlides.map((s) => s.image));
+    downloadBlob(blob, `${safeName} - GPT Images edited.pptx`);
+  }
 
   async function build(format: 'pptx' | 'pdf') {
     if (building || !slides) return;
@@ -432,10 +521,77 @@ export default function GptImagesDeck({
           <div className="mt-3 rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-800">
             <p className="font-semibold">נשלח בהצלחה{emailSentTo.length ? ` ל-${emailSentTo.length} נמענים` : ''}: {emailSentTo.join(', ')}</p>
             {!emailPdfOk && <p className="mt-1 text-amber-700">נשלח PPTX בלבד — הפקת ה-PDF נכשלה.</p>}
+            <button
+              type="button"
+              onClick={loadPreviewSlides}
+              disabled={previewLoading}
+              className="mt-3 w-full rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
+            >
+              {previewLoading ? 'טוען שקפים…' : 'צפייה ועריכת שקפים'}
+            </button>
           </div>
         )}
         {(emailError || error) && <p className="mt-2 text-xs text-red-600">{emailError || error}</p>}
       </div>
+
+      {previewOpen && (
+        <div className="mb-3 rounded-lg border border-[var(--border)] bg-white p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-bold">צפייה ועריכת המצגת</div>
+              <p className="text-xs text-[var(--muted)]">גללו שקף־שקף. כתבו שינוי לשקף ספציפי כדי ליצור אותו מחדש כתמונה מלאה.</p>
+            </div>
+            <button
+              type="button"
+              onClick={downloadPreviewPptx}
+              disabled={!previewSlides.length || regenBusy !== null}
+              className="rounded-lg border border-brand px-3 py-2 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+            >
+              הורדת PPTX מעודכן
+            </button>
+          </div>
+          <div className="space-y-4">
+            {previewSlides.map((slide) => {
+              const busy = regenBusy === slide.index;
+              return (
+                <div key={slide.index} className="rounded-lg border border-[var(--border)] p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="text-xs font-bold">שקף {slide.index + 1}: {slide.image.caption}</div>
+                    {busy && <span className="text-xs text-[var(--muted)]">יוצר מחדש…</span>}
+                  </div>
+                  <div className="relative overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
+                    <img src={slide.image.dataUrl} alt={`שקף ${slide.index + 1}`} className="w-full" />
+                    {busy && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white/70">
+                        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-brand" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <textarea
+                      value={feedbacks[slide.index] ?? ''}
+                      onChange={(e) => setFeedbacks((prev) => ({ ...prev, [slide.index]: e.target.value }))}
+                      placeholder="מה לשנות בשקף הזה? למשל: להחליף רקע, להגדיל כותרת, להוסיף דמות, להפוך לטון יותר רשמי"
+                      dir="rtl"
+                      rows={2}
+                      disabled={busy}
+                      className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none disabled:opacity-60"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => regeneratePreviewSlide(slide.index)}
+                      disabled={regenBusy !== null || !(feedbacks[slide.index] ?? '').trim()}
+                      className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
+                    >
+                      יצירת שקף מחדש
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {slidesReady && phase !== 'generating' && (
         <div className="mb-3 rounded-lg border border-[var(--border)] bg-white p-3">
