@@ -257,7 +257,7 @@ async function runJob(
   const sentTo: string[] = [];
   for (const to of p.emails) {
     try {
-      await sendDeliverableEmail({ to, subject: `המצגת "${topic}" מוכנה`, html, attachments });
+      await sendDeliverableEmail({ to, subject: `המצגת "${topic.replace(/\n/g, ' ')}" מוכנה`, html, attachments });
       sentTo.push(to);
     } catch (e) {
       await logEvent(database, { requestId: p.requestId, severity: 'warning', action: 'deck_email_recipient_failed', message: `${to}: ${String(e)}` });
