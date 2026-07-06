@@ -20,7 +20,7 @@ import { generateImage, generateImageWithReferences } from '../_shared/openai.ts
 import { cropBytesTo16by9 } from '../_shared/image.ts';
 import { renderPdfBase64 } from '../_shared/pdf.ts';
 import { sendDeliverableEmail, buildEmailHtml } from '../_shared/resend.ts';
-import { deliverableSubject, deliverableTitle } from '../_shared/deliverableTitle.ts';
+import { deliverableReadyHeading, deliverableSubject, deliverableTitle } from '../_shared/deliverableTitle.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -245,6 +245,7 @@ async function runJob(
   const filesLine = pdfBase64 ? 'כקובץ PowerPoint (PPTX) וכ-PDF' : 'כקובץ PowerPoint (PPTX)';
   const editUrl = buildDeckEditUrl(p.requestId, jobId);
   const subject = deliverableSubject(topic, 'presentation');
+  const emailTitle = deliverableReadyHeading(topic, 'presentation');
   const html = buildEmailHtml(
     [
       `המצגת ${topic} מוכנה ומצורפת כאן ${filesLine}.`,
@@ -252,7 +253,7 @@ async function runJob(
       'אפשר לפתוח את הקישור, לגלול בין השקפים, לערוך שקף ספציפי עם AI ולייצא PPTX מעודכן.',
     ].filter(Boolean).join('\n\n'),
     brand?.name ? `בברכה,\n${brand.name}` : 'בברכה',
-    topic,
+    emailTitle,
   );
   const attachments = [
     { filename: `${safeName}.pptx`, contentBase64: pptxBase64 },

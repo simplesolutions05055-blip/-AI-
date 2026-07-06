@@ -3,15 +3,15 @@ const MAX_SUBJECT_LENGTH = 96;
 
 const TITLE_KEYS = [
   'title',
-  'output_title',
   'deliverable_title',
+  'output_title',
   'topic',
-  'goal',
   'event_name',
   'campaign_name',
   'product_name',
   'offer_title',
   'name',
+  'goal',
 ];
 
 const TYPE_LABELS: Record<string, string> = {
@@ -44,6 +44,22 @@ export function deliverableSubject(title: string, outputType?: string | null): s
   return limitOneLineTitle(`${cleanTitle} - ${suffix}`, MAX_SUBJECT_LENGTH);
 }
 
+export function deliverableReadyHeading(title: string, outputType?: string | null): string {
+  const cleanTitle = limitOneLineTitle(title, MAX_TITLE_LENGTH) || 'התוצר שלך';
+  switch (outputType) {
+    case 'presentation':
+      return `המצגת ${cleanTitle} מוכנה`;
+    case 'image':
+      return `התמונה ${cleanTitle} מוכנה`;
+    case 'pdf':
+      return `המסמך ${cleanTitle} מוכן`;
+    case 'text':
+      return `התוכן ${cleanTitle} מוכן`;
+    default:
+      return `${cleanTitle} - התוצר מוכן`;
+  }
+}
+
 export function limitOneLineTitle(value: unknown, max = MAX_TITLE_LENGTH): string {
   const clean = oneLine(value);
   if (!clean) return '';
@@ -57,15 +73,41 @@ function firstBriefTitle(brief: Record<string, unknown> | null | undefined): str
   if (!brief || typeof brief !== 'object') return '';
   for (const key of TITLE_KEYS) {
     const value = brief[key];
-    if (typeof value === 'string' && oneLine(value)) return value;
+    if (typeof value === 'string') {
+      const title = titleCandidate(value, key === 'goal');
+      if (title) return title;
+    }
   }
   return '';
+}
+
+function titleCandidate(value: string, isGoal: boolean): string {
+  const clean = oneLine(value);
+  if (!clean) return '';
+  if (isGoal && looksLikeLongBrief(value, clean)) return headingFromMarkdown(value);
+  return clean;
+}
+
+function looksLikeLongBrief(raw: string, clean: string): boolean {
+  return raw.includes('\n') || /[#*_`\[]/.test(raw) || clean.length > MAX_TITLE_LENGTH * 1.5;
+}
+
+function headingFromMarkdown(value: string): string {
+  const firstHeading = value
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^#+\s*/, '').trim())
+    .find((line) => line && !/^(\*\*)?(מתי|איפה|מארגנת|קהל|תאריך|שעה)(\*\*)?:/.test(line));
+  return firstHeading ? oneLine(firstHeading) : '';
 }
 
 function oneLine(value: unknown): string {
   return String(value ?? '')
     .replace(/[\r\n\t]+/g, ' ')
+    .replace(/^\s*#+\s*/g, '')
+    .replace(/\[[^\]]*\]:\s*\S+.*$/g, '')
+    .replace(/\[[^\]]+\]\([^)]+\)/g, '')
     .replace(/[“”"']/g, '')
+    .replace(/[*_`]+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
