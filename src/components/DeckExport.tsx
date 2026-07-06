@@ -88,6 +88,8 @@ export default function DeckExport({
   const [exportTab, setExportTab] = useState<'template' | 'fullslide' | 'json' | 'notebook'>('template');
   const [templatePptxLoading, setTemplatePptxLoading] = useState(false);
   const [templatePdfLoading, setTemplatePdfLoading] = useState(false);
+  const [fullslidePptxLoading, setFullslidePptxLoading] = useState(false);
+  const [fullslidePdfLoading, setFullslidePdfLoading] = useState(false);
   // Cache the fully-resolved deck (slides + AI images + brand pack) keyed by the
   // AI-image count, so a follow-up PDF reuses the EXACT same images & positions
   // produced for the PPTX (and vice versa) without regenerating.
@@ -188,6 +190,34 @@ export default function DeckExport({
       setError(String((e as { message?: string })?.message ?? e));
     } finally {
       setTemplatePdfLoading(false);
+    }
+  }
+
+  // Helper: for fullslide mode, generate PPTX from already-saved full-slide images
+  async function downloadFullslidePptx() {
+    setFullslidePptxLoading(true);
+    try {
+      // TODO: implement fullslide PPTX download from saved deck_ai_images
+      // For now, placeholder that alerts user
+      await alertDialog('FullSlide PPTX download coming soon');
+    } catch (e) {
+      setError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setFullslidePptxLoading(false);
+    }
+  }
+
+  // Helper: for fullslide mode, generate PDF from already-saved full-slide images
+  async function downloadFullslidePdf() {
+    setFullslidePdfLoading(true);
+    try {
+      // TODO: implement fullslide PDF download from saved deck_ai_images
+      // For now, placeholder that alerts user
+      await alertDialog('FullSlide PDF download coming soon');
+    } catch (e) {
+      setError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setFullslidePdfLoading(false);
     }
   }
 
@@ -425,23 +455,24 @@ export default function DeckExport({
         </div>
       )}
 
-      {/* FullSlide (placeholder for now) */}
+      {/* FullSlide PPTX/PDF downloads from saved images */}
       {exportTab === 'fullslide' && (
         <div className="mb-5 border-b border-[var(--border)] pb-4">
-          <div className="text-sm font-semibold mb-2">הורדה / שליחה במייל</div>
-          <p className="text-xs text-[var(--muted)] mb-3">FullSlide PPTX/PDF מה-job האחרון</p>
+          <div className="text-sm font-semibold mb-3">הורדה / שליחה במייל</div>
           <div className="flex flex-wrap gap-3">
             <button
-              disabled
+              onClick={downloadFullslidePptx}
+              disabled={fullslidePptxLoading}
               className="flex-1 min-w-[150px] rounded-lg bg-brand px-4 py-2.5 font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
             >
-              הורדת PPTX
+              {fullslidePptxLoading ? 'בונה PPTX…' : 'הורדת PPTX'}
             </button>
             <button
-              disabled
+              onClick={downloadFullslidePdf}
+              disabled={fullslidePdfLoading}
               className="flex-1 min-w-[150px] rounded-lg border border-brand px-4 py-2.5 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
             >
-              הורדת PDF
+              {fullslidePdfLoading ? 'בונה PDF…' : 'הורדת PDF'}
             </button>
           </div>
         </div>
