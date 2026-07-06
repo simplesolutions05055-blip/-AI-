@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { randomUUID } from '@/lib/uuid';
 import { useProfile } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
 import { confirmDialog } from '@/lib/dialog';
@@ -201,7 +202,7 @@ export default function PermissionsPage() {
       return false;
     }
     setGenerating(true);
-    const token = crypto.randomUUID();
+    const token = randomUUID();
     const { data, error } = await db
       .from('brand_invites')
       .insert({ token, brand_id: brandId, created_by: me?.id ?? null } as never)

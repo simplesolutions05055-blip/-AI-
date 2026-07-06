@@ -1,6 +1,6 @@
 import { db } from '../_shared/db.ts';
 import { generatePresentationOutline, generateDeckSlides, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption } from '../_shared/openai.ts';
-import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost } from '../_shared/util.ts';
+import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost, imageUnitCost } from '../_shared/util.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 import {
   AbuseGuardError,
@@ -19,6 +19,10 @@ const corsHeaders = {
 const fallbackSystemMessage =
   'אתה סוכן AI ארגוני. הפק חבילת תוכן למצגת בעברית RTL: שם מצגת, מטרה, מבנה שקפים, תוכן מלא לכל שקף, הנחיות עיצוב, ו-Prompt מוכן ל-NotebookLM.';
 
+// Hard cap on AI images per 'images' call (one per selected slide in the
+// GPT-Images deck flow; abuse guard prices the batch before generating).
+const MAX_DECK_IMAGES = 15;
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -27,7 +31,7 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only } = await req.json();
+    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
     await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
     if (save_only !== true) {
@@ -39,18 +43,19 @@ Deno.serve(async (req) => {
       await enforceAiLimit(database, actor, {
         kind: format === 'images' ? 'generation' : 'utility',
         promptChars,
-        estimatedCost: format === 'images' ? estimateImageCost(Array.isArray(prompts) ? Math.min(prompts.length, 3) : 1) : undefined,
+        estimatedCost: format === 'images' ? estimateImageCost(Array.isArray(prompts) ? Math.min(prompts.length, MAX_DECK_IMAGES) : 1) : undefined,
       });
     }
 
-    // 'images' mode: generate up to 3 AI images from explicit prompts (built by
+    // 'images' mode: generate AI images from explicit prompts (built by
     // the client from the deck's slides + brand palette) and return them as
     // base64. Used to embed AI visuals into the downloadable deck. When a
     // requestId is supplied we also persist each image to the outputs bucket and
     // record it in deck_ai_images, so the /revise screen can show and reuse them
-    // for the next deck export without regenerating.
+    // for the next deck export without regenerating. Capped at MAX_DECK_IMAGES
+    // per call (the GPT-Images deck flow sends one prompt per selected slide).
     if (format === 'images') {
-      const list = Array.isArray(prompts) ? prompts.slice(0, 3) : [];
+      const list = Array.isArray(prompts) ? prompts.slice(0, MAX_DECK_IMAGES) : [];
       if (!list.length) {
         return new Response(JSON.stringify({ error: 'prompts array required' }), {
           status: 400,
@@ -60,6 +65,10 @@ Deno.serve(async (req) => {
       const idxList = Array.isArray(slideIndexes) ? slideIndexes : [];
       const capList = Array.isArray(captions) ? captions : [];
       const aiModelsImg = await getSetting<{ image_model?: string; image_size?: string; image_quality?: string }>(database, 'ai_models');
+      // Full-slide (NotebookLM-style) images need a wide 16:9 canvas + high
+      // quality so the baked-in Hebrew text stays crisp; the client passes these.
+      const effSize = typeof imageSize === 'string' && imageSize.trim() ? imageSize.trim() : aiModelsImg?.image_size || '1024x1024';
+      const effQuality = typeof imageQuality === 'string' && imageQuality.trim() ? imageQuality.trim() : aiModelsImg?.image_quality || 'auto';
       const brandId = (brief as { brand_id?: string } | null)?.brand_id ?? null;
       const logoReference = await loadBrandLogoReference(database, brandId);
       const images: Array<{ base64: string; mime: string; storagePath: string | null }> = [];
@@ -68,13 +77,13 @@ Deno.serve(async (req) => {
         const generated = logoReference
           ? await generateImageWithReferences(prompt, [logoReference], {
               model: aiModelsImg?.image_model,
-              size: aiModelsImg?.image_size || '1024x1024',
-              quality: aiModelsImg?.image_quality || 'auto',
+              size: effSize,
+              quality: effQuality,
             })
           : await generateImage(prompt, {
               model: aiModelsImg?.image_model,
-              size: aiModelsImg?.image_size || '1024x1024',
-              quality: aiModelsImg?.image_quality || 'auto',
+              size: effSize,
+              quality: effQuality,
             });
         const { base64, mime } = generated;
         let storagePath: string | null = null;
@@ -102,12 +111,14 @@ Deno.serve(async (req) => {
         }
         images.push({ base64, mime, storagePath });
       }
+      // Real per-image price by the size/quality actually used — not the flat
+      // estimate — so the presentation cost panel reflects what OpenAI charges.
       await recordUsageAndCost(database, requestId ?? null, {
         provider: 'openai',
         model: aiModelsImg?.image_model || 'gpt-image-1',
         input: 0,
-        output: 0,
-        cost: estimateImageCost(images.length),
+        output: images.length,
+        cost: imageUnitCost(effSize, effQuality) * images.length,
       });
       await logEvent(database, {
         action: 'deck_ai_images_generated',

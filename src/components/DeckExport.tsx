@@ -19,7 +19,9 @@ import {
   type PersistedDeckImage,
 } from '@/lib/deck';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { randomUUID } from '@/lib/uuid';
 import ImagePickerModal from '@/components/ImagePickerModal';
+import GptImagesDeck from '@/components/GptImagesDeck';
 import { alertDialog } from '@/lib/dialog';
 
 const NOTEBOOKLM_CUSTOMIZE_SCREEN = '/notebooklm/customize-slide-deck.png';
@@ -122,7 +124,7 @@ export default function DeckExport({
     setUploadingFile(true);
     try {
       const ext = file.name.split('.').pop() || 'pdf';
-      const path = `${requestId}/${crypto.randomUUID()}.${ext}`;
+      const path = `${requestId}/${randomUUID()}.${ext}`;
       const client = createSupabaseBrowserClient();
 
       const { error: uploadError } = await client.storage.from('outputs').upload(path, file, { contentType: file.type });
@@ -278,6 +280,10 @@ export default function DeckExport({
         className="hidden"
         onChange={handleFileUpload}
       />
+      {/* מצגת עם GPT Images — creates the deck's images with GPT, per a
+          user-chosen slide range, with an approval modal + cost panel. */}
+      <GptImagesDeck brief={brief} requestId={requestId} outlineText={outlineText} brandId={brandId} />
+
       <div className="mb-5 border-b border-[var(--border)] pb-4">
         <div className="text-sm font-semibold mb-1">יצירת מצגת PPTX עם AI</div>
         <p className="text-xs text-[var(--muted)] mb-2">

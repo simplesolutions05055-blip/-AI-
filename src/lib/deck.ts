@@ -5,6 +5,7 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { randomUUID } from '@/lib/uuid';
 
 export interface DeckSlide {
   title?: string;
@@ -965,7 +966,7 @@ export async function generatePptxWithClaude(
 
   // The Claude run takes 1–3 minutes — longer than a synchronous request
   // survives. Start it in the background, then poll for the result.
-  const jobId = crypto.randomUUID();
+  const jobId = randomUUID();
   const { error: startErr } = await client.functions.invoke('generate-pptx-claude', {
     body: {
       action: 'start',
@@ -1036,6 +1037,419 @@ export async function generateGammaDeck(
     if (s?.status === 'failed') throw new Error('יצירת המצגת ב-Gamma נכשלה');
   }
   throw new Error('יצירת המצגת ב-Gamma נמשכה זמן רב מדי');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// "מצגת עם GPT Images" — per-slide GPT image generation + rich RTL renderers.
+// The user picks WHICH slides get an AI image (a 1-based range like "1-5" or
+// "1,3,7"), approves each image in a modal, and only then the deck is built.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Parse a 1-based slide-range string ("1-5", "1,3,7", "2 4") into sorted unique
+// 0-based indexes into the full slides array (index 0 = the cover slide).
+export function parseSlideRange(input: string, max: number): number[] {
+  const out = new Set<number>();
+  for (const tok of String(input || '').split(/[,\s]+/).filter(Boolean)) {
+    const m = tok.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (m) {
+      let a = Number(m[1]);
+      let b = Number(m[2]);
+      if (a > b) [a, b] = [b, a];
+      for (let n = a; n <= b; n++) if (n >= 1 && n <= max) out.add(n - 1);
+    } else if (/^\d+$/.test(tok)) {
+      const n = Number(tok);
+      if (n >= 1 && n <= max) out.add(n - 1);
+    }
+  }
+  return [...out].sort((x, y) => x - y);
+}
+
+// Cover slides get a dedicated hero prompt (wide, atmospheric, text-free) —
+// the regular per-slide prompt is tuned for content slides.
+function buildCoverImagePrompt(brief: any, slide: DeckSlide, palette: string): string {
+  return [
+    `צור תמונת שער (Hero) רחבה ואווירתית למצגת בנושא: ${brief?.topic || brief?.goal || slide?.title || ''}.`,
+    'התמונה תשמש כרקע מלא לשקף הפתיחה, ולכן היא צריכה להיות ניתנת לקריאה עם טקסט לבן מעליה — קומפוזיציה נקייה, לא עמוסה.',
+    palette ? `שלב גוונים התואמים לפלטת המותג: ${palette}.` : '',
+    'סגנון עריכתי מודרני ואיכותי. ללא טקסט, ללא כיתוב, ללא לוגו וללא מסגרת.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+// Full-slide (NotebookLM-style) prompt: GPT renders the WHOLE slide as one
+// designed image — background, graphics, layout AND the Hebrew text baked in.
+// No fixed template; every slide gets its own unique design. Text stays crisp
+// because current image models render Hebrew accurately at high quality.
+function buildFullSlideImagePrompt(brief: any, slide: DeckSlide, palette: string, slideNumber: number): string {
+  const bullets = Array.isArray(slide?.bullets) ? slide.bullets : [];
+  const lines = [
+    'צור שקופית מצגת שלמה ומעוצבת בפורמט 16:9 (רוחבי), בעברית מלאה ומדויקת, מיושרת מימין לשמאל (RTL).',
+    'כל השקופית היא תמונה אחת מעוצבת: רקע, גרפיקה, אלמנטים ויזואליים וטקסט קריא — כמו שקופית מקצועית של NotebookLM, לא template אחיד.',
+    `כותרת ראשית: «${slide?.title || ''}».`,
+  ];
+  if (slide?.subtitle) lines.push(`כותרת משנה: «${slide.subtitle}».`);
+  if (bullets.length) lines.push('נקודות תוכן: ' + bullets.map((b) => `«${b}»`).join(' ; ') + '.');
+  if (slide?.body) lines.push(`טקסט מלווה: «${slide.body}».`);
+  if (brief?.topic || brief?.goal) lines.push(`נושא המצגת: ${brief?.topic || brief?.goal}.`);
+  lines.push(
+    `עיצוב מודרני, נקי ויוקרתי${palette ? `, בפלטת צבעי המותג: ${palette}` : ''}.`,
+    'חשוב מאוד: כל הטקסט חייב להיות בעברית תקנית ומדויקת בדיוק כפי שנמסר, מיושר לימין, קריא וחד. אל תמציא אותיות ואל תשבש מילים.',
+    slideNumber === 1 ? 'זהו שקף הפתיחה — כותרת גדולה ובולטת.' : 'שקף תוכן — הדגש את הנקודות בצורה ברורה וקריאה.',
+  );
+  return lines.join('\n');
+}
+
+// Generate one GPT image per selected slide (explicit 0-based indexes chosen by
+// the user), persisting each to deck_ai_images. Optional per-slide feedback is
+// appended to the prompt (the "regenerate with notes" path in the approval
+// modal). In `fullSlide` mode each image IS the whole slide (text baked in),
+// rendered on a wide 16:9 high-quality canvas. Returns images aligned to indexes.
+export async function generateGptImagesForSlides(
+  brief: any,
+  slides: DeckSlide[],
+  slideIndexes: number[],
+  requestId: string | null,
+  brand: DeckBrand | null,
+  feedback?: Record<number, string>,
+  fullSlide = false,
+): Promise<Array<{ index: number; image: DeckImage; prompt: string }>> {
+  const valid = slideIndexes.filter((i) => i >= 0 && i < slides.length);
+  if (!valid.length) return [];
+
+  const palette = (brand?.color_palette ?? [])
+    .map((c) => `${c.role} ${c.hex}`)
+    .join(', ');
+  const prompts = valid.map((i) => {
+    const base = fullSlide
+      ? buildFullSlideImagePrompt(brief, slides[i], palette, i + 1)
+      : i === 0 ? buildCoverImagePrompt(brief, slides[i], palette) : buildAiImagePrompt(brief, slides[i], palette);
+    const note = feedback?.[i]?.trim();
+    return note ? `${base}\n\nהערות תיקון מהמשתמש (חובה ליישם): ${note}` : base;
+  });
+  const captions = valid.map((i) => slides[i]?.title || (i === 0 ? 'שער' : `שקף ${i + 1}`));
+
+  const db = createSupabaseBrowserClient();
+  const { data, error } = await db.functions.invoke('generate-presentation', {
+    // Full slides need a wide 16:9 high-quality canvas so the baked Hebrew is crisp.
+    body: {
+      format: 'images', brief, requestId, prompts, slideIndexes: valid, captions,
+      ...(fullSlide ? { imageSize: '1536x1024', imageQuality: 'high' } : {}),
+    },
+  });
+  if (error) throw error;
+  const raws = (data as { images?: Array<{ base64: string; mime: string }> } | null)?.images ?? [];
+
+  const out: Array<{ index: number; image: DeckImage; prompt: string }> = [];
+  for (let k = 0; k < raws.length && k < valid.length; k++) {
+    const dataUrl = `data:${raws[k].mime || 'image/png'};base64,${raws[k].base64}`;
+    const dim = await imageSize(dataUrl);
+    out.push({
+      index: valid[k],
+      prompt: prompts[k],
+      image: { caption: captions[k], isLogo: false, dataUrl, natW: dim.w, natH: dim.h },
+    });
+  }
+  return out;
+}
+
+// ── Rich PPTX: cover = full-bleed GPT image + overlay; content slides with an
+// image use a half-half split (image left, text right — RTL reads text first).
+// Slides without an image keep the classic title+body layout. ──
+export async function renderGptDeckToPptx(
+  brief: any,
+  brand: DeckBrand | null,
+  images: DeckImage[],
+  rawSlides: DeckSlide[],
+): Promise<Blob> {
+  const PptxGenJS = (await import('pptxgenjs')).default;
+  const pptx = new PptxGenJS();
+  pptx.defineLayout({ name: 'WIDE', width: 13.33, height: 7.5 });
+  pptx.layout = 'WIDE';
+  pptx.rtlMode = true;
+
+  const { primary, secondary, accent, background } = resolvePalette(brand, brief);
+  const hex = (c: string) => c.replace('#', '').toUpperCase();
+  const FONT = 'Heebo';
+  const W = 13.33;
+  const H = 7.5;
+  const M = 0.7;
+
+  const logo = images.find((i) => i.isLogo) || null;
+  const cover = rawSlides[0];
+  const content = rawSlides.slice(1);
+  const coverTitle = cover?.title || brief?.topic || brief?.goal || 'מצגת';
+  const coverSubtitle = cover?.subtitle ?? cover?.body ?? cover?.bullets?.[0] ?? brief?.goal ?? null;
+
+  const addLogo = (s: any, light = false) => {
+    if (!logo) return;
+    const { w, h } = fitBox(logo.natW, logo.natH, 1.5, 0.72);
+    s.addImage({ data: logo.dataUrl, x: 0.5, y: 0.35 + (0.72 - h) / 2, w, h, ...(light ? {} : {}) });
+  };
+
+  // ── Cover ──
+  const t = pptx.addSlide();
+  if (cover?.aiImage) {
+    // Full-bleed hero + dark overlay; title/subtitle in white, right-aligned.
+    t.addImage({ data: cover.aiImage.dataUrl, x: 0, y: 0, w: W, h: H, sizing: { type: 'cover', w: W, h: H } });
+    t.addShape('rect', { x: 0, y: 0, w: W, h: H, fill: { color: '000000', transparency: 52 }, line: { type: 'none' } });
+    addLogo(t, true);
+    t.addShape('rect', { x: W - M - 1.7, y: 2.6, w: 1.7, h: 0.18, fill: { color: hex(accent) }, line: { type: 'none' } });
+    t.addText(String(coverTitle), {
+      x: M, y: 2.95, w: W - M * 2, h: 2.0,
+      fontFace: FONT, fontSize: 44, bold: true, color: 'FFFFFF',
+      align: 'right', rtlMode: true, valign: 'top', fit: 'shrink',
+    });
+    if (coverSubtitle) {
+      t.addText(String(coverSubtitle), {
+        x: M, y: 5.0, w: W - M * 2, h: 1.3,
+        fontFace: FONT, fontSize: 20, color: 'F3F4F6',
+        align: 'right', rtlMode: true, valign: 'top', lineSpacingMultiple: 1.4, fit: 'shrink',
+      });
+    }
+    if (brief?.audience) {
+      t.addText(`קהל יעד: ${brief.audience}`, {
+        x: M, y: 6.5, w: W - M * 2, h: 0.55,
+        fontFace: FONT, fontSize: 15, bold: true, color: 'FFFFFF', align: 'right', rtlMode: true,
+      });
+    }
+  } else {
+    t.background = { color: hex(background) };
+    addLogo(t);
+    t.addShape('rect', { x: M, y: 2.35, w: 1.7, h: 0.18, fill: { color: hex(accent) }, line: { type: 'none' } });
+    t.addText(String(coverTitle), {
+      x: M, y: 2.7, w: W - M * 2, h: 2.1,
+      fontFace: FONT, fontSize: 40, bold: true, color: hex(primary),
+      align: 'right', rtlMode: true, valign: 'top', fit: 'shrink',
+    });
+    if (coverSubtitle) {
+      t.addText(String(coverSubtitle), {
+        x: M, y: 4.9, w: W - M * 2, h: 1.4,
+        fontFace: FONT, fontSize: 20, color: hex(secondary),
+        align: 'right', rtlMode: true, valign: 'top', lineSpacingMultiple: 1.4, fit: 'shrink',
+      });
+    }
+    if (brief?.audience) {
+      t.addText(`קהל יעד: ${brief.audience}`, {
+        x: M, y: 6.4, w: W - M * 2, h: 0.6,
+        fontFace: FONT, fontSize: 15, bold: true, color: hex(accent), align: 'right', rtlMode: true,
+      });
+    }
+  }
+
+  // ── Content slides ──
+  content.forEach((s, i) => {
+    const slide = pptx.addSlide();
+    slide.background = { color: hex(background) };
+    const img = s?.aiImage ?? null;
+    const split = Boolean(img);
+
+    // Split layout: image fills the left 40%, text lives on the right 60%.
+    const IMG_W = 5.3;
+    const textX = split ? IMG_W + 0.5 : M;
+    const textW = split ? W - IMG_W - 0.5 - M : W - M * 2;
+
+    if (img) {
+      slide.addImage({ data: img.dataUrl, x: 0, y: 0, w: IMG_W, h: H, sizing: { type: 'cover', w: IMG_W, h: H } });
+      // Thin brand-accent divider between image and text.
+      slide.addShape('rect', { x: IMG_W, y: 0, w: 0.07, h: H, fill: { color: hex(accent) }, line: { type: 'none' } });
+    }
+    if (!split) addLogo(slide);
+    else if (logo) {
+      const { w, h } = fitBox(logo.natW, logo.natH, 1.2, 0.6);
+      slide.addImage({ data: logo.dataUrl, x: textX + 0.1, y: 0.35 + (0.6 - h) / 2, w, h });
+    }
+
+    slide.addShape('rect', { x: W - M - 1.1, y: 1.32, w: 1.1, h: 0.14, fill: { color: hex(accent) }, line: { type: 'none' } });
+    slide.addText(String(s?.title || `שקף ${i + 2}`), {
+      x: textX, y: 1.5, w: textW, h: 0.95,
+      fontFace: FONT, fontSize: 27, bold: true, color: hex(primary),
+      align: 'right', rtlMode: true, valign: 'top', fit: 'shrink',
+    });
+
+    // Per-paragraph RTL + right alignment MUST live on each run's options — the
+    // top-level addText options don't propagate the paragraph rtl flag when text
+    // is an array (learned the hard way with the classic renderer).
+    const para = { align: 'right' as const, rtlMode: true };
+    const runs: Array<{ text: string; options?: any }> = [];
+    if (s?.subtitle) {
+      runs.push({ text: String(s.subtitle), options: { ...para, fontSize: 17, bold: true, color: hex(secondary), breakLine: true, paraSpaceAfter: 10 } });
+    }
+    for (const b of Array.isArray(s?.bullets) ? s.bullets : []) {
+      runs.push({
+        text: String(b),
+        options: { ...para, fontSize: 15, color: hex(secondary), bullet: { code: '25AA', indent: 20 }, breakLine: true, paraSpaceAfter: 8 },
+      });
+    }
+    if (s?.body) {
+      runs.push({ text: String(s.body), options: { ...para, fontSize: 14, color: hex(secondary), breakLine: true, paraSpaceBefore: 10, lineSpacingMultiple: 1.3 } });
+    }
+    if (runs.length) {
+      slide.addText(runs as any, {
+        x: textX, y: 2.55, w: textW, h: H - 2.55 - 0.9,
+        fontFace: FONT, align: 'right', rtlMode: true, valign: 'top', fit: 'shrink',
+      });
+    }
+
+    if (brand?.name) {
+      slide.addText(String(brand.name), { x: textX, y: H - 0.55, w: 4.5, h: 0.4, fontFace: FONT, fontSize: 10, color: hex(secondary), align: 'right', rtlMode: true });
+    }
+    slide.addText(String(i + 2), { x: W - M - 1, y: H - 0.55, w: 1, h: 0.4, fontFace: FONT, fontSize: 11, bold: true, color: hex(accent), align: 'left' });
+  });
+
+  const blob = (await pptx.write({ outputType: 'blob' })) as Blob;
+  return blob;
+}
+
+// ── Rich PDF: same three layouts, rasterized from RTL HTML (Hebrew shaping is
+// the browser's, so it's always correct). ──
+export async function renderGptDeckToPdf(
+  brief: any,
+  brand: DeckBrand | null,
+  images: DeckImage[],
+  rawSlides: DeckSlide[],
+): Promise<Blob> {
+  const esc = (s: unknown) =>
+    String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const { primary, secondary, accent, background } = resolvePalette(brand, brief);
+  const logo = images.find((i) => i.isLogo) || null;
+  const cover = rawSlides[0];
+  const content = rawSlides.slice(1);
+  const coverTitle = cover?.title || brief?.topic || brief?.goal || 'מצגת';
+  const coverSubtitle = cover?.subtitle ?? cover?.body ?? cover?.bullets?.[0] ?? brief?.goal ?? null;
+
+  const W = 1280;
+  const H = 720;
+  const font = `'Heebo','Assistant','Arial Hebrew',Arial,sans-serif`;
+  const logoTag = logo ? `<img class="gd-logo" src="${logo.dataUrl}">` : '';
+
+  const tLen = String(coverTitle ?? '').length;
+  const titleSize = tLen > 80 ? 40 : tLen > 50 ? 50 : tLen > 30 ? 60 : 68;
+
+  const slideHtmls: string[] = [];
+  if (cover?.aiImage) {
+    slideHtmls.push(`
+    <div class="gd-slide gd-cover" style="background-image:linear-gradient(rgba(0,0,0,.48),rgba(0,0,0,.48)),url('${cover.aiImage.dataUrl}')">
+      ${logoTag}
+      <div class="gd-bar gd-bar-lg"></div>
+      <h1 style="font-size:${titleSize}px">${esc(coverTitle)}</h1>
+      ${coverSubtitle ? `<p class="gd-sub gd-light">${esc(coverSubtitle)}</p>` : ''}
+      ${brief?.audience ? `<p class="gd-aud gd-light-strong">קהל יעד: ${esc(brief.audience)}</p>` : ''}
+    </div>`);
+  } else {
+    slideHtmls.push(`
+    <div class="gd-slide gd-cover gd-cover-plain">
+      ${logoTag}
+      <div class="gd-bar gd-bar-lg"></div>
+      <h1 style="font-size:${titleSize}px;color:${primary}">${esc(coverTitle)}</h1>
+      ${coverSubtitle ? `<p class="gd-sub" style="color:${secondary}">${esc(coverSubtitle)}</p>` : ''}
+      ${brief?.audience ? `<p class="gd-aud" style="color:${accent}">קהל יעד: ${esc(brief.audience)}</p>` : ''}
+    </div>`);
+  }
+
+  content.forEach((s, i) => {
+    const bullets = Array.isArray(s?.bullets) ? s.bullets : [];
+    const img = s?.aiImage ?? null;
+    const total = bullets.join(' ').length + (s?.body?.length ?? 0);
+    const listSize = total > 520 ? 19 : total > 320 ? 23 : 26;
+    const bodyHtml = `
+      ${s?.subtitle ? `<p class="gd-sub2">${esc(s.subtitle)}</p>` : ''}
+      ${bullets.length ? `<ul class="gd-list" style="font-size:${listSize}px">${bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
+      ${s?.body ? `<p class="gd-para">${esc(s.body)}</p>` : ''}`;
+    slideHtmls.push(`
+    <div class="gd-slide ${img ? 'gd-split' : ''}">
+      ${img ? `<div class="gd-img" style="background-image:url('${img.dataUrl}')"></div>` : ''}
+      <div class="gd-content">
+        ${logoTag}
+        <div class="gd-bar"></div>
+        <h2>${esc(s?.title || `שקף ${i + 2}`)}</h2>
+        ${bodyHtml}
+        <div class="gd-foot">${esc(brand?.name ?? '')}</div>
+        <div class="gd-num">${i + 2}</div>
+      </div>
+    </div>`);
+  });
+
+  const css = `
+    .gd-slide{width:${W}px;height:${H}px;background:${background};color:${secondary};
+      box-sizing:border-box;position:relative;overflow:hidden;font-family:${font};direction:rtl;text-align:right;letter-spacing:0}
+    .gd-cover{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;
+      padding:72px 96px;background-size:cover;background-position:center;color:#fff}
+    .gd-cover-plain{background:${background}}
+    .gd-cover h1{font-weight:800;line-height:1.12;margin:0;max-width:88%;color:#fff}
+    .gd-cover-plain h1{color:${primary}}
+    .gd-logo{position:absolute;top:44px;left:72px;height:74px;object-fit:contain}
+    .gd-bar{width:72px;height:9px;background:${accent};border-radius:5px;margin-bottom:22px}
+    .gd-bar-lg{width:120px;height:12px;margin-bottom:30px}
+    .gd-sub{font-size:28px;margin-top:26px;max-width:80%;line-height:1.55}
+    .gd-light{color:#f3f4f6}
+    .gd-light-strong{color:#fff}
+    .gd-aud{font-size:22px;margin-top:20px;font-weight:700}
+    .gd-split{display:flex;flex-direction:row}
+    .gd-img{width:40%;height:100%;background-size:cover;background-position:center;border-right:6px solid ${accent};order:2}
+    .gd-split .gd-content{width:60%;order:1}
+    .gd-content{box-sizing:border-box;padding:72px 96px 72px 64px;position:relative;height:100%;
+      display:flex;flex-direction:column;justify-content:flex-start}
+    .gd-slide:not(.gd-split) .gd-content{width:100%;padding:72px 96px}
+    .gd-content h2{font-size:44px;font-weight:800;color:${primary};margin:0 0 26px;line-height:1.15}
+    .gd-sub2{font-size:26px;font-weight:700;color:${secondary};margin:0 0 16px}
+    .gd-list{margin:0;padding:0 30px 0 0;list-style:none}
+    .gd-list li{position:relative;margin:0 0 16px;padding-right:30px;line-height:1.5}
+    .gd-list li::before{content:'';position:absolute;right:0;top:13px;width:13px;height:13px;background:${accent};border-radius:3px}
+    .gd-para{font-size:24px;line-height:1.6;margin:18px 0 0}
+    .gd-foot{position:absolute;bottom:34px;right:96px;font-size:18px;color:${secondary};opacity:.55;font-weight:600}
+    .gd-num{position:absolute;bottom:30px;left:64px;font-size:20px;color:${accent};font-weight:800}
+  `;
+
+  const container = document.createElement('div');
+  container.style.cssText = `position:fixed;left:-99999px;top:0;width:${W}px;`;
+  container.innerHTML = `<style>${css}</style>${slideHtmls.join('')}`;
+  document.body.appendChild(container);
+
+  try {
+    await (document as any).fonts?.ready?.catch?.(() => {});
+    await new Promise((r) => setTimeout(r, 120));
+
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [W, H] });
+    const els = Array.from(container.querySelectorAll('.gd-slide')) as HTMLElement[];
+    for (let i = 0; i < els.length; i++) {
+      const canvas = await html2canvas(els[i], { scale: 2, useCORS: true, backgroundColor: background, width: W, height: H });
+      const img = canvas.toDataURL('image/jpeg', 0.92);
+      if (i > 0) pdf.addPage([W, H], 'landscape');
+      pdf.addImage(img, 'JPEG', 0, 0, W, H);
+    }
+    return pdf.output('blob');
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
+// ── Full-slide mode: each slide IS one GPT image covering the whole frame
+// (NotebookLM-style, text baked in). The deck is just a container — no text
+// boxes, no template. `slideImages` are ordered by slide. ──
+export async function renderFullSlideDeckToPptx(slideImages: DeckImage[]): Promise<Blob> {
+  const PptxGenJS = (await import('pptxgenjs')).default;
+  const pptx = new PptxGenJS();
+  pptx.defineLayout({ name: 'WIDE', width: 13.33, height: 7.5 });
+  pptx.layout = 'WIDE';
+  pptx.rtlMode = true;
+  for (const img of slideImages) {
+    const s = pptx.addSlide();
+    // Full-bleed: the image fills the entire 16:9 slide.
+    s.addImage({ data: img.dataUrl, x: 0, y: 0, w: 13.33, h: 7.5, sizing: { type: 'cover', w: 13.33, h: 7.5 } });
+  }
+  return (await pptx.write({ outputType: 'blob' })) as Blob;
+}
+
+export async function renderFullSlideDeckToPdf(slideImages: DeckImage[]): Promise<Blob> {
+  const W = 1280, H = 720;
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [W, H] });
+  for (let i = 0; i < slideImages.length; i++) {
+    if (i > 0) pdf.addPage([W, H], 'landscape');
+    pdf.addImage(slideImages[i].dataUrl, 'PNG', 0, 0, W, H);
+  }
+  return pdf.output('blob');
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

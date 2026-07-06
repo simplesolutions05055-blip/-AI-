@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, ChangeEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { OUTPUT_LABEL, senderLabel } from '@/lib/labels';
+import { randomUUID } from '@/lib/uuid';
 import { formatHebrewDateTime } from '@/lib/format';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
@@ -152,7 +153,7 @@ export default function FilesPage() {
     setUploadingId(row.id);
     try {
       const ext = file.name.split('.').pop() || 'pdf';
-      const path = `${row.request_id}/${crypto.randomUUID()}.${ext}`;
+      const path = `${row.request_id}/${randomUUID()}.${ext}`;
       const client = createSupabaseBrowserClient();
       const { error } = await client.storage.from('outputs').upload(path, file, { contentType: file.type });
       if (error) throw error;
@@ -420,7 +421,7 @@ export default function FilesPage() {
     if (nextFiles.length === 0) return;
     setUploadFiles((current) => [
       ...current,
-      ...nextFiles.map((file) => ({ id: crypto.randomUUID(), file, previewUrl: URL.createObjectURL(file) })),
+      ...nextFiles.map((file) => ({ id: randomUUID(), file, previewUrl: URL.createObjectURL(file) })),
     ]);
   }
 

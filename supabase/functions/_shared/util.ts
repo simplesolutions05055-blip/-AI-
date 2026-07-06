@@ -163,6 +163,19 @@ export function estimateTextCost(input: number, output: number): number {
 export function estimateImageCost(count = 1): number {
   return 0.04 * count;
 }
+// Size/quality-aware per-image price (gpt-image-1/2 published rates). Used where
+// the actual generation settings are known, so the cost log reflects reality —
+// the flat estimateImageCost() above stays for callers without that context.
+const GPT_IMAGE_PRICES: Record<string, Record<string, number>> = {
+  low: { '1024x1024': 0.011, '1024x1536': 0.016, '1536x1024': 0.016 },
+  medium: { '1024x1024': 0.042, '1024x1536': 0.063, '1536x1024': 0.063 },
+  high: { '1024x1024': 0.167, '1024x1536': 0.25, '1536x1024': 0.25 },
+};
+export function imageUnitCost(size?: string | null, quality?: string | null): number {
+  const q = quality && quality !== 'auto' ? quality : 'medium';
+  const table = GPT_IMAGE_PRICES[q] ?? GPT_IMAGE_PRICES.medium;
+  return table[size ?? '1024x1024'] ?? table['1024x1024'];
+}
 // Rough flat estimate for one audio transcription (no duration available here).
 export function estimateTranscriptionCost(): number {
   return 0.01;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchSocialCaption, type SocialPlatform } from '@/lib/social';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { randomUUID } from '@/lib/uuid';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 const PLATFORM_LABEL: Record<SocialPlatform, string> = {
@@ -74,7 +75,7 @@ export async function uploadPendingMedia(media: MediaItem[], uploadPrefix: strin
       }
       if (!item.file) throw new Error('קובץ מדיה חסר');
       const safeName = item.file.name.replace(/[^\w.\-]+/g, '_').slice(-120);
-      const path = `${prefix}/social/${crypto.randomUUID()}-${safeName}`;
+      const path = `${prefix}/social/${randomUUID()}-${safeName}`;
       const { error } = await client.storage.from('outputs').upload(path, item.file, {
         contentType: item.file.type || undefined,
         upsert: false,
@@ -95,7 +96,7 @@ export async function hydrateStoredMedia(records: StoredMediaRecord[] | null | u
       const { data: signed } = await client.storage.from('outputs').createSignedUrl(record.storage_path, 3600);
       if (!signed?.signedUrl) return null;
       return {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         url: signed.signedUrl,
         kind: record.kind === 'video' ? 'video' : 'image',
         source: record.source === 'upload' ? 'upload' : 'output',
@@ -217,7 +218,7 @@ export default function SocialScheduleSection({
           next = next.map((m, i) => (i === idx ? { ...m, url: produced.url, storagePath: produced.storagePath } : m));
         } else {
           const item: MediaItem = {
-            id: crypto.randomUUID(),
+            id: randomUUID(),
             url: produced.url,
             kind: 'image',
             source: 'output',
@@ -659,7 +660,7 @@ export function MediaEditor({
     for (const file of Array.from(files)) {
       const kind = file.type.startsWith('video') ? 'video' : 'image';
       next.push({
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         url: URL.createObjectURL(file),
         kind,
         source: 'upload',
@@ -676,7 +677,7 @@ export function MediaEditor({
       const next = items
         .filter((it) => !existing.has(it.storagePath))
         .map<MediaItem>((it) => ({
-          id: crypto.randomUUID(),
+          id: randomUUID(),
           url: it.url,
           kind: 'image',
           source: 'output',

@@ -1,5 +1,6 @@
 import { type DragEvent, useEffect, useRef, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { randomUUID } from '@/lib/uuid';
 import { formatHebrewDateTime } from '@/lib/format';
 import {
   brandsToCsv,
@@ -431,7 +432,7 @@ export default function BrandingPage() {
     const id = selected?.id ?? (await save());
     if (!id) return;
     const ext = file.name.split('.').pop() || 'png';
-    const path = `${id}/assets/${crypto.randomUUID()}.${ext}`;
+    const path = `${id}/assets/${randomUUID()}.${ext}`;
     const { error } = await db.storage.from('branding').upload(path, file, { contentType: file.type });
     if (error) {
       await alertDialog('העלאה נכשלה: ' + error.message);

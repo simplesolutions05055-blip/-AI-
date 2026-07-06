@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Lightbulb, X } from 'lucide-react';
+import { randomUUID } from '@/lib/uuid';
 import { Spinner } from '@/components/ui/Spinner';
 import SocialScheduleSection, {
   MediaEditor,
@@ -586,7 +587,7 @@ export default function HolidaysCalendarPage() {
   }
 
   function renderCalendarDay(date: string | null, compact = false) {
-    if (!date) return <div key={crypto.randomUUID()} className={`${compact ? 'min-h-28' : 'min-h-[104px]'} bg-[#f9fafb]`} />;
+    if (!date) return <div key={randomUUID()} className={`${compact ? 'min-h-28' : 'min-h-[104px]'} bg-[#f9fafb]`} />;
     const day = Number(date.slice(8, 10));
     const dayHolidays = byDate.get(date) ?? [];
     const dayPosts = postsByDate.get(date) ?? [];

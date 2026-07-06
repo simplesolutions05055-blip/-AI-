@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { randomUUID } from '@/lib/uuid';
 import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, plainTextFromBlocks, type RichTextBlock } from '@/lib/richText';
 import { isValidEmail } from '@/lib/format';
 import { useProfile } from '@/lib/useProfile';
@@ -534,7 +535,7 @@ export default function RevisePage() {
       let referencePath: string | null = null;
       if (referenceImage) {
         const safeName = referenceImage.file.name.replace(/[^\w.\-]+/g, '_').slice(-120);
-        referencePath = `${fromRequestId}/edit-refs/${crypto.randomUUID()}-${safeName}`;
+        referencePath = `${fromRequestId}/edit-refs/${randomUUID()}-${safeName}`;
         const { error: upError } = await client.storage.from('outputs').upload(referencePath, referenceImage.file, {
           contentType: referenceImage.file.type || undefined,
           upsert: false,
@@ -1970,7 +1971,7 @@ function ActionSidebar({
   const [editOpen, setEditOpen] = useState(true);
 
   return (
-    <aside className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-lg lg:static lg:shadow-none">
+    <aside className="order-first h-fit rounded-lg border border-[var(--border)] bg-white p-5 shadow-sm lg:order-none lg:static lg:shadow-none">
       <section className="rounded-lg border border-[var(--border)] bg-gray-50/60 p-4">
         <div className="mb-3">
           <p className="flex items-center gap-2 text-sm font-semibold">
