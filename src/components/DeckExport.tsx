@@ -389,19 +389,21 @@ export default function DeckExport({
           </p>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:flex sm:gap-3">
+          {/* Primary (PPTX) — appears on the right in RTL */}
           <button
             onClick={downloadPptx}
             disabled={downloadPptxLoading}
-            className="flex-1 rounded-lg bg-brand px-4 py-3 font-semibold text-white hover:bg-brand/90 disabled:opacity-50 transition"
+            className="order-2 sm:order-2 flex-1 rounded-lg bg-brand px-4 py-3 font-semibold text-white hover:bg-brand/90 disabled:opacity-50 transition"
           >
             <div className="text-sm font-bold">הורדת PPTX</div>
             <div className="text-[11px] opacity-90">עריך בקלות</div>
             {downloadPptxLoading && <div className="text-[11px] mt-1">בונה…</div>}
           </button>
+          {/* Secondary (PDF) — appears on the left in RTL */}
           <button
             onClick={downloadPdf}
             disabled={downloadPdfLoading}
-            className="flex-1 rounded-lg border-2 border-brand px-4 py-3 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
+            className="order-1 sm:order-1 flex-1 rounded-lg border-2 border-brand px-4 py-3 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
           >
             <div className="text-sm font-bold">הורדת PDF</div>
             <div className="text-[11px] opacity-80">שתף בקלות</div>
