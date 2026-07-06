@@ -327,7 +327,7 @@ export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
       { role: 'system', content: systemPrompt },
       {
         role: 'user',
-        content: `אתה כותב תוכן שיווקי מקצועי בעברית. הפק מצגת אינפורמטיבית ומשכנעת של בדיוק 10 שקפים על בסיס הבריף. הרחב את מה שנמסר לתוכן מלא, עשיר ומעשי — אל תכתוב משפטים ריקים או כלליים. כל שקף חייב להיות אינפורמטיבי ובעל ערך.
+        content: `אתה כותב תוכן שיווקי מקצועי בעברית. הפק מצגת אינפורמטיבית ומשכנעת של בדיוק 10 שקפים על בסיס הבריף. הרחב את מה שנמסר לתוכן מלא, עשיר ומעשי — אל תכתוב משפטים ריקים או כלליים. כל שקף חייב להיות אינפורמטיבי ובעל ערך לקהל היעד.
 החזר JSON תקין בלבד במבנה:
 {
   "slides": [
@@ -340,7 +340,16 @@ export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
     }
   ]
 }
-דרישות: בדיוק 10 שקפים. שקף 1 = פתיחה/כותרת. שקף אחרון = סיכום + קריאה לפעולה. 3-5 נקודות מהותיות בכל שקף תוכן. עברית RTL, טון מותאם לקהל היעד שבבריף. אל תמציא עובדות, נתונים, שמות או תאריכים שלא נמסרו.
+דרישות:
+- בדיוק 10 שקפים.
+- שקף 1 = פתיחה/כותרת.
+- שקף אחרון = סיכום + קריאה לפעולה.
+- 3-5 נקודות מהותיות בכל שקף תוכן.
+- עברית RTL, טון מותאם לקהל היעד שבבריף.
+- אל תמציא עובדות, נתונים, שמות או תאריכים שלא נמסרו.
+- אסור להחזיר שקפי מטא או מפרט: בלי "פלטת צבעים", בלי "צבעי מותג", בלי "הנחיות עיצוב", בלי "סגנון עיצובי", בלי "טיפוגרפיה", בלי "קומפוזיציה", בלי "מפרט שקף", בלי הסברים על איך לעצב את המצגת.
+- אם בבריף קיימים צבעים, מיתוג, סגנון או הנחיות עיצוב — השתמש בהם רק כרקע פנימי ל-image_suggestion, לא כתוכן שמופיע בשקפים.
+- כל title/bullets/body חייבים להיות תוכן שהקהל אמור לראות במצגת עצמה, לא הוראות למעצב ולא תיאור טכני של העיצוב.
 בריף:\n${JSON.stringify(brief, null, 2)}`,
       },
     ],
@@ -359,7 +368,22 @@ export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
     (Array.isArray(parsed?.presentation_spec?.slide_structure) && parsed.presentation_spec.slide_structure) ||
     (Array.isArray(parsed?.brief?.presentation_spec?.slide_structure) && parsed.brief.presentation_spec.slide_structure) ||
     [];
-  return { slides, usage, raw: content };
+  return { slides: sanitizeDeckSlides(slides), usage, raw: content };
+}
+
+function sanitizeDeckSlides(slides: any[]): any[] {
+  const metaRe = /פלטת|צבעי?\s*מותג|צבעים?\s*שנבחר|הנחיות?\s*עיצוב|סגנון\s*עיצוב|טיפוגרפ|קומפוזיצ|מפרט\s*שקף|brand\s*color|palette|design\s*guidelines/i;
+  return slides
+    .filter((slide) => {
+      const text = [
+        slide?.title,
+        slide?.subtitle,
+        ...(Array.isArray(slide?.bullets) ? slide.bullets : []),
+        slide?.body,
+      ].filter(Boolean).join(' ');
+      return !metaRe.test(text);
+    })
+    .slice(0, 10);
 }
 
 // Build a structured Hebrew price-quote ("הצעת מחיר") from a free brief. Mirrors
