@@ -57,7 +57,8 @@ export default function GptImagesDeck({
   const [rangeInput, setRangeInput] = useState('');
   // 'template' = image beside editable text boxes; 'fullslide' = each slide is
   // ONE GPT image (whole slide designed by AI, text baked in, NotebookLM-style).
-  const [mode, setMode] = useState<'template' | 'fullslide'>('template');
+  // Default is 'fullslide' — the NotebookLM-style deck is the primary output.
+  const [mode, setMode] = useState<'template' | 'fullslide'>('fullslide');
   const [phase, setPhase] = useState<'idle' | 'generating' | 'review' | 'ready'>('idle');
   const [progressText, setProgressText] = useState('');
   const [error, setError] = useState<string | null>(null);
