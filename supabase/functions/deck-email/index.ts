@@ -360,8 +360,7 @@ async function generateMissingSlideImages(
   const logoReference = await loadBrandLogoReference(database, p.brandId);
   const palette = (p.brand?.palette ?? []).map((c) => `${c.role} ${c.hex}`).join(', ');
 
-  let generated = 0;
-  for (const idx of p.indexes) {
+  const generatedImages = await Promise.all(p.indexes.map(async (idx) => {
     const slide = p.slides[idx];
     const basePrompt = p.mode === 'fullslide'
       ? buildFullSlideImagePrompt(p.brief, slide, palette, idx + 1)
@@ -373,8 +372,6 @@ async function generateMissingSlideImages(
       ? await generateImageWithReferences(prompt, [logoReference], { model: aiModelsImg?.image_model, size, quality })
       : await generateImage(prompt, { model: aiModelsImg?.image_model, size, quality });
     const dataUrl = `data:${image.mime || 'image/png'};base64,${image.base64}`;
-    p.out.set(idx, dataUrl);
-    generated++;
 
     if (p.requestId) {
       const ext = (image.mime || 'image/png').includes('jpeg') ? 'jpg' : 'png';
@@ -393,7 +390,11 @@ async function generateMissingSlideImages(
         });
       }
     }
-  }
+    return { idx, dataUrl };
+  }));
+
+  for (const image of generatedImages) p.out.set(image.idx, image.dataUrl);
+  const generated = generatedImages.length;
 
   await recordUsageAndCost(database, p.requestId ?? null, {
     provider: 'openai',
