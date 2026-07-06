@@ -103,6 +103,45 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function parsePresentationSlides(text: string | null): Array<{ title: string; body: string }> {
+  const source = (text ?? '').trim();
+  if (!source) return [];
+  const lines = source.split(/\r?\n/);
+  const slides: Array<{ title: string; body: string }> = [];
+  let currentTitle = '';
+  let currentBody: string[] = [];
+
+  const flush = () => {
+    const body = currentBody.join('\n').trim();
+    if (currentTitle || body) {
+      slides.push({
+        title: currentTitle || `שקף ${slides.length + 1}`,
+        body,
+      });
+    }
+    currentTitle = '';
+    currentBody = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const heading = line.match(/^\s*#{0,6}\s*שקף\s*(\d+)\s*[:\-–.]?\s*(.*)$/);
+    if (heading) {
+      flush();
+      currentTitle = `שקף ${heading[1]}${heading[2]?.trim() ? `: ${heading[2].trim()}` : ''}`;
+      continue;
+    }
+    currentBody.push(line);
+  }
+  flush();
+
+  if (slides.length > 1) return slides;
+  const chunks = source.split(/\n\s*\n+/).map((part) => part.trim()).filter(Boolean);
+  return chunks.length > 1
+    ? chunks.map((body, index) => ({ title: `שקף ${index + 1}`, body }))
+    : [{ title: 'שקף 1', body: source }];
+}
+
 export default function FilesPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -116,10 +155,17 @@ export default function FilesPage() {
   const [files, setFiles] = useState<FileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [deckPreviews, setDeckPreviews] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastIndex, setLastIndex] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [textPreview, setTextPreview] = useState<FileRow | null>(null);
+  const [textPreviewSlideIndex, setTextPreviewSlideIndex] = useState(0);
+  const [deckSlidePreview, setDeckSlidePreview] = useState<{
+    row: FileRow;
+    slides: Array<{ slideIndex: number; caption: string; url: string }>;
+    index: number;
+  } | null>(null);
   const [viewerFile, setViewerFile] = useState<{ row: FileRow; url: string } | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -173,14 +219,15 @@ export default function FilesPage() {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         setTextPreview(null);
+        setDeckSlidePreview(null);
         setViewerFile(null);
       }
     }
-    if (textPreview || viewerFile) {
+    if (textPreview || deckSlidePreview || viewerFile) {
       window.addEventListener('keydown', handleKeyDown);
     }
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [textPreview, viewerFile]);
+  }, [textPreview, deckSlidePreview, viewerFile]);
 
   useEffect(() => {
     const client = createSupabaseBrowserClient();
@@ -326,6 +373,34 @@ export default function FilesPage() {
         }),
       );
       setPreviews(Object.fromEntries(pairs.filter(([, url]) => url)) as Record<string, string>);
+
+      // Presentation cards prefer the first saved GPT slide image when available.
+      const presentationRows = rows.filter((r) => r.output_type === 'presentation');
+      const presentationRequestIds = Array.from(new Set(presentationRows.map((r) => r.request_id).filter(Boolean)));
+      if (presentationRequestIds.length > 0) {
+        const { data: deckRows } = await client
+          .from('deck_ai_images')
+          .select('request_id, slide_index, storage_path, created_at')
+          .in('request_id', presentationRequestIds)
+          .order('slide_index', { ascending: true })
+          .order('created_at', { ascending: false });
+        const firstByRequest: Record<string, { storage_path: string; slide_index: number | null; created_at: string | null }> = {};
+        for (const row of (deckRows ?? []) as Array<{ request_id: string; slide_index: number | null; storage_path: string | null; created_at: string | null }>) {
+          if (!row.storage_path || firstByRequest[row.request_id]) continue;
+          firstByRequest[row.request_id] = { storage_path: row.storage_path, slide_index: row.slide_index, created_at: row.created_at };
+        }
+        const deckPairs = await Promise.all(
+          presentationRows.map(async (file) => {
+            const deckImage = firstByRequest[file.request_id];
+            if (!deckImage) return [file.id, null] as const;
+            const { data: s } = await client.storage.from('outputs').createSignedUrl(deckImage.storage_path, 600);
+            return [file.id, s?.signedUrl ?? null] as const;
+          }),
+        );
+        setDeckPreviews(Object.fromEntries(deckPairs.filter(([, url]) => url)) as Record<string, string>);
+      } else {
+        setDeckPreviews({});
+      }
     })();
   }, []);
 
@@ -338,6 +413,40 @@ export default function FilesPage() {
       url = data?.signedUrl ?? '';
     }
     if (url) setViewerFile({ row, url });
+  }
+
+  async function openPresentationDeckPreview(row: FileRow) {
+    const client = createSupabaseBrowserClient();
+    const { data } = await client
+      .from('deck_ai_images')
+      .select('slide_index, caption, storage_path, created_at')
+      .eq('request_id', row.request_id)
+      .order('slide_index', { ascending: true })
+      .order('created_at', { ascending: false });
+    const latestBySlide = new Map<number, { slideIndex: number; caption: string; storagePath: string }>();
+    for (const deckRow of (data ?? []) as Array<{ slide_index: number | null; caption: string | null; storage_path: string | null }>) {
+      if (!deckRow.storage_path) continue;
+      const slideIndex = deckRow.slide_index ?? latestBySlide.size + 1;
+      if (latestBySlide.has(slideIndex)) continue;
+      latestBySlide.set(slideIndex, {
+        slideIndex,
+        caption: deckRow.caption || `שקף ${slideIndex}`,
+        storagePath: deckRow.storage_path,
+      });
+    }
+    const slides = await Promise.all(
+      Array.from(latestBySlide.values()).map(async (slide) => {
+        const { data: signed } = await client.storage.from('outputs').createSignedUrl(slide.storagePath, 600);
+        return signed?.signedUrl ? { slideIndex: slide.slideIndex, caption: slide.caption, url: signed.signedUrl } : null;
+      }),
+    );
+    const signedSlides = slides.filter((slide): slide is { slideIndex: number; caption: string; url: string } => Boolean(slide));
+    if (signedSlides.length) {
+      setDeckSlidePreview({ row, slides: signedSlides, index: 0 });
+      return;
+    }
+    setTextPreviewSlideIndex(0);
+    setTextPreview(row);
   }
 
   async function download(path: string) {
@@ -661,7 +770,9 @@ export default function FilesPage() {
                         </div>}
 
                         <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
-                          {file.output_type === 'image' && previews[file.id] ? (
+                          {file.output_type === 'presentation' && deckPreviews[file.id] ? (
+                            <img src={deckPreviews[file.id]} alt="שקף ראשון ממצגת GPT Images" className="w-full h-full object-contain bg-white" />
+                          ) : file.output_type === 'image' && previews[file.id] ? (
                             <img src={previews[file.id]} alt="" className="w-full h-full object-cover" />
                           ) : (file.output_type === 'pdf' || file.mime_type === 'application/pdf') && previews[file.id] ? (
                             <iframe
@@ -755,9 +866,14 @@ export default function FilesPage() {
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      setTextPreview(file);
+                                      if (file.output_type === 'presentation') {
+                                        void openPresentationDeckPreview(file);
+                                      } else {
+                                        setTextPreviewSlideIndex(0);
+                                        setTextPreview(file);
+                                      }
                                     }}
-                                    aria-label="פתיחת הטקסט"
+                                    aria-label={file.output_type === 'presentation' ? 'פתיחת שקפי המצגת' : 'פתיחת הטקסט'}
                                     className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-[var(--border)] px-2 py-2 text-xs font-semibold hover:bg-gray-50"
                                   >
                                     <EyeIcon />
@@ -965,9 +1081,41 @@ export default function FilesPage() {
                 ×
               </button>
             </header>
-            <div className="overflow-auto p-4">
-              <pre className="whitespace-pre-wrap break-words text-sm leading-6">{textPreview.text_content}</pre>
-            </div>
+            {textPreview.output_type === 'presentation' ? (
+              <PresentationSlidesPreview
+                text={textPreview.text_content}
+                slideIndex={textPreviewSlideIndex}
+                onSlideIndexChange={setTextPreviewSlideIndex}
+              />
+            ) : (
+              <div className="overflow-auto p-4 text-right" dir="rtl">
+                <pre className="whitespace-pre-wrap break-words text-right text-sm leading-6">{textPreview.text_content}</pre>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {deckSlidePreview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3"
+          dir="rtl"
+          onClick={() => setDeckSlidePreview(null)}
+        >
+          <section
+            className="flex max-h-[92dvh] w-[calc(100vw-24px)] max-w-5xl flex-col overflow-hidden rounded-xl bg-white text-right shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="תצוגת שקפי מצגת"
+          >
+            <PresentationImageSlidesPreview
+              slides={deckSlidePreview.slides}
+              index={deckSlidePreview.index}
+              onIndexChange={(index) => setDeckSlidePreview((current) => current ? { ...current, index } : current)}
+              onClose={() => setDeckSlidePreview(null)}
+              createdAt={deckSlidePreview.row.created_at}
+            />
           </section>
         </div>
       )}
@@ -1012,6 +1160,171 @@ export default function FilesPage() {
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+function PresentationSlidesPreview({
+  text,
+  slideIndex,
+  onSlideIndexChange,
+}: {
+  text: string | null;
+  slideIndex: number;
+  onSlideIndexChange: (index: number) => void;
+}) {
+  const slides = parsePresentationSlides(text);
+  const safeIndex = Math.min(Math.max(slideIndex, 0), Math.max(slides.length - 1, 0));
+  const slide = slides[safeIndex] ?? { title: 'שקף 1', body: text ?? '' };
+  const canPrev = safeIndex > 0;
+  const canNext = safeIndex < slides.length - 1;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col text-right" dir="rtl">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-gray-50 px-4 py-3">
+        <div className="text-xs font-semibold text-[var(--muted)]">
+          שקף {safeIndex + 1} מתוך {Math.max(slides.length, 1)}
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => onSlideIndexChange(safeIndex - 1)}
+            disabled={!canPrev}
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-semibold hover:bg-white disabled:opacity-40"
+          >
+            הקודם
+          </button>
+          <button
+            type="button"
+            onClick={() => onSlideIndexChange(safeIndex + 1)}
+            disabled={!canNext}
+            className="rounded-lg border border-brand bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-40"
+          >
+            הבא
+          </button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <article className="mx-auto min-h-[22rem] max-w-xl rounded-xl border border-[var(--border)] bg-white p-5 shadow-sm">
+          <h3 className="mb-4 text-lg font-bold leading-7">{slide.title}</h3>
+          <pre className="whitespace-pre-wrap break-words text-right text-sm leading-7 text-gray-800">{slide.body}</pre>
+        </article>
+      </div>
+    </div>
+  );
+}
+
+function PresentationImageSlidesPreview({
+  slides,
+  index,
+  onIndexChange,
+  onClose,
+  createdAt,
+}: {
+  slides: Array<{ slideIndex: number; caption: string; url: string }>;
+  index: number;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+  createdAt: string;
+}) {
+  const safeIndex = Math.min(Math.max(index, 0), Math.max(slides.length - 1, 0));
+  const slide = slides[safeIndex];
+  const canPrev = safeIndex > 0;
+  const canNext = safeIndex < slides.length - 1;
+  const touchStartXRef = useRef<number | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
+
+  function handleSwipe(deltaX: number, deltaY: number) {
+    if (Math.abs(deltaX) < 48 || Math.abs(deltaX) < Math.abs(deltaY) * 1.4) return;
+    if (deltaX > 0 && canPrev) onIndexChange(safeIndex - 1);
+    if (deltaX < 0 && canNext) onIndexChange(safeIndex + 1);
+  }
+
+  if (!slide) return null;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col text-right" dir="rtl">
+      <header className="border-b border-[var(--border)] bg-white">
+        {/* שורת זהות: כותרת בימין, סגירה בקצה השמאלי */}
+        <div className="flex items-center gap-3 px-3 py-2.5 sm:px-4 sm:py-3">
+          <div className="min-w-0 flex-1 text-right">
+            <h2 className="truncate text-sm font-bold sm:text-base">שקפי מצגת GPT Images</h2>
+            <p className="mt-0.5 truncate text-xs text-[var(--muted)]">
+              <span dir="ltr">{formatHebrewDateTime(createdAt)}</span>
+            </p>
+          </div>
+
+          <button
+            onClick={onClose}
+            aria-label="סגירה"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-2xl leading-none text-[var(--muted)] hover:bg-gray-50"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* שורת ניווט: מונה שקפים בימין, כפתורי מעבר בשמאל */}
+        <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] bg-gray-50/60 px-3 py-2 sm:px-4">
+          <div className="min-w-0 text-right leading-tight">
+            <div className="text-sm font-semibold">
+              שקף <span dir="ltr">{safeIndex + 1}</span> מתוך <span dir="ltr">{slides.length}</span>
+            </div>
+            <div className="mt-0.5 text-xs text-[var(--muted)]">
+              מספר שקף מקורי: <span dir="ltr">{slide.slideIndex}</span>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => onIndexChange(safeIndex - 1)}
+              disabled={!canPrev}
+              aria-label="שקף קודם"
+              className="flex h-10 min-w-[2.5rem] items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-3 text-sm font-semibold hover:bg-white disabled:opacity-40"
+            >
+              <span aria-hidden="true">→</span>
+              <span className="hidden sm:inline">הקודם</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onIndexChange(safeIndex + 1)}
+              disabled={!canNext}
+              aria-label="שקף הבא"
+              className="flex h-10 min-w-[2.5rem] items-center justify-center gap-1.5 rounded-lg border border-brand bg-brand px-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-40"
+            >
+              <span className="hidden sm:inline">הבא</span>
+              <span aria-hidden="true">←</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div
+        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-gray-100 px-2 py-3.5 sm:px-4 sm:py-6"
+        onTouchStart={(event) => {
+          const touch = event.touches[0];
+          touchStartXRef.current = touch.clientX;
+          touchStartYRef.current = touch.clientY;
+        }}
+        onTouchEnd={(event) => {
+          const startX = touchStartXRef.current;
+          const startY = touchStartYRef.current;
+          touchStartXRef.current = null;
+          touchStartYRef.current = null;
+          if (startX === null || startY === null) return;
+          const touch = event.changedTouches[0];
+          handleSwipe(touch.clientX - startX, touch.clientY - startY);
+        }}
+      >
+        <figure className="flex h-full w-full items-center justify-center">
+          <img
+            src={slide.url}
+            alt={slide.caption}
+            className="max-h-[calc(92dvh-160px)] max-w-full rounded-lg border border-[var(--border)] bg-white object-contain sm:max-h-[calc(92dvh-168px)]"
+          />
+        </figure>
+      </div>
     </div>
   );
 }

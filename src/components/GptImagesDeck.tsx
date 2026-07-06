@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildDeckSlides,
   fetchBrandImages,
@@ -7,6 +7,7 @@ import {
   generateGptImagesForSlides,
   loadPersistedDeckImage,
   parseSlideRange,
+  rewriteDeckSlideContent,
   renderGptDeckToPdf,
   renderGptDeckToPptx,
   renderFullSlideDeckToPdf,
@@ -82,6 +83,16 @@ export default function GptImagesDeck({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewSlides, setPreviewSlides] = useState<PreviewSlide[]>([]);
   const [hasSavedDeckImages, setHasSavedDeckImages] = useState(false);
+  const autoOpenedRef = useRef(false);
+  // Content editor: view + edit the deck's slide TEXT before generating images.
+  // Edits (direct or AI-rewrite) are applied into `slides` so they flow into the
+  // image prompts (title/subtitle/bullets/body are baked into each slide image).
+  const [contentOpen, setContentOpen] = useState(false);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [contentError, setContentError] = useState<string | null>(null);
+  const [contentSlides, setContentSlides] = useState<DeckSlide[]>([]);
+  const [contentPrompts, setContentPrompts] = useState<Record<number, string>>({});
+  const [contentRewriteBusy, setContentRewriteBusy] = useState<number | null>(null);
 
   // Prefill the first recipient with the user's own email once the profile loads.
   useEffect(() => {
@@ -93,7 +104,14 @@ export default function GptImagesDeck({
     let alive = true;
     fetchPersistedDeckImages(requestId)
       .then((rows) => {
-        if (alive) setHasSavedDeckImages(rows.length > 0);
+        if (!alive) return;
+        setHasSavedDeckImages(rows.length > 0);
+        // If a deck was already generated, open the slide-by-slide editor
+        // automatically instead of hiding it behind a button under the form.
+        if (rows.length > 0 && !autoOpenedRef.current) {
+          autoOpenedRef.current = true;
+          void loadPreviewSlides();
+        }
       })
       .catch(() => {
         if (alive) setHasSavedDeckImages(false);
@@ -111,9 +129,17 @@ export default function GptImagesDeck({
       setEmailJobStatus('running');
       setProgressText('בודקים את מצב המצגת שנוצרה...');
     } else if (openDeck) {
+      autoOpenedRef.current = true;
       void loadPreviewSlides();
     }
   }, [requestId]);
+
+  useEffect(() => {
+    if (!contentOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setContentOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [contentOpen]);
 
   const deckBrief = useMemo<Record<string, any>>(() => {
     const b = (brief ?? {}) as Record<string, any>;
@@ -243,6 +269,57 @@ export default function GptImagesDeck({
     } finally {
       setPreviewLoading(false);
     }
+  }
+
+  // Open the content editor: load the deck's slide text (reuse the in-memory
+  // slides if already built) so the user can review/edit copy before generating.
+  async function openContentEditor() {
+    setContentError(null);
+    setContentOpen(true);
+    if (contentSlides.length) return;
+    setContentLoading(true);
+    try {
+      const resolved = await resolveBrand();
+      const fullBrief = { ...deckBrief, brand_id: resolved.id ?? deckBrief.brand_id };
+      const deck = slides ?? (await buildDeckSlides(fullBrief, requestId, outlineText));
+      if (!deck.length) throw new Error('לא נמצא תוכן שקפים לעריכה.');
+      setSlides(deck);
+      setContentSlides(deck.map((s) => ({ ...s })));
+    } catch (e) {
+      setContentError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setContentLoading(false);
+    }
+  }
+
+  // Update one editable field of a slide in the content editor's working copy.
+  function updateContentSlide(idx: number, patch: Partial<DeckSlide>) {
+    setContentSlides((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  }
+
+  // Rewrite a slide's copy with AI per the user's per-slide instruction.
+  async function rewriteContentSlide(idx: number) {
+    const instruction = (contentPrompts[idx] ?? '').trim();
+    if (!instruction || contentRewriteBusy !== null) return;
+    setContentRewriteBusy(idx);
+    setContentError(null);
+    try {
+      const resolved = await resolveBrand();
+      const fullBrief = { ...deckBrief, brand_id: resolved.id ?? deckBrief.brand_id };
+      const updated = await rewriteDeckSlideContent(fullBrief, contentSlides[idx], instruction, idx + 1, requestId);
+      setContentSlides((prev) => prev.map((s, i) => (i === idx ? updated : s)));
+      setContentPrompts((prev) => ({ ...prev, [idx]: '' }));
+    } catch (e) {
+      setContentError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setContentRewriteBusy(null);
+    }
+  }
+
+  // Commit the edited text into `slides` so it flows into image generation.
+  function applyContentEdits() {
+    setSlides(contentSlides.map((s) => ({ ...s })));
+    setContentOpen(false);
   }
 
   async function regeneratePreviewSlide(idx: number) {
@@ -439,6 +516,98 @@ export default function GptImagesDeck({
         כדי לבחון את התוצאה לפני שמפיקים את כל המצגת. ההפקה רצה בשרת ברקע ותישלח למיילים שתבחרו בסיום.
       </p>
 
+      {/* Slide-by-slide viewer + per-slide AI editor for an already-generated
+          deck. Opens automatically when saved images exist (see effect above),
+          shown here at the top so it's the first thing an existing deck sees. */}
+      {previewOpen && (
+        <div className="mb-4 rounded-lg border border-brand/30 bg-white p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-bold">צפייה ועריכת המצגת — שקף־שקף</div>
+              <p className="text-xs text-[var(--muted)]">גללו שקף־שקף. כתבו שינוי לשקף ספציפי כדי ליצור אותו מחדש כתמונה מלאה ב-AI.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={startEmailJob}
+                disabled={!previewSlides.length || regenBusy !== null || emailStarting || emailJobStatus === 'running' || !validEmails.length}
+                className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
+              >
+                שליחת מצגת מעודכנת למייל
+              </button>
+              <button
+                type="button"
+                onClick={downloadPreviewPptx}
+                disabled={!previewSlides.length || regenBusy !== null}
+                className="rounded-lg border border-brand px-3 py-2 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+              >
+                הורדת PPTX מעודכן
+              </button>
+            </div>
+          </div>
+          <div className="space-y-4">
+            {previewSlides.map((slide) => {
+              const busy = regenBusy === slide.index;
+              return (
+                <div key={slide.index} className="rounded-lg border border-[var(--border)] p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="text-xs font-bold">שקף {slide.index + 1}: {slide.image.caption}</div>
+                    {busy && <span className="text-xs text-[var(--muted)]">יוצר מחדש…</span>}
+                  </div>
+                  <div className="relative overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
+                    <img src={slide.image.dataUrl} alt={`שקף ${slide.index + 1}`} className="w-full" />
+                    {busy && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white/70">
+                        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-brand" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <textarea
+                      value={feedbacks[slide.index] ?? ''}
+                      onChange={(e) => setFeedbacks((prev) => ({ ...prev, [slide.index]: e.target.value }))}
+                      placeholder="מה לשנות בשקף הזה? למשל: להחליף רקע, להגדיל כותרת, להוסיף דמות, להפוך לטון יותר רשמי"
+                      dir="rtl"
+                      rows={2}
+                      disabled={busy}
+                      className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none disabled:opacity-60"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => regeneratePreviewSlide(slide.index)}
+                      disabled={regenBusy !== null || !(feedbacks[slide.index] ?? '').trim()}
+                      className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
+                    >
+                      יצירת שקף מחדש
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Content editor: review + edit the deck's slide TEXT before generating
+          the images. Sits above the design/range controls so the copy can be
+          refined (directly or with an AI prompt) before "approving" a slide. */}
+      <div className="mb-3 rounded-lg border border-[var(--border)] bg-white p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">תוכן המצגת</div>
+            <p className="text-xs text-[var(--muted)]">צפייה ועריכה של תוכן כל שקף — ישירות או לפי הנחיה ל-AI — לפני יצירת התמונות.</p>
+          </div>
+          <button
+            type="button"
+            onClick={openContentEditor}
+            disabled={contentLoading}
+            className="shrink-0 rounded-lg border border-brand px-4 py-2 text-sm font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+          >
+            {contentLoading ? 'טוען תוכן…' : 'צפייה ועריכת תוכן המצגת'}
+          </button>
+        </div>
+      </div>
+
       {/* Mode: template (editable text + image) vs full-slide (whole slide as one AI image). */}
       <div className="mb-3">
         <div className="mb-1.5 text-xs font-semibold">סוג העיצוב</div>
@@ -493,10 +662,7 @@ export default function GptImagesDeck({
       </div>
 
       <div className="mb-3 rounded-lg border border-[var(--border)] bg-white p-3">
-        <div className="mb-1 text-sm font-semibold">מיילים לשליחת המצגת בסיום</div>
-        <p className="mb-2 text-xs text-[var(--muted)]">
-          לחצו על הפקה ברקע והמשיכו לעבוד באתר. Supabase Edge Function תייצר את תמונות ה-AI, תבנה PPTX/PDF ותשלח את הקבצים בסיום.
-        </p>
+        <div className="mb-2 text-sm font-semibold">מיילים לשליחת המצגת בסיום</div>
         <div className="space-y-2">
           {emails.map((val, i) => (
             <div key={i} className="flex items-center gap-2">
@@ -578,75 +744,6 @@ export default function GptImagesDeck({
         )}
         {(emailError || error) && <p className="mt-2 text-xs text-red-600">{emailError || error}</p>}
       </div>
-
-      {previewOpen && (
-        <div className="mb-3 rounded-lg border border-[var(--border)] bg-white p-3">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <div className="text-sm font-bold">צפייה ועריכת המצגת</div>
-              <p className="text-xs text-[var(--muted)]">גללו שקף־שקף. כתבו שינוי לשקף ספציפי כדי ליצור אותו מחדש כתמונה מלאה.</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={startEmailJob}
-                disabled={!previewSlides.length || regenBusy !== null || emailStarting || emailJobStatus === 'running' || !validEmails.length}
-                className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
-              >
-                שליחת מצגת מעודכנת למייל
-              </button>
-              <button
-                type="button"
-                onClick={downloadPreviewPptx}
-                disabled={!previewSlides.length || regenBusy !== null}
-                className="rounded-lg border border-brand px-3 py-2 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
-              >
-                הורדת PPTX מעודכן
-              </button>
-            </div>
-          </div>
-          <div className="space-y-4">
-            {previewSlides.map((slide) => {
-              const busy = regenBusy === slide.index;
-              return (
-                <div key={slide.index} className="rounded-lg border border-[var(--border)] p-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="text-xs font-bold">שקף {slide.index + 1}: {slide.image.caption}</div>
-                    {busy && <span className="text-xs text-[var(--muted)]">יוצר מחדש…</span>}
-                  </div>
-                  <div className="relative overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
-                    <img src={slide.image.dataUrl} alt={`שקף ${slide.index + 1}`} className="w-full" />
-                    {busy && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-white/70">
-                        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-brand" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                    <textarea
-                      value={feedbacks[slide.index] ?? ''}
-                      onChange={(e) => setFeedbacks((prev) => ({ ...prev, [slide.index]: e.target.value }))}
-                      placeholder="מה לשנות בשקף הזה? למשל: להחליף רקע, להגדיל כותרת, להוסיף דמות, להפוך לטון יותר רשמי"
-                      dir="rtl"
-                      rows={2}
-                      disabled={busy}
-                      className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none disabled:opacity-60"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => regeneratePreviewSlide(slide.index)}
-                      disabled={regenBusy !== null || !(feedbacks[slide.index] ?? '').trim()}
-                      className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
-                    >
-                      יצירת שקף מחדש
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {slidesReady && phase !== 'generating' && (
         <div className="mb-3 rounded-lg border border-[var(--border)] bg-white p-3">
@@ -785,6 +882,130 @@ export default function GptImagesDeck({
           onClose={() => setPhase('ready')}
           error={error}
         />
+      )}
+
+      {contentOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-4"
+          dir="rtl"
+          onClick={() => setContentOpen(false)}
+        >
+          <div
+            className="flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="flex items-center gap-3 border-b border-[var(--border)] p-3 sm:p-4">
+              <div className="min-w-0 flex-1 text-right">
+                <h2 className="text-sm font-bold sm:text-base">עריכת תוכן המצגת</h2>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">ערכו את הטקסט ישירות או בקשו שינוי מ-AI לכל שקף. השינויים ישמשו ליצירת התמונות.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setContentOpen(false)}
+                aria-label="סגירה"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-2xl leading-none text-[var(--muted)] hover:bg-gray-50"
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+              {contentError && <p className="mb-3 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">{contentError}</p>}
+              {contentLoading ? (
+                <div className="py-10 text-center text-sm text-[var(--muted)]">טוען את תוכן השקפים…</div>
+              ) : (
+                <div className="space-y-4">
+                  {contentSlides.map((slide, idx) => {
+                    const busy = contentRewriteBusy === idx;
+                    return (
+                      <div key={idx} className="rounded-lg border border-[var(--border)] p-3">
+                        <div className="mb-2 text-xs font-bold text-brand">שקף <span dir="ltr">{idx + 1}</span></div>
+
+                        <label className="mb-1 block text-[11px] font-semibold text-[var(--muted)]">כותרת</label>
+                        <input
+                          value={slide.title ?? ''}
+                          onChange={(e) => updateContentSlide(idx, { title: e.target.value })}
+                          dir="rtl"
+                          disabled={busy}
+                          className="mb-2 w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none disabled:opacity-60"
+                        />
+
+                        <label className="mb-1 block text-[11px] font-semibold text-[var(--muted)]">כותרת משנה (אופציונלי)</label>
+                        <input
+                          value={slide.subtitle ?? ''}
+                          onChange={(e) => updateContentSlide(idx, { subtitle: e.target.value || null })}
+                          dir="rtl"
+                          disabled={busy}
+                          className="mb-2 w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none disabled:opacity-60"
+                        />
+
+                        <label className="mb-1 block text-[11px] font-semibold text-[var(--muted)]">נקודות (שורה לכל נקודה)</label>
+                        <textarea
+                          value={(slide.bullets ?? []).join('\n')}
+                          onChange={(e) => updateContentSlide(idx, { bullets: e.target.value.split('\n').map((b) => b.trim()).filter(Boolean) })}
+                          dir="rtl"
+                          rows={3}
+                          disabled={busy}
+                          className="mb-2 w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none disabled:opacity-60"
+                        />
+
+                        <label className="mb-1 block text-[11px] font-semibold text-[var(--muted)]">טקסט מלווה (אופציונלי)</label>
+                        <textarea
+                          value={slide.body ?? ''}
+                          onChange={(e) => updateContentSlide(idx, { body: e.target.value || null })}
+                          dir="rtl"
+                          rows={2}
+                          disabled={busy}
+                          className="mb-3 w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none disabled:opacity-60"
+                        />
+
+                        <div className="rounded-lg border border-brand/20 bg-brand/5 p-2">
+                          <label className="mb-1 block text-[11px] font-semibold text-brand">עריכה עם AI לפי הנחיה</label>
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <input
+                              value={contentPrompts[idx] ?? ''}
+                              onChange={(e) => setContentPrompts((prev) => ({ ...prev, [idx]: e.target.value }))}
+                              placeholder="למשל: לקצר את הנקודות, טון יותר רשמי, להוסיף קריאה לפעולה"
+                              dir="rtl"
+                              disabled={busy}
+                              className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none disabled:opacity-60"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => rewriteContentSlide(idx)}
+                              disabled={contentRewriteBusy !== null || !(contentPrompts[idx] ?? '').trim()}
+                              className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
+                            >
+                              {busy ? 'משכתב…' : 'עריכה עם AI'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <footer className="flex items-center justify-between gap-2 border-t border-[var(--border)] p-3 sm:p-4">
+              <button
+                type="button"
+                onClick={() => setContentOpen(false)}
+                className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-semibold hover:bg-gray-50"
+              >
+                ביטול
+              </button>
+              <button
+                type="button"
+                onClick={applyContentEdits}
+                disabled={contentLoading || contentRewriteBusy !== null || !contentSlides.length}
+                className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
+              >
+                שמירת התוכן
+              </button>
+            </footer>
+          </div>
+        </div>
       )}
     </div>
   );

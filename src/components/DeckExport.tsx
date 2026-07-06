@@ -12,6 +12,8 @@ import {
   buildNotebookLmPrompt,
   buildGammaRequestBody,
   generatePptxWithClaude,
+  fetchDeckApiBrief,
+  saveDeckApiBrief,
   downloadBlob,
   type DeckSlide,
   type DeckBrand,
@@ -26,6 +28,12 @@ import { alertDialog } from '@/lib/dialog';
 
 const NOTEBOOKLM_CUSTOMIZE_SCREEN = '/notebooklm/customize-slide-deck.png';
 const NOTEBOOKLM_SLIDE_DECK_BUTTON = '/notebooklm/slide-deck-button.png';
+
+function hashString(value: string) {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i++) hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+  return (hash >>> 0).toString(36);
+}
 
 // Builds a real, branded Hebrew deck (PDF or editable PPTX) from a brief +
 // approved outline — pulling in the brand's logo/images/palette and, optionally,
@@ -61,6 +69,7 @@ export default function DeckExport({
   const [aiCount, setAiCount] = useState(0);
   // The exact JSON body sent to Gamma's API, shown on demand for inspection.
   const [gammaJson, setGammaJson] = useState<string | null>(null);
+  const [gammaJsonOpen, setGammaJsonOpen] = useState(false);
   const [gammaJsonCopied, setGammaJsonCopied] = useState(false);
   // AI images already generated for this request (shown so they can be reused
   // in the next export instead of regenerating from scratch).
@@ -72,6 +81,7 @@ export default function DeckExport({
   const [brandId, setBrandId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [guideImageOpen, setGuideImageOpen] = useState(false);
+  const [notebookLmOpen, setNotebookLmOpen] = useState(false);
   const [pickedImages, setPickedImages] = useState<DeckImage[] | null>(initialPickedImages ?? null);
   const [pickedKeys, setPickedKeys] = useState<string[]>(initialPickedKeys ?? []);
   // Cache the fully-resolved deck (slides + AI images + brand pack) keyed by the
@@ -84,11 +94,24 @@ export default function DeckExport({
     images: DeckImage[];
     slides: DeckSlide[];
   } | null>(null);
+  const gammaJsonCacheRef = useRef<{ key: string; json: string } | null>(null);
 
   // A changed outline (e.g. after an edit/regenerate) must invalidate the cache.
   useEffect(() => {
     cacheRef.current = null;
+    gammaJsonCacheRef.current = null;
+    setGammaJson(null);
+    setGammaJsonOpen(false);
   }, [outlineText, requestId]);
+
+  useEffect(() => {
+    if (!gammaJsonOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setGammaJsonOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [gammaJsonOpen]);
 
   // Load any AI images previously generated + persisted for this request.
   useEffect(() => {
@@ -115,6 +138,25 @@ export default function DeckExport({
 
   // When reuse is on we embed the persisted images; otherwise we generate aiCount.
   const willReuse = reuseExisting && existing.length > 0;
+
+  function getDeckCacheKey() {
+    const pickKey = pickedImages ? `pick:${pickedKeys.join(',')}` : 'pick:none';
+    const contentKey = hashString(JSON.stringify({ brief: brief ?? null, outlineText: outlineText ?? null }));
+    return (willReuse ? `reuse:${existing.map((e) => e.id).join(',')}` : `ai:${aiCount}`) + `|${pickKey}|content:${contentKey}`;
+  }
+
+  async function readStoredGammaJson(deckKey: string) {
+    if (!requestId) return null;
+    const stored = await fetchDeckApiBrief(requestId, deckKey);
+    return stored ? JSON.stringify(stored.contentJson, null, 2) : null;
+  }
+
+  async function storeGammaJson(deckKey: string, body: unknown) {
+    const json = JSON.stringify(body, null, 2);
+    gammaJsonCacheRef.current = { key: deckKey, json };
+    if (requestId) await saveDeckApiBrief(requestId, deckKey, body);
+    return json;
+  }
 
   async function handleFileUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -161,8 +203,7 @@ export default function DeckExport({
   async function prepareDeck() {
     // The picked-image selection is part of the cache identity, so changing it
     // re-resolves the deck with the new image set.
-    const pickKey = pickedImages ? `pick:${pickedKeys.join(',')}` : 'pick:none';
-    const key = (willReuse ? `reuse:${existing.map((e) => e.id).join(',')}` : `ai:${aiCount}`) + `|${pickKey}`;
+    const key = getDeckCacheKey();
     if (cacheRef.current?.key === key) return cacheRef.current;
 
     const resolvedBrandId = brandId ?? (requestId ? await fetchRequestBrandId(requestId) : null);
@@ -206,6 +247,7 @@ export default function DeckExport({
     setError(null);
     try {
       const { deckBrief, brand, images, slides } = await prepareDeck();
+      const deckKey = getDeckCacheKey();
       const safeName =
         String((brief as any)?.topic || brief?.goal || 'מצגת')
           .slice(0, 40)
@@ -219,6 +261,8 @@ export default function DeckExport({
         // Surface the full prompt (slide text + RTL + image placement) for paste,
         // and tell the parent to collapse the outline view.
         setPromptText(buildNotebookLmPrompt(deckBrief, brand, images, slides));
+        const gammaBody = buildGammaRequestBody(deckBrief, brand, images, slides, { numCards: slides.length });
+        await storeGammaJson(deckKey, gammaBody);
         setCopied(false);
         onBriefGenerated?.();
       } else {
@@ -257,17 +301,34 @@ export default function DeckExport({
   // buildGammaRequestBody() that the real generation uses.
   async function previewGammaJson() {
     if (busy) return;
-    setBusy('gamma');
+    const key = getDeckCacheKey();
+    if (gammaJsonCacheRef.current?.key === key) {
+      setGammaJson(gammaJsonCacheRef.current.json);
+      setGammaJsonCopied(false);
+      setGammaJsonOpen(true);
+      return;
+    }
+    const storedJson = await readStoredGammaJson(key);
+    if (storedJson) {
+      gammaJsonCacheRef.current = { key, json: storedJson };
+      setGammaJson(storedJson);
+      setGammaJsonCopied(false);
+      setGammaJsonOpen(true);
+      return;
+    }
     setError(null);
     try {
+      if (!cacheRef.current || cacheRef.current.key !== key) setBusy('gamma');
       const { deckBrief, brand, images, slides } = await prepareDeck();
       const body = buildGammaRequestBody(deckBrief, brand, images, slides, { numCards: slides.length });
-      setGammaJson(JSON.stringify(body, null, 2));
+      const json = await storeGammaJson(key, body);
+      setGammaJson(json);
       setGammaJsonCopied(false);
+      setGammaJsonOpen(true);
     } catch (e) {
       setError(`בניית ה-JSON נכשלה: ${String((e as { message?: string })?.message ?? e)}`);
     } finally {
-      setBusy(null);
+      setBusy((current) => current === 'gamma' ? null : current);
     }
   }
 
@@ -312,135 +373,111 @@ export default function DeckExport({
           {busy === 'gamma' ? 'בונה JSON…' : 'הצגת ה-JSON ל-API'}
         </button>
 
-        {gammaJson && (
-          <div className="mt-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold">ה-JSON של תוכן המצגת</div>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(gammaJson);
-                      setGammaJsonCopied(true);
-                      setTimeout(() => setGammaJsonCopied(false), 2000);
-                    } catch {
-                      setError('העתקה ללוח נכשלה — סמנו והעתיקו ידנית.');
-                    }
-                  }}
-                  className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white"
-                >
-                  {gammaJsonCopied ? 'הועתק ✓' : 'העתקה'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => downloadBlob(new Blob([gammaJson], { type: 'application/json' }), 'gamma-request.json')}
-                  className="rounded-md border border-brand px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5"
-                >
-                  הורדה
-                </button>
-              </div>
-            </div>
-            <p className="mb-2 text-xs text-[var(--muted)]">
-              זה הגוף המדויק של הבקשה. התוכן המלא של כל שקופית נמצא בתוך השדה <code>inputText</code>.
-            </p>
-            <pre
-              dir="ltr"
-              className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--border)] bg-white p-2 text-[11px] leading-relaxed text-gray-800"
-            >
-              {gammaJson}
-            </pre>
-          </div>
-        )}
       </div>
 
       <div>
-        <div className="text-sm font-semibold mb-1">בריף ל-NotebookLM (PDF)</div>
-        <p className="text-xs text-[var(--muted)] mb-2">
-          קובץ מקור (Source) להעלאה ל-NotebookLM. כולל את הבריף, <b>התוכן המלא שנכתב ב-AI לכל
-          שקופית</b> (לפי תוכני המותג), הפרומפט המוכן, ואת תמונות המותג <b>מוטמעות בתוך ה-PDF</b>
-          וממוספרות ("תמונה 1, 2…"), כך ש-NotebookLM קורא אותן בהקשר. אחרי ההפקה, המצגת תופיע
-          ב-NotebookLM כ-<b>Slide Deck</b> בסגנון הכרטיסים שצירפתם.
-        </p>
-
-        <div className="mb-3 rounded-lg border border-[var(--border)] bg-blue-50/60 p-3 text-xs leading-relaxed">
-          <div className="mb-2 flex flex-col items-start gap-2 sm:mb-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-            <div className="font-semibold">איך משתמשים:</div>
-            <button
-              type="button"
-              onClick={() => setGuideImageOpen(true)}
-              className="rounded-md border border-brand/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5 text-right text-balance"
-            >
-              כיצד נראה Describe the slide deck you want to create בממשק של NotebookLM
-            </button>
-          </div>
-          <ol className="list-decimal pr-4 space-y-0.5 text-[var(--muted)]">
-            <li>עובדים ב-NotebookLM בדסקטופ ומעלים את ה-PDF הזה כמקור יחיד (התמונות כבר בתוכו).</li>
-            <li>
-              נכנסים ל-<b>Customize Slide Deck</b>, בוחרים <b>Presenter Slides</b>, שפה <b>עברית</b>,
-              ומדביקים בתיבת <b>"Describe the slide deck you want to create"</b> את הפרומפט המלא מטה.
-            </li>
-          </ol>
-        </div>
-
         <button
-          onClick={() => build('brief')}
-          disabled={busy !== null}
-          className="w-full border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
+          type="button"
+          onClick={() => setNotebookLmOpen((open) => !open)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-brand px-4 py-2.5 text-right font-semibold text-brand hover:bg-brand/5"
+          aria-expanded={notebookLmOpen}
         >
-          {busy === 'brief' ? 'בונה בריף…' : 'הורדת בריף ל-NotebookLM'}
+          <span>NotebookLM - בריף, הנחיות והעלאת קובץ</span>
+          <span className="text-lg leading-none">{notebookLmOpen ? '−' : '+'}</span>
         </button>
 
-        {promptText && (
-          <div className="mt-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="text-sm font-semibold">הפרומפט המלא ל-NotebookLM</div>
+        {notebookLmOpen && (
+          <div className="mt-3 border-t border-[var(--border)] pt-4">
+            <div className="text-sm font-semibold mb-1">בריף ל-NotebookLM (PDF)</div>
+            <p className="text-xs text-[var(--muted)] mb-2">
+              קובץ מקור (Source) להעלאה ל-NotebookLM. כולל את הבריף, <b>התוכן המלא שנכתב ב-AI לכל
+              שקופית</b> (לפי תוכני המותג), הפרומפט המוכן, ואת תמונות המותג <b>מוטמעות בתוך ה-PDF</b>
+              וממוספרות ("תמונה 1, 2…"), כך ש-NotebookLM קורא אותן בהקשר. אחרי ההפקה, המצגת תופיע
+              ב-NotebookLM כ-<b>Slide Deck</b> בסגנון הכרטיסים שצירפתם.
+            </p>
+
+            <div className="mb-3 rounded-lg border border-[var(--border)] bg-blue-50/60 p-3 text-xs leading-relaxed">
+              <div className="mb-2 flex flex-col items-start gap-2 sm:mb-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <div className="font-semibold">איך משתמשים:</div>
+                <button
+                  type="button"
+                  onClick={() => setGuideImageOpen(true)}
+                  className="rounded-md border border-brand/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5 text-right text-balance"
+                >
+                  כיצד נראה Describe the slide deck you want to create בממשק של NotebookLM
+                </button>
+              </div>
+              <ol className="list-decimal pr-4 space-y-0.5 text-[var(--muted)]">
+                <li>עובדים ב-NotebookLM בדסקטופ ומעלים את ה-PDF הזה כמקור יחיד (התמונות כבר בתוכו).</li>
+                <li>
+                  נכנסים ל-<b>Customize Slide Deck</b>, בוחרים <b>Presenter Slides</b>, שפה <b>עברית</b>,
+                  ומדביקים בתיבת <b>"Describe the slide deck you want to create"</b> את הפרומפט המלא מטה.
+                </li>
+              </ol>
+            </div>
+
+            <button
+              onClick={() => build('brief')}
+              disabled={busy !== null}
+              className="w-full border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
+            >
+              {busy === 'brief' ? 'בונה בריף…' : 'הורדת בריף ל-NotebookLM'}
+            </button>
+
+            {promptText && (
+              <div className="mt-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="text-sm font-semibold">הפרומפט המלא ל-NotebookLM</div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(promptText);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      } catch {
+                        setError('העתקה ללוח נכשלה — סמנו והעתיקו ידנית.');
+                      }
+                    }}
+                    className="shrink-0 rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    {copied ? 'הועתק ✓' : 'העתקה'}
+                  </button>
+                </div>
+                <p className="mb-2 text-xs text-[var(--muted)]">
+                  כולל את הטקסט של כל שקופית + הנחיות RTL ומיקום התמונות. הדביקו בתיבת
+                  "Describe the slide deck".
+                </p>
+                <pre
+                  dir="rtl"
+                  className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--border)] bg-white p-2 text-[11px] leading-relaxed text-gray-800"
+                >
+                  {promptText}
+                </pre>
+              </div>
+            )}
+
+            <div className="mt-5 border-t border-[var(--border)] pt-4">
+              <div className="text-sm font-semibold mb-1">העלאת קובץ מ-NotebookLM</div>
+              <p className="text-xs text-[var(--muted)] mb-3">
+                אם יצרתם את המצגת ב-NotebookLM, אפשר להעלות את ה-PDF או ה-PPTX שנוצר כאן.
+              </p>
               <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(promptText);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
-                  } catch {
-                    setError('העתקה ללוח נכשלה — סמנו והעתיקו ידנית.');
-                  }
-                }}
-                className="shrink-0 rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingFile}
+                className="w-full border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
               >
-                {copied ? 'הועתק ✓' : 'העתקה'}
+                {uploadingFile ? 'מעלה...' : 'העלאת קובץ PDF או PPTX'}
               </button>
             </div>
-            <p className="mb-2 text-xs text-[var(--muted)]">
-              כולל את הטקסט של כל שקופית + הנחיות RTL ומיקום התמונות. הדביקו בתיבת
-              "Describe the slide deck".
-            </p>
-            <pre
-              dir="rtl"
-              className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--border)] bg-white p-2 text-[11px] leading-relaxed text-gray-800"
-            >
-              {promptText}
-            </pre>
           </div>
         )}
       </div>
 
-      <div className="mt-5 border-t border-[var(--border)] pt-4">
-        <div className="text-sm font-semibold mb-1">העלאת קובץ מ-NotebookLM</div>
-        <p className="text-xs text-[var(--muted)] mb-3">
-          אם יצרתם את המצגת ב-NotebookLM, אפשר להעלות את ה-PDF או ה-PPTX שנוצר כאן.
-        </p>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploadingFile}
-          className="w-full border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
-        >
-          {uploadingFile ? 'מעלה...' : 'העלאת קובץ PDF או PPTX'}
-        </button>
-      </div>
-
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      {busy && <DeckBuildingOverlay format={busy === 'pptx' ? 'pptx' : 'pdf'} aiCount={willReuse || cacheRef.current ? 0 : aiCount} />}
+      {(busy === 'pdf' || busy === 'pptx' || busy === 'brief') && (
+        <DeckBuildingOverlay format={busy === 'pptx' ? 'pptx' : 'pdf'} aiCount={willReuse || cacheRef.current ? 0 : aiCount} />
+      )}
 
       {guideImageOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm" dir="rtl">
@@ -482,6 +519,69 @@ export default function DeckExport({
         </div>
       )}
 
+      {gammaJsonOpen && gammaJson && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm"
+          dir="rtl"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setGammaJsonOpen(false);
+          }}
+        >
+          <div className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-white/10 bg-white text-right shadow-2xl">
+            <div className="flex flex-col gap-3 border-b border-[var(--border)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-bold">ה-JSON של תוכן המצגת</div>
+                <div className="text-xs text-[var(--muted)]">
+                  אם ה-JSON כבר נוצר עבור ההגדרות הנוכחיות, הוא נשלף מ-Supabase ולא נבנה מחדש.
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(gammaJson);
+                      setGammaJsonCopied(true);
+                      setTimeout(() => setGammaJsonCopied(false), 2000);
+                    } catch {
+                      setError('העתקה ללוח נכשלה — סמנו והעתיקו ידנית.');
+                    }
+                  }}
+                  className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white"
+                >
+                  {gammaJsonCopied ? 'הועתק ✓' : 'העתקה'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadBlob(new Blob([gammaJson], { type: 'application/json' }), 'gamma-request.json')}
+                  className="rounded-md border border-brand px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5"
+                >
+                  הורדה
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGammaJsonOpen(false)}
+                  className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold hover:bg-gray-50"
+                >
+                  סגירה
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto bg-gray-50 p-4">
+              <p className="mb-2 text-xs text-[var(--muted)]">
+                זה הגוף המדויק של הבקשה. התוכן המלא של כל שקופית נמצא בתוך השדה <code>inputText</code>.
+              </p>
+              <pre
+                dir="ltr"
+                className="max-h-[68dvh] overflow-auto whitespace-pre-wrap rounded-md border border-[var(--border)] bg-white p-3 text-left text-[11px] leading-relaxed text-gray-800"
+              >
+                {gammaJson}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ImagePickerModal
         brandId={brandId}
         open={pickerOpen}
@@ -491,6 +591,8 @@ export default function DeckExport({
           setPickedImages(images);
           setPickedKeys(keys);
           cacheRef.current = null;
+          gammaJsonCacheRef.current = null;
+          setGammaJson(null);
           setPickerOpen(false);
         }}
       />

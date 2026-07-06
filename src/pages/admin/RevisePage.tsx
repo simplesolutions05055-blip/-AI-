@@ -157,6 +157,8 @@ export default function RevisePage() {
         setOutputType('presentation');
         setPresRequestId(requestId);
         setOutline((latest as { text_content?: string } | null)?.text_content ?? '');
+        // The GPT slide viewer/editor is rendered by DeckExport → GptImagesDeck,
+        // which loads saved deck images itself, so no preview fetch is needed here.
         setLoading(false);
         return;
       }
@@ -668,6 +670,10 @@ export default function RevisePage() {
       ) : outputType === 'presentation' ? (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
           <div className="bg-white border border-[var(--border)] rounded-lg p-5 min-w-0">
+            {/* The static first-slide preview was removed: DeckExport → GptImagesDeck
+                now auto-opens the full slide-by-slide viewer + per-slide AI editor
+                whenever saved deck images exist, so a single duplicate image here
+                only added noise. */}
             <DeckExport
               brief={brief}
               requestId={presRequestId}

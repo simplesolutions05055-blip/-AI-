@@ -1,5 +1,5 @@
 import { db } from '../_shared/db.ts';
-import { generatePresentationOutline, generateDeckSlides, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption } from '../_shared/openai.ts';
+import { generatePresentationOutline, generateDeckSlides, rewriteDeckSlide, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost, imageUnitCost } from '../_shared/util.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 import {
@@ -31,7 +31,7 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality } = await req.json();
+    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, slide, slideNumber, instruction } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
     await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
     if (save_only !== true) {
@@ -180,6 +180,35 @@ Deno.serve(async (req) => {
         metadata: { slide_count: slides.length, request_id: requestId ?? null },
       });
       return new Response(JSON.stringify({ ok: true, slides }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 'rewrite-slide' mode: rewrite the content of ONE slide per a free-text
+    // instruction, without regenerating the whole deck. Powers the per-slide
+    // "edit with AI" action in the GPT-Images deck content editor.
+    if (format === 'rewrite-slide') {
+      const instr = typeof instruction === 'string' ? instruction.trim() : '';
+      if (!instr) {
+        return new Response(JSON.stringify({ error: 'instruction required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const aiModelsRewrite = await getSetting<{ text_model?: string }>(database, 'ai_models');
+      const { slide: rewritten, usage } = await rewriteDeckSlide(brief ?? {}, slide ?? {}, instr, Number(slideNumber) || 1);
+      await recordUsageAndCost(database, requestId ?? null, {
+        provider: 'openai',
+        model: aiModelsRewrite?.text_model || 'gpt-4o',
+        input: usage?.prompt_tokens ?? 0,
+        output: usage?.completion_tokens ?? 0,
+        cost: estimateTextCost(usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0),
+      });
+      await logEvent(database, {
+        action: 'deck_slide_rewritten',
+        metadata: { request_id: requestId ?? null, slide_number: Number(slideNumber) || 1 },
+      });
+      return new Response(JSON.stringify({ ok: true, slide: rewritten }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }

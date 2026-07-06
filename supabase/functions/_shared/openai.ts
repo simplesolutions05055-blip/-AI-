@@ -371,6 +371,73 @@ export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
   return { slides: sanitizeDeckSlides(slides), usage, raw: content };
 }
 
+// Rewrite the content of ONE deck slide per a free-text instruction from the
+// user, without touching the other slides. Used by the GPT-Images deck content
+// editor so a user can refine a slide's copy before generating its image.
+// Returns the rewritten slide in the same shape as generateDeckSlides items.
+export async function rewriteDeckSlide(
+  brief: unknown,
+  slide: { title?: string; subtitle?: string | null; bullets?: string[]; body?: string | null; image_suggestion?: string | null },
+  instruction: string,
+  slideNumber: number,
+) {
+  const current = {
+    title: slide?.title ?? '',
+    subtitle: slide?.subtitle ?? null,
+    bullets: Array.isArray(slide?.bullets) ? slide.bullets : [],
+    body: slide?.body ?? null,
+    image_suggestion: slide?.image_suggestion ?? null,
+  };
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content:
+          'אתה עורך תוכן מצגות מקצועי בעברית RTL. משכתב תוכן של שקף בודד לפי הנחיית המשתמש בלבד, בלי לשנות שקפים אחרים ובלי לחרוג מהנושא.',
+      },
+      {
+        role: 'user',
+        content: `להלן תוכן של שקף ${slideNumber} במצגת. שכתב אותו לפי ההנחיה של המשתמש, ושמור על אותו נושא כללי.
+הנחיית המשתמש: «${instruction}»
+
+תוכן השקף הנוכחי (JSON):
+${JSON.stringify(current, null, 2)}
+
+נושא המצגת: ${(brief as any)?.topic || (brief as any)?.goal || ''}
+
+החזר JSON תקין בלבד באותו מבנה:
+{
+  "title": "כותרת קצרה וחדה",
+  "subtitle": "שורת משנה או null",
+  "bullets": ["נקודה 1", "נקודה 2", "נקודה 3"],
+  "body": "פסקה קצרה או null",
+  "image_suggestion": "תיאור תמונה מתאימה לשקף או null"
+}
+דרישות:
+- עברית תקנית ומדויקת, טון מותאם לקהל.
+- יישם את ההנחיה של המשתמש במדויק.
+- אל תמציא עובדות, נתונים, שמות או תאריכים שלא נמסרו.
+- אסור להחזיר שמות צבעים, קודי צבע, פלטת צבעים, הנחיות עיצוב או מפרט טכני כתוכן — רק תוכן שהקהל אמור לראות בשקף.`,
+      },
+    ],
+    { json: true, temperature: 0.6 }
+  );
+  let parsed: any = {};
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    parsed = {};
+  }
+  const rewritten = {
+    title: typeof parsed?.title === 'string' && parsed.title.trim() ? parsed.title : current.title,
+    subtitle: typeof parsed?.subtitle === 'string' ? parsed.subtitle : null,
+    bullets: Array.isArray(parsed?.bullets) ? parsed.bullets.filter((b: unknown) => typeof b === 'string' && b.trim()) : current.bullets,
+    body: typeof parsed?.body === 'string' ? parsed.body : null,
+    image_suggestion: typeof parsed?.image_suggestion === 'string' ? parsed.image_suggestion : current.image_suggestion,
+  };
+  return { slide: sanitizeDeckSlides([rewritten])[0] ?? rewritten, usage, raw: content };
+}
+
 function sanitizeDeckSlides(slides: any[]): any[] {
   const metaRe = /פלטת|צבעי?\s*מותג|צבעים?\s*שנבחר|הנחיות?\s*עיצוב|סגנון\s*עיצוב|טיפוגרפ|קומפוזיצ|מפרט\s*שקף|brand\s*color|palette|design\s*guidelines/i;
   return slides

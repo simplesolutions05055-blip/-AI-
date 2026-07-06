@@ -32,6 +32,12 @@ export interface DeckBrand {
   style_notes?: string | null;
 }
 
+export interface PersistedDeckApiBrief {
+  id: string;
+  contentJson: unknown;
+  updatedAt: string;
+}
+
 interface DeckPalette {
   primary: string;
   secondary: string;
@@ -75,6 +81,39 @@ export async function fetchRequestBrandId(requestId: string): Promise<string | n
   const db = createSupabaseBrowserClient();
   const { data } = await db.from('requests').select('brand_id').eq('id', requestId).maybeSingle();
   return (data as { brand_id?: string | null } | null)?.brand_id ?? null;
+}
+
+export async function fetchDeckApiBrief(requestId: string, cacheKey: string): Promise<PersistedDeckApiBrief | null> {
+  const db = createSupabaseBrowserClient();
+  const { data, error } = await db
+    .from('deck_api_briefs')
+    .select('id, content_json, updated_at')
+    .eq('request_id', requestId)
+    .eq('brief_type', 'gamma_json')
+    .eq('cache_key', cacheKey)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  const row = data as { id: string; content_json: unknown; updated_at: string } | null;
+  return row ? { id: row.id, contentJson: row.content_json, updatedAt: row.updated_at } : null;
+}
+
+export async function saveDeckApiBrief(requestId: string, cacheKey: string, contentJson: unknown): Promise<void> {
+  const db = createSupabaseBrowserClient();
+  const { error } = await db
+    .from('deck_api_briefs')
+    .upsert(
+      {
+        request_id: requestId,
+        brief_type: 'gamma_json',
+        cache_key: cacheKey,
+        content_json: contentJson,
+        updated_at: new Date().toISOString(),
+      } as never,
+      { onConflict: 'request_id,brief_type,cache_key' },
+    );
+  if (error) throw error;
 }
 
 // Ask the Edge function for rich 10-slide structured content for this brief.
@@ -172,6 +211,40 @@ export async function buildDeckSlides(
   if (deck.length >= 3) return deck;
   const parsed = parseOutlineSlides(outlineText);
   return parsed.length > deck.length ? parsed : deck;
+}
+
+// Rewrite a single slide's text content per a free-text instruction, via the
+// generate-presentation 'rewrite-slide' Edge Function. Only the text fields
+// change — the caller keeps the slide's position and any assigned image.
+export async function rewriteDeckSlideContent(
+  brief: unknown,
+  slide: DeckSlide,
+  instruction: string,
+  slideNumber: number,
+  requestId: string | null,
+): Promise<DeckSlide> {
+  const db = createSupabaseBrowserClient();
+  const { data, error } = await db.functions.invoke('generate-presentation', {
+    body: {
+      format: 'rewrite-slide',
+      brief,
+      requestId,
+      slideNumber,
+      instruction,
+      slide: {
+        title: slide.title ?? '',
+        subtitle: slide.subtitle ?? null,
+        bullets: Array.isArray(slide.bullets) ? slide.bullets : [],
+        body: slide.body ?? null,
+        image_suggestion: slide.image_suggestion ?? null,
+      },
+    },
+  });
+  if (error) throw error;
+  const out = (data as { slide?: DeckSlide } | null)?.slide;
+  if (!out) throw new Error('לא התקבל תוכן מעודכן לשקף');
+  // Preserve any image already assigned to this slide; only text changes.
+  return { ...slide, ...out };
 }
 
 // Build an image-generation prompt for one slide from the brief + brand palette.
