@@ -9,6 +9,7 @@ import {
   loadRequestActor,
   rejectClientOpenAiKeyIfDisabled,
 } from '../_shared/abuseGuard.ts';
+import { cropBytesTo16by9 } from '../_shared/image.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -31,7 +32,7 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, slide, slideNumber, instruction } = await req.json();
+    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, cropTo16by9, slide, slideNumber, instruction } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
     await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
     if (save_only !== true) {
@@ -85,15 +86,22 @@ Deno.serve(async (req) => {
               size: effSize,
               quality: effQuality,
             });
-        const { base64, mime } = generated;
+        // Full-slide deck images come back as 1536x1024 (3:2); crop to 16:9 so
+        // they fill the 16:9 slide without stretching in PPTX/PDF.
+        let outBase64 = generated.base64;
+        let mime = generated.mime || 'image/png';
+        if (cropTo16by9 === true) {
+          outBase64 = encodeBase64(await cropBytesTo16by9(decodeBase64(generated.base64)));
+          mime = 'image/png';
+        }
         let storagePath: string | null = null;
         if (requestId) {
           try {
-            const ext = (mime || 'image/png').includes('jpeg') ? 'jpg' : 'png';
+            const ext = mime.includes('jpeg') ? 'jpg' : 'png';
             const path = `deck-ai/${requestId}/${Date.now()}-${k}.${ext}`;
             const { error: upErr } = await database.storage
               .from('outputs')
-              .upload(path, decodeBase64(base64), { contentType: mime || 'image/png', upsert: true });
+              .upload(path, decodeBase64(outBase64), { contentType: mime, upsert: true });
             if (!upErr) {
               storagePath = path;
               await database.from('deck_ai_images').insert({
@@ -102,14 +110,14 @@ Deno.serve(async (req) => {
                 prompt,
                 caption: capList[k] ? String(capList[k]) : null,
                 storage_path: path,
-                mime_type: mime || 'image/png',
+                mime_type: mime,
               });
             }
           } catch (_e) {
             // Persistence is best-effort: a storage hiccup must not fail the deck.
           }
         }
-        images.push({ base64, mime, storagePath });
+        images.push({ base64: outBase64, mime, storagePath });
       }
       // Real per-image price by the size/quality actually used — not the flat
       // estimate — so the presentation cost panel reflects what OpenAI charges.

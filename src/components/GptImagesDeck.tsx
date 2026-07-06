@@ -20,6 +20,7 @@ import {
 } from '@/lib/deck';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
+import { Spinner } from '@/components/ui/Spinner';
 
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
@@ -711,12 +712,15 @@ export default function GptImagesDeck({
               : `הפקה ברקע ושליחה ל-${validEmails.length || ''} ${validEmails.length === 1 ? 'נמען' : 'נמענים'}`}
         </button>
         {(emailStarting || emailJobStatus === 'running') && (
-          <div className="mt-3 rounded-lg border border-brand/20 bg-brand/5 p-3 text-xs text-[var(--muted)]">
-            <div className="mb-1 flex items-center gap-2 font-semibold text-brand">
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-brand/20 border-t-brand" />
-              עובד ברקע עכשיו
+          <div className="relative mt-3 overflow-hidden rounded-lg border border-brand/20 bg-brand/5 p-3 text-xs text-[var(--muted)]" aria-live="polite" aria-busy="true">
+            <div className="revise-sheen absolute inset-0" />
+            <div className="relative">
+              <div className="mb-1 flex items-center gap-2 font-semibold text-brand">
+                <Spinner className="h-4 w-4" />
+                <span className="revise-dots">עובד ברקע עכשיו</span>
+              </div>
+              <p>{progressText || 'השרת מכין את תוכן השקפים, יוצר תמונות AI, בונה את המצגת וישלח אותה למיילים בסיום. אפשר להמשיך לגלול ולעבוד באתר.'}</p>
             </div>
-            <p>{progressText || 'השרת מכין את תוכן השקפים, יוצר תמונות AI, בונה את המצגת וישלח אותה למיילים בסיום. אפשר להמשיך לגלול ולעבוד באתר.'}</p>
           </div>
         )}
         {(hasSavedDeckImages || previewSlides.length > 0) && emailJobStatus !== 'running' && (
@@ -847,9 +851,12 @@ export default function GptImagesDeck({
             </button>
 
             {emailJobStatus === 'running' && (
-              <div className="mt-2 flex items-center gap-2 text-xs text-[var(--muted)]">
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-200 border-t-brand" />
-                המצגת מופקת בשרת ותישלח למייל. אפשר לסגור את החלון.
+              <div className="relative mt-2 overflow-hidden rounded-lg border border-brand/20 bg-brand/5 p-3 text-xs text-[var(--muted)]" aria-live="polite" aria-busy="true">
+                <div className="revise-sheen absolute inset-0" />
+                <div className="relative flex items-center gap-2">
+                  <Spinner className="h-4 w-4 text-brand" />
+                  <span className="revise-dots">המצגת מופקת בשרת ותישלח למייל. אפשר לסגור את החלון</span>
+                </div>
               </div>
             )}
             {emailJobStatus === 'done' && (
@@ -913,7 +920,10 @@ export default function GptImagesDeck({
             <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
               {contentError && <p className="mb-3 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">{contentError}</p>}
               {contentLoading ? (
-                <div className="py-10 text-center text-sm text-[var(--muted)]">טוען את תוכן השקפים…</div>
+                <div className="flex min-h-40 flex-col items-center justify-center gap-3 py-10 text-center text-sm text-[var(--muted)]" aria-live="polite" aria-busy="true">
+                  <Spinner className="h-6 w-6 text-brand" />
+                  <span className="revise-dots font-semibold">טוען את תוכן השקפים</span>
+                </div>
               ) : (
                 <div className="space-y-4">
                   {contentSlides.map((slide, idx) => {

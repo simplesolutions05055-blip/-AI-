@@ -17,6 +17,7 @@ import PptxGenJS from 'npm:pptxgenjs@4.0.1';
 import { db } from '../_shared/db.ts';
 import { getSetting, imageUnitCost, logEvent, recordUsageAndCost } from '../_shared/util.ts';
 import { generateImage, generateImageWithReferences } from '../_shared/openai.ts';
+import { cropBytesTo16by9 } from '../_shared/image.ts';
 import { renderPdfBase64 } from '../_shared/pdf.ts';
 import { sendDeliverableEmail, buildEmailHtml } from '../_shared/resend.ts';
 
@@ -348,8 +349,15 @@ async function loadApprovedImages(
     if (mode === 'template' && isFullSlideImage) continue;
     const { data: file } = await database.storage.from(BUCKET).download(r.storage_path);
     if (!file) continue;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    out.set(r.slide_index, `data:${r.mime_type || 'image/png'};base64,${encodeBase64(bytes)}`);
+    let bytes = new Uint8Array(await file.arrayBuffer());
+    let mime = r.mime_type || 'image/png';
+    // Legacy full-slide images may have been stored as 1536x1024 (3:2). Crop
+    // when loading them so reused images are also exact 16:9 and never stretch.
+    if (mode === 'fullslide') {
+      bytes = await cropBytesTo16by9(bytes);
+      mime = 'image/png';
+    }
+    out.set(r.slide_index, `data:${mime};base64,${encodeBase64(bytes)}`);
   }
   return out;
 }
@@ -385,14 +393,23 @@ async function generateMissingSlideImages(
     const image = logoReference
       ? await generateImageWithReferences(prompt, [logoReference], { model: aiModelsImg?.image_model, size, quality })
       : await generateImage(prompt, { model: aiModelsImg?.image_model, size, quality });
-    const dataUrl = `data:${image.mime || 'image/png'};base64,${image.base64}`;
+
+    // Full-slide images are generated at 1536x1024 (3:2) but the slide is 16:9;
+    // crop to 16:9 at the source so they fill the slide without stretching.
+    let bytes = decodeBase64(image.base64);
+    let mime = image.mime || 'image/png';
+    if (p.mode === 'fullslide') {
+      bytes = await cropBytesTo16by9(bytes);
+      mime = 'image/png';
+    }
+    const dataUrl = `data:${mime};base64,${encodeBase64(bytes)}`;
 
     if (p.requestId) {
-      const ext = (image.mime || 'image/png').includes('jpeg') ? 'jpg' : 'png';
+      const ext = mime.includes('jpeg') ? 'jpg' : 'png';
       const path = `deck-ai/${p.requestId}/${Date.now()}-${idx}.${ext}`;
       const { error: upErr } = await database.storage
         .from(BUCKET)
-        .upload(path, decodeBase64(image.base64), { contentType: image.mime || 'image/png', upsert: true });
+        .upload(path, bytes, { contentType: mime, upsert: true });
       if (!upErr) {
         await database.from('deck_ai_images').insert({
           request_id: p.requestId,
@@ -400,7 +417,7 @@ async function generateMissingSlideImages(
           prompt,
           caption: slide?.title ? String(slide.title) : `שקף ${idx + 1}`,
           storage_path: path,
-          mime_type: image.mime || 'image/png',
+          mime_type: mime,
         });
       }
     }
@@ -487,6 +504,7 @@ function buildFullSlideImagePrompt(brief: Record<string, unknown>, slide: DeckSl
   if (brief?.topic || brief?.goal) lines.push(`נושא המצגת: ${brief?.topic || brief?.goal}.`);
   lines.push(
     `עיצוב מודרני, נקי ויוקרתי${palette ? `, בהשראת צבעי המותג הבאים כהנחיית סגנון פנימית בלבד: ${palette}` : ''}.`,
+    'חשוב: המודל מפיק תמונה רחבה שתיחתך למסגרת 16:9 של מצגת. שמור את כל הטקסט, הלוגואים והאלמנטים החשובים באזור המרכזי הבטוח; השאר שוליים נקיים למעלה ולמטה.',
     'חשוב מאוד: כל הטקסט חייב להיות בעברית תקנית ומדויקת בדיוק כפי שנמסר, מיושר לימין, קריא וחד. אל תמציא אותיות ואל תשבש מילים.',
     'אסור להציג על השקף שמות צבעים, קודי צבע, פלטת צבעים, הנחיות עיצוב, מפרט עיצובי או הסברים על העיצוב. השקף חייב להציג רק את תוכן המצגת לקהל.',
     slideNumber === 1 ? 'זהו שקף הפתיחה — כותרת גדולה ובולטת.' : 'שקף תוכן — הדגש את הנקודות בצורה ברורה וקריאה.',
@@ -683,7 +701,6 @@ async function buildFullSlidePptxBase64(slideImages: string[]): Promise<string> 
       y: 0,
       w: 13.33,
       h: 7.5,
-      sizing: { type: 'cover', w: 13.33, h: 7.5 },
     });
   }
 
