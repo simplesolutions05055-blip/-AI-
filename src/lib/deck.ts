@@ -32,12 +32,6 @@ export interface DeckBrand {
   style_notes?: string | null;
 }
 
-export interface PersistedDeckApiBrief {
-  id: string;
-  contentJson: unknown;
-  updatedAt: string;
-}
-
 interface DeckPalette {
   primary: string;
   secondary: string;
@@ -81,39 +75,6 @@ export async function fetchRequestBrandId(requestId: string): Promise<string | n
   const db = createSupabaseBrowserClient();
   const { data } = await db.from('requests').select('brand_id').eq('id', requestId).maybeSingle();
   return (data as { brand_id?: string | null } | null)?.brand_id ?? null;
-}
-
-export async function fetchDeckApiBrief(requestId: string, cacheKey: string): Promise<PersistedDeckApiBrief | null> {
-  const db = createSupabaseBrowserClient();
-  const { data, error } = await db
-    .from('deck_api_briefs')
-    .select('id, content_json, updated_at')
-    .eq('request_id', requestId)
-    .eq('brief_type', 'gamma_json')
-    .eq('cache_key', cacheKey)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  const row = data as { id: string; content_json: unknown; updated_at: string } | null;
-  return row ? { id: row.id, contentJson: row.content_json, updatedAt: row.updated_at } : null;
-}
-
-export async function saveDeckApiBrief(requestId: string, cacheKey: string, contentJson: unknown): Promise<void> {
-  const db = createSupabaseBrowserClient();
-  const { error } = await db
-    .from('deck_api_briefs')
-    .upsert(
-      {
-        request_id: requestId,
-        brief_type: 'gamma_json',
-        cache_key: cacheKey,
-        content_json: contentJson,
-        updated_at: new Date().toISOString(),
-      } as never,
-      { onConflict: 'request_id,brief_type,cache_key' },
-    );
-  if (error) throw error;
 }
 
 // Ask the Edge function for rich 10-slide structured content for this brief.
@@ -991,37 +952,6 @@ export async function renderDeckToPptx(
   return blob;
 }
 
-// ── Gamma deck: send the assembled slide content to Gamma's Generate API (via
-// the generate-gamma edge function) and poll until the PPTX is ready. Reuses the
-// exact NotebookLM prompt as inputText so the deck carries the AI-written
-// per-slide copy. Returns the editable Gamma URL + the exported PPTX as a Blob. ──
-// The EXACT request body sent to Gamma's Generate API. Single source of truth —
-// used both to start a real generation and to preview/copy the JSON in the UI, so
-// what the user sees is byte-for-byte what we send. The per-slide content lives
-// inside `inputText` (built by buildNotebookLmPrompt: title + subtitle + bullets
-// + body for every slide).
-export function buildGammaRequestBody(
-  brief: any,
-  brand: DeckBrand | null,
-  images: DeckImage[],
-  slides: DeckSlide[],
-  opts: { numCards?: number } = {},
-): Record<string, unknown> {
-  const inputText = buildNotebookLmPrompt(brief, brand, images, slides);
-  const additionalInstructions =
-    'הצג את כל השקופיות בעברית, מיושר מימין לשמאל (RTL). שמור על התוכן שנכתב לכל שקופית.' +
-    (brand?.name ? ` התאם את הטון והסגנון למותג ${brand.name}.` : '');
-  return {
-    inputText,
-    format: 'presentation',
-    textMode: 'preserve',
-    exportAs: 'pptx',
-    textOptions: { language: 'he' },
-    numCards: opts.numCards ?? slides.length,
-    additionalInstructions,
-  };
-}
-
 // Build a real branded Hebrew PPTX via Claude's pptx skill (generate-pptx-claude
 // edge function). Reuses the exact slide content from buildNotebookLmPrompt and
 // passes the brand's images (logo first) + palette so Claude can embed them.
@@ -1071,45 +1001,6 @@ export async function generatePptxWithClaude(
     type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   });
   return { pptx, fileName: res.fileName || 'presentation.pptx' };
-}
-
-export async function generateGammaDeck(
-  brief: any,
-  brand: DeckBrand | null,
-  images: DeckImage[],
-  slides: DeckSlide[],
-  opts: { numCards?: number; signal?: AbortSignal } = {},
-): Promise<{ gammaUrl: string | null; pptx: Blob }> {
-  const client = createSupabaseBrowserClient();
-  const gammaBody = buildGammaRequestBody(brief, brand, images, slides, { numCards: opts.numCards });
-
-  const { data: started, error: startErr } = await client.functions.invoke('generate-gamma', {
-    body: { action: 'start', gammaBody },
-  });
-  if (startErr) throw startErr;
-  const generationId = (started as { generationId?: string } | null)?.generationId;
-  if (!generationId) throw new Error('Gamma לא החזיר מזהה יצירה');
-
-  // Poll status — Gamma typically completes within ~30–60s.
-  const deadline = Date.now() + 5 * 60 * 1000;
-  while (Date.now() < deadline) {
-    if (opts.signal?.aborted) throw new Error('בוטל');
-    await new Promise((r) => setTimeout(r, 4000));
-    const { data: statusData, error: statusErr } = await client.functions.invoke('generate-gamma', {
-      body: { action: 'status', generationId },
-    });
-    if (statusErr) throw statusErr;
-    const s = statusData as { status?: string; gammaUrl?: string | null; pptxBase64?: string } | null;
-    if (s?.status === 'completed' && s.pptxBase64) {
-      const bytes = Uint8Array.from(atob(s.pptxBase64), (c) => c.charCodeAt(0));
-      const pptx = new Blob([bytes], {
-        type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
-      return { gammaUrl: s.gammaUrl ?? null, pptx };
-    }
-    if (s?.status === 'failed') throw new Error('יצירת המצגת ב-Gamma נכשלה');
-  }
-  throw new Error('יצירת המצגת ב-Gamma נמשכה זמן רב מדי');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

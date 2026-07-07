@@ -10,10 +10,7 @@ import {
   renderDeckToPptx,
   renderBriefToPdf,
   buildNotebookLmPrompt,
-  buildGammaRequestBody,
   generatePptxWithClaude,
-  fetchDeckApiBrief,
-  saveDeckApiBrief,
   downloadBlob,
   type DeckSlide,
   type DeckBrand,
@@ -58,7 +55,7 @@ export default function DeckExport({
   initialPickedImages?: DeckImage[] | null;
   initialPickedKeys?: string[];
 }) {
-  const [busy, setBusy] = useState<null | 'pdf' | 'pptx' | 'brief' | 'gamma' | 'claude'>(null);
+  const [busy, setBusy] = useState<null | 'pdf' | 'pptx' | 'brief' | 'claude'>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -67,10 +64,6 @@ export default function DeckExport({
   const [promptText, setPromptText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [aiCount, setAiCount] = useState(0);
-  // The exact JSON body sent to Gamma's API, shown on demand for inspection.
-  const [gammaJson, setGammaJson] = useState<string | null>(null);
-  const [gammaJsonOpen, setGammaJsonOpen] = useState(false);
-  const [gammaJsonCopied, setGammaJsonCopied] = useState(false);
   // AI images already generated for this request (shown so they can be reused
   // in the next export instead of regenerating from scratch).
   const [existing, setExisting] = useState<PersistedDeckImage[]>([]);
@@ -87,8 +80,6 @@ export default function DeckExport({
   // Simple action states for primary download buttons
   const [downloadPptxLoading, setDownloadPptxLoading] = useState(false);
   const [downloadPdfLoading, setDownloadPdfLoading] = useState(false);
-  // UI state for secondary/tertiary sections
-  const [showDeveloperOptions, setShowDeveloperOptions] = useState(false);
   // Cache the fully-resolved deck (slides + AI images + brand pack) keyed by the
   // AI-image count, so a follow-up PDF reuses the EXACT same images & positions
   // produced for the PPTX (and vice versa) without regenerating.
@@ -99,24 +90,11 @@ export default function DeckExport({
     images: DeckImage[];
     slides: DeckSlide[];
   } | null>(null);
-  const gammaJsonCacheRef = useRef<{ key: string; json: string } | null>(null);
 
   // A changed outline (e.g. after an edit/regenerate) must invalidate the cache.
   useEffect(() => {
     cacheRef.current = null;
-    gammaJsonCacheRef.current = null;
-    setGammaJson(null);
-    setGammaJsonOpen(false);
   }, [outlineText, requestId]);
-
-  useEffect(() => {
-    if (!gammaJsonOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setGammaJsonOpen(false);
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [gammaJsonOpen]);
 
   // Load any AI images previously generated + persisted for this request.
   useEffect(() => {
@@ -148,19 +126,6 @@ export default function DeckExport({
     const pickKey = pickedImages ? `pick:${pickedKeys.join(',')}` : 'pick:none';
     const contentKey = hashString(JSON.stringify({ brief: brief ?? null, outlineText: outlineText ?? null }));
     return (willReuse ? `reuse:${existing.map((e) => e.id).join(',')}` : `ai:${aiCount}`) + `|${pickKey}|content:${contentKey}`;
-  }
-
-  async function readStoredGammaJson(deckKey: string) {
-    if (!requestId) return null;
-    const stored = await fetchDeckApiBrief(requestId, deckKey);
-    return stored ? JSON.stringify(stored.contentJson, null, 2) : null;
-  }
-
-  async function storeGammaJson(deckKey: string, body: unknown) {
-    const json = JSON.stringify(body, null, 2);
-    gammaJsonCacheRef.current = { key: deckKey, json };
-    if (requestId) await saveDeckApiBrief(requestId, deckKey, body);
-    return json;
   }
 
   // Primary action: download presentation as PPTX
@@ -282,7 +247,6 @@ export default function DeckExport({
     setError(null);
     try {
       const { deckBrief, brand, images, slides } = await prepareDeck();
-      const deckKey = getDeckCacheKey();
       const safeName =
         String((brief as any)?.topic || brief?.goal || 'מצגת')
           .slice(0, 40)
@@ -296,8 +260,6 @@ export default function DeckExport({
         // Surface the full prompt (slide text + RTL + image placement) for paste,
         // and tell the parent to collapse the outline view.
         setPromptText(buildNotebookLmPrompt(deckBrief, brand, images, slides));
-        const gammaBody = buildGammaRequestBody(deckBrief, brand, images, slides, { numCards: slides.length });
-        await storeGammaJson(deckKey, gammaBody);
         setCopied(false);
         onBriefGenerated?.();
       } else {
@@ -328,42 +290,6 @@ export default function DeckExport({
       setError(`יצירת המצגת נכשלה: ${String((e as { message?: string })?.message ?? e)}`);
     } finally {
       setBusy(null);
-    }
-  }
-
-  // Build (without sending) the exact JSON body that would go to Gamma's API, so
-  // the user can inspect / copy / download it. Uses the same prepareDeck() +
-  // buildGammaRequestBody() that the real generation uses.
-  async function previewGammaJson() {
-    if (busy) return;
-    const key = getDeckCacheKey();
-    if (gammaJsonCacheRef.current?.key === key) {
-      setGammaJson(gammaJsonCacheRef.current.json);
-      setGammaJsonCopied(false);
-      setGammaJsonOpen(true);
-      return;
-    }
-    const storedJson = await readStoredGammaJson(key);
-    if (storedJson) {
-      gammaJsonCacheRef.current = { key, json: storedJson };
-      setGammaJson(storedJson);
-      setGammaJsonCopied(false);
-      setGammaJsonOpen(true);
-      return;
-    }
-    setError(null);
-    try {
-      if (!cacheRef.current || cacheRef.current.key !== key) setBusy('gamma');
-      const { deckBrief, brand, images, slides } = await prepareDeck();
-      const body = buildGammaRequestBody(deckBrief, brand, images, slides, { numCards: slides.length });
-      const json = await storeGammaJson(key, body);
-      setGammaJson(json);
-      setGammaJsonCopied(false);
-      setGammaJsonOpen(true);
-    } catch (e) {
-      setError(`בניית ה-JSON נכשלה: ${String((e as { message?: string })?.message ?? e)}`);
-    } finally {
-      setBusy((current) => current === 'gamma' ? null : current);
     }
   }
 
@@ -515,42 +441,6 @@ export default function DeckExport({
         )}
       </div>
 
-      {/* TERTIARY SECTION: Developer options (hidden by default) */}
-      <div className="mb-6">
-        <button
-          type="button"
-          onClick={() => setShowDeveloperOptions(!showDeveloperOptions)}
-          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-3 text-right font-semibold text-[var(--muted)] hover:text-black hover:bg-gray-50/30 transition"
-          aria-expanded={showDeveloperOptions}
-        >
-          <div className="flex-1 text-right">
-            <div className="font-bold">למפתחים 🔧</div>
-            <div className="text-[11px] text-[var(--muted)] font-normal">
-              JSON ל-<span dir="ltr">API</span> ואינטגרציות
-            </div>
-          </div>
-          <span className="text-lg leading-none">{showDeveloperOptions ? '▼' : '◀'}</span>
-        </button>
-
-        {showDeveloperOptions && (
-          <div className="mt-3 rounded-lg border border-[var(--border)] bg-gray-50/40 p-4">
-            <div className="mb-4">
-              <div className="text-sm font-semibold mb-2">תוכן המצגת ל-API (JSON)</div>
-              <p className="text-xs text-[var(--muted)] mb-3">
-                קבל JSON מובנה עם תוכן כל שקופית. אפשר להשתמש ב-Gamma, Gemini, או כל כלי אחר שתומך בJSON.
-              </p>
-              <button
-                onClick={previewGammaJson}
-                disabled={busy !== null}
-                className="w-full rounded-lg border border-brand px-4 py-2.5 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
-              >
-                {busy === 'gamma' ? 'בונה JSON…' : 'צפה ב-JSON'}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       {(busy === 'pdf' || busy === 'pptx' || busy === 'brief') && (
         <DeckBuildingOverlay format={busy === 'pptx' ? 'pptx' : 'pdf'} aiCount={willReuse || cacheRef.current ? 0 : aiCount} />
@@ -596,69 +486,6 @@ export default function DeckExport({
         </div>
       )}
 
-      {gammaJsonOpen && gammaJson && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm"
-          dir="rtl"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setGammaJsonOpen(false);
-          }}
-        >
-          <div className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-white/10 bg-white text-right shadow-2xl">
-            <div className="flex flex-col gap-3 border-b border-[var(--border)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-sm font-bold">ה-JSON של תוכן המצגת</div>
-                <div className="text-xs text-[var(--muted)]">
-                  אם ה-JSON כבר נוצר עבור ההגדרות הנוכחיות, הוא נשלף מ-Supabase ולא נבנה מחדש.
-                </div>
-              </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(gammaJson);
-                      setGammaJsonCopied(true);
-                      setTimeout(() => setGammaJsonCopied(false), 2000);
-                    } catch {
-                      setError('העתקה ללוח נכשלה — סמנו והעתיקו ידנית.');
-                    }
-                  }}
-                  className="rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white"
-                >
-                  {gammaJsonCopied ? 'הועתק ✓' : 'העתקה'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => downloadBlob(new Blob([gammaJson], { type: 'application/json' }), 'gamma-request.json')}
-                  className="rounded-md border border-brand px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5"
-                >
-                  הורדה
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGammaJsonOpen(false)}
-                  className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-semibold hover:bg-gray-50"
-                >
-                  סגירה
-                </button>
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto bg-gray-50 p-4">
-              <p className="mb-2 text-xs text-[var(--muted)]">
-                זה הגוף המדויק של הבקשה. התוכן המלא של כל שקופית נמצא בתוך השדה <code>inputText</code>.
-              </p>
-              <pre
-                dir="ltr"
-                className="max-h-[68dvh] overflow-auto whitespace-pre-wrap rounded-md border border-[var(--border)] bg-white p-3 text-left text-[11px] leading-relaxed text-gray-800"
-              >
-                {gammaJson}
-              </pre>
-            </div>
-          </div>
-        </div>
-      )}
-
       <ImagePickerModal
         brandId={brandId}
         open={pickerOpen}
@@ -668,8 +495,6 @@ export default function DeckExport({
           setPickedImages(images);
           setPickedKeys(keys);
           cacheRef.current = null;
-          gammaJsonCacheRef.current = null;
-          setGammaJson(null);
           setPickerOpen(false);
         }}
       />

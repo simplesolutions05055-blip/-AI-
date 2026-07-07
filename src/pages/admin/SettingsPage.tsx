@@ -212,19 +212,24 @@ export default function SettingsPage() {
         <p className="mb-4 text-xs text-[var(--muted)]">
           קובע אילו סוגי תוצרים כל תפקיד יכול להפיק. למשתמש רגיל עדיין נדרשת גם הרשאת הפקה כללית במסך משתמשים והרשאות.
         </p>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[520px] border-collapse text-sm">
+        <div className="overflow-hidden">
+          <table className="w-full table-fixed border-collapse text-sm">
+            <colgroup>
+              <col />
+              <col className="w-16 sm:w-24" />
+              <col className="w-20 sm:w-28" />
+            </colgroup>
             <thead>
               <tr className="border-b border-[var(--border)] text-right text-xs text-[var(--muted)]">
-                <th className="py-2 font-semibold">תוצר</th>
+                <th className="py-2 pe-2 font-semibold">תוצר</th>
                 <th className="py-2 text-center font-semibold">מנהל</th>
-                <th className="py-2 text-center font-semibold">משתמש רגיל</th>
+                <th className="py-2 text-center font-semibold">משתמש<span className="hidden sm:inline"> רגיל</span></th>
               </tr>
             </thead>
             <tbody>
               {PRODUCTION_PERMISSION_TYPES.map((item) => (
                 <tr key={item.type} className="border-b border-[var(--border)] last:border-0">
-                  <td className="py-3 font-medium">{item.label}</td>
+                  <td className="py-3 pe-2 font-medium leading-snug">{item.label}</td>
                   <td className="py-3 text-center">
                     <PermissionCheckbox
                       permissions={outputPermissions}
