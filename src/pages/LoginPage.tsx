@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import LegalLinks from '@/components/legal/LegalLinks';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -78,6 +79,7 @@ export default function LoginPage() {
             <Link to="/signup" className="text-brand font-semibold hover:underline">הירשם</Link>
           </p>
         )}
+        <LegalLinks />
       </form>
     </main>
   );

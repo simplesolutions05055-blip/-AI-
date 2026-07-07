@@ -4,6 +4,10 @@ import LoginPage from '@/pages/LoginPage';
 import SignupPage from '@/pages/SignupPage';
 import ResetPasswordPage from '@/pages/ResetPasswordPage';
 import OnboardingPage from '@/pages/OnboardingPage';
+import PrivacyPolicyPage from '@/pages/legal/PrivacyPolicyPage';
+import CookiePolicyPage from '@/pages/legal/CookiePolicyPage';
+import DataRequestsPage from '@/pages/legal/DataRequestsPage';
+import TermsPage from '@/pages/legal/TermsPage';
 import AdminLayout from '@/pages/admin/AdminLayout';
 import DashboardPage from '@/pages/admin/DashboardPage';
 import RequestsCostsPage from '@/pages/admin/RequestsCostsPage';
@@ -37,6 +41,10 @@ export default function App() {
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
+        <Route path="/privacy" element={<PrivacyPolicyPage />} />
+        <Route path="/cookies" element={<CookiePolicyPage />} />
+        <Route path="/data-requests" element={<DataRequestsPage />} />
+        <Route path="/terms" element={<TermsPage />} />
         <Route path="/admin" element={<AdminLayout><Outlet /></AdminLayout>}>
           <Route index element={<DashboardPage />} />
           <Route path="requests" element={<RequestsCostsPage />} />

@@ -4,6 +4,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { applyBrandPalette, resetBrandTheme, type PaletteEntry } from '@/lib/useBrandTheme';
 import { Spinner } from '@/components/ui/Spinner';
+import LegalLinks from '@/components/legal/LegalLinks';
 
 interface InviteBrand {
   name: string;
@@ -192,6 +193,7 @@ export default function SignupPage() {
               חזרה
             </button>
           </div>
+          <LegalLinks />
         </form>
       </main>
     );
@@ -247,6 +249,7 @@ export default function SignupPage() {
           כבר יש לך חשבון?{' '}
           <Link to="/login" className="text-brand font-semibold hover:underline">כניסה</Link>
         </p>
+        <LegalLinks />
       </form>
     </main>
   );
