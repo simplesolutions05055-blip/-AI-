@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Lightbulb, X } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, Copy, Download, Eye, Lightbulb, Trash2, X } from 'lucide-react';
 import { randomUUID } from '@/lib/uuid';
 import { Spinner } from '@/components/ui/Spinner';
 import SocialScheduleSection, {
@@ -38,6 +38,12 @@ type ScheduledSocialPost = {
   status: 'scheduled' | 'published' | 'failed' | 'cancelled';
   media?: StoredMediaRecord[] | null;
   brands?: { name?: string | null } | null;
+};
+
+type ScheduleThumb = {
+  url: string;
+  count: number;
+  kind: 'image' | 'video';
 };
 
 type EditScheduleForm = {
@@ -84,7 +90,6 @@ function scheduleStatusLabel(post: ScheduledSocialPost) {
 function scheduleTone(post: ScheduledSocialPost) {
   if (post.status === 'failed') return 'border-red-200 bg-red-50 text-red-700';
   if (post.status === 'published') return 'border-[#10b981] bg-[#ecfdf5] text-[#065f46]';
-  if (isDueForPublish(post)) return 'border-amber-300 bg-amber-50 text-amber-800';
   if (post.platform === 'facebook') return 'border-[#60a5fa] bg-[#eff6ff] text-[#1d4ed8]';
   return 'border-[#f472b6] bg-[#fdf2f8] text-[#9d174d]';
 }
@@ -97,6 +102,18 @@ function scheduleLabel(post: ScheduledSocialPost) {
 
 function scheduleDisplayTitle(post: ScheduledSocialPost) {
   return post.title?.trim() || scheduleLabel(post);
+}
+
+function schedulePlatformLabel(post: ScheduledSocialPost) {
+  return post.platform === 'facebook' ? 'פייסבוק' : 'אינסטגרם';
+}
+
+function schedulePlatformMark(post: ScheduledSocialPost) {
+  return post.platform === 'facebook' ? 'f' : '◎';
+}
+
+function firstMediaRecord(post: ScheduledSocialPost) {
+  return (post.media ?? []).find((item) => item.storage_path) ?? null;
 }
 
 function dateKeyFromIso(value: string) {
@@ -140,6 +157,7 @@ export default function HolidaysCalendarPage() {
   const [pickerTempYear, setPickerTempYear] = useState(new Date().getFullYear());
   const [pickerTempMonth, setPickerTempMonth] = useState(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [mobileAgendaDate, setMobileAgendaDate] = useState<string | null>(null);
   const [scheduleDate, setScheduleDate] = useState<string | null>(null);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [editPostId, setEditPostId] = useState<string | null>(null);
@@ -164,6 +182,7 @@ export default function HolidaysCalendarPage() {
   const [brandsError, setBrandsError] = useState<string | null>(null);
   const [holidays, setHolidays] = useState<IsraelHoliday[]>([]);
   const [scheduledPosts, setScheduledPosts] = useState<ScheduledSocialPost[]>([]);
+  const [scheduleThumbs, setScheduleThumbs] = useState<Record<string, ScheduleThumb>>({});
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -271,6 +290,42 @@ export default function HolidaysCalendarPage() {
   }, [scheduleDate]);
 
   useEffect(() => {
+    let cancelled = false;
+    const db = createSupabaseBrowserClient();
+    const postsWithMedia = scheduledPosts.filter((post) => firstMediaRecord(post));
+    if (postsWithMedia.length === 0) {
+      setScheduleThumbs({});
+      return;
+    }
+
+    void Promise.all(
+      postsWithMedia.map(async (post) => {
+        const media = firstMediaRecord(post);
+        if (!media?.storage_path) return null;
+        const { data } = await db.storage.from('outputs').createSignedUrl(media.storage_path, 3600);
+        if (!data?.signedUrl) return null;
+        return {
+          id: post.id,
+          thumb: {
+            url: data.signedUrl,
+            count: post.media?.length ?? 1,
+            kind: media.kind === 'video' ? 'video' as const : 'image' as const,
+          },
+        };
+      })
+    ).then((items) => {
+      if (cancelled) return;
+      const next: Record<string, ScheduleThumb> = {};
+      for (const item of items) if (item) next[item.id] = item.thumb;
+      setScheduleThumbs(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [scheduledPosts]);
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         if (isMonthPickerOpen) {
@@ -345,6 +400,12 @@ export default function HolidaysCalendarPage() {
       .filter((day) => day >= 1 && day <= monthDayCount)
       .map((day) => isoDate(year, month, day))
   ), [cells, monthDayCount, month, year]);
+  const mobileActiveDate = mobileAgendaDate && visibleDates.includes(mobileAgendaDate)
+    ? mobileAgendaDate
+    : (visibleDates.includes(todayKey) ? todayKey : visibleDates[0]);
+  const mobileActiveHolidays = mobileActiveDate ? byDate.get(mobileActiveDate) ?? [] : [];
+  const mobileActivePosts = mobileActiveDate ? postsByDate.get(mobileActiveDate) ?? [] : [];
+  const mobileActiveDateDisplay = mobileActiveDate ? hebrewDateLabel(mobileActiveDate) : '';
   const activeWeekDates = useMemo(() => {
     const activeDate = selectedDate ?? (visibleDates.includes(todayKey) ? todayKey : visibleDates[0]);
     const activeDay = Number(activeDate?.slice(8, 10) ?? 1);
@@ -362,6 +423,11 @@ export default function HolidaysCalendarPage() {
       ...(showPosts ? (postsByDate.get(date) ?? []).map((post) => ({ date, kind: 'post' as const, id: post.id, title: scheduleDisplayTitle(post), tone: scheduleTone(post), meta: scheduleLabel(post) })) : []),
     ])
   ), [byDate, postsByDate, visibleDates, showHolidays, showPosts]);
+
+  useEffect(() => {
+    if (!mobileActiveDate || mobileAgendaDate === mobileActiveDate) return;
+    setMobileAgendaDate(mobileActiveDate);
+  }, [mobileActiveDate, mobileAgendaDate]);
 
   function moveMonth(delta: number) {
     setVisibleMonth((value) => new Date(value.getFullYear(), value.getMonth() + delta, 1));
@@ -554,13 +620,22 @@ export default function HolidaysCalendarPage() {
   }
 
   function buildProductionIdeaPrompt(date: string, holidaysForDay: IsraelHoliday[], postsForDay: ScheduledSocialPost[]) {
-    const lines = [`צרו רעיון לתוכן עבור התאריך ${hebrewDateLabel(date)}.`];
+    const eventNames = holidaysForDay.map((holiday) => holiday.hebrew_title || holiday.title);
+    const lines = [
+      eventNames.length > 0
+        ? `צרו רעיון לתוכן עבור האירוע/החג: ${eventNames.join(', ')}.`
+        : `צרו רעיון לתוכן עבור התאריך ${hebrewDateLabel(date)}.`,
+      `תאריך: ${hebrewDateLabel(date)}.`,
+    ];
 
     if (holidaysForDay.length > 0) {
-      lines.push(`אירועים וחגים ביום הזה: ${holidaysForDay.map((holiday) => holiday.hebrew_title || holiday.title).join(', ')}.`);
+      lines.push('פרטי אירועים וחגים ביום הזה:');
+      holidaysForDay.forEach((holiday, index) => {
+        lines.push(`${index + 1}. ${holiday.hebrew_title || holiday.title}${holiday.memo ? ` - ${holiday.memo}` : ''}`);
+      });
     }
     if (postsForDay.length > 0) {
-      lines.push('תזמונים קיימים ביום הזה:');
+      lines.push('תזמונים קיימים ביום הזה, כהקשר בלבד כדי לא לחזור על תוכן שכבר נקבע:');
       postsForDay.forEach((post, index) => {
         const platform = post.platform === 'facebook' ? 'פייסבוק' : 'אינסטגרם';
         lines.push(
@@ -571,7 +646,7 @@ export default function HolidaysCalendarPage() {
     }
 
     lines.push(
-      'הציעו כיוון ברור לתוצר שאפשר להפיק עכשיו: פוסט, תמונה/גרפיקה, מסמך או מצגת.',
+      'הציעו כיוון ברור לתוצר שאפשר להפיק עכשיו עבור האירוע: פוסט, תמונה/גרפיקה, מסמך או מצגת.',
       'כתבו בשפה עברית עסקית, קצרה וברורה, עם רעיון מרכזי, קהל יעד, מסר מוביל וקריאה לפעולה.',
     );
 
@@ -586,27 +661,63 @@ export default function HolidaysCalendarPage() {
     });
   }
 
+  function renderPostCard(post: ScheduledSocialPost, compact = false) {
+    const thumb = scheduleThumbs[post.id];
+    return (
+      <button
+        key={`post-${post.id}`}
+        type="button"
+        title={`${scheduleLabel(post)} · ${post.caption}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          openEditSchedule(post);
+        }}
+        className={`group flex w-full min-w-0 items-center gap-2 rounded-lg border bg-white/95 p-1.5 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${scheduleTone(post)}`}
+      >
+        <div className={`${compact ? 'h-9 w-9' : 'h-10 w-10'} relative shrink-0 overflow-hidden rounded-md border border-black/10 bg-white/70`}>
+          {thumb ? (
+            thumb.kind === 'video' ? (
+              <video src={thumb.url} className="h-full w-full object-cover" muted />
+            ) : (
+              <img src={thumb.url} alt="" className="h-full w-full object-cover" />
+            )
+          ) : (
+            <span className="grid h-full w-full place-items-center text-xs font-black">{schedulePlatformMark(post)}</span>
+          )}
+          {thumb && thumb.count > 1 && (
+            <span className="absolute bottom-0.5 left-0.5 rounded bg-black/65 px-1 text-[9px] font-bold text-white">
+              {thumb.count}
+            </span>
+          )}
+        </div>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1 text-[10px] font-bold opacity-80">
+            <span className="ltr">{timeLabel(post.scheduled_at)}</span>
+            <span>·</span>
+            <span>{schedulePlatformLabel(post)}</span>
+          </span>
+          <span className="block truncate text-[11px] font-bold leading-4">{scheduleDisplayTitle(post)}</span>
+          {!compact && <span dir="auto" className="block truncate text-[10px] font-medium opacity-75">{post.caption}</span>}
+        </span>
+      </button>
+    );
+  }
+
   function renderCalendarDay(date: string | null, compact = false) {
     if (!date) return <div key={randomUUID()} className={`${compact ? 'min-h-28' : 'min-h-[104px]'} bg-[#f9fafb]`} />;
     const day = Number(date.slice(8, 10));
     const dayHolidays = byDate.get(date) ?? [];
     const dayPosts = postsByDate.get(date) ?? [];
-    const events = [
-      ...(showHolidays ? dayHolidays.map((holiday) => ({
+    const holidayEvents = showHolidays ? dayHolidays.map((holiday) => ({
         id: `holiday-${holiday.id}`,
         label: holiday.hebrew_title || holiday.title,
         tone: holidayTone(holiday),
         title: holiday.memo ?? holiday.title,
-      })) : []),
-      ...(showPosts ? dayPosts.map((post) => ({
-        id: `post-${post.id}`,
-        label: `${post.platform === 'facebook' ? '📘' : '📸'} ${scheduleDisplayTitle(post)}`,
-        tone: scheduleTone(post),
-        title: `${scheduleLabel(post)} · ${post.caption}`,
-      })) : []),
-    ];
-    const visibleEvents = events.slice(0, compact ? 5 : 3);
-    const hasEvents = events.length > 0;
+      })) : [];
+    const visibleHolidays = holidayEvents.slice(0, compact ? 2 : 1);
+    const visiblePosts = showPosts ? dayPosts.slice(0, compact ? 4 : 2) : [];
+    const hiddenCount = Math.max(0, holidayEvents.length - visibleHolidays.length) + Math.max(0, (showPosts ? dayPosts.length : 0) - visiblePosts.length);
+    const hasIdeaEvent = dayHolidays.length > 0;
 
     return (
       <div
@@ -627,17 +738,18 @@ export default function HolidaysCalendarPage() {
             {day}
           </span>
         </div>
-        <div className="w-full space-y-1">
-          {visibleEvents.map((event) => (
+        <div className="w-full space-y-1.5">
+          {visibleHolidays.map((event) => (
             <div key={event.id} title={event.title} className={`truncate rounded px-1.5 py-1 text-[10px] font-bold ${event.tone}`}>
               {event.label}
             </div>
           ))}
-          {events.length > visibleEvents.length && (
-            <div className="text-[11px] font-semibold text-[var(--muted)]">+{events.length - visibleEvents.length}</div>
+          {visiblePosts.map((post) => renderPostCard(post, compact))}
+          {hiddenCount > 0 && (
+            <div className="text-[11px] font-semibold text-[var(--muted)]">+{hiddenCount}</div>
           )}
         </div>
-        {hasEvents && (
+        {hasIdeaEvent && (
           <div className="mt-auto w-full pt-2">
             <button
               type="button"
@@ -690,7 +802,7 @@ export default function HolidaysCalendarPage() {
             </button>
           </div>
           <div className="flex gap-1.5 lg:gap-3 lg:order-2">
-            <div className="flex rounded-lg bg-[#f0f2f7] p-0.5">
+            <div className="schedule-view-tabs hidden rounded-lg bg-[#f0f2f7] p-0.5 lg:flex">
             {([
               ['week', 'שבוע'],
               ['month', 'חודש'],
@@ -708,7 +820,7 @@ export default function HolidaysCalendarPage() {
             </div>
             <button
               type="button"
-              onClick={() => openSchedule(selectedDate ?? defaultScheduleDate)}
+              onClick={() => openSchedule(mobileActiveDate ?? selectedDate ?? defaultScheduleDate)}
               className="rounded-lg bg-brand px-3 py-1 lg:px-4 lg:py-2 text-lg lg:text-xl font-bold text-white hover:opacity-95"
             >
               +
@@ -748,8 +860,120 @@ export default function HolidaysCalendarPage() {
             </div>
           </div>
 
-          {viewMode === 'list' ? (
-            <div className="divide-y divide-[#f0f2f7]">
+          <div className="schedule-mobile-agenda lg:hidden">
+            <div className="border-b border-[#f0f2f7] bg-[#fbfcfe] px-3 py-3">
+              <div className="flex gap-2 overflow-x-auto pb-1" dir="rtl">
+                {visibleDates.map((date) => {
+                  const dayPosts = postsByDate.get(date) ?? [];
+                  const dayHolidays = byDate.get(date) ?? [];
+                  const isActive = date === mobileActiveDate;
+                  return (
+                    <button
+                      key={date}
+                      type="button"
+                      onClick={() => setMobileAgendaDate(date)}
+                      className={`min-w-[64px] rounded-xl border px-3 py-2 text-center transition ${
+                        isActive
+                          ? 'border-[#2563eb] bg-[#2563eb] text-white shadow-sm'
+                          : 'border-[var(--border)] bg-white text-[#334155] hover:bg-[#f8faff]'
+                      }`}
+                    >
+                      <div className="text-[11px] font-bold">{WEEKDAYS_HE[new Date(date).getDay()]}</div>
+                      <div className="mt-1 text-lg font-black">{Number(date.slice(8, 10))}</div>
+                      {(dayPosts.length > 0 || dayHolidays.length > 0) && (
+                        <div className={`mx-auto mt-1 h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-[#2563eb]'}`} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-3 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold">{mobileActiveDateDisplay}</h3>
+                  <p className="mt-0.5 text-xs text-[var(--muted)]">
+                    {mobileActivePosts.length} תזמונים · {mobileActiveHolidays.length} חגים
+                  </p>
+                </div>
+                {mobileActiveDate && (
+                  <button
+                    type="button"
+                    onClick={() => openSchedule(mobileActiveDate)}
+                    className="min-h-10 rounded-lg bg-brand px-3 py-2 text-sm font-bold text-white"
+                  >
+                    + תזמון
+                  </button>
+                )}
+              </div>
+
+              {showHolidays && mobileActiveHolidays.map((holiday) => (
+                <article key={holiday.id} className={`rounded-xl border p-3 ${holidayTone(holiday)}`}>
+                  <div className="text-sm font-bold">{holiday.hebrew_title || holiday.title}</div>
+                  {holiday.memo && <p className="mt-1 line-clamp-2 text-xs opacity-80">{holiday.memo}</p>}
+                </article>
+              ))}
+
+              {showPosts && mobileActivePosts.map((post) => (
+                <article key={post.id} className={`rounded-xl border p-3 shadow-sm ${scheduleTone(post)}`}>
+                  <button
+                    type="button"
+                    onClick={() => openEditSchedule(post)}
+                    className="flex w-full items-center gap-3 text-right"
+                  >
+                    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border border-black/10 bg-white/70">
+                      {scheduleThumbs[post.id] ? (
+                        scheduleThumbs[post.id].kind === 'video' ? (
+                          <video src={scheduleThumbs[post.id].url} className="h-full w-full object-cover" muted />
+                        ) : (
+                          <img src={scheduleThumbs[post.id].url} alt="" className="h-full w-full object-cover" />
+                        )
+                      ) : (
+                        <span className="grid h-full w-full place-items-center text-lg font-black">{schedulePlatformMark(post)}</span>
+                      )}
+                      {(scheduleThumbs[post.id]?.count ?? 0) > 1 && (
+                        <span className="absolute bottom-1 left-1 rounded bg-black/65 px-1.5 text-[10px] font-bold text-white">
+                          {scheduleThumbs[post.id].count}
+                        </span>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1 text-xs font-bold opacity-80">
+                        <span className="ltr">{timeLabel(post.scheduled_at)}</span>
+                        <span>·</span>
+                        <span>{schedulePlatformLabel(post)}</span>
+                      </div>
+                      <div className="mt-1 truncate text-base font-black">{scheduleDisplayTitle(post)}</div>
+                      <p dir="auto" className="mt-1 line-clamp-2 text-sm font-medium opacity-80">{post.caption}</p>
+                      <div className="mt-2 text-xs font-bold opacity-75">{scheduleStatusLabel(post)}</div>
+                    </div>
+                  </button>
+                </article>
+              ))}
+
+              {mobileActiveDate && mobileActiveHolidays.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => goToProductionIdea(mobileActiveDate, mobileActiveHolidays, mobileActivePosts)}
+                  className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#bfdbfe] bg-white px-3 py-2 text-sm font-bold text-[#1d4ed8]"
+                >
+                  <Lightbulb className="h-4 w-4" />
+                  קבלו רעיון ליום הזה
+                </button>
+              )}
+
+              {(!showPosts || mobileActivePosts.length === 0) && (!showHolidays || mobileActiveHolidays.length === 0) && (
+                <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-6 text-center text-sm text-[var(--muted)]">
+                  אין תזמונים או חגים ביום הזה.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="schedule-calendar-table hidden lg:block">
+            {viewMode === 'list' ? (
+              <div className="divide-y divide-[#f0f2f7]">
               {listEvents.length === 0 ? (
                 <div className="p-8 text-center text-sm text-[var(--muted)]">אין חגים או תזמונים בחודש הזה.</div>
               ) : listEvents.map((event) => (
@@ -757,7 +981,10 @@ export default function HolidaysCalendarPage() {
                   key={`${event.kind}-${event.id}`}
                   type="button"
                   onClick={() => {
-                    if (event.kind === 'post') setSelectedPostId(event.id);
+                    if (event.kind === 'post') {
+                      const post = scheduledPosts.find((item) => item.id === event.id);
+                      if (post) openEditSchedule(post);
+                    }
                     else setSelectedDate(event.date);
                   }}
                   className="flex w-full items-center justify-between gap-4 px-4 py-3 text-right transition hover:bg-[#f8faff]"
@@ -773,9 +1000,9 @@ export default function HolidaysCalendarPage() {
                   </div>
                 </button>
               ))}
-            </div>
-          ) : (
-            <>
+              </div>
+            ) : (
+              <>
               <div className="grid grid-cols-7 bg-white px-2 text-center text-xs font-bold text-[var(--muted)]">
                 {WEEKDAYS_HE.map((day) => <div key={day} className="py-2">{day}</div>)}
               </div>
@@ -787,8 +1014,9 @@ export default function HolidaysCalendarPage() {
                     return renderCalendarDay(isoDate(year, month, day));
                   })}
               </div>
-            </>
-          )}
+              </>
+            )}
+          </div>
         </section>
       )}
 
@@ -826,32 +1054,41 @@ export default function HolidaysCalendarPage() {
                   </article>
                 ))}
                 {selectedPosts.map((post) => (
-                  <article key={post.id} className={`rounded-lg border p-4 ${scheduleTone(post)}`}>
+                  <article key={post.id} className={`rounded-xl border p-3 ${scheduleTone(post)}`}>
                     <button
                       type="button"
                       onClick={() => {
                         setDeleteError(null);
-                        setSelectedPostId(post.id);
+                        openEditSchedule(post);
                       }}
                       className="block w-full text-right transition hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
+                      <div className="flex items-center gap-3">
+                        <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-black/10 bg-white/70">
+                          {scheduleThumbs[post.id] ? (
+                            scheduleThumbs[post.id].kind === 'video' ? (
+                              <video src={scheduleThumbs[post.id].url} className="h-full w-full object-cover" muted />
+                            ) : (
+                              <img src={scheduleThumbs[post.id].url} alt="" className="h-full w-full object-cover" />
+                            )
+                          ) : (
+                            <span className="grid h-full w-full place-items-center text-lg font-black">{schedulePlatformMark(post)}</span>
+                          )}
+                          {(scheduleThumbs[post.id]?.count ?? 0) > 1 && (
+                            <span className="absolute bottom-1 left-1 rounded bg-black/65 px-1.5 text-[10px] font-bold text-white">
+                              {scheduleThumbs[post.id].count}
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
                           <div className="truncate text-base font-bold">{scheduleDisplayTitle(post)}</div>
                           <div className="mt-1 text-xs font-semibold opacity-80">{scheduleLabel(post)}</div>
+                          <p dir="auto" className="mt-2 line-clamp-2 text-sm opacity-85">{post.caption}</p>
                         </div>
-                        <div className="text-xs font-semibold">{post.brands?.name ?? 'ללא מותג'}</div>
+                        <div className="hidden text-xs font-semibold sm:block">{post.brands?.name ?? 'ללא מותג'}</div>
                       </div>
-                      <p className="mt-2 line-clamp-3 text-sm opacity-85">{post.caption}</p>
                     </button>
                     <div className="mt-3 flex flex-wrap justify-start gap-2">
-                      <button
-                        type="button"
-                        onClick={() => goToProductionIdea(post.scheduled_at ? dateKeyFromIso(post.scheduled_at) : selectedDate, [], [post])}
-                        className="min-h-10 rounded-lg border border-[#bfdbfe] bg-white px-3 py-2 text-sm font-semibold text-[#1d4ed8] hover:bg-[#eff6ff]"
-                      >
-                        קבלו רעיון
-                      </button>
                       <button
                         type="button"
                         onClick={() => openEditSchedule(post)}
@@ -876,6 +1113,15 @@ export default function HolidaysCalendarPage() {
             )}
 
             <div className="mt-5 flex justify-start">
+              {selectedHolidays.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => goToProductionIdea(selectedDate, selectedHolidays, selectedPosts)}
+                  className="ml-2 rounded-lg border border-[#bfdbfe] bg-white px-4 py-2.5 text-sm font-semibold text-[#1d4ed8] hover:bg-[#eff6ff]"
+                >
+                  קבלו רעיון
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => openSchedule(selectedDate)}
@@ -889,13 +1135,15 @@ export default function HolidaysCalendarPage() {
       )}
 
       {editPost && (
-        <div className="fixed inset-0 z-[74] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="עריכת תזמון">
+        <div className="fixed inset-0 z-[74] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="עריכת תזמון" lang="he">
           <button type="button" className="absolute inset-0 h-full w-full cursor-default" aria-label="סגירת חלון" onClick={closeEditSchedule} />
-          <div className="relative max-h-[88dvh] w-full overflow-y-auto rounded-t-2xl border border-[var(--border)] bg-white p-5 text-right shadow-xl sm:max-w-lg sm:rounded-2xl" dir="rtl">
-            <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="relative flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-t-2xl border border-[var(--border)] bg-white text-right shadow-xl sm:rounded-2xl" dir="rtl">
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] p-4 sm:p-5">
               <div className="min-w-0">
-                <h2 className="text-xl font-bold">עריכת תזמון</h2>
-                <p className="mt-1 text-sm text-[var(--muted)]">{scheduleLabel(editPost)} · {editPost.brands?.name ?? 'ללא מותג'}</p>
+                <h2 className="text-xl font-bold">עריכת פוסט מתוזמן</h2>
+                <p className="mt-1 text-sm text-[var(--muted)]">
+                  {scheduleStatusLabel(editPost)} · {scheduleLabel(editPost)} · {editPost.brands?.name ?? 'ללא מותג'}
+                </p>
               </div>
               <button
                 type="button"
@@ -907,73 +1155,102 @@ export default function HolidaysCalendarPage() {
               </button>
             </div>
 
-            <div className="space-y-4">
-              <label className="block text-sm font-semibold">
-                שם התזמון
-                <input
-                  type="text"
-                  value={editForm.title}
-                  onChange={(event) => setEditForm((current) => ({ ...current, title: event.target.value }))}
-                  maxLength={160}
-                  className="mt-2 block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm"
-                />
-              </label>
-
-              <label className="block text-sm font-semibold">
-                תאריך ושעה
-                <input
-                  type="datetime-local"
-                  value={editForm.scheduledAt}
-                  onChange={(event) => setEditForm((current) => ({ ...current, scheduledAt: event.target.value }))}
-                  className="mt-2 block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm"
-                />
-              </label>
-
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <label className="block text-sm font-semibold">כיתוב לפרסום</label>
-                  <button
-                    type="button"
-                    onClick={() => void generateEditCaption(editPost)}
-                    disabled={editAiLoading || !editForm.caption.trim()}
-                    className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {editAiLoading ? 'מנסח...' : 'ניסוח עם AI'}
-                  </button>
-                </div>
-                <textarea
-                  rows={5}
-                  value={editForm.caption}
-                  onChange={(event) => {
-                    setEditForm((current) => ({ ...current, caption: event.target.value }));
-                    if (editAiError) setEditAiError(null);
-                  }}
-                  className="block w-full resize-none rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm leading-6"
-                />
-                {editAiError && <p className="mt-2 text-xs text-red-600">{editAiError}</p>}
-              </div>
-
-              <div>
-                {editMediaLoading ? (
-                  <p className="text-sm text-[var(--muted)]">טוען מדיה...</p>
-                ) : (
-                  <MediaEditor media={editMedia} setMedia={setEditMedia} brandId={editPost.brand_id} />
-                )}
-                {!editMediaLoading && editPost.platform === 'instagram' && editMedia.length === 0 && (
-                  <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                    אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
+            <div className="min-h-0 flex-1 overflow-y-auto bg-[#f6f8fb] p-3 sm:p-5">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
+                <section className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                  <div className="mb-4 flex items-center gap-2 text-sm font-bold text-[#071a33]">
+                    <CalendarClock className="h-4 w-4" />
+                    פרטי התזמון
                   </div>
-                )}
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm font-semibold">
+                      שם התזמון
+                      <input
+                        type="text"
+                        value={editForm.title}
+                        onChange={(event) => setEditForm((current) => ({ ...current, title: event.target.value }))}
+                        maxLength={160}
+                        className="mt-2 block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm"
+                      />
+                    </label>
+
+                    <label className="block text-sm font-semibold">
+                      תאריך ושעה
+                      <input
+                        type="datetime-local"
+                        value={editForm.scheduledAt}
+                        onChange={(event) => setEditForm((current) => ({ ...current, scheduledAt: event.target.value }))}
+                        className="mt-2 block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm ltr"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <label className="block text-sm font-semibold">כיתוב לפרסום</label>
+                      <button
+                        type="button"
+                        onClick={() => void generateEditCaption(editPost)}
+                        disabled={editAiLoading || !editForm.caption.trim()}
+                        className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {editAiLoading ? 'מנסח...' : 'ניסוח עם AI'}
+                      </button>
+                    </div>
+                    <textarea
+                      dir="auto"
+                      rows={8}
+                      value={editForm.caption}
+                      onChange={(event) => {
+                        setEditForm((current) => ({ ...current, caption: event.target.value }));
+                        if (editAiError) setEditAiError(null);
+                      }}
+                      className="block w-full resize-y rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm leading-6"
+                    />
+                    {editAiError && <p className="mt-2 text-xs text-red-600">{editAiError}</p>}
+                  </div>
+
+                  <div className="mt-4">
+                    {editMediaLoading ? (
+                      <div className="rounded-lg border border-[var(--border)] bg-[#fbfdfc] p-5 text-center text-sm text-[var(--muted)]">טוען מדיה...</div>
+                    ) : (
+                      <MediaEditor media={editMedia} setMedia={setEditMedia} brandId={editPost.brand_id} />
+                    )}
+                    {!editMediaLoading && editPost.platform === 'instagram' && editMedia.length === 0 && (
+                      <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-sm font-bold text-[#071a33]">
+                      <Eye className="h-4 w-4" />
+                      תצוגה מקדימה
+                    </div>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${scheduleTone(editPost)}`}>
+                      {scheduleStatusLabel(editPost)}
+                    </span>
+                  </div>
+                  <ScheduleInlinePreview
+                    post={editPost}
+                    caption={editForm.caption}
+                    media={editMedia}
+                  />
+                </section>
               </div>
             </div>
 
             {editError && (
-              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <div className="mx-3 mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:mx-5">
                 לא ניתן לשמור את העריכה: {editError}
               </div>
             )}
 
-            <div className="mt-5 grid grid-cols-2 gap-3 sm:flex sm:justify-start">
+            <div className="grid shrink-0 grid-cols-2 gap-3 border-t border-[var(--border)] bg-white p-3 sm:flex sm:justify-start sm:p-5">
               <button
                 type="button"
                 onClick={() => void saveScheduleEdit(editPost)}
@@ -989,7 +1266,56 @@ export default function HolidaysCalendarPage() {
               >
                 ביטול
               </button>
+              {isDueForPublish(editPost) && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void copyPostCaption(editPost)}
+                    className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <Copy className="h-4 w-4" />
+                      {captionCopied ? 'הועתק' : 'העתקת כיתוב'}
+                    </span>
+                  </button>
+                  {(editPost.media?.length ?? 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void downloadPostMedia(editPost)}
+                      disabled={downloadingMedia}
+                      className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      <span className="inline-flex items-center gap-2">
+                        <Download className="h-4 w-4" />
+                        {downloadingMedia ? 'מוריד...' : 'הורדת מדיה'}
+                      </span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void markPostPublished(editPost)}
+                    disabled={markingPublishedId === editPost.id}
+                    className="min-h-11 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                  >
+                    {markingPublishedId === editPost.id ? 'מעדכן...' : 'סימון כפורסם'}
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteError(null);
+                  setDeleteConfirmPostId(editPost.id);
+                }}
+                className="col-span-2 min-h-11 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50 sm:mr-auto"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Trash2 className="h-4 w-4" />
+                  מחיקת תזמון
+                </span>
+              </button>
             </div>
+            {publishActionError && <p className="px-5 pb-3 text-sm text-red-600">{publishActionError}</p>}
           </div>
         </div>
       )}
@@ -1309,6 +1635,97 @@ export default function HolidaysCalendarPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ScheduleInlinePreview({
+  post,
+  caption,
+  media,
+}: {
+  post: ScheduledSocialPost;
+  caption: string;
+  media: MediaItem[];
+}) {
+  const images = media.filter((item) => item.kind === 'image');
+  const [slide, setSlide] = useState(0);
+  const activeSlide = Math.min(slide, Math.max(images.length - 1, 0));
+  const pageName = post.brands?.name ?? 'העמוד שלכם';
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-[#f0f2f5] p-3">
+      <article className="overflow-hidden rounded-lg bg-white shadow-[0_1px_2px_rgba(0,0,0,0.16)]">
+        <header className="flex items-center justify-between px-4 pt-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand text-base font-black text-white">
+              {pageName.trim().charAt(0) || 'ע'}
+            </span>
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-[15px] font-semibold text-[#050505]">{pageName}</div>
+              <div className="mt-0.5 flex items-center gap-1 text-[13px] text-[#65676B]">
+                <span>{schedulePlatformLabel(post)}</span>
+                <span>·</span>
+                <span className="ltr">{timeLabel(post.scheduled_at)}</span>
+              </div>
+            </div>
+          </div>
+          <span className="text-xs font-bold text-[#65676B]">{schedulePlatformMark(post)}</span>
+        </header>
+
+        {caption.trim() && (
+          <div dir="auto" className="whitespace-pre-wrap px-4 pb-2 pt-2.5 text-start text-[15px] leading-6 text-[#050505]">
+            {caption.trim()}
+          </div>
+        )}
+
+        {images.length === 1 && (
+          <img src={images[0].url} alt="תמונת הפוסט" className="max-h-[420px] w-full bg-black/5 object-cover" />
+        )}
+
+        {images.length >= 2 && (
+          <div className="relative">
+            <img
+              src={images[activeSlide].url}
+              alt={`תמונה ${activeSlide + 1} מתוך ${images.length}`}
+              className="h-[320px] w-full bg-black/5 object-cover"
+            />
+            <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-xs font-semibold text-white">
+              {activeSlide + 1}/{images.length}
+            </span>
+            {activeSlide > 0 && (
+              <button
+                type="button"
+                onClick={() => setSlide(activeSlide - 1)}
+                aria-label="התמונה הקודמת"
+                className="absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            )}
+            {activeSlide < images.length - 1 && (
+              <button
+                type="button"
+                onClick={() => setSlide(activeSlide + 1)}
+                aria-label="התמונה הבאה"
+                className="absolute left-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {images.length === 0 && (
+          <div className="mx-4 mb-3 rounded-lg border border-dashed border-[#ced0d4] bg-[#f8fafc] p-6 text-center text-sm text-[#65676B]">
+            אין מדיה מצורפת. זה יוצג כפוסט טקסט בלבד.
+          </div>
+        )}
+
+        <footer className="border-t border-[#ced0d4] px-4 py-2 text-xs text-[#65676B]">
+          תצוגה להמחשה לפני פרסום
+        </footer>
+      </article>
     </div>
   );
 }

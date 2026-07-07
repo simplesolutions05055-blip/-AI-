@@ -351,3 +351,19 @@ select {
     font-size: 16px !important;
   }
 }
+
+/* Phones in portrait get an agenda because a 7-column calendar is too cramped.
+   In landscape there is enough horizontal space, so show the calendar table. */
+@media (max-width: 1023px) and (orientation: landscape) {
+  .schedule-mobile-agenda {
+    display: none;
+  }
+
+  .schedule-calendar-table {
+    display: block;
+  }
+
+  .schedule-view-tabs {
+    display: flex;
+  }
+}

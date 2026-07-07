@@ -427,7 +427,7 @@ function ScheduleModal({
     >
       <div
         dir="rtl"
-        className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl sm:rounded-xl"
+        className="flex max-h-[90dvh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl sm:rounded-xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] p-3 sm:gap-3 sm:p-5">
@@ -449,7 +449,9 @@ function ScheduleModal({
           </Tooltip>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#f6f8fb] p-3 sm:p-5">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
+            <section className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
           <fieldset className="mb-4">
             <legend className="mb-2 block text-sm font-semibold">איפה לפרסם?</legend>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -549,16 +551,6 @@ function ScheduleModal({
 
           <MediaEditor media={media} setMedia={setMedia} brandId={brandId} onRemove={onMediaRemoved} />
 
-          <button
-            type="button"
-            onClick={() => setPreviewOpen(true)}
-            disabled={!caption.trim() && media.length === 0}
-            className="mb-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#1877F2]/30 bg-[#1877F2]/5 px-3 py-2 text-sm font-semibold text-[#1877F2] hover:bg-[#1877F2]/10 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <EyeIcon />
-            <span>דוגמה של הפוסט</span>
-          </button>
-
           {includesInstagram && media.length === 0 && (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
@@ -570,6 +562,24 @@ function ScheduleModal({
             </div>
           )}
           {saveError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
+            </section>
+
+            <aside className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="text-sm font-bold text-[#071a33]">תצוגה מקדימה</div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewOpen(true)}
+                  disabled={!caption.trim() && media.length === 0}
+                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-[#1877F2]/30 bg-[#1877F2]/5 px-3 py-1.5 text-xs font-semibold text-[#1877F2] hover:bg-[#1877F2]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <EyeIcon />
+                  <span>פתחו בגדול</span>
+                </button>
+              </div>
+              <InlinePostPreview caption={caption} media={media} brandId={brandId} />
+            </aside>
+          </div>
         </div>
 
         {previewOpen && (
@@ -634,6 +644,121 @@ function PlatformToggle({
         className="h-5 w-5 accent-brand"
       />
     </label>
+  );
+}
+
+function InlinePostPreview({
+  caption,
+  media,
+  brandId,
+}: {
+  caption: string;
+  media: MediaItem[];
+  brandId: string | null;
+}) {
+  const [pageName, setPageName] = useState('העמוד שלכם');
+  const [pageLogoUrl, setPageLogoUrl] = useState<string | null>(null);
+  const images = media.filter((m) => m.kind === 'image');
+  const [slide, setSlide] = useState(0);
+  const activeSlide = Math.min(slide, Math.max(images.length - 1, 0));
+
+  useEffect(() => {
+    let alive = true;
+    if (!brandId) return;
+    (async () => {
+      const client = createSupabaseBrowserClient();
+      const { data: brand } = await client.from('brands').select('name, logo_path').eq('id', brandId).maybeSingle();
+      if (!alive || !brand) return;
+      if ((brand as { name?: string }).name) setPageName((brand as { name: string }).name);
+      const logoPath = (brand as { logo_path?: string | null }).logo_path;
+      if (logoPath) {
+        const { data: signed } = await client.storage.from('branding').createSignedUrl(logoPath, 600);
+        if (alive && signed?.signedUrl) setPageLogoUrl(signed.signedUrl);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [brandId]);
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-[#F0F2F5] p-3">
+      <article className="overflow-hidden rounded-lg bg-white shadow-[0_1px_2px_rgba(0,0,0,0.16)]">
+        <header className="flex items-center justify-between px-4 pt-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {pageLogoUrl ? (
+              <img src={pageLogoUrl} alt={pageName} className="h-10 w-10 shrink-0 rounded-full border border-black/5 bg-white object-cover" />
+            ) : (
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#1877F2] text-lg font-bold text-white">
+                {pageName.trim().charAt(0) || 'ע'}
+              </span>
+            )}
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-[15px] font-semibold text-[#050505]">{pageName}</div>
+              <div className="mt-0.5 flex items-center gap-1 text-[13px] text-[#65676B]">
+                <span>עכשיו</span>
+                <span>·</span>
+                <GlobeIcon />
+              </div>
+            </div>
+          </div>
+          <MoreIcon />
+        </header>
+
+        {caption.trim() ? (
+          <div dir="auto" className="whitespace-pre-wrap px-4 pb-2 pt-2.5 text-start text-[15px] leading-6 text-[#050505]">
+            {caption.trim()}
+          </div>
+        ) : (
+          <div className="px-4 pb-2 pt-2.5 text-sm text-[#65676B]">כאן תופיע הטיוטה לפרסום.</div>
+        )}
+
+        {images.length === 1 && (
+          <img src={images[0].url} alt="תמונת הפוסט" className="max-h-[420px] w-full bg-black/5 object-cover" />
+        )}
+        {images.length >= 2 && (
+          <div className="relative">
+            <img
+              src={images[activeSlide].url}
+              alt={`תמונה ${activeSlide + 1} מתוך ${images.length}`}
+              className="h-[320px] w-full bg-black/5 object-cover"
+            />
+            <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-xs font-semibold text-white">
+              {activeSlide + 1}/{images.length}
+            </span>
+            {activeSlide > 0 && (
+              <button
+                type="button"
+                onClick={() => setSlide(activeSlide - 1)}
+                aria-label="התמונה הקודמת"
+                className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
+              >
+                <ChevronIcon dir="right" size={16} />
+              </button>
+            )}
+            {activeSlide < images.length - 1 && (
+              <button
+                type="button"
+                onClick={() => setSlide(activeSlide + 1)}
+                aria-label="התמונה הבאה"
+                className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
+              >
+                <ChevronIcon dir="left" size={16} />
+              </button>
+            )}
+          </div>
+        )}
+        {images.length === 0 && (
+          <div className="mx-4 mb-3 rounded-lg border border-dashed border-[#CED0D4] bg-[#F8FAFC] p-6 text-center text-sm text-[#65676B]">
+            אין תמונה מצורפת עדיין.
+          </div>
+        )}
+
+        <footer className="border-t border-[#CED0D4] px-4 py-2 text-xs text-[#65676B]">
+          תצוגה להמחשה לפני תזמון
+        </footer>
+      </article>
+    </div>
   );
 }
 
