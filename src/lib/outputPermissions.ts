@@ -1,6 +1,6 @@
 import type { OutputType } from '@/types/db';
 
-export type ProductionPermissionType = OutputType | 'quote';
+export type ProductionPermissionType = OutputType | 'quote' | 'upload';
 export type OutputPermissionsRole = 'admin' | 'user';
 
 export type OutputPermissions = Record<
@@ -17,6 +17,7 @@ export const PRODUCTION_PERMISSION_TYPES: Array<{
   { type: 'presentation', label: 'מצגת' },
   { type: 'pdf', label: 'מסמך' },
   { type: 'quote', label: 'הצעת מחיר' },
+  { type: 'upload', label: 'העלאת תכנים של המותג' },
 ];
 
 export const DEFAULT_OUTPUT_PERMISSIONS: OutputPermissions = {
@@ -25,6 +26,7 @@ export const DEFAULT_OUTPUT_PERMISSIONS: OutputPermissions = {
   presentation: { admin: true, user: true },
   pdf: { admin: true, user: true },
   quote: { admin: true, user: true },
+  upload: { admin: true, user: true },
 };
 
 export function normalizeOutputPermissions(value: unknown): OutputPermissions {

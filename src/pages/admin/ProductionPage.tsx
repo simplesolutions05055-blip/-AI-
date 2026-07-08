@@ -25,6 +25,7 @@ import {
   type ProductionPermissionType,
 } from '@/lib/outputPermissions';
 import ImagePickerModal from '@/components/ImagePickerModal';
+import { UserContentUploadModal } from '@/components/UserContentUploadModal';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
 import { fetchSocialCaption, reviseSocialCaption, saveSocialCaption } from '@/lib/social';
@@ -681,6 +682,9 @@ function ProductionPicker({
   // chosen images ride into the flow (and onward into the deck).
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
+  // Uploading the brand's own content is a permissioned action (not a produced
+  // type), so it opens its own modal instead of selecting a textarea flow.
+  const [uploadContentOpen, setUploadContentOpen] = useState(false);
   // Hint to choose a product type — held back for a moment so it doesn't flash
   // the instant the page loads, and dropped the moment a type is chosen.
   const [showTypeHint, setShowTypeHint] = useState(false);
@@ -696,6 +700,7 @@ function ProductionPicker({
     ),
     [effectivePermissions, profile?.can_create_outputs, role],
   );
+  const canUploadContent = canProduceType(effectivePermissions, 'upload', role, profile?.can_create_outputs ?? false);
   const canCreate = !!selected && allowedTypes.includes(selected) && description.trim().length > 0;
   const singleBrand = brands.length === 1 ? brands[0] : null;
   const selectedBrand = brands.find((brand) => brand.id === brandId) ?? singleBrand ?? null;
@@ -960,6 +965,21 @@ function ProductionPicker({
   ];
   const pickerChips = allPickerChips.filter((item) => allowedTypes.includes(item.to));
   const selectedPickerLabel = pickerChips.find((item) => !item.disabled && item.to === selected)?.label ?? null;
+  // The grid mixes produced types (open the textarea flow) with the upload
+  // action (opens the upload modal). `to === null` marks the upload chip.
+  const gridChips: Array<{ key: string; label: string; tone: string; to: ProductionType | 'quote' | null; disabled?: boolean }> = [
+    ...pickerChips,
+    ...(canUploadContent
+      ? [{ key: 'upload', label: 'העלאת תכנים שלי', tone: 'bg-[var(--tint-olive)]', to: null }]
+      : []),
+  ];
+  const gridColsClass =
+    gridChips.length >= 6 ? 'grid-cols-6'
+      : gridChips.length === 5 ? 'grid-cols-5'
+        : gridChips.length === 4 ? 'grid-cols-4'
+          : gridChips.length === 3 ? 'grid-cols-3'
+            : gridChips.length === 2 ? 'grid-cols-2'
+              : 'grid-cols-1';
   const uploadText = genderCopy(profile?.gender, {
     male: 'העלה קובץ',
     female: 'העלי קובץ',
@@ -981,7 +1001,7 @@ function ProductionPicker({
     },
   ];
   const recentOutputCategories = allRecentOutputCategories.filter((item) =>
-    allowedTypes.includes((item.key === 'quote' ? 'quote' : item.type) as ProductionPermissionType),
+    allowedTypes.includes((item.key === 'quote' ? 'quote' : item.type) as OutputType | 'quote'),
   );
 
   return (
@@ -1039,16 +1059,21 @@ function ProductionPicker({
             </div>
 
             <div className="min-w-0 flex-1 space-y-2">
-              <div className="grid w-full grid-cols-5 gap-2">
-                {pickerChips.map((item) => {
-                  const active = !item.disabled && item.to === selected;
+              <div className={`grid w-full ${gridColsClass} gap-2`}>
+                {gridChips.map((item) => {
+                  const isUpload = item.to === null;
+                  const active = !item.disabled && !isUpload && item.to === selected;
                   return (
                     <button
                       key={item.key}
                       type="button"
                       aria-label={item.label}
                       disabled={item.disabled}
-                      onClick={() => item.to && !item.disabled && setSelected(item.to)}
+                      onClick={() => {
+                        if (item.disabled) return;
+                        if (isUpload) setUploadContentOpen(true);
+                        else if (item.to) setSelected(item.to);
+                      }}
                       className={`group relative flex h-14 min-w-0 items-center justify-center rounded-[10px] border p-1.5 text-center transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:h-[86px] sm:flex-col sm:gap-1.5 sm:px-2 sm:py-2 ${
                         item.disabled
                           ? 'cursor-not-allowed border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-muted)] opacity-50'
@@ -1058,7 +1083,9 @@ function ProductionPicker({
                       }`}
                     >
                       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[9px] border border-[var(--border-soft)] sm:h-11 sm:w-11 ${item.tone} ${active ? 'text-[var(--warm-accent-dark)]' : 'text-[var(--text-strong)] group-hover:text-[var(--warm-accent-dark)]'}`}>
-                        <PickerIcon type={item.to ?? 'text'} className="h-6 w-6 stroke-[1.75]" />
+                        {isUpload
+                          ? <UploadIcon className="h-6 w-6 stroke-[1.75]" />
+                          : <PickerIcon type={item.to ?? 'text'} className="h-6 w-6 stroke-[1.75]" />}
                       </span>
                       <span className="hidden min-w-0 max-w-full sm:block">
                         <span className="block whitespace-normal text-[13px] font-bold leading-5">{item.label}</span>
@@ -1088,7 +1115,7 @@ function ProductionPicker({
               </div>
             )}
 
-            {allowedTypes.length === 0 && (
+            {allowedTypes.length === 0 && !canUploadContent && (
               <div className="rounded-[10px] border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--warn-fg)]">
                 אין לך כרגע הרשאה להפיק תוצרים. אפשר לפנות למנהל המערכת.
               </div>
@@ -1378,6 +1405,12 @@ function ProductionPicker({
           setPickerOpen(false);
           goToFlow({ pickedImages: images, pickedKeys: keys });
         }}
+      />
+
+      <UserContentUploadModal
+        open={uploadContentOpen}
+        onClose={() => setUploadContentOpen(false)}
+        onUploaded={() => navigate('/admin/files?source=user_upload')}
       />
     </div>
   );

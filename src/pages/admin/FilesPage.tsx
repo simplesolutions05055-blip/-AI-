@@ -8,9 +8,11 @@ import { useProfile } from '@/lib/useProfile';
 import { Tooltip } from '@/components/ui/Tooltip';
 import type { OutputType } from '@/types/db';
 import { parseRichText, exportRichTextPdf, exportRichTextDocx, RichTextPreview } from '@/lib/richText';
+import { canProduceType, normalizeOutputPermissions, type OutputPermissions } from '@/lib/outputPermissions';
 import { Spinner } from '@/components/ui/Spinner';
 import { alertDialog, confirmDialog } from '@/lib/dialog';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
+import { UserContentUploadModal, type UploadedUserContentFile } from '@/components/UserContentUploadModal';
 
 const ico = 'h-4 w-4 shrink-0';
 const EyeIcon = () => (
@@ -84,23 +86,15 @@ type FileFilter = {
 const FILE_TYPE_FILTERS: FileFilter[] = [
   { key: 'all', types: null, queryType: null, source: null, label: 'הכל', icon: '▦' },
   { key: 'image', types: ['image'], queryType: 'image', source: null, label: 'תמונה/גרפיקה', icon: TYPE_ICON.image },
+  { key: 'text', types: ['text'], queryType: 'text', source: null, label: 'פוסט / טקסט', icon: TYPE_ICON.text },
   { key: 'presentation', types: ['presentation'], queryType: 'presentation', source: null, label: 'מצגת', icon: TYPE_ICON.presentation },
-  { key: 'document', types: ['pdf', 'text'], queryType: 'pdf', source: null, label: 'מסמך', icon: TYPE_ICON.pdf },
+  { key: 'document', types: ['pdf'], queryType: 'pdf', source: null, label: 'מסמך', icon: TYPE_ICON.pdf },
   { key: 'quote', types: ['pdf'], queryType: 'pdf', source: 'quote', label: 'הצעות מחיר', icon: '💰' },
   { key: 'user_upload', types: ['image'], queryType: null, source: 'user_upload', label: 'תכנים שהעליתי', icon: '⬆️' },
 ];
 
 function isOutputType(value: string | null): value is OutputType {
   return value === 'image' || value === 'presentation' || value === 'pdf' || value === 'text';
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(reader.error ?? new Error('file_read_failed'));
-    reader.readAsDataURL(file);
-  });
 }
 
 function parsePresentationSlides(text: string | null): Array<{ title: string; body: string }> {
@@ -152,6 +146,7 @@ export default function FilesPage() {
     rawSource === 'quote' || rawSource === 'user_upload' ? rawSource : null;
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
+  const [permissions, setPermissions] = useState<OutputPermissions | null>(null);
   const [files, setFiles] = useState<FileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -171,22 +166,12 @@ export default function FilesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [targetFileRow, setTargetFileRow] = useState<FileRow | null>(null);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [uploadFiles, setUploadFiles] = useState<Array<{ id: string; file: File; previewUrl: string }>>([]);
-  const [uploadSaving, setUploadSaving] = useState(false);
-  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (targetFileRow && fileInputRef.current) {
       fileInputRef.current.click();
     }
   }, [targetFileRow]);
-
-  useEffect(() => {
-    return () => {
-      for (const item of uploadFiles) URL.revokeObjectURL(item.previewUrl);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function handleUploadFinal(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -232,18 +217,22 @@ export default function FilesPage() {
   useEffect(() => {
     const client = createSupabaseBrowserClient();
     (async () => {
-      const { data } = await client
-        .from('outputs')
-        // Show every produced תוצר — file-backed (image/PDF) and text-only
-        // (text/presentation delivered as WhatsApp text) alike.
-        .select('id, request_id, output_type, storage_path, text_content, mime_type, created_at')
-        .order('created_at', { ascending: false })
-        // Admins must see every תוצר; cap at Supabase's default max-rows ceiling.
-        .limit(1000);
+      const [{ data }, { data: auth }, { data: settingsRow }] = await Promise.all([
+        client
+          .from('outputs')
+          // Show every produced תוצר — file-backed (image/PDF) and text-only
+          // (text/presentation delivered as WhatsApp text) alike.
+          .select('id, request_id, output_type, storage_path, text_content, mime_type, created_at')
+          .order('created_at', { ascending: false })
+          // Admins must see every תוצר; cap at Supabase's default max-rows ceiling.
+          .limit(1000),
+        client.auth.getUser(),
+        client.from('settings').select('value_json').eq('key', 'output_permissions').maybeSingle(),
+      ]);
       const rawRows = (data ?? []) as Omit<FileRow, 'creator' | 'creator_id' | 'request_source' | 'brand_logo_url' | 'brand_id' | 'structured_brief'>[];
+      setPermissions(normalizeOutputPermissions((settingsRow as { value_json?: unknown } | null)?.value_json));
 
       // The admin currently using the site — credited for simulator outputs.
-      const { data: auth } = await client.auth.getUser();
       const siteUser = auth.user?.email || auth.user?.user_metadata?.name || 'משתמש מחובר';
 
       // Resolve who created each output via request -> conversation.
@@ -511,6 +500,26 @@ export default function FilesPage() {
   }
 
   const visibleFiles = files.filter((file) => {
+    // 1. Strictly filter out files the user doesn't have permission to see/create
+    const role = profile?.role ?? 'user';
+    const canCreateOutputs = profile?.can_create_outputs ?? false;
+    
+    if (file.request_source !== 'user_upload') {
+      let requiredType = file.output_type as any;
+      if (file.request_source === 'quote') requiredType = 'quote';
+
+      if (permissions && !canProduceType(permissions, requiredType, role, canCreateOutputs)) {
+        return false;
+      }
+    }
+
+    // Uploaded brand content is private to its uploader — a regular user only
+    // sees files they uploaded themselves; an admin sees everyone's uploads.
+    if (file.request_source === 'user_upload' && !isAdmin && file.creator_id !== profile?.id) {
+      return false;
+    }
+
+    // 2. Filter by current active tab
     const matchesSource =
       sourceFilter === 'quote'
         ? file.request_source === 'quote'
@@ -520,93 +529,40 @@ export default function FilesPage() {
     if (!matchesSource) return false;
     if (sourceFilter === 'user_upload') return file.output_type === 'image';
     if (sourceFilter === 'quote') return file.output_type === 'pdf';
-    if (filterType === 'pdf' || filterType === 'text') return file.output_type === 'pdf' || file.output_type === 'text';
     return filterType ? file.output_type === filterType : true;
   });
   const manageableVisibleFiles = visibleFiles.filter(canManageFile);
 
-  function addUploadFiles(fileList: FileList | null) {
-    const nextFiles = Array.from(fileList ?? []).filter((file) => file.type.startsWith('image/'));
-    if (nextFiles.length === 0) return;
-    setUploadFiles((current) => [
+  async function handleUserUploaded(uploaded: UploadedUserContentFile[]) {
+    const client = createSupabaseBrowserClient();
+    const createdAt = new Date().toISOString();
+    const rows: FileRow[] = uploaded.map((file) => ({
+      id: file.id,
+      request_id: file.request_id,
+      output_type: 'image',
+      storage_path: file.storage_path,
+      text_content: file.file_name,
+      mime_type: file.mime_type,
+      created_at: createdAt,
+      creator: 'אני',
+      request_source: 'user_upload',
+      brand_logo_url: null,
+      creator_id: profile?.id ?? null,
+      brand_id: null,
+      structured_brief: { source: 'user_upload', title: file.file_name },
+    }));
+    const signedPairs = await Promise.all(
+      rows.map(async (row) => {
+        const { data: signed } = await client.storage.from('outputs').createSignedUrl(row.storage_path as string, 600);
+        return [row.id, signed?.signedUrl] as const;
+      }),
+    );
+    setFiles((current) => [...rows, ...current]);
+    setPreviews((current) => ({
+      ...Object.fromEntries(signedPairs.filter(([, url]) => url)),
       ...current,
-      ...nextFiles.map((file) => ({ id: randomUUID(), file, previewUrl: URL.createObjectURL(file) })),
-    ]);
-  }
-
-  function removeUploadFile(id: string) {
-    setUploadFiles((current) => {
-      const target = current.find((item) => item.id === id);
-      if (target) URL.revokeObjectURL(target.previewUrl);
-      return current.filter((item) => item.id !== id);
-    });
-  }
-
-  function closeUploadModal() {
-    setUploadModalOpen(false);
-    setUploadFiles((current) => {
-      for (const item of current) URL.revokeObjectURL(item.previewUrl);
-      return [];
-    });
-  }
-
-  async function saveUploadedContent() {
-    if (uploadFiles.length === 0 || uploadSaving) return;
-    setUploadSaving(true);
-    try {
-      const client = createSupabaseBrowserClient();
-      const payloadFiles = await Promise.all(
-        uploadFiles.map(async (item) => ({
-          file_base64: await readFileAsDataUrl(item.file),
-          file_name: item.file.name,
-          mime_type: item.file.type,
-        })),
-      );
-      const { data, error } = await client.functions.invoke('upload-user-content', {
-        body: { files: payloadFiles },
-      });
-      if (error) throw error;
-      const payload = data as {
-        ok?: boolean;
-        error?: string;
-        files?: Array<{ id: string; request_id: string; storage_path: string; mime_type: string; file_name: string }>;
-      } | null;
-      if (!payload?.ok) throw new Error(payload?.error ?? 'upload_failed');
-
-      const createdAt = new Date().toISOString();
-      const rows: FileRow[] = (payload.files ?? []).map((file) => ({
-        id: file.id,
-        request_id: file.request_id,
-        output_type: 'image',
-        storage_path: file.storage_path,
-        text_content: file.file_name,
-        mime_type: file.mime_type,
-        created_at: createdAt,
-        creator: 'אני',
-        request_source: 'user_upload',
-        brand_logo_url: null,
-        creator_id: profile?.id ?? null,
-        brand_id: null,
-        structured_brief: { source: 'user_upload', title: file.file_name },
-      }));
-      const signedPairs = await Promise.all(
-        rows.map(async (row) => {
-          const { data: signed } = await client.storage.from('outputs').createSignedUrl(row.storage_path as string, 600);
-          return [row.id, signed?.signedUrl] as const;
-        }),
-      );
-      setFiles((current) => [...rows, ...current]);
-      setPreviews((current) => ({
-        ...Object.fromEntries(signedPairs.filter(([, url]) => url)),
-        ...current,
-      }) as Record<string, string>);
-      closeUploadModal();
-      navigate('/admin/files?source=user_upload');
-    } catch (err) {
-      await alertDialog('העלאה נכשלה: ' + String(err));
-    } finally {
-      setUploadSaving(false);
-    }
+    }) as Record<string, string>);
+    navigate('/admin/files?source=user_upload');
   }
 
   async function deleteSelected() {
@@ -687,7 +643,16 @@ export default function FilesPage() {
 
       <div className="mb-5 sm:overflow-x-auto sm:pb-1">
         <div className="flex flex-wrap gap-2 rounded-2xl border border-[#EAECF0] bg-white p-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:inline-flex sm:flex-nowrap">
-          {FILE_TYPE_FILTERS.map((item) => {
+          {FILE_TYPE_FILTERS.filter(item => {
+            if (item.key === 'all' || item.key === 'user_upload') return true;
+            if (!permissions) return true;
+            const role = profile?.role ?? 'user';
+            const canCreateOutputs = profile?.can_create_outputs ?? false;
+            if (item.key === 'document') {
+              return canProduceType(permissions, 'pdf', role, canCreateOutputs);
+            }
+            return canProduceType(permissions, item.key as any, role, canCreateOutputs);
+          }).map((item) => {
             const active =
               sourceFilter === item.source &&
               (item.types === null
@@ -964,103 +929,11 @@ export default function FilesPage() {
         </div>
       )}
 
-      {uploadModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-3 pb-[calc(var(--safe-bottom)+12px)] sm:items-center sm:p-4"
-          dir="rtl"
-          onClick={closeUploadModal}
-        >
-          <section
-            className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl sm:rounded-xl"
-            onClick={(e) => e.stopPropagation()}
-            aria-label="העלאת תכנים"
-            role="dialog"
-            aria-modal="true"
-          >
-            <header className="flex items-start justify-between gap-3 border-b border-[var(--border)] p-4 sm:p-5">
-              <div>
-                <h2 className="text-lg font-bold">העלאת תכנים שהעליתי</h2>
-                <p className="mt-1 text-sm text-[var(--muted)]">
-                  העלו תמונות משלכם כדי להשתמש בהן אחר כך בשילוב בתוך עיצובים או כתוכן עצמאי.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeUploadModal}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-2xl leading-none text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-                aria-label="סגירה"
-              >
-                ×
-              </button>
-            </header>
-
-            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
-              <input
-                ref={uploadInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(event) => {
-                  addUploadFiles(event.target.files);
-                  event.target.value = '';
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => uploadInputRef.current?.click()}
-                disabled={uploadSaving}
-                className="flex min-h-32 w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-brand/40 bg-brand/5 px-4 py-6 text-center font-semibold text-brand hover:bg-brand/10 disabled:opacity-50"
-              >
-                <UploadIcon />
-                בחירת תמונות מהמחשב
-                <span className="text-xs font-normal text-[var(--muted)]">אפשר לבחור כמה תמונות יחד</span>
-              </button>
-
-              {uploadFiles.length > 0 && (
-                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  {uploadFiles.map((item) => (
-                    <div key={item.id} className="relative overflow-hidden rounded-xl border border-[var(--border)] bg-gray-50">
-                      <img src={item.previewUrl} alt={item.file.name} className="aspect-square w-full object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => removeUploadFile(item.id)}
-                        disabled={uploadSaving}
-                        aria-label="הסרת תמונה"
-                        className="absolute left-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-xl leading-none text-white hover:bg-black/80 disabled:opacity-50"
-                      >
-                        ×
-                      </button>
-                      <div className="p-2">
-                        <p className="truncate text-xs font-semibold" title={item.file.name}>{item.file.name}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <footer className="grid shrink-0 grid-cols-2 gap-3 border-t border-[var(--border)] bg-white p-4 sm:flex sm:justify-start sm:p-5">
-              <button
-                type="button"
-                onClick={saveUploadedContent}
-                disabled={uploadSaving || uploadFiles.length === 0}
-                className="min-h-11 rounded-lg bg-brand px-4 py-2.5 font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {uploadSaving ? 'מעלה...' : `העלאה${uploadFiles.length ? ` (${uploadFiles.length})` : ''}`}
-              </button>
-              <button
-                type="button"
-                onClick={closeUploadModal}
-                disabled={uploadSaving}
-                className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 font-semibold hover:bg-gray-50 disabled:opacity-50"
-              >
-                ביטול
-              </button>
-            </footer>
-          </section>
-        </div>
-      )}
+      <UserContentUploadModal
+        open={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        onUploaded={handleUserUploaded}
+      />
 
       {textPreview && (
         <div 

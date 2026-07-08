@@ -96,19 +96,19 @@ export default function SettingsPage() {
   if (loading) return <p className="text-[var(--muted)]"><Spinner /></p>;
 
   return (
-    <div className="space-y-6">
-      <div className="sticky top-[calc(var(--safe-top)+3.75rem)] z-20 -mx-3 flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-normal">הגדרות מערכת</h1>
           <p className="mt-1 hidden text-sm text-[var(--muted)] sm:block">נהלו נוסחים, הרשאות, מיילים, מודלים ומגבלות.</p>
         </div>
-        <button onClick={save} className="rounded-lg bg-brand text-white px-4 py-2 text-sm font-semibold">
+        <button onClick={save} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white sm:w-auto">
           {saved ? 'נשמר' : 'שמירת הגדרות'}
         </button>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-white p-1">
-        <div className="flex min-w-max gap-1">
+      <div className="rounded-xl border border-[var(--border)] bg-white p-1">
+        <div className="grid grid-cols-2 gap-1 sm:flex sm:flex-wrap">
           {SETTINGS_TABS.map((tab) => {
             const active = activeTab === tab.id;
             return (
@@ -116,7 +116,7 @@ export default function SettingsPage() {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`min-h-10 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                className={`min-h-10 rounded-lg px-2 py-2 text-sm font-semibold transition sm:px-3 ${
                   active
                     ? 'bg-brand text-white'
                     : 'text-[var(--muted)] hover:bg-gray-50 hover:text-[var(--text)]'
@@ -212,7 +212,34 @@ export default function SettingsPage() {
         <p className="mb-4 text-xs text-[var(--muted)]">
           קובע אילו סוגי תוצרים כל תפקיד יכול להפיק. למשתמש רגיל עדיין נדרשת גם הרשאת הפקה כללית במסך משתמשים והרשאות.
         </p>
-        <div className="overflow-hidden">
+        <div className="space-y-2 sm:hidden">
+          {PRODUCTION_PERMISSION_TYPES.map((item) => (
+            <div key={item.type} className="rounded-lg border border-[var(--border)] p-3">
+              <div className="mb-3 text-sm font-semibold leading-snug">{item.label}</div>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <label className="flex min-h-11 items-center justify-between gap-2 rounded-lg bg-gray-50 px-3">
+                  <span>מנהל</span>
+                  <PermissionCheckbox
+                    permissions={outputPermissions}
+                    type={item.type}
+                    role="admin"
+                    onChange={(next) => update('output_permissions', next)}
+                  />
+                </label>
+                <label className="flex min-h-11 items-center justify-between gap-2 rounded-lg bg-gray-50 px-3">
+                  <span>משתמש</span>
+                  <PermissionCheckbox
+                    permissions={outputPermissions}
+                    type={item.type}
+                    role="user"
+                    onChange={(next) => update('output_permissions', next)}
+                  />
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="hidden overflow-hidden sm:block">
           <table className="w-full table-fixed border-collapse text-sm">
             <colgroup>
               <col />
