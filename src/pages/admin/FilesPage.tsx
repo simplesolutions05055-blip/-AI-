@@ -98,8 +98,27 @@ function isOutputType(value: string | null): value is OutputType {
 }
 
 function parsePresentationSlides(text: string | null): Array<{ title: string; body: string }> {
-  const source = (text ?? '').trim();
+  let source = (text ?? '').trim();
   if (!source) return [];
+
+  if (source.startsWith('```')) {
+    source = source.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+  }
+
+  if (source.startsWith('{')) {
+    try {
+      const obj = JSON.parse(source);
+      if (obj.brief) {
+        return [{
+          title: obj.brief.topic || 'הכנת מצגת',
+          body: `**מטרה:** ${obj.brief.goal || ''}\n\n${obj.message_to_user || ''}`
+        }];
+      }
+    } catch (e) {
+      // Fallback to text parsing
+    }
+  }
+
   const lines = source.split(/\r?\n/);
   const slides: Array<{ title: string; body: string }> = [];
   let currentTitle = '';
@@ -747,7 +766,14 @@ export default function FilesPage() {
                           ) : !file.storage_path && file.text_content ? (
                             <div className="pointer-events-none h-full w-full overflow-hidden bg-white">
                               <div className="w-[250%] origin-top-right scale-[0.4] p-4">
-                                <RichTextPreview blocks={parseRichText(file.text_content)} />
+                                <RichTextPreview blocks={parseRichText(
+                                  file.output_type === 'presentation'
+                                    ? (() => {
+                                        const slide = parsePresentationSlides(file.text_content)[0];
+                                        return slide ? `# ${slide.title}\n\n${slide.body}` : file.text_content;
+                                      })()
+                                    : file.text_content
+                                )} />
                               </div>
                             </div>
                           ) : (

@@ -428,7 +428,7 @@ Deno.serve(async (req) => {
 
     const aiModels = await getSetting<{ system_message?: string; text_model?: string }>(database, 'ai_models');
     const { text, usage } = await generatePresentationOutline(
-      aiModels?.system_message || fallbackSystemMessage,
+      fallbackSystemMessage,
       brief,
       assetLines.length ? assetLines.join('\n') : undefined
     );

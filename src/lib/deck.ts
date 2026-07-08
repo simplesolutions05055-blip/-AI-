@@ -155,6 +155,20 @@ export function parseOutlineSlides(text: string | null | undefined): DeckSlide[]
   return slides.map((s) => ({ ...s, bullets: (s.bullets ?? []).filter(Boolean) }));
 }
 
+export function serializeDeckSlidesToMarkdown(slides: DeckSlide[]): string {
+  return slides.map((s, i) => {
+    let out = `#### שקף ${i + 1}: ${s.title || ''}\n`;
+    if (s.bullets && s.bullets.length) {
+      out += `- **תוכן:**\n`;
+      s.bullets.forEach(b => out += `  - ${b}\n`);
+    } else if (s.body) {
+      out += `- **תוכן:**\n  - ${s.body}\n`;
+    }
+    if (s.image_suggestion) out += `- **הנחיות עיצוב:** ${s.image_suggestion}\n`;
+    return out.trim();
+  }).join('\n\n');
+}
+
 // Resolve the slides to render: prefer the Edge function's rich JSON deck when
 // available, otherwise fall back to parsing the approved outline text. Whichever
 // yields a fuller deck wins, so we never end up with a single slide.

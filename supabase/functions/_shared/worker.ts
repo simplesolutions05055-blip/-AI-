@@ -654,7 +654,12 @@ async function runRequestPipeline(
       effectiveNextQuestion = String(gated.message_to_user ?? '') || nextQuestion;
     }
 
-    const requestedOutputType = (b.output_type as string) ?? (request.output_type as string) ?? 'text';
+    let requestedOutputType = (b.output_type as string) ?? (request.output_type as string) ?? 'text';
+    if (requestedOutputType === 'presentation_kit') {
+      requestedOutputType = 'presentation';
+      b.output_type = 'presentation';
+    }
+
     if (effectiveNextQuestion || b.ready !== true) {
       Object.assign(
         b,
@@ -859,7 +864,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         `פרומפט שנשלח למנוע התמונה:\n${prompt}`,
       ].join('\n\n');
     } else if (outputType === 'presentation') {
-      const genPrompt = systemPrompt + (await buildSkillInstructions(database, 'presentation', { outputType: 'presentation', clientType: genClientType })) + lockBlock + learnedBlock;
+      const genPrompt = (await buildSkillInstructions(database, 'presentation', { outputType: 'presentation', clientType: genClientType })) + lockBlock + learnedBlock;
       const { text, usage } = await generatePresentationOutline(genPrompt, brief);
       await recordUsage(database, requestId, 'openai', 'chat', usage.prompt_tokens, usage.completion_tokens, estimateTextCost(usage.prompt_tokens, usage.completion_tokens));
       textContent = text;

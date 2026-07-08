@@ -13,6 +13,7 @@ import {
   renderFullSlideDeckToPdf,
   renderFullSlideDeckToPptx,
   downloadBlob,
+  serializeDeckSlidesToMarkdown,
   type DeckBrand,
   type DeckImage,
   type DeckSlide,
@@ -295,6 +296,16 @@ export default function GptImagesDeck({
       if (!deck.length) throw new Error('לא נמצא תוכן שקפים לעריכה.');
       setSlides(deck);
       setContentSlides(deck.map((s) => ({ ...s })));
+
+      if (requestId && !slides) {
+        try {
+          const db = createSupabaseBrowserClient();
+          const markdown = serializeDeckSlidesToMarkdown(deck);
+          await db.from('outputs').update({ text_content: markdown }).eq('request_id', requestId);
+        } catch (e) {
+          console.error('Failed to auto-save presentation slides:', e);
+        }
+      }
     } catch (e) {
       setContentError(String((e as { message?: string })?.message ?? e));
     } finally {
@@ -327,9 +338,19 @@ export default function GptImagesDeck({
   }
 
   // Commit the edited text into `slides` so it flows into image generation.
-  function applyContentEdits() {
+  async function applyContentEdits() {
     setSlides(contentSlides.map((s) => ({ ...s })));
     setContentOpen(false);
+
+    if (requestId) {
+      try {
+        const db = createSupabaseBrowserClient();
+        const markdown = serializeDeckSlidesToMarkdown(contentSlides);
+        await db.from('outputs').update({ text_content: markdown }).eq('request_id', requestId);
+      } catch (e) {
+        console.error('Failed to save presentation slides:', e);
+      }
+    }
   }
 
   async function regeneratePreviewSlide(idx: number) {
