@@ -21,6 +21,7 @@ import {
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
+import { InfoHint } from '@/components/ui/InfoHint';
 
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
@@ -259,10 +260,12 @@ export default function GptImagesDeck({
         if (wanted && !wanted.has(row.slideIndex)) continue;
         if (!newestBySlide.has(row.slideIndex)) newestBySlide.set(row.slideIndex, row);
       }
-      const loaded: PreviewSlide[] = [];
-      for (const row of [...newestBySlide.values()].sort((a, b) => a.slideIndex - b.slideIndex)) {
-        loaded.push({ index: row.slideIndex, row, image: await loadPersistedDeckImage(row) });
-      }
+      // Inline each slide's image to base64 in parallel — sequential fetch +
+      // encode per image made the preview slow to open.
+      const previewRows = [...newestBySlide.values()].sort((a, b) => a.slideIndex - b.slideIndex);
+      const loaded: PreviewSlide[] = await Promise.all(
+        previewRows.map(async (row) => ({ index: row.slideIndex, row, image: await loadPersistedDeckImage(row) })),
+      );
       if (!loaded.length) throw new Error('לא נמצאו שקפים שנוצרו למצגת הזו.');
       setPreviewSlides(loaded);
       setPreviewOpen(true);
@@ -508,15 +511,17 @@ export default function GptImagesDeck({
 
   return (
     <div className="mb-5 rounded-xl border-2 border-brand/25 bg-brand/[0.03] p-4" dir="rtl">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-3 flex items-center gap-2">
         <span className="text-sm font-bold">מצגת עם GPT Images</span>
         <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-bold text-brand">חדש</span>
+        <InfoHint title="מצגת עם GPT Images" label="איך זה עובד?" className="mr-auto">
+          <p>
+            ⚠️ אפשרות זו <b>יוצרת את התמונות במצגת עם GPT</b> — כל שקף שתבחרו מקבל תמונה שנוצרת במיוחד עבורו
+            לפי הבריף וצבעי המותג (יש עלות לפי מספר התמונות). כתבו אילו שקפים להפיק — למשל <b>1-5</b> —
+            כדי לבחון את התוצאה לפני שמפיקים את כל המצגת. ההפקה רצה בשרת ברקע ותישלח למיילים שתבחרו בסיום.
+          </p>
+        </InfoHint>
       </div>
-      <p className="mb-3 text-xs leading-relaxed text-[var(--muted)]">
-        ⚠️ אפשרות זו <b>יוצרת את התמונות במצגת עם GPT</b> — כל שקף שתבחרו מקבל תמונה שנוצרת במיוחד עבורו
-        לפי הבריף וצבעי המותג (יש עלות לפי מספר התמונות). כתבו אילו שקפים להפיק — למשל <b>1-5</b> —
-        כדי לבחון את התוצאה לפני שמפיקים את כל המצגת. ההפקה רצה בשרת ברקע ותישלח למיילים שתבחרו בסיום.
-      </p>
 
       {/* Slide-by-slide viewer + per-slide AI editor for an already-generated
           deck. Opens automatically when saved images exist (see effect above),
@@ -596,8 +601,12 @@ export default function GptImagesDeck({
       <div className="mb-3 rounded-lg border border-[var(--border)] bg-white p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
-            <div className="text-sm font-semibold">תוכן המצגת</div>
-            <p className="text-xs text-[var(--muted)]">צפייה ועריכה של תוכן כל שקף — ישירות או לפי הנחיה ל-AI — לפני יצירת התמונות.</p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold">תוכן המצגת</span>
+              <InfoHint title="תוכן המצגת">
+                צפייה ועריכה של תוכן כל שקף — ישירות או לפי הנחיה ל-AI — לפני יצירת התמונות.
+              </InfoHint>
+            </div>
           </div>
           <button
             type="button"
@@ -612,11 +621,28 @@ export default function GptImagesDeck({
 
       {/* Mode: template (editable text + image) vs full-slide (whole slide as one AI image). */}
       <div className="mb-3">
-        <div className="mb-1.5 text-xs font-semibold">סוג העיצוב</div>
+        <div className="mb-1.5 flex items-center gap-2">
+          <span className="text-xs font-semibold">סוג העיצוב</span>
+          <InfoHint title="סוג העיצוב">
+            <div className="space-y-3">
+              <div>
+                <div className="font-semibold">עיצוב עם תיבות טקסט</div>
+                <p className="text-[var(--muted)]">תמונה בצד + טקסט חד וניתן לעריכה. מהיר וזול יותר.</p>
+              </div>
+              <div>
+                <div className="font-semibold">שקף מלא ב-AI (NotebookLM)</div>
+                <p className="text-[var(--muted)]">כל שקף = תמונה אחת שכוללת הכל. יפה ומגוון, אך יקר ואיטי יותר והטקסט לא ניתן לעריכה.</p>
+              </div>
+              <p className="text-amber-700">
+                שקף מלא: ~$0.25 לשקף וכ-2–3 דקות לשקף. מומלץ להפיק קודם 1–2 שקפים לבדיקה.
+              </p>
+            </div>
+          </InfoHint>
+        </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {([
-            { key: 'template', title: 'עיצוב עם תיבות טקסט', desc: 'תמונה בצד + טקסט חד וניתן לעריכה. מהיר וזול יותר.' },
-            { key: 'fullslide', title: 'שקף מלא ב-AI (NotebookLM)', desc: 'כל שקף = תמונה אחת שכוללת הכל. יפה ומגוון, אך יקר ואיטי יותר והטקסט לא ניתן לעריכה.' },
+            { key: 'template', title: 'עיצוב עם תיבות טקסט' },
+            { key: 'fullslide', title: 'שקף מלא ב-AI (NotebookLM)' },
           ] as const).map((opt) => (
             <button
               key={opt.key}
@@ -640,15 +666,9 @@ export default function GptImagesDeck({
                 </span>
                 {opt.title}
               </div>
-              <div className="mt-1 text-[11px] leading-snug text-[var(--muted)]">{opt.desc}</div>
             </button>
           ))}
         </div>
-        {mode === 'fullslide' && (
-          <p className="mt-1.5 text-[11px] text-amber-700">
-            שקף מלא: ~$0.25 לשקף וכ-2–3 דקות לשקף. מומלץ להפיק קודם 1–2 שקפים לבדיקה.
-          </p>
-        )}
       </div>
 
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">

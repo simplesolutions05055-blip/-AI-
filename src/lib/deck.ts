@@ -321,20 +321,23 @@ export async function fetchPersistedDeckImages(requestId: string): Promise<Persi
     mime_type: string | null;
   }>) ?? [];
 
-  const out: PersistedDeckImage[] = [];
-  for (const r of rows) {
-    const { data: signed } = await db.storage.from('outputs').createSignedUrl(r.storage_path, 600);
-    if (!signed?.signedUrl) continue;
-    out.push({
+  // Create all signed URLs in parallel — sequential round-trips made this slow
+  // on requests with many generated images.
+  const signed = await Promise.all(
+    rows.map((r) =>
+      db.storage.from('outputs').createSignedUrl(r.storage_path, 600).then((s) => ({ r, url: s.data?.signedUrl })),
+    ),
+  );
+  return signed
+    .filter((s): s is { r: (typeof rows)[number]; url: string } => Boolean(s.url))
+    .map(({ r, url }) => ({
       id: r.id,
       slideIndex: r.slide_index ?? 0,
       caption: r.caption || 'תמונת AI',
-      previewUrl: signed.signedUrl,
+      previewUrl: url,
       storagePath: r.storage_path,
       mimeType: r.mime_type || 'image/png',
-    });
-  }
-  return out;
+    }));
 }
 
 function imageOutputCaption(brief: unknown): string {
@@ -369,23 +372,75 @@ export async function fetchBrandAiImages(brandId: string): Promise<PersistedDeck
     caption: row.caption ?? imageOutputCaption(row.brief),
   }));
 
-  const out: PersistedDeckImage[] = [];
+  // Dedup by storage path, then create all signed URLs in parallel (one
+  // round-trip each — doing them sequentially made the image picker crawl).
   const seenPaths = new Set<string>();
-  for (const r of rows) {
-    if (seenPaths.has(r.storage_path)) continue;
-    seenPaths.add(r.storage_path);
-    const { data: signed } = await db.storage.from('outputs').createSignedUrl(r.storage_path, 600);
-    if (!signed?.signedUrl) continue;
-    out.push({
+  const deduped = rows.filter((r) => (seenPaths.has(r.storage_path) ? false : (seenPaths.add(r.storage_path), true)));
+  const signed = await Promise.all(
+    deduped.map((r) =>
+      db.storage.from('outputs').createSignedUrl(r.storage_path, 600).then((s) => ({ r, url: s.data?.signedUrl })),
+    ),
+  );
+  return signed
+    .filter((s): s is { r: (typeof deduped)[number]; url: string } => Boolean(s.url))
+    .map(({ r, url }) => ({
       id: r.id,
       slideIndex: r.slide_index ?? 0,
       caption: r.caption || 'תמונת AI',
-      previewUrl: signed.signedUrl,
+      previewUrl: url,
       storagePath: r.storage_path,
       mimeType: r.mime_type || 'image/png',
-    });
+    }));
+}
+
+// A brand image referenced for the picker: a signed preview URL only (no
+// download/base64 up front). Inlined to a full DeckImage on confirm via
+// loadBrandDeckImage — mirroring how AI images are handled, so opening the
+// picker stays fast regardless of image size or count.
+export interface BrandImageRef {
+  caption: string;
+  isLogo: boolean;
+  previewUrl: string;
+  storagePath: string;
+}
+
+// Lightweight brand-image list for the picker: metadata + signed preview URLs,
+// with the signed URLs created in parallel. No image bytes are downloaded here.
+export async function fetchBrandImageRefs(brandId: string): Promise<BrandImageRef[]> {
+  const db = createSupabaseBrowserClient();
+  const [{ data: brand }, { data: assets }] = await Promise.all([
+    db.from('brands').select('logo_path').eq('id', brandId).single(),
+    db.from('brand_assets').select('storage_path, caption').eq('brand_id', brandId),
+  ]);
+
+  const wanted: Array<{ path: string; caption: string; isLogo: boolean }> = [];
+  const brandRow = brand as { logo_path?: string | null } | null;
+  if (brandRow?.logo_path) wanted.push({ path: brandRow.logo_path, caption: 'לוגו', isLogo: true });
+  for (const a of (assets as Array<{ storage_path: string; caption: string | null }>) ?? []) {
+    wanted.push({ path: a.storage_path, caption: a.caption || 'תמונת מיתוג', isLogo: false });
   }
-  return out;
+
+  const seen = new Set<string>();
+  const deduped = wanted.filter((w) => (seen.has(w.path) ? false : (seen.add(w.path), true)));
+  const signed = await Promise.all(
+    deduped.map((w) =>
+      db.storage.from('branding').createSignedUrl(w.path, 600).then((s) => ({ w, url: s.data?.signedUrl })),
+    ),
+  );
+  return signed
+    .filter((s): s is { w: (typeof deduped)[number]; url: string } => Boolean(s.url))
+    .map(({ w, url }) => ({ caption: w.caption, isLogo: w.isLogo, previewUrl: url, storagePath: w.path }));
+}
+
+// Inline a single brand image ref to a self-contained DeckImage (base64) on
+// confirm. The bytes are usually warm in the browser HTTP cache from the
+// thumbnail, so this is cheap despite fetching the full image.
+export async function loadBrandDeckImage(ref: BrandImageRef): Promise<DeckImage> {
+  const res = await fetch(ref.previewUrl);
+  const blob = await res.blob();
+  const dataUrl = await blobToDataUrl(blob);
+  const dim = await imageSize(dataUrl);
+  return { caption: ref.caption, isLogo: ref.isLogo, dataUrl, natW: dim.w, natH: dim.h };
 }
 
 // Inline a persisted image as a self-contained DeckImage (base64 dataUrl) so it

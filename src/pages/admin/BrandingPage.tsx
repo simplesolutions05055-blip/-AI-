@@ -221,9 +221,15 @@ export default function BrandingPage() {
         .eq('brand_id', b.id)
         .order('created_at', { ascending: false });
       setTextSources((sources ?? []) as BusinessTextSource[]);
+      // Resolve all preview URLs in parallel — one round-trip each, so a
+      // sequential loop made the screen crawl on brands with many assets.
       const next: Record<string, string> = {};
-      if (b.logo_path) next['__logo'] = await signedUrl(b.logo_path);
-      for (const a of list) next[a.id] = await signedUrl(a.storage_path);
+      const [logoUrl, assetUrls] = await Promise.all([
+        b.logo_path ? signedUrl(b.logo_path) : Promise.resolve(''),
+        Promise.all(list.map((a) => signedUrl(a.storage_path))),
+      ]);
+      if (b.logo_path) next['__logo'] = logoUrl;
+      list.forEach((a, i) => { next[a.id] = assetUrls[i]; });
       setPreviews(next);
     }
   }

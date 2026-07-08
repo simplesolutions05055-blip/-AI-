@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  fetchBrandImages,
+  fetchBrandImageRefs,
   fetchBrandAiImages,
+  loadBrandDeckImage,
   loadPersistedDeckImage,
   type DeckImage,
   type PersistedDeckImage,
+  type BrandImageRef,
 } from '@/lib/deck';
 import { Tooltip } from '@/components/ui/Tooltip';
 
-// A selectable thumbnail: either an already-inlined brand image, or an AI image
-// referenced by its persisted row (inlined to base64 only on confirm).
+// A selectable thumbnail. Both kinds reference their image by a signed preview
+// URL and are inlined to base64 only on confirm — so opening the picker never
+// downloads full-resolution images.
 type PickItem =
-  | { key: string; kind: 'brand'; caption: string; isLogo: boolean; previewUrl: string; image: DeckImage }
+  | { key: string; kind: 'brand'; caption: string; isLogo: boolean; previewUrl: string; ref: BrandImageRef }
   | { key: string; kind: 'ai'; caption: string; isLogo: false; previewUrl: string; row: PersistedDeckImage };
 
 function ImageSkeletonCard() {
@@ -127,17 +130,17 @@ export default function ImagePickerModal({
     setError(null);
     // Run the two sources independently so one failing (e.g. RLS on AI outputs)
     // doesn't blank or hang the other.
-    Promise.allSettled([fetchBrandImages(brandId), fetchBrandAiImages(brandId)])
+    Promise.allSettled([fetchBrandImageRefs(brandId), fetchBrandAiImages(brandId)])
       .then(([brandRes, aiRes]) => {
         if (!alive) return;
         if (brandRes.status === 'fulfilled') {
-          const brandPickItems: PickItem[] = brandRes.value.images.map((img, i) => ({
-            key: `brand:${i}:${img.isLogo ? 'logo' : img.caption}`,
+          const brandPickItems: PickItem[] = brandRes.value.map((ref, i) => ({
+            key: `brand:${i}:${ref.isLogo ? 'logo' : ref.caption}`,
             kind: 'brand' as const,
-            caption: img.caption,
-            isLogo: img.isLogo,
-            previewUrl: img.dataUrl,
-            image: img,
+            caption: ref.caption,
+            isLogo: ref.isLogo,
+            previewUrl: ref.previewUrl,
+            ref,
           }));
           setBrandItems(brandPickItems);
           // The logo is selected by default — always.
@@ -206,11 +209,13 @@ export default function ImagePickerModal({
     setError(null);
     try {
       const chosen = all.filter((it) => selected.has(it.key));
-      const images: DeckImage[] = [];
-      for (const it of chosen) {
-        if (it.kind === 'brand') images.push(it.image);
-        else images.push(await loadPersistedDeckImage(it.row));
-      }
+      // Inline only the chosen images to base64, in parallel. Bytes are usually
+      // warm in the HTTP cache from the thumbnails, so this stays fast.
+      const images: DeckImage[] = await Promise.all(
+        chosen.map((it) =>
+          it.kind === 'brand' ? loadBrandDeckImage(it.ref) : loadPersistedDeckImage(it.row),
+        ),
+      );
       // Keep the logo first so it lands on the title slide / headers.
       images.sort((a, b) => Number(b.isLogo) - Number(a.isLogo));
       onConfirm(images, chosen.map((c) => c.key));

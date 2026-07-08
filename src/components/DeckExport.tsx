@@ -21,6 +21,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { randomUUID } from '@/lib/uuid';
 import ImagePickerModal from '@/components/ImagePickerModal';
 import GptImagesDeck from '@/components/GptImagesDeck';
+import { InfoHint } from '@/components/ui/InfoHint';
 import { alertDialog } from '@/lib/dialog';
 
 const NOTEBOOKLM_CUSTOMIZE_SCREEN = '/notebooklm/customize-slide-deck.png';
@@ -224,8 +225,12 @@ export default function DeckExport({
       // each on its recorded slide, clamped to a valid content slide if the
       // outline changed since.
       const lastContent = slides.length - 1;
-      for (const e of existing) {
-        const image = await loadPersistedDeckImage(e);
+      // Inline all reused images to base64 in parallel, then place each — the
+      // sequential fetch + encode per image made deck prep slow.
+      const loaded = await Promise.all(
+        existing.map(async (e) => ({ e, image: await loadPersistedDeckImage(e) })),
+      );
+      for (const { e, image } of loaded) {
         const idx = Math.min(Math.max(1, e.slideIndex || 1), lastContent);
         if (slides[idx]) slides[idx] = { ...slides[idx], aiImage: image };
       }
@@ -308,11 +313,11 @@ export default function DeckExport({
 
       {/* PRIMARY SECTION: Download your presentation */}
       <div className="mb-6 rounded-lg border border-[var(--border)] bg-gray-50/40 p-4">
-        <div className="mb-3">
-          <div className="text-base font-bold text-brand mb-1">הורדת המצגת שלך</div>
-          <p className="text-xs text-[var(--muted)]">
+        <div className="mb-3 flex items-center gap-2">
+          <div className="text-base font-bold text-brand">הורדת המצגת שלך</div>
+          <InfoHint title="הורדת המצגת שלך">
             בחר פורמט: PowerPoint שניתן לעריכה או PDF משיתוף. שניהם כוללים את כל צבעי המותג, הלוגו, והתמונות שבחרת.
-          </p>
+          </InfoHint>
         </div>
         {/* In an RTL container the first item lands on the right, so PPTX
             (primary) is authored first → renders on the right per reading gravity. */}
