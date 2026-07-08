@@ -185,15 +185,20 @@ export default function GptImagesDeck({
         setProgressText('בודקים תמונות שכבר נוצרו…');
         try {
           const persisted = await fetchPersistedDeckImages(requestId);
+          const cacheHits: Array<{ idx: number; hit: PersistedDeckImage }> = [];
           for (const idx of indexes) {
             if (slideImages[idx]) {
               reused[idx] = slideImages[idx];
               continue;
             }
             const hit = persisted.find((p) => p.slideIndex === idx); // newest first
-            if (hit) {
-              reused[idx] = { image: await loadPersistedDeckImage(hit), prompt: null, approved: true, fromCache: true };
-            }
+            if (hit) cacheHits.push({ idx, hit });
+          }
+          const loadedHits = await Promise.all(
+            cacheHits.map(async ({ idx, hit }) => ({ idx, image: await loadPersistedDeckImage(hit) })),
+          );
+          for (const { idx, image } of loadedHits) {
+            reused[idx] = { image, prompt: null, approved: true, fromCache: true };
           }
         } catch {
           // Cache probing is best-effort — worst case we just generate.

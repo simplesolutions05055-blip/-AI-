@@ -472,27 +472,29 @@ export async function fetchBrandImages(
   }
 
   const seen = new Set<string>();
-  const images: DeckImage[] = [];
-  for (const w of wanted) {
-    if (seen.has(w.path)) continue;
-    seen.add(w.path);
-    try {
-      const { data: signed } = await db.storage.from('branding').createSignedUrl(w.path, 600);
-      if (!signed?.signedUrl) continue;
-      const res = await fetch(signed.signedUrl);
-      if (!res.ok) continue;
-      const blob = await res.blob();
-      // Guard against non-image bodies (404/auth error pages return JSON/text):
-      // converting those to a data URL yields an <img> that never fires load/error
-      // and shows an eternal spinner in the picker.
-      if (blob.size === 0 || !blob.type.startsWith('image/')) continue;
-      const dataUrl = await blobToDataUrl(blob);
-      const dim = await imageSize(dataUrl);
-      images.push({ caption: w.caption, isLogo: w.isLogo, dataUrl, natW: dim.w, natH: dim.h });
-    } catch {
-      // skip images that fail to load
-    }
-  }
+  const deduped = wanted.filter((w) => (seen.has(w.path) ? false : (seen.add(w.path), true)));
+  const images = (
+    await Promise.all(
+      deduped.map(async (w): Promise<DeckImage | null> => {
+        try {
+          const { data: signed } = await db.storage.from('branding').createSignedUrl(w.path, 600);
+          if (!signed?.signedUrl) return null;
+          const res = await fetch(signed.signedUrl);
+          if (!res.ok) return null;
+          const blob = await res.blob();
+          // Guard against non-image bodies (404/auth error pages return JSON/text):
+          // converting those to a data URL yields an <img> that never fires load/error
+          // and shows an eternal spinner in the picker.
+          if (blob.size === 0 || !blob.type.startsWith('image/')) return null;
+          const dataUrl = await blobToDataUrl(blob);
+          const dim = await imageSize(dataUrl);
+          return { caption: w.caption, isLogo: w.isLogo, dataUrl, natW: dim.w, natH: dim.h };
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter((image): image is DeckImage => Boolean(image));
   return { brand: brandRow, images };
 }
 

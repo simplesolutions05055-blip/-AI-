@@ -535,20 +535,25 @@ async function fetchBrandImages(
   }
 
   const seen = new Set<string>();
-  const images: DeckImage[] = [];
-  for (const w of wanted) {
-    if (seen.has(w.path)) continue;
-    seen.add(w.path);
-    try {
-      const { data: signed } = await db.storage.from('branding').createSignedUrl(w.path, 600);
-      if (!signed?.signedUrl) continue;
-      const res = await fetch(signed.signedUrl);
-      const dataUrl = await blobToDataUrl(await res.blob());
-      images.push({ caption: w.caption, isLogo: w.isLogo, dataUrl });
-    } catch {
-      // skip images that fail to load
-    }
-  }
+  const deduped = wanted.filter((w) => (seen.has(w.path) ? false : (seen.add(w.path), true)));
+  const images = (
+    await Promise.all(
+      deduped.map(async (w): Promise<DeckImage | null> => {
+        try {
+          const { data: signed } = await db.storage.from('branding').createSignedUrl(w.path, 600);
+          if (!signed?.signedUrl) return null;
+          const res = await fetch(signed.signedUrl);
+          if (!res.ok) return null;
+          const blob = await res.blob();
+          if (blob.size === 0 || !blob.type.startsWith('image/')) return null;
+          const dataUrl = await blobToDataUrl(blob);
+          return { caption: w.caption, isLogo: w.isLogo, dataUrl };
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter((image): image is DeckImage => Boolean(image));
   return { brand, images };
 }
 
