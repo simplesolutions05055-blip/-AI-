@@ -560,48 +560,6 @@ async function fetchBrandImages(
 // Render a branded slide deck to a real PDF (RTL, city palette, embedded
 // images) entirely client-side via html2canvas + jsPDF. Hebrew renders
 // correctly because each slide is rasterized by the browser.
-// Build a ready-to-paste NotebookLM prompt from the same rich slide content
-// used for the PDF, so the user can regenerate the deck in NotebookLM.
-function buildNotebookLmPrompt(brief: any, brand: any, images: DeckImage[], slides: any[]): string {
-  const lines: string[] = [];
-  lines.push('## תוכן המצגת ל-NotebookLM');
-  lines.push(
-    'הדבק את הטקסט הבא ב-NotebookLM כדי להפיק את אותה מצגת. בנה מצגת בעברית RTL לפי המבנה, ' +
-      `בפלטת הצבעים של ${brand?.name ?? 'המותג'}${
-        brand?.color_palette?.length
-          ? ' (' + brand.color_palette.map((c: any) => `${c.role}: ${c.hex}`).join(', ') + ')'
-          : ''
-      }.`
-  );
-  lines.push('');
-  lines.push(`כותרת: ${brief?.topic || 'מצגת'}`);
-  if (brief?.goal) lines.push(`מטרה: ${brief.goal}`);
-  if (brief?.audience) lines.push(`קהל יעד: ${brief.audience}`);
-  lines.push('');
-
-  const list = slides.length
-    ? slides
-    : (brief?.presentation_spec?.slide_structure ?? []).map((s: any) => ({
-        title: s?.title,
-        bullets: s?.content ? [s.content] : [],
-      }));
-
-  list.forEach((s: any, i: number) => {
-    lines.push(`### שקף ${i + 1}: ${s?.title || ''}`);
-    if (s?.subtitle) lines.push(s.subtitle);
-    for (const b of (Array.isArray(s?.bullets) ? s.bullets : [])) lines.push(`- ${b}`);
-    if (s?.body) lines.push(s.body);
-    if (s?.image_suggestion) lines.push(`תמונה מוצעת: ${s.image_suggestion}`);
-    lines.push('');
-  });
-
-  if (images.length) {
-    lines.push('---');
-    lines.push('התמונות מהמיתוג מצורפות בקובץ ה-PDF; ניתן להוריד אותן משם ולהכניס לשקפים המתאימים.');
-  }
-  return lines.join('\n');
-}
-
 async function renderDeckToPdf(brief: any, brand: any, images: DeckImage[], richSlides: any[]): Promise<Blob> {
   const esc = (s: string) =>
     String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

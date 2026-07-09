@@ -17,7 +17,7 @@ const corsHeaders = {
 };
 
 const fallbackSystemMessage =
-  'אתה סוכן AI ארגוני. הפק חבילת תוכן למצגת בעברית RTL: שם מצגת, מטרה, מבנה שקפים, תוכן מלא לכל שקף, הנחיות עיצוב, ו-Prompt מוכן ל-NotebookLM.';
+  'אתה סוכן AI ארגוני. הפק חבילת תוכן למצגת בעברית RTL: שם מצגת, מטרה, מבנה שקפים, תוכן מלא לכל שקף, הנחיות עיצוב.';
 
 // Hard cap on AI images per 'images' call (one per selected slide in the
 // GPT-Images deck flow; abuse guard prices the batch before generating).
@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
       const idxList = Array.isArray(slideIndexes) ? slideIndexes : [];
       const capList = Array.isArray(captions) ? captions : [];
       const aiModelsImg = await getSetting<{ image_model?: string; image_size?: string; image_quality?: string }>(database, 'ai_models');
-      // Full-slide (NotebookLM-style) images need a wide 16:9 canvas + high
+      // Full-slide images need a wide 16:9 canvas + high
       // quality so the baked-in Hebrew text stays crisp; the client passes these.
       const effSize = typeof imageSize === 'string' && imageSize.trim() ? imageSize.trim() : aiModelsImg?.image_size || '1024x1024';
       const effQuality = typeof imageQuality === 'string' && imageQuality.trim() ? imageQuality.trim() : aiModelsImg?.image_quality || 'auto';
@@ -438,7 +438,7 @@ Deno.serve(async (req) => {
     const textWithAssets = assetLines.length
       ? `${text}\n\n---\n\n## תמונות מהמיתוג (קישורים פתוחים, תקפים ל-7 ימים)\n\n${assetLines.join(
           '\n'
-        )}\n\n_הקישורים כוללים טוקן גישה חד-פעמי. ניתן להוריד את התמונות ולהזין אותן ל-NotebookLM._`
+        )}\n\n_הקישורים כוללים טוקן גישה חד-פעמי._`
       : text;
 
     await recordUsageAndCost(database, requestId ?? null, {

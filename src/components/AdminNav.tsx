@@ -183,8 +183,8 @@ export function AdminBottomNav({
     : ['/admin/production', '/admin/files'];
   // Mobile version: show branding instead of requests (admins only)
   const mobileHrefs = isAdmin
-    ? ['/admin', '/admin/production', '/admin/files', '/admin/branding']
-    : ['/admin/production', '/admin/files', '/admin/user-settings'];
+    ? ['/admin', '/admin/production', '/admin/files', '/admin/holidays', '/admin/branding']
+    : ['/admin/production', '/admin/files', '/admin/holidays', '/admin/user-settings'];
 
   // Use mobile version which swaps requests for branding for better mobile UX
   const itemHrefs = mobileHrefs;

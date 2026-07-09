@@ -141,10 +141,10 @@ function profileInitials(fullName?: string | null, email?: string | null) {
 }
 
 const OPENAI_QUOTA_MESSAGE =
-  'נגמר התקציב/המכסה ב-OpenAI (insufficient_quota) — לא ניתן לבנות בריף או להפיק תוצרים כרגע. יש להוסיף קרדיט לחשבון OpenAI או להחליף את מפתח ה-API.';
+  'נגמר התקציב/המכסה של השירות — לא ניתן לבנות בריף או להפיק תוצרים כרגע. יש להוסיף קרדיט לחשבון או להחליף את מפתח ה-API.';
 
 const IMAGE_QUOTA_MESSAGE =
-  'יצירת התמונה נעצרה כי מפתח ה-OpenAI שבשימוש הגיע לתקרת ה-billing/מכסה שלו (billing hard limit / quota). אם הוגדר מפתח חד-פעמי — הוא זה שאזל; אחרת מדובר במפתח הפרויקט. יש להוסיף קרדיט / להעלות את תקרת ה-billing, או להזין מפתח חד-פעמי אחר עם קרדיט, ואז להפיק שוב.';
+  'יצירת התמונה נעצרה כי מפתח ה-API שבשימוש הגיע לתקרת ה-billing/מכסה שלו (billing hard limit / quota). אם הוגדר מפתח חד-פעמי — הוא זה שאזל; אחרת מדובר במפתח הפרויקט. יש להוסיף קרדיט / להעלות את תקרת ה-billing, או להזין מפתח חד-פעמי אחר עם קרדיט, ואז להפיק שוב.';
 
 const DESCRIPTION_MAX_LENGTH = 12000;
 const TEXT_UPLOAD_ACCEPT = '.txt,.md,.doc,.docx,.pdf,text/plain,text/markdown,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf';
@@ -1443,7 +1443,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   const [briefLoading, setBriefLoading] = useState(false);
   const [brandLogoUrl, setBrandLogoUrl] = useState<string | null>(null);
   // Image selection chosen during the flow (brief step). Carried into the result
-  // so the deck + NotebookLM brief embed exactly these images.
+  // so the deck embeds exactly these images.
   const [pickerOpen, setPickerOpen] = useState(false);
   // Seeded from the entry-page picker (presentations choose deck images up front).
   const [pickedImages, setPickedImages] = useState<DeckImage[] | null>(navState?.pickedImages ?? null);
@@ -1452,9 +1452,9 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
   const setOpenAiKeyText = genderCopy(profile?.gender, {
-    male: 'שים מפתח OpenAI חד-פעמי',
-    female: 'שימי מפתח OpenAI חד-פעמי',
-    neutral: 'הגדרת מפתח OpenAI חד-פעמי',
+    male: 'שים מפתח API חד-פעמי',
+    female: 'שימי מפתח API חד-פעמי',
+    neutral: 'הגדרת מפתח API חד-פעמי',
   });
 
   // Default the send-by-email box to the signed-in user's address, so sending
@@ -1564,9 +1564,9 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       });
   }, []);
 
-  // Presentations always require a brand (its images + palette drive the deck
-  // and the NotebookLM brief). Otherwise, a regular user with brands available
-  // must still pick one before producing.
+  // Presentations always require a brand (its images + palette drive the deck).
+  // Otherwise, a regular user with brands available must still pick one before
+  // producing.
   const brandRequired = type === 'presentation' || (!isAdmin && brands.length > 0);
   const selectedBrand = brands.find((b) => b.id === brandId) ?? null;
   const effectiveBrand = selectedBrand ?? (brands.length === 1 ? brands[0] : null);
@@ -2772,7 +2772,7 @@ function ResultCard({
   }
 
   return (
-    <div className="grid lg:grid-cols-[1fr_360px] gap-5">
+    <div className={output.output_type === 'presentation' ? 'grid gap-5' : 'grid lg:grid-cols-[1fr_360px] gap-5'}>
       <div className={`${PANEL} p-5`}>
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-xl font-bold">התוצר מוכן</h2>
@@ -2923,6 +2923,7 @@ function ResultCard({
           />
         )}
       </div>
+      {output.output_type !== 'presentation' && (
       <div className={`${PANEL} p-5 h-fit`}>
         <h3 className="font-bold mb-3">שליחה במייל</h3>
         <input
@@ -2985,6 +2986,7 @@ function ResultCard({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -3018,7 +3020,7 @@ function OpenAiKeyModal({
         className="w-full max-w-md rounded-2xl bg-white p-6 text-right shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="mb-2 text-lg font-bold">מפתח OpenAI חד-פעמי</h2>
+        <h2 className="mb-2 text-lg font-bold">מפתח API חד-פעמי</h2>
         <p className="mb-4 text-sm text-[var(--muted)]">
           המפתח נשמר לסשן הדפדפן הזה בלבד ומשמש את ההפקה הנוכחית.{' '}
           {genderCopy(gender, {

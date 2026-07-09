@@ -382,7 +382,7 @@ export default function FilesPage() {
       );
       setPreviews(Object.fromEntries(pairs.filter(([, url]) => url)) as Record<string, string>);
 
-      // Presentation cards prefer the first saved GPT slide image when available.
+      // Presentation cards prefer the first saved AI slide image when available.
       const presentationRows = rows.filter((r) => r.output_type === 'presentation');
       const presentationRequestIds = Array.from(new Set(presentationRows.map((r) => r.request_id).filter(Boolean)));
       if (presentationRequestIds.length > 0) {
@@ -755,7 +755,7 @@ export default function FilesPage() {
 
                         <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden">
                           {file.output_type === 'presentation' && deckPreviews[file.id] ? (
-                            <img src={deckPreviews[file.id]} alt="שקף ראשון ממצגת GPT Images" className="w-full h-full object-contain bg-white" />
+                            <img src={deckPreviews[file.id]} alt="שקף ראשון מהמצגת" className="w-full h-full object-contain bg-white" />
                           ) : file.output_type === 'image' && previews[file.id] ? (
                             <img src={previews[file.id]} alt="" className="w-full h-full object-cover" />
                           ) : (file.output_type === 'pdf' || file.mime_type === 'application/pdf') && previews[file.id] ? (
@@ -1148,7 +1148,7 @@ function PresentationImageSlidesPreview({
         {/* שורת זהות: כותרת בימין, סגירה בקצה השמאלי */}
         <div className="flex items-center gap-3 px-3 py-2.5 sm:px-4 sm:py-3">
           <div className="min-w-0 flex-1 text-right">
-            <h2 className="truncate text-sm font-bold sm:text-base">שקפי מצגת GPT Images</h2>
+            <h2 className="truncate text-sm font-bold sm:text-base">שקפי המצגת</h2>
             <p className="mt-0.5 truncate text-xs text-[var(--muted)]">
               <span dir="ltr">{formatHebrewDateTime(createdAt)}</span>
             </p>

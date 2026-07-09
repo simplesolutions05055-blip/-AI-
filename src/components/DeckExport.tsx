@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, ChangeEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   fetchRequestBrandId,
   fetchBrandImages,
@@ -8,24 +8,21 @@ import {
   loadPersistedDeckImage,
   renderDeckToPdf,
   renderDeckToPptx,
-  renderBriefToPdf,
-  buildNotebookLmPrompt,
-  generatePptxWithClaude,
   downloadBlob,
   type DeckSlide,
   type DeckBrand,
   type DeckImage,
   type PersistedDeckImage,
 } from '@/lib/deck';
-import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import { randomUUID } from '@/lib/uuid';
 import ImagePickerModal from '@/components/ImagePickerModal';
 import GptImagesDeck from '@/components/GptImagesDeck';
 import { InfoHint } from '@/components/ui/InfoHint';
-import { alertDialog } from '@/lib/dialog';
+import { useProfile } from '@/lib/useProfile';
 
-const NOTEBOOKLM_CUSTOMIZE_SCREEN = '/notebooklm/customize-slide-deck.png';
-const NOTEBOOKLM_SLIDE_DECK_BUTTON = '/notebooklm/slide-deck-button.png';
+// This plain "brand template" download (text boxes + a few sprinkled AI
+// images) is hidden from everyone except this account — every other user
+// only ever produces/downloads the full-slide AI design via GptImagesDeck.
+const TEMPLATE_MODE_EMAIL = 'itayk93@gmail.com';
 
 function hashString(value: string) {
   let hash = 5381;
@@ -41,29 +38,21 @@ export default function DeckExport({
   brief,
   requestId,
   outlineText,
-  onBriefGenerated,
   initialPickedImages,
   initialPickedKeys,
 }: {
   brief: Record<string, any> | null;
   requestId: string | null;
   outlineText: string | null;
-  // Fired after a NotebookLM brief PDF is successfully built, so the parent can
-  // collapse the now-redundant outline view.
-  onBriefGenerated?: () => void;
   // An image selection made earlier in the flow (e.g. the brief step), used as
   // the starting selection here.
   initialPickedImages?: DeckImage[] | null;
   initialPickedKeys?: string[];
 }) {
-  const [busy, setBusy] = useState<null | 'pdf' | 'pptx' | 'brief' | 'claude'>(null);
+  const { profile } = useProfile();
+  const canUseTemplateMode = profile?.email?.trim().toLowerCase() === TEMPLATE_MODE_EMAIL;
+  const [busy, setBusy] = useState<null | 'pdf' | 'pptx'>(null);
   const [error, setError] = useState<string | null>(null);
-  const [uploadingFile, setUploadingFile] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  // The full ready-to-paste NotebookLM prompt (per-slide content + RTL + image
-  // placement), produced alongside the brief PDF and shown with a copy button.
-  const [promptText, setPromptText] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [aiCount, setAiCount] = useState(0);
   // AI images already generated for this request (shown so they can be reused
   // in the next export instead of regenerating from scratch).
@@ -74,8 +63,6 @@ export default function DeckExport({
   // set). Keys persist the selection so the modal reopens with it ticked.
   const [brandId, setBrandId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [guideImageOpen, setGuideImageOpen] = useState(false);
-  const [notebookLmOpen, setNotebookLmOpen] = useState(false);
   const [pickedImages, setPickedImages] = useState<DeckImage[] | null>(initialPickedImages ?? null);
   const [pickedKeys, setPickedKeys] = useState<string[]>(initialPickedKeys ?? []);
   // Simple action states for primary download buttons
@@ -159,48 +146,6 @@ export default function DeckExport({
     }
   }
 
-  async function handleFileUpload(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    if (!file || !requestId) return;
-
-    setUploadingFile(true);
-    try {
-      const ext = file.name.split('.').pop() || 'pdf';
-      const path = `${requestId}/${randomUUID()}.${ext}`;
-      const client = createSupabaseBrowserClient();
-
-      const { error: uploadError } = await client.storage.from('outputs').upload(path, file, { contentType: file.type });
-      if (uploadError) throw uploadError;
-
-      // Fetch the latest presentation output for this request
-      const { data: outputs } = await client
-        .from('outputs')
-        .select('id')
-        .eq('request_id', requestId)
-        .eq('output_type', 'presentation')
-        .order('version', { ascending: false })
-        .limit(1);
-
-      if (!outputs || outputs.length === 0) throw new Error('לא נמצא תוצר מצגת לעדכון');
-
-      const outputId = (outputs[0] as { id: string }).id;
-      const { error: dbError } = await client
-        .from('outputs')
-        .update({ storage_path: path, mime_type: file.type } as never)
-        .eq('id', outputId);
-
-      if (dbError) throw dbError;
-
-      setError(null);
-      await alertDialog('הקובץ הועלה בהצלחה!');
-    } catch (err) {
-      setError('העלאה נכשלה: ' + String(err));
-    } finally {
-      setUploadingFile(false);
-    }
-  }
-
   async function prepareDeck() {
     // The picked-image selection is part of the cache identity, so changing it
     // re-resolves the deck with the new image set.
@@ -246,7 +191,7 @@ export default function DeckExport({
     return cache;
   }
 
-  async function build(format: 'pdf' | 'pptx' | 'brief') {
+  async function build(format: 'pdf' | 'pptx') {
     if (busy) return;
     setBusy(format);
     setError(null);
@@ -259,14 +204,6 @@ export default function DeckExport({
       if (format === 'pdf') {
         const blob = await renderDeckToPdf(deckBrief, brand, images, slides);
         downloadBlob(blob, `${safeName}.pdf`);
-      } else if (format === 'brief') {
-        const blob = await renderBriefToPdf(deckBrief, brand, images, slides);
-        downloadBlob(blob, `${safeName} - בריף NotebookLM.pdf`);
-        // Surface the full prompt (slide text + RTL + image placement) for paste,
-        // and tell the parent to collapse the outline view.
-        setPromptText(buildNotebookLmPrompt(deckBrief, brand, images, slides));
-        setCopied(false);
-        onBriefGenerated?.();
       } else {
         const blob = await renderDeckToPptx(deckBrief, brand, images, slides);
         downloadBlob(blob, `${safeName}.pptx`);
@@ -278,217 +215,51 @@ export default function DeckExport({
     }
   }
 
-  // Build a real branded Hebrew RTL PPTX via Claude's pptx skill and download it.
-  async function buildPptxWithClaude() {
-    if (busy) return;
-    setBusy('claude');
-    setError(null);
-    try {
-      const { deckBrief, brand, images, slides } = await prepareDeck();
-      const safeName =
-        String((brief as any)?.topic || brief?.goal || 'מצגת')
-          .slice(0, 40)
-          .replace(/[\\/:*?"<>|]/g, '') || 'presentation';
-      const { pptx } = await generatePptxWithClaude(deckBrief, brand, images, slides);
-      downloadBlob(pptx, `${safeName}.pptx`);
-    } catch (e) {
-      setError(`יצירת המצגת נכשלה: ${String((e as { message?: string })?.message ?? e)}`);
-    } finally {
-      setBusy(null);
-    }
-  }
-
   return (
     <div className="mt-5 border-t border-[var(--border)] pt-4">
-      <input
-        type="file"
-        ref={fileInputRef}
-        accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        className="hidden"
-        onChange={handleFileUpload}
-      />
-      {/* מצגת עם GPT Images — creates the deck's images with GPT, per a
-          user-chosen slide range, with an approval modal + cost panel. */}
+      {/* Creates the deck's images with AI, per a user-chosen slide range,
+          with an approval modal + cost panel. */}
       <GptImagesDeck brief={brief} requestId={requestId} outlineText={outlineText} brandId={brandId} />
 
-      {/* PRIMARY SECTION: Download your presentation */}
-      <div className="mb-6 rounded-lg border border-[var(--border)] bg-gray-50/40 p-4">
-        <div className="mb-3 flex items-center gap-2">
-          <div className="text-base font-bold text-brand">הורדת המצגת שלך</div>
-          <InfoHint title="הורדת המצגת שלך">
-            בחר פורמט: PowerPoint שניתן לעריכה או PDF משיתוף. שניהם כוללים את כל צבעי המותג, הלוגו, והתמונות שבחרת.
-          </InfoHint>
-        </div>
-        {/* In an RTL container the first item lands on the right, so PPTX
-            (primary) is authored first → renders on the right per reading gravity. */}
-        <div className="grid grid-cols-2 gap-3 sm:flex sm:gap-3">
-          <button
-            onClick={downloadPptx}
-            disabled={downloadPptxLoading}
-            className="flex-1 rounded-lg bg-brand px-4 py-3 font-semibold text-white hover:bg-brand/90 disabled:opacity-50 transition"
-          >
-            <div className="text-sm font-bold">הורדת PPTX</div>
-            <div className="text-[11px] opacity-90">לעריכה</div>
-            {downloadPptxLoading && <div className="text-[11px] mt-1">בונה…</div>}
-          </button>
-          <button
-            onClick={downloadPdf}
-            disabled={downloadPdfLoading}
-            className="flex-1 rounded-lg border-2 border-brand px-4 py-3 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
-          >
-            <div className="text-sm font-bold">הורדת PDF</div>
-            <div className="text-[11px] opacity-80">לשיתוף</div>
-            {downloadPdfLoading && <div className="text-[11px] mt-1">בונה…</div>}
-          </button>
-        </div>
-      </div>
-
-      {/* SECONDARY SECTION: NotebookLM workflow (collapsible) */}
-      <div className="mb-6">
-        <button
-          type="button"
-          onClick={() => setNotebookLmOpen((open) => !open)}
-          className="flex w-full items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-4 py-3 text-right font-semibold text-brand hover:bg-blue-50/30 transition"
-          aria-expanded={notebookLmOpen}
-        >
-          <div className="flex-1 text-right">
-            <div className="font-bold">עבוד עם NotebookLM</div>
-            <div className="text-[11px] text-[var(--muted)] font-normal">צור מצגת Google Slides יפה בעזרת AI</div>
+      {/* PRIMARY SECTION: Download your presentation — the plain brand-template
+          design, hidden from everyone except TEMPLATE_MODE_EMAIL. Every other
+          user downloads/emails only the full-slide AI design (above). */}
+      {canUseTemplateMode && (
+        <div className="mb-6 rounded-lg border border-[var(--border)] bg-gray-50/40 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="text-base font-bold text-brand">הורדת המצגת שלך</div>
+            <InfoHint title="הורדת המצגת שלך">
+              בחר פורמט: PowerPoint שניתן לעריכה או PDF משיתוף. שניהם כוללים את כל צבעי המותג, הלוגו, והתמונות שבחרת.
+            </InfoHint>
           </div>
-          <span className="text-lg leading-none">{notebookLmOpen ? '▼' : '◀'}</span>
-        </button>
-
-        {notebookLmOpen && (
-          <div className="mt-3 border-t border-[var(--border)] pt-4">
-            <div className="text-sm font-semibold mb-1">בריף ל-NotebookLM (PDF)</div>
-            <p className="text-xs text-[var(--muted)] mb-2">
-              קובץ מקור (Source) להעלאה ל-NotebookLM. כולל את הבריף, <b>התוכן המלא שנכתב ב-AI לכל
-              שקופית</b> (לפי תוכני המותג), הפרומפט המוכן, ואת תמונות המותג <b>מוטמעות בתוך ה-PDF</b>
-              וממוספרות ("תמונה 1, 2…"), כך ש-NotebookLM קורא אותן בהקשר. אחרי ההפקה, המצגת תופיע
-              ב-NotebookLM כ-<b>Slide Deck</b> בסגנון הכרטיסים שצירפתם.
-            </p>
-
-            <div className="mb-3 rounded-lg border border-[var(--border)] bg-blue-50/60 p-3 text-xs leading-relaxed">
-              <div className="mb-2 flex flex-col items-start gap-2 sm:mb-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                <div className="font-semibold">איך משתמשים:</div>
-                <button
-                  type="button"
-                  onClick={() => setGuideImageOpen(true)}
-                  className="rounded-md border border-brand/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5 text-right text-balance"
-                >
-                  כיצד נראה Describe the slide deck you want to create בממשק של NotebookLM
-                </button>
-              </div>
-              <ol className="list-decimal pr-4 space-y-0.5 text-[var(--muted)]">
-                <li>עובדים ב-NotebookLM בדסקטופ ומעלים את ה-PDF הזה כמקור יחיד (התמונות כבר בתוכו).</li>
-                <li>
-                  נכנסים ל-<b>Customize Slide Deck</b>, בוחרים <b>Presenter Slides</b>, שפה <b>עברית</b>,
-                  ומדביקים בתיבת <b>"Describe the slide deck you want to create"</b> את הפרומפט המלא מטה.
-                </li>
-              </ol>
-            </div>
-
+          {/* In an RTL container the first item lands on the right, so PPTX
+              (primary) is authored first → renders on the right per reading gravity. */}
+          <div className="grid grid-cols-2 gap-3 sm:flex sm:gap-3">
             <button
-              onClick={() => build('brief')}
-              disabled={busy !== null}
-              className="w-full border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
+              onClick={downloadPptx}
+              disabled={downloadPptxLoading}
+              className="flex-1 rounded-lg bg-brand px-4 py-3 font-semibold text-white hover:bg-brand/90 disabled:opacity-50 transition"
             >
-              {busy === 'brief' ? 'בונה בריף…' : 'הורדת בריף ל-NotebookLM'}
+              <div className="text-sm font-bold">הורדת PPTX</div>
+              <div className="text-[11px] opacity-90">לעריכה</div>
+              {downloadPptxLoading && <div className="text-[11px] mt-1">בונה…</div>}
             </button>
-
-            {promptText && (
-              <div className="mt-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3">
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="text-sm font-semibold">הפרומפט המלא ל-NotebookLM</div>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(promptText);
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 2000);
-                      } catch {
-                        setError('העתקה ללוח נכשלה — סמנו והעתיקו ידנית.');
-                      }
-                    }}
-                    className="shrink-0 rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white"
-                  >
-                    {copied ? 'הועתק ✓' : 'העתקה'}
-                  </button>
-                </div>
-                <p className="mb-2 text-xs text-[var(--muted)]">
-                  כולל את הטקסט של כל שקופית + הנחיות RTL ומיקום התמונות. הדביקו בתיבת
-                  "Describe the slide deck".
-                </p>
-                <pre
-                  dir="rtl"
-                  className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--border)] bg-white p-2 text-[11px] leading-relaxed text-gray-800"
-                >
-                  {promptText}
-                </pre>
-              </div>
-            )}
-
-            <div className="mt-5 border-t border-[var(--border)] pt-4">
-              <div className="text-sm font-semibold mb-1">העלאת קובץ מ-NotebookLM</div>
-              <p className="text-xs text-[var(--muted)] mb-3">
-                אם יצרתם את המצגת ב-NotebookLM, אפשר להעלות את ה-PDF או ה-PPTX שנוצר כאן.
-              </p>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadingFile}
-                className="w-full border border-brand text-brand rounded-lg px-4 py-2.5 font-semibold hover:bg-brand/5 disabled:opacity-50"
-              >
-                {uploadingFile ? 'מעלה...' : 'העלאת קובץ PDF או PPTX'}
-              </button>
-            </div>
+            <button
+              onClick={downloadPdf}
+              disabled={downloadPdfLoading}
+              className="flex-1 rounded-lg border-2 border-brand px-4 py-3 font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 transition"
+            >
+              <div className="text-sm font-bold">הורדת PDF</div>
+              <div className="text-[11px] opacity-80">לשיתוף</div>
+              {downloadPdfLoading && <div className="text-[11px] mt-1">בונה…</div>}
+            </button>
           </div>
-        )}
-      </div>
-
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      {(busy === 'pdf' || busy === 'pptx' || busy === 'brief') && (
-        <DeckBuildingOverlay format={busy === 'pptx' ? 'pptx' : 'pdf'} aiCount={willReuse || cacheRef.current ? 0 : aiCount} />
+        </div>
       )}
 
-      {guideImageOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm" dir="rtl">
-          <div className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-white/10 bg-white shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
-              <div>
-                <div className="text-sm font-bold">כיצד נראה Describe the slide deck you want to create</div>
-                <div className="text-xs text-[var(--muted)]">
-                  במסך Customize Slide Deck, בשדה "Describe the slide deck you want to create".
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setGuideImageOpen(false)}
-                className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-semibold hover:bg-gray-50"
-              >
-                סגירה
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto bg-gray-950 p-3">
-              <div className="mx-auto grid max-w-3xl gap-3">
-                <figure className="overflow-hidden rounded-lg border border-white/10 bg-black">
-                  <img
-                    src={NOTEBOOKLM_CUSTOMIZE_SCREEN}
-                    alt="מסך Customize Slide Deck ב-NotebookLM"
-                    className="mx-auto block h-auto max-h-[46dvh] w-auto max-w-full object-contain"
-                  />
-                </figure>
-                <figure className="overflow-hidden rounded-lg border border-white/10 bg-black">
-                  <img
-                    src={NOTEBOOKLM_SLIDE_DECK_BUTTON}
-                    alt="כפתור Slide Deck ב-NotebookLM"
-                    className="mx-auto block h-auto max-h-[18dvh] w-auto max-w-full object-contain"
-                  />
-                </figure>
-              </div>
-            </div>
-          </div>
-        </div>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {(busy === 'pdf' || busy === 'pptx') && (
+        <DeckBuildingOverlay format={busy === 'pptx' ? 'pptx' : 'pdf'} aiCount={willReuse || cacheRef.current ? 0 : aiCount} />
       )}
 
       <ImagePickerModal

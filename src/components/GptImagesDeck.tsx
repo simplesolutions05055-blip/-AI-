@@ -26,12 +26,16 @@ import { InfoHint } from '@/components/ui/InfoHint';
 
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-// "מצגת עם GPT Images" — end-to-end flow on the presentation output screen:
-// the user types WHICH slides should get a GPT-generated image ("1-5", "1,3"),
-// the images are generated per slide, reviewed/approved in a modal (with
-// regenerate-with-feedback), and only then the deck is built as PPTX/PDF with
-// rich RTL layouts (full-bleed cover, split content slides). A cost panel shows
-// what this presentation cost so far (images + text), read from usage_events.
+// The text-box design mode is hidden from everyone except this account — every
+// other user only ever sees/produces the full-slide AI design.
+const TEMPLATE_MODE_EMAIL = 'itayk93@gmail.com';
+
+// End-to-end AI-image flow on the presentation output screen: the user types
+// WHICH slides should get an AI-generated image ("1-5", "1,3"), the images are
+// generated per slide, reviewed/approved in a modal (with regenerate-with-
+// feedback), and only then the deck is built as PPTX/PDF with rich RTL layouts
+// (full-bleed cover, split content slides). A cost panel shows what this
+// presentation cost so far (images + text), read from usage_events.
 
 interface SlideImageState {
   image: DeckImage;
@@ -59,8 +63,8 @@ export default function GptImagesDeck({
 }) {
   const [rangeInput, setRangeInput] = useState('');
   // 'template' = image beside editable text boxes; 'fullslide' = each slide is
-  // ONE GPT image (whole slide designed by AI, text baked in, NotebookLM-style).
-  // Default is 'fullslide' — the NotebookLM-style deck is the primary output.
+  // ONE AI image (whole slide designed by AI, text baked in).
+  // Default is 'fullslide' — the full-slide AI deck is the primary output.
   const [mode, setMode] = useState<'template' | 'fullslide'>('fullslide');
   const [phase, setPhase] = useState<'idle' | 'generating' | 'review' | 'ready'>('idle');
   const [progressText, setProgressText] = useState('');
@@ -102,6 +106,13 @@ export default function GptImagesDeck({
   useEffect(() => {
     if (profile?.email) setEmails((prev) => (prev.length === 1 && !prev[0] ? [profile.email] : prev));
   }, [profile?.email]);
+
+  const canUseTemplateMode = profile?.email?.trim().toLowerCase() === TEMPLATE_MODE_EMAIL;
+  // Everyone except the one account above only ever produces the full-slide AI
+  // design — force it even if `mode` was somehow left at 'template'.
+  useEffect(() => {
+    if (!canUseTemplateMode && mode !== 'fullslide') setMode('fullslide');
+  }, [canUseTemplateMode, mode]);
 
   useEffect(() => {
     if (!requestId) return;
@@ -208,7 +219,7 @@ export default function GptImagesDeck({
 
       const missing = indexes.filter((i) => !reused[i]);
       if (missing.length) {
-        setProgressText(`יוצרים ${missing.length} תמונות GPT (שקפים ${missing.map((i) => i + 1).join(', ')})…`);
+        setProgressText(`יוצרים ${missing.length} תמונות AI (שקפים ${missing.map((i) => i + 1).join(', ')})…`);
         const generated = await generateGptImagesForSlides(fullBrief, deck, missing, requestId, resolved.brand, undefined, mode === 'fullslide');
         for (const g of generated) {
           reused[g.index] = { image: g.image, prompt: g.prompt, approved: true, fromCache: false };
@@ -399,7 +410,17 @@ export default function GptImagesDeck({
         .slice(0, 40)
         .replace(/[\\/:*?"<>|]/g, '') || 'presentation';
     const blob = await renderFullSlideDeckToPptx(previewSlides.map((s) => s.image));
-    downloadBlob(blob, `${safeName} - GPT Images edited.pptx`);
+    downloadBlob(blob, `${safeName} - edited.pptx`);
+  }
+
+  async function downloadPreviewPdf() {
+    if (!previewSlides.length) return;
+    const safeName =
+      String(deckBrief?.topic || deckBrief?.goal || 'מצגת')
+        .slice(0, 40)
+        .replace(/[\\/:*?"<>|]/g, '') || 'presentation';
+    const blob = await renderFullSlideDeckToPdf(previewSlides.map((s) => s.image));
+    downloadBlob(blob, `${safeName} - edited.pdf`);
   }
 
   async function build(format: 'pptx' | 'pdf') {
@@ -414,7 +435,7 @@ export default function GptImagesDeck({
           .replace(/[\\/:*?"<>|]/g, '') || 'presentation';
       let blob: Blob;
       if (mode === 'fullslide') {
-        // Each approved slide is one full-bleed GPT image, in slide order.
+        // Each approved slide is one full-bleed AI image, in slide order.
         const imgs = Object.entries(slideImages)
           .filter(([, st]) => st.approved)
           .sort(([a], [b]) => Number(a) - Number(b))
@@ -432,7 +453,7 @@ export default function GptImagesDeck({
             ? await renderGptDeckToPptx(deckBrief, resolved.brand, resolved.images, finalSlides)
             : await renderGptDeckToPdf(deckBrief, resolved.brand, resolved.images, finalSlides);
       }
-      downloadBlob(blob, `${safeName} - GPT Images.${format}`);
+      downloadBlob(blob, `${safeName}.${format}`);
     } catch (e) {
       setError(String((e as { message?: string })?.message ?? e));
     } finally {
@@ -538,11 +559,11 @@ export default function GptImagesDeck({
   return (
     <div className="mb-5 rounded-xl border-2 border-brand/25 bg-brand/[0.03] p-4" dir="rtl">
       <div className="mb-3 flex items-center gap-2">
-        <span className="text-sm font-bold">מצגת עם GPT Images</span>
+        <span className="text-sm font-bold">יצירת תמונות למצגת</span>
         <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-bold text-brand">חדש</span>
-        <InfoHint title="מצגת עם GPT Images" label="איך זה עובד?" className="mr-auto">
+        <InfoHint title="יצירת תמונות למצגת" label="איך זה עובד?" className="mr-auto">
           <p>
-            ⚠️ אפשרות זו <b>יוצרת את התמונות במצגת עם GPT</b> — כל שקף שתבחרו מקבל תמונה שנוצרת במיוחד עבורו
+            ⚠️ אפשרות זו <b>יוצרת תמונות ייעודיות למצגת</b> — כל שקף שתבחרו מקבל תמונה שנוצרת במיוחד עבורו
             לפי הבריף וצבעי המותג (יש עלות לפי מספר התמונות). כתבו אילו שקפים להפיק — למשל <b>1-5</b> —
             כדי לבחון את התוצאה לפני שמפיקים את כל המצגת. ההפקה רצה בשרת ברקע ותישלח למיילים שתבחרו בסיום.
           </p>
@@ -575,6 +596,14 @@ export default function GptImagesDeck({
                 className="rounded-lg border border-brand px-3 py-2 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
               >
                 הורדת PPTX מעודכן
+              </button>
+              <button
+                type="button"
+                onClick={downloadPreviewPdf}
+                disabled={!previewSlides.length || regenBusy !== null}
+                className="rounded-lg border border-brand px-3 py-2 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+              >
+                הורדת PDF מעודכן
               </button>
             </div>
           </div>
@@ -645,57 +674,61 @@ export default function GptImagesDeck({
         </div>
       </div>
 
-      {/* Mode: template (editable text + image) vs full-slide (whole slide as one AI image). */}
-      <div className="mb-3">
-        <div className="mb-1.5 flex items-center gap-2">
-          <span className="text-xs font-semibold">סוג העיצוב</span>
-          <InfoHint title="סוג העיצוב">
-            <div className="space-y-3">
-              <div>
-                <div className="font-semibold">עיצוב עם תיבות טקסט</div>
-                <p className="text-[var(--muted)]">תמונה בצד + טקסט חד וניתן לעריכה. מהיר וזול יותר.</p>
+      {/* Mode: template (editable text + image) vs full-slide (whole slide as one AI image).
+          Hidden for everyone except TEMPLATE_MODE_EMAIL — every other account only
+          ever gets the full-slide AI design (mode is force-set above). */}
+      {canUseTemplateMode && (
+        <div className="mb-3">
+          <div className="mb-1.5 flex items-center gap-2">
+            <span className="text-xs font-semibold">סוג העיצוב</span>
+            <InfoHint title="סוג העיצוב">
+              <div className="space-y-3">
+                <div>
+                  <div className="font-semibold">עיצוב עם תיבות טקסט</div>
+                  <p className="text-[var(--muted)]">תמונה בצד + טקסט חד וניתן לעריכה. מהיר וזול יותר.</p>
+                </div>
+                <div>
+                  <div className="font-semibold">שקף מלא ב-AI</div>
+                  <p className="text-[var(--muted)]">כל שקף = תמונה אחת שכוללת הכל. יפה ומגוון, אך יקר ואיטי יותר והטקסט לא ניתן לעריכה.</p>
+                </div>
+                <p className="text-amber-700">
+                  שקף מלא: ~$0.25 לשקף וכ-2–3 דקות לשקף. מומלץ להפיק קודם 1–2 שקפים לבדיקה.
+                </p>
               </div>
-              <div>
-                <div className="font-semibold">שקף מלא ב-AI (NotebookLM)</div>
-                <p className="text-[var(--muted)]">כל שקף = תמונה אחת שכוללת הכל. יפה ומגוון, אך יקר ואיטי יותר והטקסט לא ניתן לעריכה.</p>
-              </div>
-              <p className="text-amber-700">
-                שקף מלא: ~$0.25 לשקף וכ-2–3 דקות לשקף. מומלץ להפיק קודם 1–2 שקפים לבדיקה.
-              </p>
-            </div>
-          </InfoHint>
+            </InfoHint>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {([
+              { key: 'template', title: 'עיצוב עם תיבות טקסט' },
+              { key: 'fullslide', title: 'שקף מלא ב-AI' },
+            ] as const).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => {
+                  if (mode === opt.key) return;
+                  setMode(opt.key);
+                  // Different image style → previously generated images no longer
+                  // apply; start clean so the user regenerates in the new mode.
+                  setSlideImages({});
+                  setPhase('idle');
+                }}
+                disabled={phase === 'generating' || building !== null}
+                className={`rounded-lg border-2 p-2.5 text-right transition disabled:opacity-50 ${
+                  mode === opt.key ? 'border-brand bg-brand/5' : 'border-[var(--border)] bg-white hover:border-brand/40'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-bold">
+                  <span className={`flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[9px] text-white ${mode === opt.key ? 'border-brand bg-brand' : 'border-gray-300'}`}>
+                    {mode === opt.key ? '✓' : ''}
+                  </span>
+                  {opt.title}
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {([
-            { key: 'template', title: 'עיצוב עם תיבות טקסט' },
-            { key: 'fullslide', title: 'שקף מלא ב-AI (NotebookLM)' },
-          ] as const).map((opt) => (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => {
-                if (mode === opt.key) return;
-                setMode(opt.key);
-                // Different image style → previously generated images no longer
-                // apply; start clean so the user regenerates in the new mode.
-                setSlideImages({});
-                setPhase('idle');
-              }}
-              disabled={phase === 'generating' || building !== null}
-              className={`rounded-lg border-2 p-2.5 text-right transition disabled:opacity-50 ${
-                mode === opt.key ? 'border-brand bg-brand/5' : 'border-[var(--border)] bg-white hover:border-brand/40'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 text-xs font-bold">
-                <span className={`flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[9px] text-white ${mode === opt.key ? 'border-brand bg-brand' : 'border-gray-300'}`}>
-                  {mode === opt.key ? '✓' : ''}
-                </span>
-                {opt.title}
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
+      )}
 
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <label className="shrink-0 text-xs font-semibold" htmlFor="gpt-deck-range">אילו שקפים להפיק?</label>
@@ -1113,7 +1146,7 @@ function ImageReviewModal({
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] p-4">
           <div>
-            <h2 className="text-lg font-bold">אישור תמונות GPT למצגת</h2>
+            <h2 className="text-lg font-bold">אישור תמונות AI למצגת</h2>
             <p className="text-xs text-[var(--muted)]">אשרו כל תמונה, בקשו גרסה חדשה עם הערה, או השאירו שקף בלי תמונה.</p>
           </div>
           <button type="button" onClick={onClose} disabled={regenBusy !== null} aria-label="סגירה" className="rounded-full p-1.5 text-xl leading-none hover:bg-gray-100 disabled:opacity-40">×</button>
@@ -1194,7 +1227,7 @@ function ImageReviewModal({
 }
 
 // ── Cost panel: everything this presentation's request cost so far, split into
-// GPT images vs text work (brief/slides/captions), from usage_events. Rows are
+// AI images vs text work (brief/slides/captions), from usage_events. Rows are
 // admin-readable (RLS) — for non-admins the panel simply stays empty/hidden. ──
 function DeckCostPanel({ requestId, refreshKey }: { requestId: string; refreshKey: number }) {
   const [rows, setRows] = useState<Array<{ model: string | null; output_units: number; estimated_cost: number }> | null>(null);
@@ -1228,7 +1261,7 @@ function DeckCostPanel({ requestId, refreshKey }: { requestId: string; refreshKe
       <div className="mb-2 text-xs font-bold">עלות הפקת המצגת (מצטבר לבקשה זו)</div>
       <div className="space-y-1 text-xs text-[var(--muted)]">
         <div className="flex justify-between">
-          <span>תמונות GPT ({imageCount} תמונות, {imageRows.length} קריאות)</span>
+          <span>תמונות AI ({imageCount} תמונות, {imageRows.length} קריאות)</span>
           <span dir="ltr">{usd(imageCost)}</span>
         </div>
         <div className="flex justify-between">

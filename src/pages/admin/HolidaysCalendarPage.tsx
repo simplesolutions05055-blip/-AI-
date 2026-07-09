@@ -861,27 +861,37 @@ export default function HolidaysCalendarPage() {
           </div>
 
           <div className="schedule-mobile-agenda lg:hidden">
-            <div className="border-b border-[#f0f2f7] bg-[#fbfcfe] px-3 py-3">
-              <div className="flex gap-2 overflow-x-auto pb-1" dir="rtl">
-                {visibleDates.map((date) => {
+            <div className="border-b border-[#f0f2f7] bg-[#fbfcfe] px-2 py-3">
+              <div className="grid grid-cols-7 text-center text-[11px] font-bold text-[var(--muted)]" dir="rtl">
+                {WEEKDAYS_HE.map((day) => <div key={day} className="py-1">{day}</div>)}
+              </div>
+              <div className="grid grid-cols-7 gap-1" dir="rtl">
+                {cells.map((day, index) => {
+                  if (day < 1 || day > monthDayCount) {
+                    return <div key={`mempty-${index}`} className="aspect-square" />;
+                  }
+                  const date = isoDate(year, month, day);
                   const dayPosts = postsByDate.get(date) ?? [];
                   const dayHolidays = byDate.get(date) ?? [];
+                  const hasEvents = dayPosts.length > 0 || dayHolidays.length > 0;
                   const isActive = date === mobileActiveDate;
+                  const isToday = date === todayKey;
                   return (
                     <button
                       key={date}
                       type="button"
                       onClick={() => setMobileAgendaDate(date)}
-                      className={`min-w-[64px] rounded-xl border px-3 py-2 text-center transition ${
+                      className={`relative flex aspect-square flex-col items-center justify-center rounded-lg border text-xs font-bold transition ${
                         isActive
                           ? 'border-[#2563eb] bg-[#2563eb] text-white shadow-sm'
-                          : 'border-[var(--border)] bg-white text-[#334155] hover:bg-[#f8faff]'
+                          : isToday
+                          ? 'border-[#2563eb] bg-white text-[#2563eb]'
+                          : 'border-transparent bg-white text-[#334155] hover:bg-[#f8faff]'
                       }`}
                     >
-                      <div className="text-[11px] font-bold">{WEEKDAYS_HE[new Date(date).getDay()]}</div>
-                      <div className="mt-1 text-lg font-black">{Number(date.slice(8, 10))}</div>
-                      {(dayPosts.length > 0 || dayHolidays.length > 0) && (
-                        <div className={`mx-auto mt-1 h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-[#2563eb]'}`} />
+                      <span>{day}</span>
+                      {hasEvents && (
+                        <span className={`absolute bottom-1 h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-[#2563eb]'}`} />
                       )}
                     </button>
                   );

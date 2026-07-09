@@ -14,6 +14,7 @@
 // no DOM needed); the PDF is rendered from RTL HTML by the Vercel chromium
 // endpoint (renderPdfBase64), same as the WhatsApp deliverables.
 import PptxGenJS from 'npm:pptxgenjs@4.0.1';
+import { PDFDocument } from 'npm:pdf-lib@1.17.1';
 import { db } from '../_shared/db.ts';
 import { getSetting, imageUnitCost, logEvent, recordUsageAndCost } from '../_shared/util.ts';
 import { generateImage, generateImageWithReferences } from '../_shared/openai.ts';
@@ -192,9 +193,10 @@ async function runJob(
   const topic = deliverableTitle(p.brief, 'presentation', 'מצגת');
   const safeName = topic.slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'presentation';
 
-  // 3) Build the PPTX (always) and the PDF (best-effort). The PDF depends on the
-  //    Vercel render endpoint + INTERNAL_API_SECRET; if that's misconfigured we
-  //    still deliver the PPTX rather than failing the whole job.
+  // 3) Build the PPTX (always) and the PDF (best-effort — a PDF failure never
+  //    fails the whole job, the PPTX is still delivered). Full-slide decks build
+  //    the PDF directly from the slide images with pdf-lib; template decks
+  //    render RTL HTML via the Vercel chromium endpoint (renderPdfBase64).
   let pptxBase64: string;
   let pdfHtml: string | null;
   await writeJob(database, jobId, {
@@ -204,14 +206,21 @@ async function runJob(
     generated: generatedCount,
     reused: reusedCount,
   });
+  let pdfBase64: string | null = null;
+  let pdfError: string | null = null;
   if (p.mode === 'fullslide') {
     // Each approved slide is one full-bleed image, in slide order.
     const fullImages = [...imagesBySlide.entries()].sort((a, b) => a[0] - b[0]).map(([, url]) => url);
     pptxBase64 = await buildFullSlidePptxBase64(fullImages);
-    // Full-slide PDFs can exceed the render endpoint payload limit because every
-    // page is a high-quality base64 image. Deliver the PPTX reliably; the deck
-    // itself still contains the full-bleed AI slides.
+    // The PDF is assembled directly from the slide images with pdf-lib — no
+    // HTML/chromium round-trip, so there is no render-endpoint payload limit.
     pdfHtml = null;
+    try {
+      pdfBase64 = await buildFullSlidePdfBase64(fullImages);
+    } catch (e) {
+      pdfError = String(e);
+      await logEvent(database, { requestId: p.requestId, severity: 'warning', action: 'deck_email_pdf_failed', message: pdfError });
+    }
   } else {
     const slides = p.slides.map((s, i) => ({ ...s, aiImage: imagesBySlide.get(i) ?? null }));
     pptxBase64 = await buildPptxBase64(p.brief, brand, slides);
@@ -224,8 +233,6 @@ async function runJob(
     generated: generatedCount,
     reused: reusedCount,
   });
-  let pdfBase64: string | null = null;
-  let pdfError: string | null = null;
   if (pdfHtml) {
     try {
       pdfBase64 = await renderPdfBase64(pdfHtml);
@@ -495,7 +502,7 @@ function buildFullSlideImagePrompt(brief: Record<string, unknown>, slide: DeckSl
   const bullets = Array.isArray(slide?.bullets) ? slide.bullets : [];
   const lines = [
     'צור שקופית מצגת שלמה ומעוצבת בפורמט 16:9 (רוחבי), בעברית מלאה ומדויקת, מיושרת מימין לשמאל (RTL).',
-    'כל השקופית היא תמונה אחת מעוצבת: רקע, גרפיקה, אלמנטים ויזואליים וטקסט קריא — כמו שקופית מקצועית של NotebookLM, לא template אחיד.',
+    'כל השקופית היא תמונה אחת מעוצבת: רקע, גרפיקה, אלמנטים ויזואליים וטקסט קריא — עיצוב מקצועי, לא template אחיד.',
     `כותרת ראשית: «${slide?.title || ''}».`,
   ];
   if (slide?.subtitle) lines.push(`כותרת משנה: «${slide.subtitle}».`);
@@ -711,20 +718,24 @@ async function buildFullSlidePptxBase64(slideImages: string[]): Promise<string> 
   return (await pptx.write({ outputType: 'base64' })) as string;
 }
 
-function buildFullSlideHtml(slideImages: string[]): string {
+// Full-slide PDF: one 16:9 page per slide, the image embedded directly with
+// pdf-lib (contain, centered). No HTML/chromium involved, so big high-quality
+// image decks don't hit any render-endpoint payload limit.
+async function buildFullSlidePdfBase64(slideImages: string[]): Promise<string> {
   const W = 1280;
   const H = 720;
-  const pages = slideImages
-    .map((img) => `<div class="gd-full-slide"><img src="${img}" alt=""></div>`)
-    .join('');
-  const css = `
-    @page { size: ${W}px ${H}px; margin: 0 }
-    *{box-sizing:border-box}
-    html,body{margin:0;padding:0;background:#fff}
-    .gd-full-slide{width:${W}px;height:${H}px;overflow:hidden;page-break-after:always;background:#fff}
-    .gd-full-slide img{width:100%;height:100%;object-fit:contain;display:block}
-  `;
-  return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><style>${css}</style></head><body>${pages}</body></html>`;
+  const doc = await PDFDocument.create();
+  for (const dataUrl of slideImages) {
+    const bytes = dataUrlToBytes(dataUrl);
+    const isJpeg = /^data:image\/jpe?g/i.test(dataUrl) || (bytes[0] === 0xff && bytes[1] === 0xd8);
+    const img = isJpeg ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
+    const box = containBox(img.width, img.height, W, H);
+    const page = doc.addPage([W, H]);
+    // pdf-lib's y axis grows upward; containBox returns a top-based offset,
+    // but the box is vertically centered so the value is the same either way.
+    page.drawImage(img, { x: box.x, y: box.y, width: box.w, height: box.h });
+  }
+  return await doc.saveAsBase64();
 }
 
 function containBox(natW: number, natH: number, boxW: number, boxH: number): { x: number; y: number; w: number; h: number } {

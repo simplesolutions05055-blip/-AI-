@@ -287,8 +287,7 @@ export default function ImagePickerModal({
 
         <div className="flex-1 overflow-auto p-4">
           <p className="mb-4 text-xs text-[var(--muted)]">
-            בחרו אילו תמונות ייכנסו למצגת. הבחירה תוטמע ב-PDF הבריף ותשובץ בפרומפט ל-NotebookLM
-            (לוגו בשער ובכותרות, שאר התמונות בשקופיות התוכן).
+            בחרו אילו תמונות ייכנסו למצגת (לוגו בשער ובכותרות, שאר התמונות בשקופיות התוכן).
           </p>
           {loading ? (
             <div className="space-y-5" aria-busy="true" aria-label="טוען תמונות">

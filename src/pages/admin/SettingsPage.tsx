@@ -339,22 +339,6 @@ export default function SettingsPage() {
         <p className="text-xs text-[var(--muted)] mt-2">
           ברירת המחדל היא gpt-image-2, המודל המתקדם הנוכחי של OpenAI לתמונות.
         </p>
-
-        <div className="mt-4 border-t border-[var(--border)] pt-4">
-          <Field label="מצב הפקת מצגות">
-            <select
-              className={input}
-              value={aiModels.presentation_mode ?? 'auto'}
-              onChange={(e) => update('ai_models', { ...aiModels, presentation_mode: e.target.value })}
-            >
-              <option value="auto">המערכת מכינה מצגת לבד (תמונות + צבעים מוטמעים)</option>
-              <option value="gemini">פרומפט ארוך ל-Gemini / NotebookLM</option>
-            </select>
-          </Field>
-          <p className="text-xs text-[var(--muted)]">
-            "מצגת לבד" מפיקה קובץ מצגת ממותג עם התמונות של העיר מוטמעות ופלטת הצבעים שלה. "פרומפט ל-Gemini" מפיק טקסט מפורט וקישורים להזנה ידנית ב-NotebookLM (Gemini אינו מטמיע תמונות מקישור או מ-base64).
-          </p>
-        </div>
       </section>
       )}
 
