@@ -680,7 +680,7 @@ function ProductionPicker({
   const [recentDeckPreviews, setRecentDeckPreviews] = useState<Record<string, string>>({});
   // Signed PDF URLs per document/quote output (rendered as a non-interactive <iframe>).
   const [recentPdfPreviews, setRecentPdfPreviews] = useState<Record<string, string>>({});
-  // One-item recent-outputs carousel: track active slide for the dots.
+  // Instagram-style recent-outputs carousel: track the active slide for the dots.
   const recentCarouselRef = useRef<HTMLDivElement | null>(null);
   const [recentCarouselIndex, setRecentCarouselIndex] = useState(0);
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
@@ -839,13 +839,15 @@ function ProductionPicker({
           text: [],
         };
 
+        // Keep more recent items for the one-at-a-time carousel (not just 2/type).
+        const PER_TYPE = 8;
         for (const file of files) {
           if (file.request_source === 'quote') continue;
-          if (grouped[file.output_type].length < 2) {
+          if (grouped[file.output_type].length < PER_TYPE) {
             grouped[file.output_type].push(file);
           }
         }
-        const quoteFiles = files.filter((file) => file.output_type === 'pdf' && file.request_source === 'quote').slice(0, 2);
+        const quoteFiles = files.filter((file) => file.output_type === 'pdf' && file.request_source === 'quote').slice(0, PER_TYPE);
         setRecentFiles(grouped);
         setRecentQuoteFiles(quoteFiles);
 
@@ -870,6 +872,7 @@ function ProductionPicker({
         if (active) setRecentPdfPreviews(Object.fromEntries(pdfPairs.filter(([, url]) => url)) as Record<string, string>);
 
         // Presentations show the first saved AI slide image (like FilesPage).
+        // Prefer lowest slide_index; if several rows share an index, take the newest.
         const presentationFiles = grouped.presentation;
         const presentationRequestIds = Array.from(new Set(presentationFiles.map((file) => file.request_id).filter(Boolean)));
         if (presentationRequestIds.length > 0) {
@@ -880,7 +883,12 @@ function ProductionPicker({
             .order('slide_index', { ascending: true })
             .order('created_at', { ascending: false });
           const firstByRequest: Record<string, string> = {};
-          for (const row of (deckRows ?? []) as Array<{ request_id: string; storage_path: string | null }>) {
+          for (const row of (deckRows ?? []) as Array<{
+            request_id: string;
+            slide_index: number | null;
+            storage_path: string | null;
+            created_at: string | null;
+          }>) {
             if (!row.storage_path || firstByRequest[row.request_id]) continue;
             firstByRequest[row.request_id] = row.storage_path;
           }
@@ -893,6 +901,8 @@ function ProductionPicker({
             }),
           );
           if (active) setRecentDeckPreviews(Object.fromEntries(deckPairs.filter(([, url]) => url)) as Record<string, string>);
+        } else if (active) {
+          setRecentDeckPreviews({});
         }
       });
 
@@ -1051,7 +1061,7 @@ function ProductionPicker({
     (['image', 'presentation', 'pdf', 'text'] as const).forEach((type) =>
       recentFiles[type].forEach((file) => pushAllowed(file)),
     );
-    return flat.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return flat.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 10);
   })();
 
   const carouselMeta = (file: RecentOutputPreviewRow & { isQuote?: boolean }) => {
@@ -1067,7 +1077,7 @@ function ProductionPicker({
     return { label: labelByType[file.output_type], to: `/admin/files?type=${file.output_type}`, pickerType: file.output_type };
   };
 
-  // Resolve which full-width card is centered (viewport math works for RTL scrollLeft quirks).
+  // Resolve which full-width slide is centered (viewport math sidesteps RTL scrollLeft quirks).
   const handleRecentCarouselScroll = () => {
     const el = recentCarouselRef.current;
     if (!el || el.clientWidth === 0) return;
@@ -1088,7 +1098,7 @@ function ProductionPicker({
   };
 
   return (
-    <div dir="rtl" className="theme-warm min-h-full bg-[var(--bg-page)]">
+    <div dir="rtl" className="theme-warm min-h-full overflow-x-hidden bg-[var(--bg-page)]">
       <header className="hidden h-[60px] items-center justify-between border-b border-[var(--border-warm)] bg-[var(--bg-surface)] px-7 lg:flex">
         <div className="text-[15px] font-semibold text-[var(--text-strong)]">הפקה</div>
         <div className="flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
@@ -1332,43 +1342,49 @@ function ProductionPicker({
               </Link>
             </div>
 
-            <div className="mt-4 grid gap-3 lg:grid-cols-5">
+            {/* Compact horizontal carousel — each event is a fixed visual tile that
+                reads "פרסמו פוסט ל…"; tapping it builds the brief for that event. */}
+            <div className="mt-4 flex w-full max-w-full snap-x gap-3 overflow-x-auto scroll-smooth pb-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {upcomingEvents.map((event) => {
                 const label = upcomingEventName(event);
+                const interactive = allowedTypes.length > 0;
+                const tileTint = event.is_major || event.subcategory === 'major'
+                  ? 'from-[var(--tint-sand)]'
+                  : event.subcategory === 'modern'
+                    ? 'from-[var(--tint-clay)]'
+                    : 'from-[var(--tint-olive)]';
                 return (
-                  <article
+                  <button
                     key={event.id}
-                    className="flex min-h-[128px] flex-col justify-between rounded-[12px] border border-[var(--border-warm)] bg-[var(--bg-surface)] p-3.5 text-right transition hover:border-brand/30 hover:bg-[var(--surface-2)]"
+                    type="button"
+                    disabled={!interactive}
+                    onClick={() => interactive && handleUseUpcomingEvent(event)}
+                    className="group flex w-[168px] min-w-[168px] shrink-0 snap-start flex-col overflow-hidden rounded-[12px] border border-[var(--border-warm)] bg-[var(--bg-surface)] text-right transition hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)] disabled:cursor-default disabled:hover:border-[var(--border-warm)] disabled:hover:shadow-none"
                   >
-                    <div>
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="rounded-[8px] bg-brand/10 px-2 py-1 text-[11px] font-bold text-brand">
-                          {upcomingEventTag(event)}
-                        </span>
-                        <span className="ltr shrink-0 text-start text-[11px] font-semibold text-[var(--text-muted)]">
-                          {formatHebrewDate(event.date)}
-                        </span>
-                      </div>
-                      <h3 className="mt-3 line-clamp-2 text-[14px] font-bold leading-5 text-[var(--text-strong)]">{label}</h3>
+                    <div className={`relative flex h-[104px] w-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br ${tileTint} via-[var(--bg-surface)] to-brand/10 px-3 text-center`}>
+                      <span className="absolute right-1.5 top-1.5 rounded-full bg-[var(--bg-surface)]/90 px-2 py-0.5 text-[10px] font-bold text-brand shadow-sm">
+                        {upcomingEventTag(event)}
+                      </span>
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--bg-surface)]/90 text-[var(--text-strong)] shadow-sm">
+                        <CalendarDaysIcon className="h-4 w-4 stroke-[1.75]" />
+                      </span>
+                      <span className="line-clamp-2 text-[13px] font-bold leading-4 text-[var(--text-strong)]">{label}</span>
+                      <span className="ltr text-[10px] font-semibold text-[var(--text-muted)]">{formatHebrewDate(event.date)}</span>
                     </div>
-                    {allowedTypes.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => handleUseUpcomingEvent(event)}
-                        className="mt-4 inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-[9px] border border-brand/35 bg-transparent px-3 py-2 text-[13px] font-semibold text-brand transition hover:border-brand hover:bg-brand/10"
-                      >
-                        <LightbulbIcon className="h-4 w-4 stroke-[1.75]" />
-                        קבלו רעיון
-                      </button>
+                    {interactive && (
+                      <span className="flex w-full items-center justify-center gap-1.5 border-t border-[var(--border-soft)] px-2.5 py-2 text-[12px] font-semibold text-brand transition group-hover:bg-brand/5">
+                        <LightbulbIcon className="h-3.5 w-3.5 shrink-0 stroke-[1.75]" />
+                        <span className="truncate">פרסמו פוסט ל{label}</span>
+                      </span>
                     )}
-                  </article>
+                  </button>
                 );
               })}
             </div>
           </section>
         )}
 
-        <section className="mt-5 rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-6 shadow-[var(--warm-shadow-card)] sm:px-8">
+        <section className="mt-5 overflow-hidden rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-6 shadow-[var(--warm-shadow-card)] sm:px-8">
           <div className="flex items-center justify-between">
             <h2 className="text-[18px] font-bold text-[var(--text-strong)]">תוצרים אחרונים</h2>
             <Link
@@ -1387,15 +1403,16 @@ function ProductionPicker({
               אין תוצרים עדיין
             </div>
           ) : (
-            <div className="mt-5">
+            <div className="mx-auto mt-5 w-full max-w-[460px]">
               {/*
-                One full-width card at a time. Parent page is dir=rtl so the
-                newest item starts on the right; swipe left → next, swipe right → previous.
+                Instagram-style carousel: one image per output, full-width slide,
+                swipe/scroll snaps to the next one. Parent is dir=rtl so the newest
+                item starts on the right.
               */}
               <div
                 ref={recentCarouselRef}
                 onScroll={handleRecentCarouselScroll}
-                className="flex snap-x snap-mandatory overflow-x-auto scroll-smooth [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="flex w-full max-w-full snap-x snap-mandatory overflow-x-auto scroll-smooth rounded-[14px] border border-[var(--border-warm)] bg-[var(--surface-2)] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 {recentCarouselItems.map((file) => {
                   const meta = carouselMeta(file);
@@ -1406,43 +1423,38 @@ function ProductionPicker({
                     <Link
                       key={file.id}
                       to={meta.to}
-                      className="group flex w-full min-w-full shrink-0 snap-center flex-col overflow-hidden rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] text-right transition hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)]"
+                      className="relative flex aspect-square w-full min-w-full shrink-0 snap-center items-center justify-center overflow-hidden bg-[var(--surface-2)]"
                     >
-                      <div className="relative flex aspect-[16/11] w-full items-center justify-center overflow-hidden bg-[var(--surface-2)] sm:aspect-[16/10]">
-                        {imagePreview ? (
-                          <img src={imagePreview} alt="" className="h-full w-full object-cover" />
-                        ) : deckPreview ? (
-                          <img src={deckPreview} alt="שקף ראשון מהמצגת" className="h-full w-full bg-white object-contain" />
-                        ) : pdfPreview ? (
-                          <iframe
-                            src={`${pdfPreview}#toolbar=0&navpanes=0&view=FitH`}
-                            title=""
-                            className="pointer-events-none h-full w-full border-0 bg-white"
-                          />
-                        ) : file.text_content ? (
-                          <span className="line-clamp-8 px-5 text-[13px] leading-5 text-[var(--text-muted)] sm:text-[14px]">
-                            {file.text_content.slice(0, 280)}
-                          </span>
-                        ) : (
-                          <PickerIcon type={meta.pickerType} className="h-14 w-14 stroke-[1.5] text-[var(--text-muted)]" />
-                        )}
-                        <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--text-strong)] shadow-sm">
-                          <PickerIcon type={meta.pickerType} className="h-3.5 w-3.5 stroke-[1.75]" />
-                          {meta.label}
+                      {imagePreview ? (
+                        <img src={imagePreview} alt="" className="h-full w-full object-cover" />
+                      ) : deckPreview ? (
+                        <img src={deckPreview} alt="שקף ראשון מהמצגת" className="h-full w-full bg-white object-contain" />
+                      ) : pdfPreview ? (
+                        <iframe
+                          src={`${pdfPreview}#toolbar=0&navpanes=0&view=FitH`}
+                          title=""
+                          className="pointer-events-none h-full w-full border-0 bg-white"
+                        />
+                      ) : file.text_content ? (
+                        <span className="line-clamp-[10] px-6 text-[14px] leading-6 text-[var(--text-muted)]">
+                          {file.text_content.slice(0, 320)}
                         </span>
-                      </div>
-                      <div className="flex flex-1 flex-col gap-1 p-3.5 sm:p-4">
-                        <div className="truncate text-[15px] font-semibold text-[var(--text-strong)] sm:text-[16px]">
-                          {file.text_content ? file.text_content.slice(0, 60) : meta.label}
-                        </div>
-                        <div className="ltr text-start text-[12px] text-[var(--text-muted)]">{formatHebrewDate(file.created_at)}</div>
-                      </div>
+                      ) : (
+                        <PickerIcon type={meta.pickerType} className="h-14 w-14 stroke-[1.5] text-[var(--text-muted)]" />
+                      )}
+                      <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface)]/95 px-2.5 py-1 text-[12px] font-semibold text-[var(--text-strong)] shadow-sm">
+                        <PickerIcon type={meta.pickerType} className="h-3.5 w-3.5 stroke-[1.75]" />
+                        {meta.label}
+                      </span>
+                      <span className="ltr absolute bottom-2.5 left-2.5 rounded-full bg-[var(--bg-surface)]/95 px-2.5 py-1 text-[11px] font-semibold text-[var(--text-muted)] shadow-sm">
+                        {formatHebrewDate(file.created_at)}
+                      </span>
                     </Link>
                   );
                 })}
               </div>
               {recentCarouselItems.length > 1 && (
-                <div className="mt-3 flex items-center justify-center gap-1.5" aria-hidden="true">
+                <div className="mt-3 flex items-center justify-center gap-1.5">
                   {recentCarouselItems.map((file, idx) => (
                     <button
                       key={file.id}

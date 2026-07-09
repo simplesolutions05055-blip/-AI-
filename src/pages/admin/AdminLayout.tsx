@@ -148,13 +148,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         {showBanner && <OnboardingBanner userId={profile.id} onboarding={profile.onboarding} />}
         {/* mobile top bar */}
         <main
           className={
             isProductionLanding
-              ? 'min-h-0 w-full flex-1 overflow-y-auto pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-0'
+              ? 'min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-0'
               : 'min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-3 py-4 pb-[calc(var(--safe-bottom)+5.75rem)] sm:px-4 lg:p-6'
           }
         >
