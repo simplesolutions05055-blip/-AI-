@@ -1001,7 +1001,7 @@ export default function GptImagesDeck({
               {contentLoading ? (
                 <div className="flex min-h-40 flex-col items-center justify-center gap-3 py-10 text-center text-sm text-[var(--muted)]" aria-live="polite" aria-busy="true">
                   <Spinner className="h-6 w-6 text-brand" />
-                  <span className="revise-dots font-semibold">טוען את תוכן השקפים</span>
+                  <span className="font-semibold">טוען את תוכן השקפים...</span>
                 </div>
               ) : (
                 <div className="space-y-4">

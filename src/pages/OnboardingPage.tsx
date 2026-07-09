@@ -886,7 +886,8 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
     }
   }
 
-  const docsUploaded = docs.some((d) => d.status === 'done');
+  const docsUploaded =
+    docs.some((d) => d.status === 'done') || contentSources.some((s) => s.content.trim().length > 0);
   const assetsUploaded = assets.some((a) => a.status === 'done');
   // When uploads are mandatory, the user must add at least one item to continue.
   const canLeaveStep =

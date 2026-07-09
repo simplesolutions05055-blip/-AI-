@@ -4,8 +4,17 @@
 // closed — the job keeps running here via EdgeRuntime.waitUntil and, when done,
 // Resend delivers both files to every address the user entered.
 //
-//   action 'start'  → validate, stash a job file, waitUntil(runJob), return { jobId }.
-//   action 'status' → read the job file → { status, error, sentTo }.
+//   action 'start'  → validate, stash a job file (including the full params),
+//                     waitUntil(generate stage), return { jobId }.
+//   action 'build'  → internal, self-invoked by the generate stage so the
+//                     PPTX/PDF build + email run in a FRESH isolate with a
+//                     fresh CPU/memory budget. Generating hi-res images and
+//                     building the deck in the same isolate used to blow the
+//                     runtime limits — the worker was killed mid-job with no
+//                     catchable error, leaving the job stuck on 'running'.
+//   action 'status' → read the job file → { status, error, sentTo }. A running
+//                     job whose heartbeat (updatedAt) went silent is reported
+//                     (and persisted) as an error instead of spinning forever.
 //
 // The slide TEXT is passed in from the client (exactly what the user approved,
 // minus the heavy image data URLs). The images themselves are reloaded from the
@@ -42,8 +51,19 @@ interface DeckSlide {
   body?: string | null;
   image_suggestion?: string | null;
 }
+interface JobParams {
+  requestId: string | null;
+  brandId: string | null;
+  brief: Record<string, unknown>;
+  slides: DeckSlide[];
+  approvedSlideIndexes: number[];
+  emails: string[];
+  mode: 'template' | 'fullslide';
+  generateMissingImages: boolean;
+}
 interface JobState {
   status: 'running' | 'done' | 'error';
+  stage?: 'generate' | 'build';
   error?: string | null;
   message?: string | null;
   sentTo?: string[];
@@ -54,6 +74,21 @@ interface JobState {
   pdf?: boolean; // false when the PDF step failed and only the PPTX was sent
   pdfError?: string | null;
   mode?: 'template' | 'fullslide'; // which mode generated this deck
+  updatedAt?: number; // heartbeat — the worker refreshes this while alive
+  params?: JobParams; // internal: lets the 'build' stage resume in a fresh isolate
+  buildToken?: string; // internal: authorizes the self-invoked 'build' action
+}
+
+// A live worker refreshes updatedAt every HEARTBEAT_MS. A 'running' job whose
+// updatedAt is older than STALL_MS (or missing — written before heartbeats
+// existed) means the isolate was killed by the runtime; report it as an error.
+const HEARTBEAT_MS = 25_000;
+const STALL_MS = 3 * 60_000;
+
+// Fields the browser polls for — everything except the internal params/token.
+function publicJobState(state: JobState) {
+  const { params: _params, buildToken: _token, ...rest } = state;
+  return rest;
 }
 
 function json(body: unknown, status = 200) {
@@ -76,7 +111,38 @@ Deno.serve(async (req) => {
       if (!jobId) return json({ error: 'jobId required' }, 400);
       const state = await readJob(database, jobId);
       if (!state) return json({ status: 'unknown' });
-      return json(state);
+      const stale = typeof state.updatedAt !== 'number' || Date.now() - state.updatedAt > STALL_MS;
+      if (state.status === 'running' && stale) {
+        const error = 'ההפקה נעצרה בשרת לפני שהסתיימה. התמונות שכבר נוצרו נשמרו — נסו להפיק שוב, ניסיון חוזר משתמש בהן וממשיך מאותה נקודה.';
+        await writeJob(database, jobId, { status: 'error', error });
+        await logEvent(database, {
+          requestId: state.params?.requestId ?? null,
+          severity: 'error',
+          action: 'deck_email_stalled',
+          message: `job ${jobId} stalled at stage ${state.stage ?? 'unknown'} (${state.message ?? ''})`,
+        });
+        return json(publicJobState({ ...state, status: 'error', error }));
+      }
+      return json(publicJobState(state));
+    }
+
+    // Internal hand-off: the generate stage invokes this so the heavy PPTX/PDF
+    // build runs in a fresh isolate. Guarded by the per-job secret token.
+    if (action === 'build') {
+      const jobId = String(payload?.jobId || '');
+      const token = String(payload?.buildToken || '');
+      if (!jobId || !token) return json({ error: 'jobId and buildToken required' }, 400);
+      const state = await readJob(database, jobId);
+      if (!state?.params || state.buildToken !== token) return json({ error: 'unknown_job' }, 404);
+      if (state.status !== 'running') return json({ ok: true, status: state.status });
+      const requestId = state.params.requestId;
+      EdgeRuntime.waitUntil(
+        runBuildStage(database, jobId).catch(async (e) => {
+          await writeJob(database, jobId, { status: 'error', error: String(e) });
+          await logEvent(database, { requestId, severity: 'error', action: 'deck_email_failed', message: String(e) });
+        }),
+      );
+      return json({ ok: true });
     }
 
     // action 'start'
@@ -107,7 +173,26 @@ Deno.serve(async (req) => {
     }
 
     const jobId = crypto.randomUUID();
-    await writeJob(database, jobId, { status: 'running', total: validEmails.length, selectedSlideIndexes: approvedSlideIndexes, message: 'המשימה נפתחה בשרת.' });
+    const buildToken = crypto.randomUUID();
+    const params: JobParams = {
+      requestId,
+      brandId,
+      brief,
+      slides,
+      approvedSlideIndexes,
+      emails: validEmails,
+      mode: deckMode,
+      generateMissingImages,
+    };
+    await writeJob(database, jobId, {
+      status: 'running',
+      stage: 'generate',
+      total: validEmails.length,
+      selectedSlideIndexes: approvedSlideIndexes,
+      message: 'המשימה נפתחה בשרת.',
+      params,
+      buildToken,
+    });
     await logEvent(database, {
       requestId,
       action: 'deck_email_started',
@@ -126,12 +211,10 @@ Deno.serve(async (req) => {
     // Fire-and-forget: the job continues after we return, even if the browser
     // that started it is closed.
     EdgeRuntime.waitUntil(
-      runJob(database, jobId, { requestId, brandId, brief, slides, approvedSlideIndexes, emails: validEmails, mode: deckMode, generateMissingImages }).catch(
-        async (e) => {
-          await writeJob(database, jobId, { status: 'error', error: String(e) });
-          await logEvent(database, { requestId, severity: 'error', action: 'deck_email_failed', message: String(e) });
-        },
-      ),
+      runGenerateStage(database, jobId).catch(async (e) => {
+        await writeJob(database, jobId, { status: 'error', error: String(e) });
+        await logEvent(database, { requestId, severity: 'error', action: 'deck_email_failed', message: String(e) });
+      }),
     );
 
     return json({ ok: true, jobId, emails: validEmails });
@@ -140,55 +223,125 @@ Deno.serve(async (req) => {
   }
 });
 
-async function runJob(
+// Refresh the job's updatedAt while a stage is alive, so 'status' can tell a
+// working job from one whose isolate was killed by the runtime.
+function startHeartbeat(database: Database, jobId: string): () => void {
+  const id = setInterval(() => {
+    writeJob(database, jobId, {}).catch(() => {});
+  }, HEARTBEAT_MS);
+  return () => clearInterval(id);
+}
+
+// Stage 1 — reuse/generate the slide images (persisted to deck_ai_images as
+// they are created), then hand the heavy PPTX/PDF build to a fresh isolate.
+async function runGenerateStage(database: Database, jobId: string) {
+  const state = await readJob(database, jobId);
+  const p = state?.params;
+  if (!p || !state?.buildToken) throw new Error('job params missing');
+  const stopHeartbeat = startHeartbeat(database, jobId);
+  try {
+    const brand = await loadBrand(database, p.brandId);
+
+    // Approved images: newest deck_ai_image per approved slide index. If the
+    // browser did not pre-generate them, this worker creates the missing ones.
+    await writeJob(database, jobId, { status: 'running', message: 'בודקים תמונות קיימות לשקפים שנבחרו.' });
+    const imagesBySlide = await loadApprovedImages(database, p.requestId, p.approvedSlideIndexes, p.mode);
+    const reusedCount = imagesBySlide.size;
+
+    let generatedCount = 0;
+    if (p.generateMissingImages) {
+      const missing = p.approvedSlideIndexes.filter((idx) => !imagesBySlide.has(idx) && p.slides[idx]);
+      if (missing.length) {
+        await writeJob(database, jobId, {
+          status: 'running',
+          message: `יוצרים ${missing.length} תמונות AI בשרת. אפשר להמשיך לעבוד באתר.`,
+          reused: reusedCount,
+        });
+        generatedCount = await generateMissingSlideImages(database, {
+          requestId: p.requestId,
+          brandId: p.brandId,
+          brief: p.brief,
+          brand,
+          slides: p.slides,
+          indexes: missing,
+          mode: p.mode,
+          out: imagesBySlide,
+        });
+      }
+    }
+    if (p.approvedSlideIndexes.some((idx) => !imagesBySlide.has(idx))) {
+      throw new Error('לא נמצאו תמונות לכל השקפים שנבחרו.');
+    }
+    await writeJob(database, jobId, { status: 'running', stage: 'build', generated: generatedCount, reused: reusedCount });
+
+    // Generating hi-res images and building the deck in one isolate used to
+    // exceed the runtime's resource limits — the worker was killed mid-build
+    // with nothing to catch, and the job hung on 'running' forever. The build
+    // stage reloads the images just persisted to storage, so when we have a
+    // requestId (i.e. the images were persisted) run it as a NEW invocation
+    // with a fresh CPU/memory budget.
+    if (p.requestId) {
+      const handedOff = await invokeBuildStage(jobId, state.buildToken);
+      if (handedOff) {
+        await logEvent(database, { requestId: p.requestId, action: 'deck_email_build_handoff', metadata: { jobId } });
+        return;
+      }
+    }
+
+    // No requestId (images only exist in memory) or the self-invoke failed —
+    // build inline as a fallback.
+    await buildAndSend(database, jobId, p, imagesBySlide, { generated: generatedCount, reused: reusedCount });
+  } finally {
+    stopHeartbeat();
+  }
+}
+
+async function invokeBuildStage(jobId: string, buildToken: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/deck-email`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ action: 'build', jobId, buildToken }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Stage 2 — fresh isolate: reload the persisted images, build PPTX/PDF, email.
+async function runBuildStage(database: Database, jobId: string) {
+  const state = await readJob(database, jobId);
+  const p = state?.params;
+  if (!p) throw new Error('job params missing');
+  const stopHeartbeat = startHeartbeat(database, jobId);
+  try {
+    const imagesBySlide = await loadApprovedImages(database, p.requestId, p.approvedSlideIndexes, p.mode);
+    if (p.approvedSlideIndexes.some((idx) => !imagesBySlide.has(idx))) {
+      throw new Error('לא נמצאו תמונות לכל השקפים שנבחרו.');
+    }
+    await buildAndSend(database, jobId, p, imagesBySlide, {
+      generated: state?.generated ?? 0,
+      reused: state?.reused ?? 0,
+    });
+  } finally {
+    stopHeartbeat();
+  }
+}
+
+async function buildAndSend(
   database: Database,
   jobId: string,
-  p: {
-    requestId: string | null;
-    brandId: string | null;
-    brief: Record<string, unknown>;
-    slides: DeckSlide[];
-    approvedSlideIndexes: number[];
-    emails: string[];
-    mode: 'template' | 'fullslide';
-    generateMissingImages: boolean;
-  },
+  p: JobParams,
+  imagesBySlide: Map<number, string>,
+  counts: { generated: number; reused: number },
 ) {
-  // 1) Brand pack: name, palette, logo (as a data URL for embedding).
   const brand = await loadBrand(database, p.brandId);
-
-  // 2) Approved images: newest deck_ai_image per approved slide index, loaded
-  //    from storage as data URLs and attached to their slide. If the browser
-  //    did not pre-generate them, this worker creates the missing images here.
-  await writeJob(database, jobId, { status: 'running', total: p.emails.length, message: 'בודקים תמונות קיימות לשקפים שנבחרו.' });
-  const imagesBySlide = await loadApprovedImages(database, p.requestId, p.approvedSlideIndexes, p.mode);
-  const reusedCount = imagesBySlide.size;
-
-  let generatedCount = 0;
-  if (p.generateMissingImages) {
-    const missing = p.approvedSlideIndexes.filter((idx) => !imagesBySlide.has(idx) && p.slides[idx]);
-    if (missing.length) {
-      await writeJob(database, jobId, {
-        status: 'running',
-        total: p.emails.length,
-        message: `יוצרים ${missing.length} תמונות AI בשרת. אפשר להמשיך לעבוד באתר.`,
-        reused: reusedCount,
-      });
-      generatedCount = await generateMissingSlideImages(database, {
-        requestId: p.requestId,
-        brandId: p.brandId,
-        brief: p.brief,
-        brand,
-        slides: p.slides,
-        indexes: missing,
-        mode: p.mode,
-        out: imagesBySlide,
-      });
-    }
-  }
-  if (p.approvedSlideIndexes.some((idx) => !imagesBySlide.has(idx))) {
-    throw new Error('לא נמצאו תמונות לכל השקפים שנבחרו.');
-  }
+  const generatedCount = counts.generated;
+  const reusedCount = counts.reused;
 
   const topic = deliverableTitle(p.brief, 'presentation', 'מצגת');
   const safeName = topic.slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'presentation';
@@ -300,11 +453,23 @@ function buildDeckEditUrl(requestId: string | null, jobId: string): string | nul
 }
 
 // ── job state (small JSON blob in the outputs bucket) ──
-async function writeJob(database: Database, jobId: string, state: JobState) {
-  const existing = await readJob(database, jobId);
-  await database.storage
-    .from(BUCKET)
-    .upload(jobPath(jobId), new Blob([JSON.stringify({ ...(existing ?? {}), ...state })], { type: 'application/json' }), { upsert: true });
+// Writes are chained through a per-isolate queue so a heartbeat's
+// read-modify-write can never interleave with (and clobber) a real state
+// change like the final 'done'/'error' write.
+let jobWriteQueue: Promise<unknown> = Promise.resolve();
+function writeJob(database: Database, jobId: string, patch: Partial<JobState>): Promise<void> {
+  const run = async () => {
+    const existing = await readJob(database, jobId);
+    // A bare heartbeat must not resurrect a job that already finished.
+    if (Object.keys(patch).length === 0 && existing && existing.status !== 'running') return;
+    const next = { ...(existing ?? {}), ...patch, updatedAt: Date.now() };
+    await database.storage
+      .from(BUCKET)
+      .upload(jobPath(jobId), new Blob([JSON.stringify(next)], { type: 'application/json' }), { upsert: true });
+  };
+  const chained = jobWriteQueue.then(run, run);
+  jobWriteQueue = chained.catch(() => {});
+  return chained;
 }
 async function readJob(database: Database, jobId: string): Promise<JobState | null> {
   const { data } = await database.storage.from(BUCKET).download(jobPath(jobId));
