@@ -676,6 +676,10 @@ function ProductionPicker({
   });
   const [recentQuoteFiles, setRecentQuoteFiles] = useState<RecentOutputPreviewRow[]>([]);
   const [recentPreviews, setRecentPreviews] = useState<Record<string, string>>({});
+  // First saved slide image per presentation output (rendered as <img>).
+  const [recentDeckPreviews, setRecentDeckPreviews] = useState<Record<string, string>>({});
+  // Signed PDF URLs per document/quote output (rendered as a non-interactive <iframe>).
+  const [recentPdfPreviews, setRecentPdfPreviews] = useState<Record<string, string>>({});
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   // For presentations we open the image picker before leaving this page, so the
@@ -838,9 +842,11 @@ function ProductionPicker({
             grouped[file.output_type].push(file);
           }
         }
+        const quoteFiles = files.filter((file) => file.output_type === 'pdf' && file.request_source === 'quote').slice(0, 2);
         setRecentFiles(grouped);
-        setRecentQuoteFiles(files.filter((file) => file.output_type === 'pdf' && file.request_source === 'quote').slice(0, 2));
+        setRecentQuoteFiles(quoteFiles);
 
+        // Sign image-output previews (shown as <img>).
         const images = grouped.image.filter((file) => file.storage_path);
         const pairs = await Promise.all(
           images.map(async (file) => {
@@ -849,6 +855,42 @@ function ProductionPicker({
           }),
         );
         if (active) setRecentPreviews(Object.fromEntries(pairs.filter(([, url]) => url)) as Record<string, string>);
+
+        // Sign PDF previews for documents + quotes (shown as a non-interactive <iframe>).
+        const pdfFiles = [...grouped.pdf, ...quoteFiles].filter((file) => file.storage_path);
+        const pdfPairs = await Promise.all(
+          pdfFiles.map(async (file) => {
+            const { data: signed } = await client.storage.from('outputs').createSignedUrl(file.storage_path as string, 600);
+            return [file.id, signed?.signedUrl] as const;
+          }),
+        );
+        if (active) setRecentPdfPreviews(Object.fromEntries(pdfPairs.filter(([, url]) => url)) as Record<string, string>);
+
+        // Presentations show the first saved AI slide image (like FilesPage).
+        const presentationFiles = grouped.presentation;
+        const presentationRequestIds = Array.from(new Set(presentationFiles.map((file) => file.request_id).filter(Boolean)));
+        if (presentationRequestIds.length > 0) {
+          const { data: deckRows } = await client
+            .from('deck_ai_images')
+            .select('request_id, slide_index, storage_path, created_at')
+            .in('request_id', presentationRequestIds)
+            .order('slide_index', { ascending: true })
+            .order('created_at', { ascending: false });
+          const firstByRequest: Record<string, string> = {};
+          for (const row of (deckRows ?? []) as Array<{ request_id: string; storage_path: string | null }>) {
+            if (!row.storage_path || firstByRequest[row.request_id]) continue;
+            firstByRequest[row.request_id] = row.storage_path;
+          }
+          const deckPairs = await Promise.all(
+            presentationFiles.map(async (file) => {
+              const path = firstByRequest[file.request_id];
+              if (!path) return [file.id, null] as const;
+              const { data: signed } = await client.storage.from('outputs').createSignedUrl(path, 600);
+              return [file.id, signed?.signedUrl ?? null] as const;
+            }),
+          );
+          if (active) setRecentDeckPreviews(Object.fromEntries(deckPairs.filter(([, url]) => url)) as Record<string, string>);
+        }
       });
 
     return () => {
@@ -990,19 +1032,37 @@ function ProductionPicker({
     female: 'צרי תוצר',
     neutral: 'יצירת תוצר',
   });
-  const allRecentOutputCategories: Array<{ key: string; label: string; bg: string; type?: OutputType }> = [
-    { key: 'image', type: 'image', label: 'תמונה/גרפיקה', bg: 'var(--tint-clay)' },
-    { key: 'presentation', type: 'presentation', label: 'מצגת', bg: 'var(--tint-olive)' },
-    { key: 'pdf', type: 'pdf', label: 'מסמך', bg: 'var(--tint-sand)' },
-    {
-      key: 'quote',
-      label: 'הצעת מחיר',
-      bg: 'var(--tint-ochre)',
-    },
-  ];
-  const recentOutputCategories = allRecentOutputCategories.filter((item) =>
-    allowedTypes.includes((item.key === 'quote' ? 'quote' : item.type) as OutputType | 'quote'),
-  );
+  // Flat, newest-first list of individual outputs for the compact carousel — each
+  // card shows the output's first image when there is one. Quotes are tagged so
+  // they keep their own label/link even though they are stored as PDFs.
+  const recentCarouselItems = (() => {
+    const seen = new Set<string>();
+    const flat: Array<RecentOutputPreviewRow & { isQuote?: boolean }> = [];
+    const pushAllowed = (file: RecentOutputPreviewRow & { isQuote?: boolean }) => {
+      const permKey = (file.isQuote ? 'quote' : file.output_type) as OutputType | 'quote';
+      if (!allowedTypes.includes(permKey) || seen.has(file.id)) return;
+      seen.add(file.id);
+      flat.push(file);
+    };
+    recentQuoteFiles.forEach((file) => pushAllowed({ ...file, isQuote: true }));
+    (['image', 'presentation', 'pdf', 'text'] as const).forEach((type) =>
+      recentFiles[type].forEach((file) => pushAllowed(file)),
+    );
+    return flat.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  })();
+
+  const carouselMeta = (file: RecentOutputPreviewRow & { isQuote?: boolean }) => {
+    if (file.isQuote) {
+      return { label: 'הצעת מחיר', to: '/admin/files?type=pdf&source=quote', pickerType: 'quote' as const };
+    }
+    const labelByType: Record<OutputType, string> = {
+      image: 'תמונה/גרפיקה',
+      presentation: 'מצגת',
+      pdf: 'מסמך',
+      text: OUTPUT_LABEL.text,
+    };
+    return { label: labelByType[file.output_type], to: `/admin/files?type=${file.output_type}`, pickerType: file.output_type };
+  };
 
   return (
     <div dir="rtl" className="theme-warm min-h-full bg-[var(--bg-page)]">
@@ -1299,100 +1359,57 @@ function ProductionPicker({
             </Link>
           </div>
 
-          <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {recentOutputCategories.map(({ key, type, label, bg }) => {
-              const items = key === 'quote' ? recentQuoteFiles : type ? recentFiles[type] : [];
-              const createType = key === 'quote' ? 'quote' : type;
-              const to =
-                items.length > 0
-                  ? key === 'quote'
-                    ? '/admin/files?type=pdf&source=quote'
-                    : `/admin/files?type=${type}`
-                  : `/admin/production?type=${createType}`;
-              return (
-                <Link
-                  key={key}
-                  to={to}
-                  onClick={() => {
-                    if (items.length === 0) {
-                      setSelected(createType ?? null);
-                      window.requestAnimationFrame(() => {
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                      });
-                    }
-                  }}
-                  className="group flex min-h-[210px] flex-col overflow-hidden rounded-[12px] border border-[var(--border-warm)] bg-[var(--bg-surface)] text-right transition hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)]"
-                >
-                  <div className="flex items-center gap-2 px-3 py-2.5" style={{ backgroundColor: bg }}>
-                    <span className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--border-soft)] bg-[var(--bg-surface)] text-[var(--text-strong)]">
-                      <PickerIcon type={key === 'quote' ? 'quote' : type ?? 'text'} className="h-5 w-5 stroke-[1.75]" />
-                    </span>
-                    <span className="text-[13px] font-bold text-[var(--text-strong)]">{label}</span>
-                  </div>
-
-                  <div className="flex flex-1 flex-col gap-2 p-3">
-                    {key === 'quote' && items.length === 0 ? (
-                      <div className="flex flex-1 items-center justify-center py-6 text-center text-[11px] leading-5 text-[var(--text-muted)]">
-                        יצירת הצעת מחיר מעוצבת כ-PDF מתוך בריף חופשי
-                      </div>
-                    ) : items.length === 0 ? (
-                      <div className="flex flex-1 items-center justify-center py-6 text-center text-[11px] text-[var(--text-muted)]">
-                        אין תוצרים עדיין
-                      </div>
-                    ) : (
-                      items.map((file) => (
-                        <div key={file.id} className="flex items-center gap-2 rounded-[8px] border border-[var(--border-soft)] p-1.5">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-[var(--surface-2)]">
-                            {file.output_type === 'image' && recentPreviews[file.id] ? (
-                              <img src={recentPreviews[file.id]} alt="" className="h-full w-full object-cover" />
-                            ) : file.text_content ? (
-                              <span className="line-clamp-3 break-all px-0.5 text-[6px] leading-[7px] text-[var(--text-muted)]">
-                                {file.text_content.slice(0, 60)}
-                              </span>
-                            ) : (
-                              <PickerIcon type={key === 'quote' ? 'quote' : file.output_type} className="h-5 w-5 stroke-[1.75] text-[var(--text-muted)]" />
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[11px] font-medium text-[var(--text-strong)]">
-                              {file.text_content ? file.text_content.slice(0, 30) : OUTPUT_LABEL[file.output_type]}
-                            </div>
-                            <div className="ltr text-start text-[10px] text-[var(--text-muted)]">{formatHebrewDate(file.created_at)}</div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <div className="border-t border-[var(--border-soft)] px-3 py-3">
-                    <Tooltip content={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}>
-                      <span
-                        className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-[9px] border border-brand/35 bg-transparent px-3 py-2 text-[13px] font-semibold text-brand transition group-hover:border-brand group-hover:bg-brand/10 cursor-pointer"
-                        aria-label={items.length === 0 ? `יצירת ${label}` : `צפייה בכל ה${label}`}
-                      >
-                        {items.length === 0 ? (
-                          <>
-                            <svg viewBox="0 0 24 24" fill="none" className="h-[16px] w-[16px]" aria-hidden="true">
-                              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                            </svg>
-                            <span>יצירה</span>
-                          </>
-                        ) : (
-                          <>
-                            <svg viewBox="0 0 24 24" fill="none" className="h-[16px] w-[16px]" aria-hidden="true">
-                              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
-                            </svg>
-                            <span>צפייה</span>
-                          </>
-                        )}
+          {recentCarouselItems.length === 0 ? (
+            <div className="mt-5 flex items-center justify-center rounded-[12px] border border-dashed border-[var(--border-warm)] py-10 text-center text-[13px] text-[var(--text-muted)]">
+              אין תוצרים עדיין
+            </div>
+          ) : (
+            <div className="mt-5 -mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2 [-webkit-overflow-scrolling:touch] [scrollbar-width:thin]">
+              {recentCarouselItems.map((file) => {
+                const meta = carouselMeta(file);
+                const imagePreview = file.output_type === 'image' ? recentPreviews[file.id] : undefined;
+                const deckPreview = file.output_type === 'presentation' ? recentDeckPreviews[file.id] : undefined;
+                const pdfPreview = file.output_type === 'pdf' ? recentPdfPreviews[file.id] : undefined;
+                return (
+                  <Link
+                    key={file.id}
+                    to={meta.to}
+                    className="group flex w-[150px] shrink-0 snap-start flex-col overflow-hidden rounded-[12px] border border-[var(--border-warm)] bg-[var(--bg-surface)] text-right transition hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)]"
+                  >
+                    <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-[var(--surface-2)]">
+                      {imagePreview ? (
+                        <img src={imagePreview} alt="" className="h-full w-full object-cover" />
+                      ) : deckPreview ? (
+                        <img src={deckPreview} alt="שקף ראשון מהמצגת" className="h-full w-full bg-white object-contain" />
+                      ) : pdfPreview ? (
+                        <iframe
+                          src={`${pdfPreview}#toolbar=0&navpanes=0&view=FitH`}
+                          title=""
+                          className="pointer-events-none h-full w-full border-0 bg-white"
+                        />
+                      ) : file.text_content ? (
+                        <span className="line-clamp-5 px-2.5 text-[9px] leading-[13px] text-[var(--text-muted)]">
+                          {file.text_content.slice(0, 140)}
+                        </span>
+                      ) : (
+                        <PickerIcon type={meta.pickerType} className="h-9 w-9 stroke-[1.5] text-[var(--text-muted)]" />
+                      )}
+                      <span className="absolute right-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-[var(--bg-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--text-strong)] shadow-sm">
+                        <PickerIcon type={meta.pickerType} className="h-3 w-3 stroke-[1.75]" />
+                        {meta.label}
                       </span>
-                    </Tooltip>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
+                    </div>
+                    <div className="flex flex-1 flex-col gap-0.5 p-2.5">
+                      <div className="truncate text-[12px] font-semibold text-[var(--text-strong)]">
+                        {file.text_content ? file.text_content.slice(0, 40) : meta.label}
+                      </div>
+                      <div className="ltr text-start text-[10px] text-[var(--text-muted)]">{formatHebrewDate(file.created_at)}</div>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
         </section>
       </div>
 
