@@ -1193,7 +1193,7 @@ function ProductionPicker({
                 })}
               </div>
               {selectedPickerLabel && (
-                <div className="inline-flex w-fit items-center rounded-xl border border-[var(--warm-accent)] bg-[var(--warm-accent-soft)] px-3.5 py-2 text-right shadow-sm sm:hidden">
+                <div className="mx-auto flex w-fit items-center rounded-xl border border-[var(--warm-accent)] bg-[var(--warm-accent-soft)] px-3.5 py-2 text-right shadow-sm sm:hidden">
                   <span className="text-[16px] font-bold leading-none text-[var(--warm-accent-dark)]">{selectedPickerLabel}</span>
                 </div>
               )}
