@@ -43,6 +43,7 @@ const jobPath = (jobId: string) => `deck-email-jobs/${jobId}.json`;
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
 type Database = ReturnType<typeof db>;
+type BuildStep = 'pptx' | 'pdf' | 'send';
 
 interface DeckSlide {
   title?: string;
@@ -126,20 +127,24 @@ Deno.serve(async (req) => {
       return json(publicJobState(state));
     }
 
-    // Internal hand-off: the generate stage invokes this so the heavy PPTX/PDF
-    // build runs in a fresh isolate. Guarded by the per-job secret token.
+    // Internal hand-off: each heavy step (build the PPTX, build the PDF, send
+    // the emails) runs in its OWN fresh isolate so no single isolate ever holds
+    // the images + PPTX + PDF + attachments at once — that combined peak is what
+    // blew the memory limit and got the worker killed for multi-image decks.
+    // Guarded by the per-job secret token; the step chains itself onward.
     if (action === 'build') {
       const jobId = String(payload?.jobId || '');
       const token = String(payload?.buildToken || '');
+      const step: BuildStep = (['pptx', 'pdf', 'send'] as const).includes(payload?.step) ? payload.step : 'pptx';
       if (!jobId || !token) return json({ error: 'jobId and buildToken required' }, 400);
       const state = await readJob(database, jobId);
       if (!state?.params || state.buildToken !== token) return json({ error: 'unknown_job' }, 404);
       if (state.status !== 'running') return json({ ok: true, status: state.status });
       const requestId = state.params.requestId;
       EdgeRuntime.waitUntil(
-        runBuildStage(database, jobId).catch(async (e) => {
+        runBuildStep(database, jobId, step).catch(async (e) => {
           await writeJob(database, jobId, { status: 'error', error: String(e) });
-          await logEvent(database, { requestId, severity: 'error', action: 'deck_email_failed', message: String(e) });
+          await logEvent(database, { requestId, severity: 'error', action: 'deck_email_failed', message: `${step}: ${String(e)}` });
         }),
       );
       return json({ ok: true });
@@ -274,14 +279,14 @@ async function runGenerateStage(database: Database, jobId: string) {
     }
     await writeJob(database, jobId, { status: 'running', stage: 'build', generated: generatedCount, reused: reusedCount });
 
-    // Generating hi-res images and building the deck in one isolate used to
-    // exceed the runtime's resource limits — the worker was killed mid-build
-    // with nothing to catch, and the job hung on 'running' forever. The build
-    // stage reloads the images just persisted to storage, so when we have a
-    // requestId (i.e. the images were persisted) run it as a NEW invocation
-    // with a fresh CPU/memory budget.
+    // The build is split into three self-chained steps (PPTX → PDF → send),
+    // each in its own fresh isolate, so no single isolate ever holds the images
+    // + PPTX + PDF + email attachments together — that combined peak is what
+    // exceeded the memory limit and got the worker killed for multi-image decks.
+    // Each step reloads only what it needs from storage, which is why we need a
+    // requestId (i.e. the images were persisted).
     if (p.requestId) {
-      const handedOff = await invokeBuildStage(jobId, state.buildToken);
+      const handedOff = await invokeBuildStep(jobId, state.buildToken, 'pptx');
       if (handedOff) {
         await logEvent(database, { requestId: p.requestId, action: 'deck_email_build_handoff', metadata: { jobId } });
         return;
@@ -289,14 +294,14 @@ async function runGenerateStage(database: Database, jobId: string) {
     }
 
     // No requestId (images only exist in memory) or the self-invoke failed —
-    // build inline as a fallback.
-    await buildAndSend(database, jobId, p, imagesBySlide, { generated: generatedCount, reused: reusedCount });
+    // build everything inline as a fallback (the pre-split behaviour).
+    await buildAndSendInline(database, jobId, p, imagesBySlide, { generated: generatedCount, reused: reusedCount });
   } finally {
     stopHeartbeat();
   }
 }
 
-async function invokeBuildStage(jobId: string, buildToken: string): Promise<boolean> {
+async function invokeBuildStep(jobId: string, buildToken: string, step: BuildStep): Promise<boolean> {
   try {
     const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/deck-email`, {
       method: 'POST',
@@ -304,7 +309,7 @@ async function invokeBuildStage(jobId: string, buildToken: string): Promise<bool
         Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ action: 'build', jobId, buildToken }),
+      body: JSON.stringify({ action: 'build', jobId, buildToken, step }),
     });
     return res.ok;
   } catch {
@@ -312,27 +317,145 @@ async function invokeBuildStage(jobId: string, buildToken: string): Promise<bool
   }
 }
 
-// Stage 2 — fresh isolate: reload the persisted images, build PPTX/PDF, email.
-async function runBuildStage(database: Database, jobId: string) {
+const jobFile = (jobId: string, name: string) => `deck-email-jobs/${jobId}/${name}`;
+
+async function uploadBase64(database: Database, path: string, base64: string, contentType: string) {
+  const { error } = await database.storage.from(BUCKET).upload(path, decodeBase64(base64), { contentType, upsert: true });
+  if (error) throw error;
+}
+async function downloadBase64(database: Database, path: string): Promise<string | null> {
+  const { data } = await database.storage.from(BUCKET).download(path);
+  if (!data) return null;
+  return encodeBase64(new Uint8Array(await data.arrayBuffer()));
+}
+
+// One build step per isolate. 'pptx' builds+stores the PPTX then chains 'pdf';
+// 'pdf' builds+stores the PDF (best-effort) then chains 'send'; 'send' emails
+// the stored files. Each reloads only the images it needs, so peak memory stays
+// far below the single-isolate limit that killed multi-image decks.
+async function runBuildStep(database: Database, jobId: string, step: BuildStep) {
   const state = await readJob(database, jobId);
   const p = state?.params;
-  if (!p) throw new Error('job params missing');
+  if (!p || !state?.buildToken) throw new Error('job params missing');
+  const buildToken = state.buildToken;
   const stopHeartbeat = startHeartbeat(database, jobId);
   try {
-    const imagesBySlide = await loadApprovedImages(database, p.requestId, p.approvedSlideIndexes, p.mode);
-    if (p.approvedSlideIndexes.some((idx) => !imagesBySlide.has(idx))) {
-      throw new Error('לא נמצאו תמונות לכל השקפים שנבחרו.');
+    if (step === 'pptx') {
+      await writeJob(database, jobId, { status: 'running', stage: 'build', total: p.emails.length, message: 'בונים את קובץ ה-PowerPoint בשרת.' });
+      const imagesBySlide = await loadBuildImages(database, p);
+      let pptxBase64: string;
+      if (p.mode === 'fullslide') {
+        const fullImages = [...imagesBySlide.entries()].sort((a, b) => a[0] - b[0]).map(([, url]) => url);
+        pptxBase64 = await buildFullSlidePptxBase64(fullImages);
+      } else {
+        const brand = await loadBrand(database, p.brandId);
+        const slides = p.slides.map((s, i) => ({ ...s, aiImage: imagesBySlide.get(i) ?? null }));
+        pptxBase64 = await buildPptxBase64(p.brief, brand, slides);
+      }
+      await uploadBase64(database, jobFile(jobId, 'deck.pptx'), pptxBase64, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+      await writeJob(database, jobId, { status: 'running', stage: 'build', message: 'קובץ ה-PowerPoint מוכן. בונים PDF בשרת.' });
+      if (!(await invokeBuildStep(jobId, buildToken, 'pdf'))) {
+        throw new Error('hand-off to pdf step failed');
+      }
+      return;
     }
-    await buildAndSend(database, jobId, p, imagesBySlide, {
-      generated: state?.generated ?? 0,
-      reused: state?.reused ?? 0,
-    });
+
+    if (step === 'pdf') {
+      let pdf = false;
+      let pdfError: string | null = null;
+      try {
+        const imagesBySlide = await loadBuildImages(database, p);
+        let pdfBase64: string;
+        if (p.mode === 'fullslide') {
+          const fullImages = [...imagesBySlide.entries()].sort((a, b) => a[0] - b[0]).map(([, url]) => url);
+          pdfBase64 = await buildFullSlidePdfBase64(fullImages);
+        } else {
+          const brand = await loadBrand(database, p.brandId);
+          const slides = p.slides.map((s, i) => ({ ...s, aiImage: imagesBySlide.get(i) ?? null }));
+          pdfBase64 = await renderPdfBase64(buildDeckHtml(p.brief, brand, slides));
+        }
+        await uploadBase64(database, jobFile(jobId, 'deck.pdf'), pdfBase64, 'application/pdf');
+        pdf = true;
+      } catch (e) {
+        pdfError = String(e);
+        await logEvent(database, { requestId: p.requestId, severity: 'warning', action: 'deck_email_pdf_failed', message: pdfError });
+      }
+      await writeJob(database, jobId, { status: 'running', stage: 'build', pdf, pdfError, message: 'שומרים קבצים ושולחים מיילים.' });
+      if (!(await invokeBuildStep(jobId, buildToken, 'send'))) {
+        throw new Error('hand-off to send step failed');
+      }
+      return;
+    }
+
+    // step === 'send'
+    await sendBuiltDeck(database, jobId, p, { pdf: state.pdf === true, pdfError: state.pdfError ?? null, generated: state.generated ?? 0, reused: state.reused ?? 0 });
   } finally {
     stopHeartbeat();
   }
 }
 
-async function buildAndSend(
+// Reload the approved images for a build step, failing loudly if any are gone.
+async function loadBuildImages(database: Database, p: JobParams): Promise<Map<number, string>> {
+  const imagesBySlide = await loadApprovedImages(database, p.requestId, p.approvedSlideIndexes, p.mode);
+  if (p.approvedSlideIndexes.some((idx) => !imagesBySlide.has(idx))) {
+    throw new Error('לא נמצאו תמונות לכל השקפים שנבחרו.');
+  }
+  return imagesBySlide;
+}
+
+// Final step: email the PPTX (+PDF if it built) that the earlier steps stored.
+async function sendBuiltDeck(
+  database: Database,
+  jobId: string,
+  p: JobParams,
+  meta: { pdf: boolean; pdfError: string | null; generated: number; reused: number },
+) {
+  const brand = await loadBrand(database, p.brandId);
+  const topic = deliverableTitle(p.brief, 'presentation', 'מצגת');
+  const safeName = topic.slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'presentation';
+
+  const pptxBase64 = await downloadBase64(database, jobFile(jobId, 'deck.pptx'));
+  if (!pptxBase64) throw new Error('קובץ המצגת לא נמצא בשרת.');
+  const pdfBase64 = meta.pdf ? await downloadBase64(database, jobFile(jobId, 'deck.pdf')) : null;
+
+  const filesLine = pdfBase64 ? 'כקובץ PowerPoint (PPTX) וכ-PDF' : 'כקובץ PowerPoint (PPTX)';
+  const editUrl = buildDeckEditUrl(p.requestId, jobId);
+  const subject = deliverableSubject(topic, 'presentation');
+  const emailTitle = deliverableReadyHeading(topic, 'presentation');
+  const html = buildEmailHtml(
+    [
+      `המצגת ${topic} מוכנה ומצורפת כאן ${filesLine}.`,
+      editUrl ? `לצפייה ועריכה של המצגת שקף־שקף:\n${editUrl}` : '',
+      'אפשר לפתוח את הקישור, לגלול בין השקפים, לערוך שקף ספציפי עם AI ולייצא PPTX מעודכן.',
+    ].filter(Boolean).join('\n\n'),
+    brand?.name ? `בברכה,\n${brand.name}` : 'בברכה',
+    emailTitle,
+  );
+  const attachments = [
+    { filename: `${safeName}.pptx`, contentBase64: pptxBase64 },
+    ...(pdfBase64 ? [{ filename: `${safeName}.pdf`, contentBase64: pdfBase64 }] : []),
+  ];
+  const sentTo: string[] = [];
+  for (const to of p.emails) {
+    try {
+      await sendDeliverableEmail({ to, subject, html, attachments });
+      sentTo.push(to);
+    } catch (e) {
+      await logEvent(database, { requestId: p.requestId, severity: 'warning', action: 'deck_email_recipient_failed', message: `${to}: ${String(e)}` });
+    }
+  }
+
+  await writeJob(database, jobId, { status: 'done', sentTo, total: p.emails.length, selectedSlideIndexes: p.approvedSlideIndexes, pdf: !!pdfBase64, pdfError: meta.pdfError, generated: meta.generated, reused: meta.reused, mode: p.mode, message: 'ההפקה הסתיימה והמיילים נשלחו.' });
+  await logEvent(database, {
+    requestId: p.requestId,
+    action: 'deck_email_sent',
+    metadata: { sent: sentTo.length, total: p.emails.length, slides: p.mode === 'fullslide' ? p.approvedSlideIndexes.length : p.slides.length, pdf: !!pdfBase64, generated: meta.generated, reused: meta.reused },
+  });
+}
+
+// Fallback only: build + email everything in one isolate (used when the images
+// were never persisted, so the split steps can't reload them from storage).
+async function buildAndSendInline(
   database: Database,
   jobId: string,
   p: JobParams,
@@ -346,27 +469,14 @@ async function buildAndSend(
   const topic = deliverableTitle(p.brief, 'presentation', 'מצגת');
   const safeName = topic.slice(0, 40).replace(/[\\/:*?"<>|]/g, '') || 'presentation';
 
-  // 3) Build the PPTX (always) and the PDF (best-effort — a PDF failure never
-  //    fails the whole job, the PPTX is still delivered). Full-slide decks build
-  //    the PDF directly from the slide images with pdf-lib; template decks
-  //    render RTL HTML via the Vercel chromium endpoint (renderPdfBase64).
   let pptxBase64: string;
   let pdfHtml: string | null;
-  await writeJob(database, jobId, {
-    status: 'running',
-    total: p.emails.length,
-    message: 'בונים מצגת PPTX ו-PDF בשרת.',
-    generated: generatedCount,
-    reused: reusedCount,
-  });
+  await writeJob(database, jobId, { status: 'running', total: p.emails.length, message: 'בונים מצגת PPTX ו-PDF בשרת.', generated: generatedCount, reused: reusedCount });
   let pdfBase64: string | null = null;
   let pdfError: string | null = null;
   if (p.mode === 'fullslide') {
-    // Each approved slide is one full-bleed image, in slide order.
     const fullImages = [...imagesBySlide.entries()].sort((a, b) => a[0] - b[0]).map(([, url]) => url);
     pptxBase64 = await buildFullSlidePptxBase64(fullImages);
-    // The PDF is assembled directly from the slide images with pdf-lib — no
-    // HTML/chromium round-trip, so there is no render-endpoint payload limit.
     pdfHtml = null;
     try {
       pdfBase64 = await buildFullSlidePdfBase64(fullImages);
@@ -379,13 +489,7 @@ async function buildAndSend(
     pptxBase64 = await buildPptxBase64(p.brief, brand, slides);
     pdfHtml = buildDeckHtml(p.brief, brand, slides);
   }
-  await writeJob(database, jobId, {
-    status: 'running',
-    total: p.emails.length,
-    message: 'מצגת PPTX נבנתה. שומרים קבצים ושולחים מיילים.',
-    generated: generatedCount,
-    reused: reusedCount,
-  });
+  await writeJob(database, jobId, { status: 'running', total: p.emails.length, message: 'מצגת PPTX נבנתה. שומרים קבצים ושולחים מיילים.', generated: generatedCount, reused: reusedCount });
   if (pdfHtml) {
     try {
       pdfBase64 = await renderPdfBase64(pdfHtml);
@@ -395,22 +499,9 @@ async function buildAndSend(
     }
   }
 
-  // Persist the built files under the job folder — a fallback download if email
-  // delivery has issues. Storage keys must be ASCII, so use fixed names here
-  // (the email attachment keeps the nice Hebrew filename).
-  const { error: pptxUploadError } = await database.storage.from(BUCKET).upload(`deck-email-jobs/${jobId}/deck.pptx`, decodeBase64(pptxBase64), {
-    contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', upsert: true,
-  });
-  if (pptxUploadError) throw pptxUploadError;
-  if (pdfBase64) {
-    const { error: pdfUploadError } = await database.storage.from(BUCKET).upload(`deck-email-jobs/${jobId}/deck.pdf`, decodeBase64(pdfBase64), {
-      contentType: 'application/pdf', upsert: true,
-    });
-    if (pdfUploadError) throw pdfUploadError;
-  }
+  await uploadBase64(database, jobFile(jobId, 'deck.pptx'), pptxBase64, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+  if (pdfBase64) await uploadBase64(database, jobFile(jobId, 'deck.pdf'), pdfBase64, 'application/pdf');
 
-  // 4) Email each recipient individually (so addresses aren't exposed to one
-  //    another) with whatever built successfully.
   const filesLine = pdfBase64 ? 'כקובץ PowerPoint (PPTX) וכ-PDF' : 'כקובץ PowerPoint (PPTX)';
   const editUrl = buildDeckEditUrl(p.requestId, jobId);
   const subject = deliverableSubject(topic, 'presentation');
