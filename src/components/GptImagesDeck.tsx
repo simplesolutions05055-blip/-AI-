@@ -101,6 +101,9 @@ export default function GptImagesDeck({
   const [contentSlides, setContentSlides] = useState<DeckSlide[]>([]);
   const [contentPrompts, setContentPrompts] = useState<Record<number, string>>({});
   const [contentRewriteBusy, setContentRewriteBusy] = useState<number | null>(null);
+  // Guards the background content prefetch against double-runs (StrictMode
+  // double-mount + the on-open call racing the prefetch).
+  const contentLoadRef = useRef(false);
 
   // Prefill the first recipient with the user's own email once the profile loads.
   useEffect(() => {
@@ -293,12 +296,12 @@ export default function GptImagesDeck({
     }
   }
 
-  // Open the content editor: load the deck's slide text (reuse the in-memory
-  // slides if already built) so the user can review/edit copy before generating.
-  async function openContentEditor() {
-    setContentError(null);
-    setContentOpen(true);
-    if (contentSlides.length) return;
+  // Load the deck's slide text once, so it's ready instantly when the content
+  // editor opens. Safe to call from both the mount prefetch and the open button
+  // — the ref guard + the contentSlides check make repeat calls no-ops.
+  async function ensureContentSlides() {
+    if (contentSlides.length || contentLoadRef.current) return;
+    contentLoadRef.current = true;
     setContentLoading(true);
     try {
       const resolved = await resolveBrand();
@@ -319,9 +322,27 @@ export default function GptImagesDeck({
       }
     } catch (e) {
       setContentError(String((e as { message?: string })?.message ?? e));
+      contentLoadRef.current = false; // failed — allow a retry on next open
     } finally {
       setContentLoading(false);
     }
+  }
+
+  // Prefetch the slide content in the background on mount, so opening the editor
+  // is instant with no spinner. Runs once per mounted request (a version switch
+  // remounts this component via its key, triggering a fresh prefetch).
+  useEffect(() => {
+    if (!requestId && !outlineText) return;
+    void ensureContentSlides();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestId, outlineText]);
+
+  // Open the content editor: instant if the prefetch already finished, otherwise
+  // shows a spinner while the (already in-flight) load completes.
+  function openContentEditor() {
+    setContentError(null);
+    setContentOpen(true);
+    void ensureContentSlides();
   }
 
   // Update one editable field of a slide in the content editor's working copy.
@@ -754,7 +775,7 @@ export default function GptImagesDeck({
                 placeholder="name@example.com"
                 dir="ltr"
                 disabled={emailJobStatus === 'running'}
-                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm focus:border-brand focus:outline-none disabled:opacity-60"
+                className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 !pl-3 text-sm text-left focus:border-brand focus:outline-none disabled:opacity-60"
               />
               {emails.length > 1 && (
                 <button

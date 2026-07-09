@@ -406,6 +406,203 @@ export async function fetchBrandAiImages(brandId: string): Promise<PersistedDeck
     }));
 }
 
+// ── Presentation version history ───────────────────────────────────────────
+// Each "עדכון המצגת לפי ההערות" creates a NEW presentation request whose
+// structured_brief.parent_request_id points back to the ORIGINAL (root) request.
+// So a presentation's whole edit history is the family: the root + every request
+// that names it as parent. This powers the version-history panel on /revise.
+
+// One version in a presentation's history, with just enough to render a card.
+export interface PresentationVersion {
+  requestId: string;
+  createdAt: string;
+  isRoot: boolean; // the original request (parent of the family)
+  isPrimary: boolean; // the version marked as the "face" of this presentation
+  slideCount: number; // how many slide images were actually produced
+  thumbnailUrl: string | null; // first produced slide, signed — null for a draft
+}
+
+// The root request of a presentation family carries a pointer to whichever
+// version is currently the primary one (FilesPage shows the primary, falling
+// back to the newest when absent). Read/written on structured_brief.
+function primaryVersionId(brief: unknown): string | null {
+  if (!brief || typeof brief !== 'object') return null;
+  const value = (brief as Record<string, unknown>).primary_version_id;
+  return typeof value === 'string' && value ? value : null;
+}
+
+// A deleted version keeps a lightweight request row (other tables reference it)
+// but is hidden from the history and products list. Its heavy artifacts (slide
+// images + outputs) are hard-deleted from storage.
+function isDeletedVersion(brief: unknown): boolean {
+  return Boolean(brief && typeof brief === 'object' && (brief as Record<string, unknown>).deleted === true);
+}
+
+// Resolve the root request id of the family `requestId` belongs to: its
+// parent_request_id if it is itself a revision, otherwise it IS the root.
+async function resolvePresentationRoot(requestId: string): Promise<string> {
+  const db = createSupabaseBrowserClient();
+  const { data } = await db.from('requests').select('structured_brief').eq('id', requestId).maybeSingle();
+  const parent = (data as { structured_brief?: { parent_request_id?: unknown } } | null)?.structured_brief
+    ?.parent_request_id;
+  return typeof parent === 'string' && parent ? parent : requestId;
+}
+
+// Load the full version history for the presentation `requestId` belongs to,
+// oldest first (so the display can number them 1,2,3…). For each version we
+// count its produced slides and sign a thumbnail of the first one.
+export async function fetchPresentationVersions(
+  requestId: string,
+): Promise<{ rootId: string; versions: PresentationVersion[] }> {
+  const db = createSupabaseBrowserClient();
+  const rootId = await resolvePresentationRoot(requestId);
+
+  // The family = the root itself + every request that names it as parent.
+  const [{ data: rootRow }, { data: childRows }] = await Promise.all([
+    db.from('requests').select('id, created_at, structured_brief').eq('id', rootId).maybeSingle(),
+    db
+      .from('requests')
+      .select('id, created_at, structured_brief')
+      .eq('structured_brief->>parent_request_id', rootId),
+  ]);
+
+  type ReqRow = { id: string; created_at: string; structured_brief: Record<string, unknown> | null };
+  const familyMap = new Map<string, ReqRow>();
+  if (rootRow) familyMap.set((rootRow as ReqRow).id, rootRow as ReqRow);
+  for (const row of (childRows as ReqRow[] | null) ?? []) familyMap.set(row.id, row);
+  const family = [...familyMap.values()]
+    .filter((r) => !isDeletedVersion(r.structured_brief)) // hide soft-deleted versions
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  if (!family.length) return { rootId, versions: [] };
+
+  const primaryId = primaryVersionId((rootRow as ReqRow | null)?.structured_brief);
+  const familyIds = family.map((r) => r.id);
+
+  // One query for all produced slides across the whole family, then group by
+  // request in JS (avoids a round-trip per version).
+  const { data: imageRows } = await db
+    .from('deck_ai_images')
+    .select('request_id, slide_index, storage_path, created_at')
+    .in('request_id', familyIds)
+    .order('created_at', { ascending: false });
+  const byRequest = new Map<string, Array<{ slide_index: number; storage_path: string }>>();
+  for (const row of (imageRows as Array<{ request_id: string; slide_index: number; storage_path: string }> | null) ??
+    []) {
+    const list = byRequest.get(row.request_id) ?? [];
+    list.push({ slide_index: row.slide_index ?? 0, storage_path: row.storage_path });
+    byRequest.set(row.request_id, list);
+  }
+
+  // Sign one thumbnail per version (the lowest-index produced slide), in parallel.
+  const thumbs = await Promise.all(
+    family.map(async (req) => {
+      const images = byRequest.get(req.id) ?? [];
+      if (!images.length) return { id: req.id, url: null as string | null };
+      const first = [...images].sort((a, b) => a.slide_index - b.slide_index)[0];
+      const { data: signed } = await db.storage.from('outputs').createSignedUrl(first.storage_path, 600);
+      return { id: req.id, url: signed?.signedUrl ?? null };
+    }),
+  );
+  const thumbById = new Map(thumbs.map((t) => [t.id, t.url]));
+
+  const versions: PresentationVersion[] = family.map((req) => {
+    const slideCount = (byRequest.get(req.id) ?? []).length;
+    return {
+      requestId: req.id,
+      createdAt: req.created_at,
+      isRoot: req.id === rootId,
+      // If no primary was ever chosen, the newest (last in the sorted family)
+      // is the effective primary — mirroring FilesPage's newest-wins default.
+      isPrimary: primaryId ? req.id === primaryId : req.id === family[family.length - 1].id,
+      slideCount,
+      thumbnailUrl: thumbById.get(req.id) ?? null,
+    };
+  });
+  return { rootId, versions };
+}
+
+// Mark `versionId` as the primary version of its family, by writing a pointer
+// onto the root request's structured_brief. FilesPage reads this to decide which
+// version represents the presentation in the products list.
+export async function setPrimaryPresentationVersion(rootId: string, versionId: string): Promise<void> {
+  const db = createSupabaseBrowserClient();
+  const { data } = await db.from('requests').select('structured_brief').eq('id', rootId).maybeSingle();
+  const brief = ((data as { structured_brief?: Record<string, unknown> } | null)?.structured_brief ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const { error } = await db
+    .from('requests')
+    // The browser client is created untyped, so update payloads resolve to
+    // `never`; cast the payload (same shape the rest of the app writes).
+    .update({ structured_brief: { ...brief, primary_version_id: versionId } } as never)
+    .eq('id', rootId);
+  if (error) throw error;
+}
+
+// Delete a presentation version: hard-delete its heavy artifacts (generated
+// slide images + output files from storage, plus the deck_ai_images/outputs/
+// usage rows) and hide the lightweight request row from listings. The produced
+// slides are removed from storage irreversibly. The request row is kept (other
+// tables reference it, and RLS may block deleting it) but flagged `deleted`.
+export async function deletePresentationVersion(requestId: string): Promise<void> {
+  const db = createSupabaseBrowserClient();
+
+  // Collect every storage file this version owns: generated slide images and any
+  // output files (outline outputs are text-only, so usually none here).
+  const [{ data: imgRows }, { data: outRows }] = await Promise.all([
+    db.from('deck_ai_images').select('storage_path').eq('request_id', requestId),
+    db.from('outputs').select('storage_path').eq('request_id', requestId),
+  ]);
+  const paths = [
+    ...(((imgRows as Array<{ storage_path: string | null }>) ?? [])),
+    ...(((outRows as Array<{ storage_path: string | null }>) ?? [])),
+  ]
+    .map((r) => r.storage_path)
+    .filter((p): p is string => Boolean(p));
+  if (paths.length) await db.storage.from('outputs').remove(paths);
+
+  // Remove the version's dependent rows (children first). usage_events cleanup
+  // is best-effort — a missing/blocked delete there must not fail the operation.
+  await db.from('deck_ai_images').delete().eq('request_id', requestId);
+  await db.from('outputs').delete().eq('request_id', requestId);
+  try {
+    await db.from('usage_events').delete().eq('request_id', requestId);
+  } catch {
+    /* non-fatal */
+  }
+
+  // If this version was pinned as the family's primary, clear that pointer so the
+  // products list falls back to the newest remaining version.
+  const rootId = await resolvePresentationRoot(requestId);
+  if (rootId !== requestId) {
+    const { data: rootRow } = await db.from('requests').select('structured_brief').eq('id', rootId).maybeSingle();
+    const rootBrief = ((rootRow as { structured_brief?: Record<string, unknown> } | null)?.structured_brief ?? {}) as Record<
+      string,
+      unknown
+    >;
+    if (rootBrief.primary_version_id === requestId) {
+      await db
+        .from('requests')
+        .update({ structured_brief: { ...rootBrief, primary_version_id: null } } as never)
+        .eq('id', rootId);
+    }
+  }
+
+  // Flag the (now empty) request as deleted so it drops out of the history and
+  // products listings, without a risky hard delete of the request row.
+  const { data: selfRow } = await db.from('requests').select('structured_brief').eq('id', requestId).maybeSingle();
+  const selfBrief = ((selfRow as { structured_brief?: Record<string, unknown> } | null)?.structured_brief ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const { error } = await db
+    .from('requests')
+    .update({ structured_brief: { ...selfBrief, deleted: true } } as never)
+    .eq('id', requestId);
+  if (error) throw error;
+}
+
 // A brand image referenced for the picker: a signed preview URL only (no
 // download/base64 up front). Inlined to a full DeckImage on confirm via
 // loadBrandDeckImage — mirroring how AI images are handled, so opening the

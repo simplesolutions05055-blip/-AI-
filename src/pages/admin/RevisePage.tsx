@@ -8,7 +8,8 @@ import { useProfile } from '@/lib/useProfile';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
 import { fetchSocialCaption, reviseSocialCaption, saveSocialCaption } from '@/lib/social';
-import { fetchBrandImages, fetchBrandAiImages, loadPersistedDeckImage, type DeckImage, type PersistedDeckImage } from '@/lib/deck';
+import { fetchBrandImages, fetchBrandAiImages, loadPersistedDeckImage, fetchPresentationVersions, setPrimaryPresentationVersion, deletePresentationVersion, type DeckImage, type PersistedDeckImage, type PresentationVersion } from '@/lib/deck';
+import { confirmDialog } from '@/lib/dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { Spinner } from '@/components/ui/Spinner';
 
@@ -73,6 +74,15 @@ export default function RevisePage() {
   const [outputType, setOutputType] = useState<'image' | 'presentation' | 'text' | 'pdf' | null>(null);
   const [presRequestId, setPresRequestId] = useState<string | null>(null);
   const [outline, setOutline] = useState<string | null>(null);
+  // Presentation version history: every edit creates a new version request in
+  // the same family (linked by parent_request_id). These power the history panel.
+  const [versions, setVersions] = useState<PresentationVersion[]>([]);
+  const [versionsRootId, setVersionsRootId] = useState<string | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionBusy, setVersionBusy] = useState<string | null>(null);
+  // Set right after an edit produces a fresh draft, to make clear nothing was
+  // produced yet — the user reviews the content and decides whether to produce.
+  const [freshDraft, setFreshDraft] = useState(false);
   const [textRequestId, setTextRequestId] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [pdfOutput, setPdfOutput] = useState<PdfOutput | null>(null);
@@ -159,6 +169,7 @@ export default function RevisePage() {
         setOutline((latest as { text_content?: string } | null)?.text_content ?? '');
         // The GPT slide viewer/editor is rendered by DeckExport → GptImagesDeck,
         // which loads saved deck images itself, so no preview fetch is needed here.
+        void loadVersions(requestId);
         setLoading(false);
         return;
       }
@@ -275,6 +286,10 @@ export default function RevisePage() {
           setBrief({ ...briefToUse });
           setFeedback('');
           setEmailSent(false);
+          // A fresh draft was written (content only — no slide images produced).
+          // Surface the history and make clear nothing was produced yet.
+          setFreshDraft(true);
+          void loadVersions(id);
           return;
         }
         const st = (r as { status?: string } | null)?.status;
@@ -298,6 +313,92 @@ export default function RevisePage() {
       admin_note: [brief.admin_note, `תיקון: ${note}`].filter(Boolean).join('\n'),
       must_include: [...((brief.must_include as string[]) ?? []), `תיקון משתמש: ${note}`],
     });
+  }
+
+  // Load the version history for the presentation family `id` belongs to.
+  async function loadVersions(id: string) {
+    setVersionsLoading(true);
+    try {
+      const { rootId, versions: list } = await fetchPresentationVersions(id);
+      setVersionsRootId(rootId);
+      setVersions(list);
+    } catch {
+      // Non-fatal: the history panel just stays empty if it can't load.
+      setVersions([]);
+    } finally {
+      setVersionsLoading(false);
+    }
+  }
+
+  // Make an older version the central one: repoint the view to it (its content
+  // + its produced slides) so the user can review/produce/download from it.
+  async function switchToVersion(versionRequestId: string) {
+    if (versionRequestId === presRequestId || versionBusy) return;
+    setVersionBusy(versionRequestId);
+    setError(null);
+    try {
+      const client = createSupabaseBrowserClient();
+      const [{ data: out }, { data: req }] = await Promise.all([
+        client
+          .from('outputs')
+          .select('text_content')
+          .eq('request_id', versionRequestId)
+          .eq('output_type', 'presentation')
+          .order('version', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        client.from('requests').select('structured_brief, brand_id').eq('id', versionRequestId).single(),
+      ]);
+      const requestRow = req as { structured_brief?: Brief; brand_id?: string | null } | null;
+      setOutline((out as { text_content?: string } | null)?.text_content ?? '');
+      setPresRequestId(versionRequestId);
+      setBrief((requestRow?.structured_brief ?? {}) as Brief);
+      setRequestBrandId(requestRow?.brand_id ?? null);
+      setFreshDraft(false);
+      setEmailSent(false);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setVersionBusy(null);
+    }
+  }
+
+  // Mark a version as the primary "face" of this presentation (what the products
+  // list shows). Purely a pointer write — nothing is produced or deleted.
+  async function makeVersionPrimary(versionRequestId: string) {
+    if (!versionsRootId || versionBusy) return;
+    setVersionBusy(versionRequestId);
+    setError(null);
+    try {
+      await setPrimaryPresentationVersion(versionsRootId, versionRequestId);
+      setVersions((prev) => prev.map((v) => ({ ...v, isPrimary: v.requestId === versionRequestId })));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setVersionBusy(null);
+    }
+  }
+
+  // Delete a version for good (also removes its produced slides from storage).
+  // Blocked for the version currently on screen — switch away first.
+  async function deleteVersion(versionRequestId: string) {
+    if (versionRequestId === presRequestId || versionBusy) return;
+    const ok = await confirmDialog({
+      message: 'למחוק את הגרסה הזו? זה ימחק לצמיתות גם את השקפים שהופקו לה. הפעולה בלתי הפיכה.',
+      danger: true,
+      confirmText: 'מחיקה',
+    });
+    if (!ok) return;
+    setVersionBusy(versionRequestId);
+    setError(null);
+    try {
+      await deletePresentationVersion(versionRequestId);
+      await loadVersions(presRequestId ?? versionRequestId);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setVersionBusy(null);
+    }
   }
 
   async function regenerateText(briefToUse: Brief) {
@@ -670,37 +771,64 @@ export default function RevisePage() {
       ) : outputType === 'presentation' ? (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
           <div className="bg-white border border-[var(--border)] rounded-lg p-5 min-w-0">
+            {/* After an edit, make clear a NEW draft was written (content only) and
+                nothing was produced — the user reviews it and decides whether to
+                produce, and can always flip back to an earlier version below. */}
+            {freshDraft && (
+              <div className="mb-4 rounded-lg border border-brand/30 bg-brand/[0.05] p-3 text-sm">
+                <p className="font-semibold text-brand">טיוטה חדשה מוכנה ✨</p>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  עדכנו את תוכן המצגת בלבד — עדיין לא הופקו שקפים ולא נוצרה עלות. עברו על התוכן והחליטו אם להפיק.
+                  הגרסה הקודמת נשמרה ב"גרסאות המצגת" ואפשר לחזור אליה בכל רגע.
+                </p>
+              </div>
+            )}
             {/* The static first-slide preview was removed: DeckExport → GptImagesDeck
                 now auto-opens the full slide-by-slide viewer + per-slide AI editor
                 whenever saved deck images exist, so a single duplicate image here
-                only added noise. */}
+                only added noise. A key on presRequestId forces a clean remount when
+                switching versions, so the correct version's slides load. */}
             <DeckExport
+              key={presRequestId ?? 'none'}
               brief={brief}
               requestId={presRequestId}
               outlineText={outline}
             />
           </div>
 
-          <ActionSidebar
-            editLabel="מה לשנות במצגת?"
-            placeholder="למשל: להוסיף שקף על עלויות, לקצר את שקף הסיכום, טון יותר רשמי"
-            feedback={feedback}
-            onFeedbackChange={setFeedback}
-            working={working}
-            regenStatus={regenStatus}
-            onRegenerate={regeneratePresentationFromFeedback}
-            actionText="עדכון המצגת לפי ההערות"
-            workingText="מעדכן את המצגת..."
-            emailProps={{
-              email: customerEmail,
-              setEmail: setCustomerEmail,
-              onSend: () => sendEmail(presRequestId),
-              sending: sendingEmail,
-              sent: emailSent,
-            }}
-            resetText="רוצים מצגת אחרת לגמרי?"
-            onReset={() => navigate('/admin/production', { state: productionReturnState })}
-          />
+          <div className="flex flex-col gap-5">
+            <ActionSidebar
+              editLabel="מה לשנות במצגת?"
+              placeholder="למשל: להוסיף שקף על עלויות, לקצר את שקף הסיכום, טון יותר רשמי"
+              feedback={feedback}
+              onFeedbackChange={setFeedback}
+              working={working}
+              regenStatus={regenStatus}
+              onRegenerate={regeneratePresentationFromFeedback}
+              actionText="עדכון המצגת לפי ההערות"
+              workingText="מעדכן את המצגת..."
+              note="* בשלב הראשון המערכת תכין מחדש את תוכן המצגת לפי ההערות, ולאחר מכן יש להפיק את שקפי המצגת מחדש."
+              emailProps={{
+                email: customerEmail,
+                setEmail: setCustomerEmail,
+                onSend: () => sendEmail(presRequestId),
+                sending: sendingEmail,
+                sent: emailSent,
+              }}
+              resetText="רוצים מצגת אחרת לגמרי?"
+              onReset={() => navigate('/admin/production', { state: productionReturnState })}
+            />
+
+            <PresentationHistory
+              versions={versions}
+              loading={versionsLoading}
+              currentId={presRequestId}
+              busyId={versionBusy}
+              onView={switchToVersion}
+              onMakePrimary={makeVersionPrimary}
+              onDelete={deleteVersion}
+            />
+          </div>
         </div>
       ) : outputType === 'text' ? (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
@@ -1119,6 +1247,143 @@ export default function RevisePage() {
 function getDocumentBlocks(text: string, imageBlocks: RichTextBlock[]): RichTextBlock[] {
   const blocks = parseRichText(text);
   return imageBlocks.length ? [...blocks, ...imageBlocks] : blocks;
+}
+
+function formatVersionDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// The presentation's edit history: every "עדכון המצגת לפי ההערות" adds a new
+// version to the same family. Lets the user flip the central view to any older
+// version (with its produced slides) and mark one as the primary "face".
+function PresentationHistory({
+  versions,
+  loading,
+  currentId,
+  busyId,
+  onView,
+  onMakePrimary,
+  onDelete,
+}: {
+  versions: PresentationVersion[];
+  loading: boolean;
+  currentId: string | null;
+  busyId: string | null;
+  onView: (requestId: string) => void;
+  onMakePrimary: (requestId: string) => void;
+  onDelete: (requestId: string) => void;
+}) {
+  // Nothing worth showing until there is more than one version. While the first
+  // history load is in flight (and none cached yet) show a light placeholder.
+  if (versions.length < 2) {
+    if (loading) {
+      return (
+        <section className="rounded-lg border border-[var(--border)] bg-white p-4">
+          <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+            <Spinner className="h-4 w-4" /> טוען גרסאות…
+          </div>
+        </section>
+      );
+    }
+    return null;
+  }
+
+  // Numbered oldest→newest (version 1 = original), but shown newest first.
+  const numbered = versions.map((v, i) => ({ v, number: i + 1 }));
+  const display = [...numbered].reverse();
+
+  return (
+    <section className="rounded-lg border border-[var(--border)] bg-white p-4" dir="rtl">
+      <div className="mb-1 flex items-center gap-2">
+        <h2 className="text-sm font-semibold">גרסאות המצגת</h2>
+        {loading && <Spinner className="h-3.5 w-3.5" />}
+      </div>
+      <p className="mb-3 text-xs text-[var(--muted)]">
+        כל עריכה יוצרת גרסה חדשה. אפשר לחזור לכל גרסה קודמת ולראות את התוכן והשקפים שהופקו לה.
+      </p>
+      <ul className="space-y-2">
+        {display.map(({ v, number }) => {
+          const isCurrent = v.requestId === currentId;
+          const busy = busyId === v.requestId;
+          return (
+            <li
+              key={v.requestId}
+              className={`rounded-lg border p-3 transition ${
+                isCurrent ? 'border-brand bg-brand/[0.04]' : 'border-[var(--border)]'
+              }`}
+            >
+              <div className="flex gap-3">
+                <div className="h-14 w-20 shrink-0 overflow-hidden rounded-md border border-[var(--border)] bg-gray-50">
+                  {v.thumbnailUrl ? (
+                    <img src={v.thumbnailUrl} alt={`גרסה ${number}`} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold text-[var(--muted)]">
+                      טיוטה
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-sm font-bold">גרסה {number}</span>
+                    {v.isRoot && (
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-600">מקורית</span>
+                    )}
+                    {isCurrent && (
+                      <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold text-brand">נוכחית</span>
+                    )}
+                    {v.isPrimary && (
+                      <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">ראשית</span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-[var(--muted)]">{formatVersionDate(v.createdAt)}</p>
+                  <p className="mt-0.5 text-[11px] font-medium">
+                    {v.slideCount > 0 ? (
+                      <span className="text-green-700">
+                        ✅ {v.slideCount === 1 ? 'הופק שקף אחד' : `הופקו ${v.slideCount} שקפים`}
+                      </span>
+                    ) : (
+                      <span className="text-[var(--muted)]">טרם הופקו שקפים</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onView(v.requestId)}
+                  disabled={isCurrent || busy}
+                  title="הצגת התוכן והשקפים של הגרסה הזו במסך"
+                  className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-semibold hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {busy ? 'טוען…' : isCurrent ? 'מוצגת כעת' : 'פתיחת גרסה זו'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onMakePrimary(v.requestId)}
+                  disabled={v.isPrimary || busy}
+                  title="הגרסה הראשית שתופיע כברירת מחדל במסך התוצרים"
+                  className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)] hover:bg-gray-50 hover:text-black disabled:opacity-50"
+                >
+                  {v.isPrimary ? '✓ ראשית' : 'הפוך לראשית'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(v.requestId)}
+                  disabled={isCurrent || busy}
+                  title={isCurrent ? 'עברו לגרסה אחרת כדי למחוק את זו' : 'מחיקת הגרסה (כולל השקפים שהופקו לה)'}
+                  className="mr-auto rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  מחיקה
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
 }
 
 function DocumentAiImageModal({

@@ -418,15 +418,14 @@ async function sendBuiltDeck(
   if (!pptxBase64) throw new Error('קובץ המצגת לא נמצא בשרת.');
   const pdfBase64 = meta.pdf ? await downloadBase64(database, jobFile(jobId, 'deck.pdf')) : null;
 
-  const filesLine = pdfBase64 ? 'כקובץ PowerPoint (PPTX) וכ-PDF' : 'כקובץ PowerPoint (PPTX)';
+  const filesLine = pdfBase64 ? 'גם כמצגת להצגה וגם כקובץ PDF' : 'כקובץ מצגת';
   const editUrl = buildDeckEditUrl(p.requestId, jobId);
   const subject = deliverableSubject(topic, 'presentation');
   const emailTitle = deliverableReadyHeading(topic, 'presentation');
   const html = buildEmailHtml(
     [
-      `המצגת ${topic} מוכנה ומצורפת כאן ${filesLine}.`,
-      editUrl ? `לצפייה ועריכה של המצגת שקף־שקף:\n${editUrl}` : '',
-      'אפשר לפתוח את הקישור, לגלול בין השקפים, לערוך שקף ספציפי עם AI ולייצא PPTX מעודכן.',
+      `המצגת «${topic}» מוכנה, ומצורפת כאן למייל ${filesLine}.`,
+      editUrl ? `רוצים לשנות משהו? אפשר לפתוח את המצגת כאן, לעבור בין השקפים ולערוך כל שקף:\n${editUrl}` : '',
     ].filter(Boolean).join('\n\n'),
     brand?.name ? `בברכה,\n${brand.name}` : 'בברכה',
     emailTitle,
@@ -502,15 +501,14 @@ async function buildAndSendInline(
   await uploadBase64(database, jobFile(jobId, 'deck.pptx'), pptxBase64, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
   if (pdfBase64) await uploadBase64(database, jobFile(jobId, 'deck.pdf'), pdfBase64, 'application/pdf');
 
-  const filesLine = pdfBase64 ? 'כקובץ PowerPoint (PPTX) וכ-PDF' : 'כקובץ PowerPoint (PPTX)';
+  const filesLine = pdfBase64 ? 'גם כמצגת להצגה וגם כקובץ PDF' : 'כקובץ מצגת';
   const editUrl = buildDeckEditUrl(p.requestId, jobId);
   const subject = deliverableSubject(topic, 'presentation');
   const emailTitle = deliverableReadyHeading(topic, 'presentation');
   const html = buildEmailHtml(
     [
-      `המצגת ${topic} מוכנה ומצורפת כאן ${filesLine}.`,
-      editUrl ? `לצפייה ועריכה של המצגת שקף־שקף:\n${editUrl}` : '',
-      'אפשר לפתוח את הקישור, לגלול בין השקפים, לערוך שקף ספציפי עם AI ולייצא PPTX מעודכן.',
+      `המצגת «${topic}» מוכנה, ומצורפת כאן למייל ${filesLine}.`,
+      editUrl ? `רוצים לשנות משהו? אפשר לפתוח את המצגת כאן, לעבור בין השקפים ולערוך כל שקף:\n${editUrl}` : '',
     ].filter(Boolean).join('\n\n'),
     brand?.name ? `בברכה,\n${brand.name}` : 'בברכה',
     emailTitle,

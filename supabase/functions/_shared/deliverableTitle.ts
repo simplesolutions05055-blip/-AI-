@@ -84,8 +84,24 @@ function firstBriefTitle(brief: Record<string, unknown> | null | undefined): str
 function titleCandidate(value: string, isGoal: boolean): string {
   const clean = oneLine(value);
   if (!clean) return '';
-  if (isGoal && looksLikeLongBrief(value, clean)) return headingFromMarkdown(value);
-  return clean;
+  if (isGoal && looksLikeLongBrief(value, clean)) {
+    const heading = headingFromMarkdown(value);
+    return heading ? stripIdeaLeadIn(heading) : '';
+  }
+  return stripIdeaLeadIn(clean);
+}
+
+// The holidays calendar seeds a production with a prompt like
+// "צרו רעיון לתוכן עבור האירוע/החג: חג הסיגד. תאריך: ...". The deliverable is
+// the event itself, not the "create an idea" instruction — so when that lead-in
+// survives into the goal, title the deck after the event (or date) name only.
+function stripIdeaLeadIn(value: string): string {
+  const match = value.match(
+    /^\s*צ(?:רו|ור)\s+רעיון\s+לתוכן\s+עבור\s+(?:האירוע\s*\/\s*החג|התאריך)\s*:?\s*(.+)$/,
+  );
+  if (!match) return value;
+  const name = match[1].split(/[.\n]/)[0].trim();
+  return name || value;
 }
 
 function looksLikeLongBrief(raw: string, clean: string): boolean {

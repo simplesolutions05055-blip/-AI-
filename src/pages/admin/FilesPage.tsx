@@ -359,8 +359,19 @@ export default function FilesPage() {
       for (const row of allRows) {
         const rootRequestId = parentByRequest[row.request_id] ?? row.request_id;
         const key = row.request_source === 'user_upload' ? row.id : `${rootRequestId}:${row.output_type}`;
+        // A presentation family can pin an explicit "primary" version (chosen in
+        // the /revise history). When set, that version represents the product;
+        // otherwise the newest output wins, as before.
+        const primaryVersionId =
+          (briefByRequest[rootRequestId] as { primary_version_id?: string } | null)?.primary_version_id ?? null;
         const current = latestByProduct.get(key);
-        if (!current || new Date(row.created_at).getTime() > new Date(current.created_at).getTime()) {
+        if (!current) {
+          latestByProduct.set(key, row);
+          continue;
+        }
+        if (primaryVersionId && current.request_id === primaryVersionId) continue; // keep pinned primary
+        const rowIsPrimary = primaryVersionId != null && row.request_id === primaryVersionId;
+        if (rowIsPrimary || new Date(row.created_at).getTime() > new Date(current.created_at).getTime()) {
           latestByProduct.set(key, row);
         }
       }
