@@ -680,6 +680,9 @@ function ProductionPicker({
   const [recentDeckPreviews, setRecentDeckPreviews] = useState<Record<string, string>>({});
   // Signed PDF URLs per document/quote output (rendered as a non-interactive <iframe>).
   const [recentPdfPreviews, setRecentPdfPreviews] = useState<Record<string, string>>({});
+  // One-item recent-outputs carousel: track active slide for the dots.
+  const recentCarouselRef = useRef<HTMLDivElement | null>(null);
+  const [recentCarouselIndex, setRecentCarouselIndex] = useState(0);
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   // For presentations we open the image picker before leaving this page, so the
@@ -1064,6 +1067,26 @@ function ProductionPicker({
     return { label: labelByType[file.output_type], to: `/admin/files?type=${file.output_type}`, pickerType: file.output_type };
   };
 
+  // Resolve which full-width card is centered (viewport math works for RTL scrollLeft quirks).
+  const handleRecentCarouselScroll = () => {
+    const el = recentCarouselRef.current;
+    if (!el || el.clientWidth === 0) return;
+    const children = Array.from(el.children) as HTMLElement[];
+    if (children.length === 0) return;
+    const viewportCenter = el.getBoundingClientRect().left + el.clientWidth / 2;
+    let bestIdx = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+    children.forEach((child, idx) => {
+      const rect = child.getBoundingClientRect();
+      const dist = Math.abs(rect.left + rect.width / 2 - viewportCenter);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = idx;
+      }
+    });
+    setRecentCarouselIndex(bestIdx);
+  };
+
   return (
     <div dir="rtl" className="theme-warm min-h-full bg-[var(--bg-page)]">
       <header className="hidden h-[60px] items-center justify-between border-b border-[var(--border-warm)] bg-[var(--bg-surface)] px-7 lg:flex">
@@ -1364,50 +1387,78 @@ function ProductionPicker({
               אין תוצרים עדיין
             </div>
           ) : (
-            <div className="mt-5 -mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2 [-webkit-overflow-scrolling:touch] [scrollbar-width:thin]">
-              {recentCarouselItems.map((file) => {
-                const meta = carouselMeta(file);
-                const imagePreview = file.output_type === 'image' ? recentPreviews[file.id] : undefined;
-                const deckPreview = file.output_type === 'presentation' ? recentDeckPreviews[file.id] : undefined;
-                const pdfPreview = file.output_type === 'pdf' ? recentPdfPreviews[file.id] : undefined;
-                return (
-                  <Link
-                    key={file.id}
-                    to={meta.to}
-                    className="group flex w-[150px] shrink-0 snap-start flex-col overflow-hidden rounded-[12px] border border-[var(--border-warm)] bg-[var(--bg-surface)] text-right transition hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)]"
-                  >
-                    <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-[var(--surface-2)]">
-                      {imagePreview ? (
-                        <img src={imagePreview} alt="" className="h-full w-full object-cover" />
-                      ) : deckPreview ? (
-                        <img src={deckPreview} alt="שקף ראשון מהמצגת" className="h-full w-full bg-white object-contain" />
-                      ) : pdfPreview ? (
-                        <iframe
-                          src={`${pdfPreview}#toolbar=0&navpanes=0&view=FitH`}
-                          title=""
-                          className="pointer-events-none h-full w-full border-0 bg-white"
-                        />
-                      ) : file.text_content ? (
-                        <span className="line-clamp-5 px-2.5 text-[9px] leading-[13px] text-[var(--text-muted)]">
-                          {file.text_content.slice(0, 140)}
+            <div className="mt-5">
+              {/*
+                One full-width card at a time. Parent page is dir=rtl so the
+                newest item starts on the right; swipe left → next, swipe right → previous.
+              */}
+              <div
+                ref={recentCarouselRef}
+                onScroll={handleRecentCarouselScroll}
+                className="flex snap-x snap-mandatory overflow-x-auto scroll-smooth [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              >
+                {recentCarouselItems.map((file) => {
+                  const meta = carouselMeta(file);
+                  const imagePreview = file.output_type === 'image' ? recentPreviews[file.id] : undefined;
+                  const deckPreview = file.output_type === 'presentation' ? recentDeckPreviews[file.id] : undefined;
+                  const pdfPreview = file.output_type === 'pdf' ? recentPdfPreviews[file.id] : undefined;
+                  return (
+                    <Link
+                      key={file.id}
+                      to={meta.to}
+                      className="group flex w-full min-w-full shrink-0 snap-center flex-col overflow-hidden rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] text-right transition hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)]"
+                    >
+                      <div className="relative flex aspect-[16/11] w-full items-center justify-center overflow-hidden bg-[var(--surface-2)] sm:aspect-[16/10]">
+                        {imagePreview ? (
+                          <img src={imagePreview} alt="" className="h-full w-full object-cover" />
+                        ) : deckPreview ? (
+                          <img src={deckPreview} alt="שקף ראשון מהמצגת" className="h-full w-full bg-white object-contain" />
+                        ) : pdfPreview ? (
+                          <iframe
+                            src={`${pdfPreview}#toolbar=0&navpanes=0&view=FitH`}
+                            title=""
+                            className="pointer-events-none h-full w-full border-0 bg-white"
+                          />
+                        ) : file.text_content ? (
+                          <span className="line-clamp-8 px-5 text-[13px] leading-5 text-[var(--text-muted)] sm:text-[14px]">
+                            {file.text_content.slice(0, 280)}
+                          </span>
+                        ) : (
+                          <PickerIcon type={meta.pickerType} className="h-14 w-14 stroke-[1.5] text-[var(--text-muted)]" />
+                        )}
+                        <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-2.5 py-1 text-[12px] font-semibold text-[var(--text-strong)] shadow-sm">
+                          <PickerIcon type={meta.pickerType} className="h-3.5 w-3.5 stroke-[1.75]" />
+                          {meta.label}
                         </span>
-                      ) : (
-                        <PickerIcon type={meta.pickerType} className="h-9 w-9 stroke-[1.5] text-[var(--text-muted)]" />
-                      )}
-                      <span className="absolute right-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-[var(--bg-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--text-strong)] shadow-sm">
-                        <PickerIcon type={meta.pickerType} className="h-3 w-3 stroke-[1.75]" />
-                        {meta.label}
-                      </span>
-                    </div>
-                    <div className="flex flex-1 flex-col gap-0.5 p-2.5">
-                      <div className="truncate text-[12px] font-semibold text-[var(--text-strong)]">
-                        {file.text_content ? file.text_content.slice(0, 40) : meta.label}
                       </div>
-                      <div className="ltr text-start text-[10px] text-[var(--text-muted)]">{formatHebrewDate(file.created_at)}</div>
-                    </div>
-                  </Link>
-                );
-              })}
+                      <div className="flex flex-1 flex-col gap-1 p-3.5 sm:p-4">
+                        <div className="truncate text-[15px] font-semibold text-[var(--text-strong)] sm:text-[16px]">
+                          {file.text_content ? file.text_content.slice(0, 60) : meta.label}
+                        </div>
+                        <div className="ltr text-start text-[12px] text-[var(--text-muted)]">{formatHebrewDate(file.created_at)}</div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+              {recentCarouselItems.length > 1 && (
+                <div className="mt-3 flex items-center justify-center gap-1.5" aria-hidden="true">
+                  {recentCarouselItems.map((file, idx) => (
+                    <button
+                      key={file.id}
+                      type="button"
+                      onClick={() => {
+                        const target = recentCarouselRef.current?.children[idx] as HTMLElement | undefined;
+                        target?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                      }}
+                      className={`h-1.5 rounded-full transition-all ${
+                        idx === recentCarouselIndex ? 'w-5 bg-brand' : 'w-1.5 bg-[var(--border-warm)]'
+                      }`}
+                      aria-label={`תוצר ${idx + 1}`}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </section>
