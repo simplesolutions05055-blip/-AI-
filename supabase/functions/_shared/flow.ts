@@ -8,7 +8,7 @@
 // `send` callback the caller supplies (inbound.ts passes worker.sendOut).
 import { type DB } from './db.ts';
 import { sendWhatsAppMedia } from './twilio.ts';
-import { generateSocialCaption, classifyPostDeliveryIntent, generateDeckSlides, rewriteDeckSlide, extractSlideCountFromPrompt } from './openai.ts';
+import { generateSocialCaption, classifyPostDeliveryIntent, generateDeckSlides, rewriteDeckSlide, extractSlideCountFromPrompt, extractDeckEditSlideTarget } from './openai.ts';
 import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail, MAX_MEDIA_BYTES } from './util.ts';
 import { normalizeHe } from './brand.ts';
 import { sendDeliverableCopy, loadPdfBrandSettings } from './deliverableEmail.ts';
@@ -974,6 +974,73 @@ function parseDeckSlideCountAnswer(text: string): number | null {
   if (!m) return null;
   const n = parseInt(m[0], 10);
   return Number.isInteger(n) && n >= 1 && n <= DECK_MAX_SLIDES ? n : null;
+}
+
+const HEBREW_SLIDE_ORDINALS: Array<[RegExp, number]> = [
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?ראשו(?:ן|נה)(?:\s|$)/, 1],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?שני(?:י?ה)?(?:\s|$)/, 2],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?שלישי(?:ת)?(?:\s|$)/, 3],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?רביעי(?:ת)?(?:\s|$)/, 4],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?חמישי(?:ת)?(?:\s|$)/, 5],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?שישי(?:ת)?(?:\s|$)/, 6],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?שביעי(?:ת)?(?:\s|$)/, 7],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?שמיני(?:ת)?(?:\s|$)/, 8],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?תשיעי(?:ת)?(?:\s|$)/, 9],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?עשירי(?:ת)?(?:\s|$)/, 10],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?אחד עשר(?:ה)?(?:\s|$)/, 11],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?שנים עשר(?:ה)?(?:\s|$)/, 12],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?שלושה עשר(?:ה)?(?:\s|$)/, 13],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?ארבעה עשר(?:ה)?(?:\s|$)/, 14],
+  [/(?:שקף|השקף|בשקף|לשקף|סלייד|הסלייד|בסלייד|לסלייד)\s+(?:ה)?חמישה עשר(?:ה)?(?:\s|$)/, 15],
+];
+
+function parseDeckEditSlideNumber(text: string, total: number): number | null {
+  const t = norm(text);
+  const numeric = t.match(/(?:שקף|סלייד)\s*(?:מספר\s*)?[-–—:]?\s*(\d+)/) ?? text.match(/slide\s*(\d+)/i);
+  if (numeric) {
+    const n = parseInt(numeric[1], 10);
+    return Number.isInteger(n) && n >= 1 && n <= total ? n : null;
+  }
+
+  for (const [pattern, n] of HEBREW_SLIDE_ORDINALS) {
+    if (n <= total && pattern.test(t)) return n;
+  }
+  return null;
+}
+
+async function resolveDeckEditSlideNumber(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  deck: DeckContext,
+  text: string
+): Promise<number | null> {
+  const slides = Array.isArray(deck.slides) ? deck.slides : [];
+  const deterministic = parseDeckEditSlideNumber(text, slides.length);
+  if (deterministic) return deterministic;
+  if (!slides.length || text.trim().length < 3) return null;
+
+  await enforceAiLimit(database, { userId: identity.userId ?? undefined, phone: conversation.whatsapp_from }, {
+    kind: 'utility',
+    promptChars: text.length,
+  });
+  const target = await extractDeckEditSlideTarget(text, {
+    totalSlides: slides.length,
+    slideTitles: slides.map((slide) => slide.title ?? ''),
+  });
+  await recordUsageAndCost(database, deck.request_id ?? null, {
+    provider: 'openai',
+    model: target.model,
+    input: target.usage.prompt_tokens,
+    output: target.usage.completion_tokens,
+    cost: estimateTextCost(target.usage.prompt_tokens, target.usage.completion_tokens),
+  });
+  await logEvent(database, {
+    requestId: deck.request_id ?? null,
+    action: 'whatsapp_deck_edit_target_classified',
+    metadata: { slide_number: target.slideNumber, confidence: target.confidence, reason: target.reason },
+  });
+  return target.slideNumber && target.confidence >= 0.65 ? target.slideNumber : null;
 }
 
 function formatDeckSlideMessage(slide: DeckSlideContent, index: number, total: number): string {
@@ -2189,9 +2256,20 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await send(deckReviewQuestion());
         return { kind: 'handled' };
       }
-      // Edit instruction — find the target slide ("שקף 2 — ...").
-      const slideMatch = norm(text).match(/שקף\s*(\d+)/) ?? text.match(/slide\s*(\d+)/i);
-      const slideNumber = slideMatch ? parseInt(slideMatch[1], 10) : deck.slides.length === 1 ? 1 : null;
+      // Edit instruction — find the target slide ("שקף 2", "בשקף השני", "slide 2").
+      let slideNumber: number | null = deck.slides.length === 1 ? 1 : null;
+      if (!slideNumber) {
+        try {
+          slideNumber = await resolveDeckEditSlideNumber(database, conversation, identity, deck, text);
+        } catch (e) {
+          await logEvent(database, {
+            requestId: deck.request_id ?? null,
+            severity: 'warning',
+            action: 'whatsapp_deck_edit_target_classify_failed',
+            message: String(e),
+          });
+        }
+      }
       if (!slideNumber || slideNumber < 1 || slideNumber > deck.slides.length) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
         await send(`באיזה שקף לבצע את השינוי? כתבו את מספר השקף יחד עם הבקשה, למשל: "שקף 2 — ${text.trim().slice(0, 40)}"`);

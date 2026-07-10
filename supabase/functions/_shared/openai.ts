@@ -18,6 +18,7 @@ const key = () => {
   return k;
 };
 const textModel = () => Deno.env.get('OPENAI_TEXT_MODEL') || 'gpt-4o';
+const intentModel = () => Deno.env.get('OPENAI_INTENT_MODEL') || 'gpt-5-nano';
 const imageModel = () => Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-2';
 
 export interface ChatUsage {
@@ -271,6 +272,64 @@ export async function classifyResetIntent(
     };
   } catch {
     return { reset: false, confidence: 0, reason: 'invalid_json_response', usage, model };
+  }
+}
+
+export async function extractDeckEditSlideTarget(
+  text: string,
+  context: { totalSlides: number; slideTitles?: string[] }
+): Promise<{ slideNumber: number | null; confidence: number; reason: string; usage: ChatUsage; model: string }> {
+  const model = intentModel();
+  const totalSlides = Math.max(1, Math.min(30, Math.floor(context.totalSlides || 1)));
+  const titles = (context.slideTitles ?? [])
+    .slice(0, totalSlides)
+    .map((title, index) => `${index + 1}. ${String(title ?? '').slice(0, 80)}`)
+    .join('\n');
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content: `אתה מחלץ יעד לעריכת שקף מתוך הודעת WhatsApp בעברית/אנגלית.
+המשתמש נמצא בשלב סקירת מצגת עם ${totalSlides} שקפים, והוא יכול לבקש שינוי בשקף מסוים.
+החזר JSON בלבד:
+{
+  "slide_number": number|null,
+  "confidence": 0-1,
+  "reason": "הסבר קצר"
+}
+
+כללים:
+- אם המשתמש מציין שקף במספר או במילים ("השני", "השקף האחרון", "שקף פתיחה", "השקף עם הכותרת...") החזר את מספר השקף 1-${totalSlides}.
+- אם יש כמה שקפים אפשריים, או שאין יעד ברור, החזר null עם confidence נמוך.
+- אל תנחש לפי תוכן השינוי בלבד אם אין רמז לשקף.
+- מספר השקף חייב להיות בטווח 1-${totalSlides}.`,
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          user_message: text,
+          total_slides: totalSlides,
+          slide_titles: titles || null,
+        }),
+      },
+    ],
+    { json: true, temperature: 0, model }
+  );
+
+  try {
+    const parsed = JSON.parse(content) as { slide_number?: unknown; confidence?: unknown; reason?: unknown };
+    const raw = typeof parsed.slide_number === 'number' ? parsed.slide_number : Number(parsed.slide_number);
+    const slideNumber = Number.isInteger(raw) && raw >= 1 && raw <= totalSlides ? raw : null;
+    const confidence = typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0;
+    return {
+      slideNumber,
+      confidence,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      usage,
+      model,
+    };
+  } catch {
+    return { slideNumber: null, confidence: 0, reason: 'invalid_json_response', usage, model };
   }
 }
 
