@@ -116,6 +116,7 @@ export default function SettingsPage() {
   const budget = settings.request_budget_usd ?? { max: 0.08 };
   const outputPermissions = normalizeOutputPermissions(settings.output_permissions);
   const interactiveWhatsAppEnabled = settings.whatsapp_interactive_messages?.enabled === true;
+  const groupSettings = settings.whatsapp_group_settings ?? { enabled: false, trigger_word: 'גרפיקה' };
   // Default to visible: only an explicit stored `false` hides the link.
   const signupVisible = settings.public_signup_visible !== false;
   const requireOnboardingUploads = settings.onboarding_require_uploads === true;
@@ -196,6 +197,39 @@ export default function SettingsPage() {
         <Field label="דחיית מדיה">
           <input className={input} dir="auto" value={tpl.rejected_media ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, rejected_media: e.target.value })} />
         </Field>
+
+        <div className="mt-5 border-t border-[var(--border)] pt-4">
+          <h3 className="mb-1 text-sm font-semibold">בוט בקבוצות</h3>
+          <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
+            כשהמתג פעיל, הבוט מגיב בקבוצות WhatsApp — אבל רק להודעות שמתחילות במילת ההפעלה
+            (למשל "{groupSettings.trigger_word || 'גרפיקה'} תכין לי פוסט"). שאר השיחה בקבוצה לא מפעילה אותו.
+            דורש חיבור מספר ייעודי דרך שער קבוצות (ראו תוכנית-בוט-בקבוצת-וואטסאפ).
+          </p>
+          <label className="mb-3 flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
+            <span className="text-sm font-semibold">הפעלת הבוט בקבוצות</span>
+            <span className="relative inline-flex shrink-0 items-center">
+              <input
+                type="checkbox"
+                role="switch"
+                className="peer sr-only"
+                checked={groupSettings.enabled === true}
+                aria-label="הפעלת הבוט בקבוצות WhatsApp"
+                onChange={(e) => update('whatsapp_group_settings', { ...groupSettings, enabled: e.target.checked })}
+              />
+              <span className="h-7 w-12 rounded-full bg-gray-300 transition peer-checked:bg-brand peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" />
+              <span className="pointer-events-none absolute start-1 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5 rtl:peer-checked:-translate-x-5" />
+            </span>
+          </label>
+          <Field label="מילת הפעלה">
+            <input
+              className={input}
+              dir="auto"
+              value={groupSettings.trigger_word ?? ''}
+              placeholder="גרפיקה"
+              onChange={(e) => update('whatsapp_group_settings', { ...groupSettings, trigger_word: e.target.value })}
+            />
+          </Field>
+        </div>
 
         <div className="mt-5 border-t border-[var(--border)] pt-4">
           <h3 className="mb-1 text-sm font-semibold">איפוס שיחה</h3>

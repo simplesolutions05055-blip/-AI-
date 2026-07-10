@@ -22,6 +22,7 @@ import {
   sendWhatsAppMedia,
   type WhatsAppInteractive,
 } from './twilio.ts';
+import { isGroupTarget, parseGroupTarget, sendGroupText, sendGroupMedia } from './group.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { loadPdfBrandSettings, sendDeliverableCopy } from './deliverableEmail.ts';
 import { deliverableTitle } from './deliverableTitle.ts';
@@ -383,6 +384,13 @@ export async function sendOut(
     if (simulated || isProductionFormTarget(to)) {
       sid = `sim-${crypto.randomUUID()}`;
       sentInteractive = useInteractive && !isProductionFormTarget(to);
+    } else if (isGroupTarget(to)) {
+      // Real WhatsApp group via the Whapi gateway. No 24h window and no Twilio
+      // Content templates there — always plain text (body already carries the
+      // numbered-menu fallback text).
+      const target = parseGroupTarget(to);
+      if (!target) throw new Error(`bad group target: ${to}`);
+      sid = await sendGroupText(target.groupId, body);
     } else if (await windowOpen(database, conversationId)) {
       if (useInteractive && interactive) {
         try {
@@ -1133,7 +1141,10 @@ async function deliverContentToWhatsApp(
     return;
   }
   try {
-    const sid = await sendWhatsAppMedia(to, url, mediaCaption.slice(0, 1000));
+    const groupTarget = isGroupTarget(to) ? parseGroupTarget(to) : null;
+    const sid = groupTarget
+      ? await sendGroupMedia(groupTarget.groupId, url, mediaCaption.slice(0, 1000))
+      : await sendWhatsAppMedia(to, url, mediaCaption.slice(0, 1000));
     await database.from('messages').insert({
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
       body: mediaCaption, media_type: contentType, storage_path: path, twilio_message_sid: sid,

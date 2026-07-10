@@ -8,6 +8,7 @@
 // `send` callback the caller supplies (inbound.ts passes worker.sendOut).
 import { type DB } from './db.ts';
 import { sendWhatsAppMedia, type WhatsAppInteractive } from './twilio.ts';
+import { isGroupTarget, parseGroupTarget, sendGroupMedia } from './group.ts';
 import { generateSocialCaption, classifyPostDeliveryIntent, generateDeckSlides, rewriteDeckSlide, extractSlideCountFromPrompt, extractDeckEditSlideTarget } from './openai.ts';
 import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail, MAX_MEDIA_BYTES } from './util.ts';
 import { normalizeHe } from './brand.ts';
@@ -661,7 +662,10 @@ async function sendMediaOut(
   }
   const { data: signed } = await database.storage.from('outputs').createSignedUrl(storagePath, 3600);
   if (!signed?.signedUrl) throw new Error('signed url failed');
-  const sid = await sendWhatsAppMedia(conversation.whatsapp_from, signed.signedUrl, caption);
+  const group = isGroupTarget(conversation.whatsapp_from) ? parseGroupTarget(conversation.whatsapp_from) : null;
+  const sid = group
+    ? await sendGroupMedia(group.groupId, signed.signedUrl, caption)
+    : await sendWhatsAppMedia(conversation.whatsapp_from, signed.signedUrl, caption);
   await database.from('messages').insert({
     conversation_id: conversation.id,
     request_id: requestId,

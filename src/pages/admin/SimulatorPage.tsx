@@ -59,6 +59,7 @@ export default function SimulatorPage() {
   const [dragging, setDragging] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  const [groupMode, setGroupMode] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -248,9 +249,24 @@ export default function SimulatorPage() {
         sessionId: conversationIdRef.current,
         body,
         attachments: outboundAttachments,
+        groupMode,
       },
     });
     setResponding(false);
+
+    // Group mode: a message without the trigger word is ignored by design —
+    // show that explicitly so it's clear the bot stayed silent on purpose.
+    if (data?.ignored) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: `ignored-${Date.now()}`,
+          mine: false,
+          body: `🤫 הבוט לא הגיב — בקבוצה הוא עונה רק להודעות שמתחילות במילת ההפעלה "${data?.triggerWord ?? 'גרפיקה'}".`,
+        },
+      ]);
+      return;
+    }
 
     if (error || !data?.ok) {
       setMessages((current) => [
@@ -298,9 +314,19 @@ export default function SimulatorPage() {
 
   return (
     <div className="mx-auto flex h-[calc(100dvh-6.5rem)] max-w-md flex-col lg:h-[calc(100dvh-3rem)]">
-      <div className="mb-4" dir="rtl">
-        <h1 className="text-xl font-semibold tracking-normal">סימולטור שיחה</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">בדקו את זרימת הבקשה לפני הפעלה אמיתית.</p>
+      <div className="mb-4 flex items-start justify-between gap-3" dir="rtl">
+        <div>
+          <h1 className="text-xl font-semibold tracking-normal">סימולטור שיחה</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">בדקו את זרימת הבקשה לפני הפעלה אמיתית.</p>
+        </div>
+        <label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm font-semibold">
+          <input
+            type="checkbox"
+            checked={groupMode}
+            onChange={(e) => setGroupMode(e.target.checked)}
+          />
+          מצב קבוצה 👥
+        </label>
       </div>
       <div
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-sm"
