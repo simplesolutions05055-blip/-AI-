@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
 
   const messageSid = params.MessageSid;
   const from = params.From;
-  const body = params.ButtonText || params.Body || '';
+  const body = params.ButtonText || params.Body || params.ButtonPayload || '';
   const numMedia = parseInt(params.NumMedia ?? '0', 10);
   if (!messageSid || !from) return twiml();
 

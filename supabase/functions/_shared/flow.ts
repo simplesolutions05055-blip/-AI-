@@ -7,7 +7,7 @@
 // constants, so importing back would create a cycle). Sending goes through the
 // `send` callback the caller supplies (inbound.ts passes worker.sendOut).
 import { type DB } from './db.ts';
-import { sendWhatsAppMedia } from './twilio.ts';
+import { sendWhatsAppMedia, type WhatsAppInteractive } from './twilio.ts';
 import { generateSocialCaption, classifyPostDeliveryIntent, generateDeckSlides, rewriteDeckSlide, extractSlideCountFromPrompt, extractDeckEditSlideTarget } from './openai.ts';
 import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail, MAX_MEDIA_BYTES } from './util.ts';
 import { normalizeHe } from './brand.ts';
@@ -44,7 +44,7 @@ export type Identity = {
   brandId: string | null;  // the user's single brand (user_brands)
 };
 
-export type SendFn = (text: string) => Promise<boolean>;
+export type SendFn = (text: string, interactive?: WhatsAppInteractive) => Promise<boolean>;
 
 export type FlowResult =
   | { kind: 'not_handled' }
@@ -151,6 +151,20 @@ export function buildMainMenu(displayName: string): string {
   ].join('\n');
 }
 
+export function buildMainMenuInteraction(): WhatsAppInteractive {
+  return {
+    kind: 'list_picker',
+    body: 'היי! מה תרצה להכין היום? 👋',
+    button: 'בחירת תוצר',
+    options: [
+      { id: '1', title: 'תמונה / פוסט', description: 'יצירת תמונה או פוסט חדש' },
+      { id: '2', title: 'מסמך', description: 'יצירת מסמך חדש' },
+      { id: '3', title: 'מצגת', description: 'יצירת מצגת חדשה' },
+      { id: '4', title: 'תזמון פוסט', description: 'תזמון פרסום לרשתות' },
+    ],
+  };
+}
+
 // WhatsApp/Twilio silently drops inbound messages over ~1600 chars (warning
 // 21617 — the webhook is never even called, so we can't react after the fact).
 // The only defense is warning up front: long material must arrive as a file.
@@ -212,6 +226,44 @@ export function buildPostDeliveryMenu(outputType: string | null | undefined): st
   ].join('\n');
 }
 
+export function buildPostDeliveryInteraction(outputType: string | null | undefined): WhatsAppInteractive {
+  let options: WhatsAppInteractive['options'];
+  if (outputType === 'image') {
+    options = [
+      { id: '1', title: 'תיקון התמונה', description: 'עריכת התמונה באמצעות AI' },
+      { id: '2', title: 'תיקון טקסט הפוסט', description: 'ניסוח מחדש של טקסט הפוסט' },
+      { id: '3', title: 'תזמון פרסום', description: 'בחירת רשת, תאריך ושעה' },
+      { id: '4', title: 'שליחה במייל', description: 'קבלת עותק של התוצר במייל' },
+      { id: '5', title: 'תוצר חדש', description: 'חזרה לתפריט הראשי' },
+    ];
+  } else if (!canScheduleOutput(outputType)) {
+    options = [
+      { id: '1', title: 'תיקון התוצר', description: 'יצירת גרסה מעודכנת' },
+      { id: '2', title: 'קובץ Word', description: 'קבלת התוצר כקובץ Word' },
+      { id: '3', title: 'שליחה במייל', description: 'קבלת עותק של התוצר במייל' },
+      { id: '4', title: 'תוצר חדש', description: 'חזרה לתפריט הראשי' },
+    ];
+  } else {
+    options = [
+      { id: '1', title: 'תיקון התוצר', description: 'יצירת גרסה מעודכנת' },
+      { id: '2', title: 'תזמון פרסום', description: 'בחירת רשת, תאריך ושעה' },
+      { id: '3', title: 'שליחה במייל', description: 'קבלת עותק של התוצר במייל' },
+      { id: '4', title: 'תוצר חדש', description: 'חזרה לתפריט הראשי' },
+    ];
+  }
+  return { kind: 'list_picker', body: 'מה תרצה לעשות עכשיו?', button: 'בחירת פעולה', options };
+}
+
+const SCHEDULE_PLATFORM_INTERACTION: WhatsAppInteractive = {
+  kind: 'quick_reply',
+  body: 'איפה לפרסם? 📅',
+  options: [
+    { id: '1', title: 'פייסבוק' },
+    { id: '2', title: 'אינסטגרם' },
+    { id: '3', title: 'שניהם' },
+  ],
+};
+
 const SCHEDULE_PLATFORM_MENU = [
   'איפה לפרסם? 📅',
   '',
@@ -232,6 +284,15 @@ const SCHEDULE_SOURCE_MENU = [
   '',
   'אפשר להשיב במספר, או "בטל" לחזרה לתפריט.',
 ].join('\n');
+
+const SCHEDULE_SOURCE_INTERACTION: WhatsAppInteractive = {
+  kind: 'quick_reply',
+  body: 'מאיפה התוכן לפוסט? 📅',
+  options: [
+    { id: '1', title: 'אכתוב כאן בצ׳אט' },
+    { id: '2', title: 'תוצר קיים באתר' },
+  ],
+};
 
 function parseScheduleSourceChoice(text: string): 'chat' | 'site' | null {
   const t = norm(text);
@@ -708,7 +769,7 @@ async function sendPostDeliveryMenu(
 ): Promise<void> {
   const reqId = requestIdOverride ?? conversation.last_delivered_request_id ?? null;
   const output = reqId ? await latestOutput(database, reqId) : null;
-  await send(buildPostDeliveryMenu(output?.output_type));
+  await send(buildPostDeliveryMenu(output?.output_type), buildPostDeliveryInteraction(output?.output_type));
 }
 
 async function requestHasEmailCopy(database: DB, requestId: string): Promise<boolean> {
@@ -771,7 +832,7 @@ async function startImageFix(
         flow_state: 'post_delivery',
         last_delivered_request_id: edited.requestId,
       });
-      await send(buildPostDeliveryMenu('image'));
+      await send(buildPostDeliveryMenu('image'), buildPostDeliveryInteraction('image'));
     } catch (e) {
       await logEvent(database, {
         requestId: sourceRequestId,
@@ -1407,7 +1468,10 @@ export async function showMainMenu(
   identity: Identity,
   send: SendFn
 ): Promise<void> {
-  const delivered = await send(buildMainMenu(identity.displayName));
+  const delivered = await send(
+    buildMainMenu(identity.displayName),
+    buildMainMenuInteraction(),
+  );
   if (delivered) {
     await setFlow(database, conversation.id, {
       flow_state: 'main_menu',
@@ -1446,7 +1510,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const choice = numMedia === 0 ? parseMainMenuChoice(text) : null;
       if (choice === 'schedule_post') {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        const delivered = await send(SCHEDULE_SOURCE_MENU);
+        const delivered = await send(SCHEDULE_SOURCE_MENU, SCHEDULE_SOURCE_INTERACTION);
         if (delivered) {
           await setFlow(database, conversation.id, {
             flow_state: 'schedule_source',
@@ -1482,7 +1546,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       // Short unrecognized reply → re-show the menu.
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-      await send(buildMainMenu(opts.identity.displayName));
+      await send(buildMainMenu(opts.identity.displayName), buildMainMenuInteraction());
       return { kind: 'handled' };
     }
 
@@ -1498,7 +1562,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // Changed their mind — they want to schedule a post, not write a brief.
       if (choice === 'schedule_post') {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        const delivered = await send(SCHEDULE_SOURCE_MENU);
+        const delivered = await send(SCHEDULE_SOURCE_MENU, SCHEDULE_SOURCE_INTERACTION);
         if (delivered) {
           await setFlow(database, conversation.id, {
             flow_state: 'schedule_source',
@@ -1566,7 +1630,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // Greeting / thanks — no LLM call, just re-show the actions once.
       if (isGreetingOnly(text) || /^(תודה|מעולה|אחלה|סבבה|וואו|יפה|מושלם|👍|🙏|❤️)+!?$/.test(norm(text))) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send(buildPostDeliveryMenu(output?.output_type));
+        await send(buildPostDeliveryMenu(output?.output_type), buildPostDeliveryInteraction(output?.output_type));
         return { kind: 'handled' };
       }
 
@@ -1625,7 +1689,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
 
       if (!action) {
-        await send(buildPostDeliveryMenu(output?.output_type));
+        await send(buildPostDeliveryMenu(output?.output_type), buildPostDeliveryInteraction(output?.output_type));
         return { kind: 'handled' };
       }
 
@@ -1700,17 +1764,17 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // and post texts can be scheduled).
       if (!canScheduleOutput(output.output_type)) {
         await send('את התוצר הזה אי אפשר לתזמן לרשתות חברתיות 🙂 תזמון זמין לתמונות ולפוסטים בלבד.');
-        await send(buildPostDeliveryMenu(output.output_type));
+        await send(buildPostDeliveryMenu(output.output_type), buildPostDeliveryInteraction(output.output_type));
         return { kind: 'handled' };
       }
       const hasMedia = Boolean(output.storage_path && (output.mime_type ?? '').startsWith('image/'));
       const caption = (output.text_content ?? '').trim();
       if (!caption && !hasMedia) {
         await send('לתוצר הזה אין תוכן שאפשר לתזמן לרשתות. אפשר לתקן אותו או ליצור תוצר חדש.');
-        await send(buildPostDeliveryMenu(output.output_type));
+        await send(buildPostDeliveryMenu(output.output_type), buildPostDeliveryInteraction(output.output_type));
         return { kind: 'handled' };
       }
-      const delivered = await send(SCHEDULE_PLATFORM_MENU);
+      const delivered = await send(SCHEDULE_PLATFORM_MENU, SCHEDULE_PLATFORM_INTERACTION);
       if (delivered) await setFlow(database, conversation.id, { flow_state: 'schedule_platform', flow_context: {} });
       return { kind: 'handled' };
     }
@@ -1812,7 +1876,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       if (choice === 'chat') {
-        const delivered = await send(SCHEDULE_PLATFORM_MENU);
+        const delivered = await send(SCHEDULE_PLATFORM_MENU, SCHEDULE_PLATFORM_INTERACTION);
         if (delivered) {
           await setFlow(database, conversation.id, {
             flow_state: 'schedule_new_platform',
@@ -1821,7 +1885,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         }
         return { kind: 'handled' };
       }
-      await send(SCHEDULE_SOURCE_MENU);
+      await send(SCHEDULE_SOURCE_MENU, SCHEDULE_SOURCE_INTERACTION);
       return { kind: 'handled' };
     }
 
@@ -1832,7 +1896,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const platforms = numMedia === 0 ? parsePlatformChoice(text) : null;
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       if (!platforms) {
-        await send(SCHEDULE_PLATFORM_MENU);
+        await send(SCHEDULE_PLATFORM_MENU, SCHEDULE_PLATFORM_INTERACTION);
         return { kind: 'handled' };
       }
       const delivered = await send(customPostContentPrompt(platforms));
@@ -1946,7 +2010,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       if (!platforms) {
-        await send(SCHEDULE_PLATFORM_MENU);
+        await send(SCHEDULE_PLATFORM_MENU, SCHEDULE_PLATFORM_INTERACTION);
         return { kind: 'handled' };
       }
       const requestId = conversation.last_delivered_request_id;

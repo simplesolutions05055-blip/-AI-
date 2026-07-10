@@ -18,6 +18,12 @@ interface ChatMessage {
   attachmentName?: string;
   attachmentKind?: AttachmentKind;
   attachmentText?: string;
+  interactive?: {
+    kind: 'quick_reply' | 'list_picker';
+    body: string;
+    button?: string;
+    options: Array<{ id: string; title: string; description?: string }>;
+  };
   meta?: {
     action?: string;
     ready?: boolean;
@@ -263,7 +269,13 @@ export default function SimulatorPage() {
 
     // Render every outbound message the engine emitted this turn — text as-is,
     // image media inline, other media (PDF) as a download link.
-    type Reply = { id: string; body: string; mediaType: string | null; mediaUrl: string | null };
+    type Reply = {
+      id: string;
+      body: string;
+      mediaType: string | null;
+      mediaUrl: string | null;
+      interactive?: ChatMessage['interactive'];
+    };
     const replies: Reply[] = Array.isArray(data?.replies) ? data.replies : [];
     if (data?.superseded && replies.length === 0) return;
     setMessages((current) => [
@@ -275,6 +287,7 @@ export default function SimulatorPage() {
           id: `out-${reply.id}`,
           mine: false,
           body: reply.body,
+          interactive: reply.interactive,
           imageUrl: isImage ? reply.mediaUrl! : undefined,
           imageName: isImage ? 'generated-image.png' : undefined,
           meta: isOtherMedia ? { deckUrl: reply.mediaUrl!, deckName: 'output.pdf' } : undefined,
@@ -336,6 +349,24 @@ export default function SimulatorPage() {
               {message.body && (
                 <div dir="auto" className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words text-[#111B21]">{message.body}</div>
               )}
+              {!message.mine && message.interactive?.options?.length ? (
+                <div className="mt-2 grid gap-2 border-t border-black/10 pt-2" dir="rtl">
+                  {message.interactive.options.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={busy || responding}
+                      onClick={() => void sendBody(option.title, false)}
+                      className="min-h-11 rounded-lg border border-[#00A884]/30 bg-white px-3 py-2 text-center text-xs font-semibold text-[#007C69] transition hover:bg-[#00A884]/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#007C69] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="block">{option.title}</span>
+                      {message.interactive?.kind === 'list_picker' && option.description ? (
+                        <span className="mt-0.5 block text-[10px] font-normal text-[#667781]">{option.description}</span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {message.attachmentKind === 'audio' && message.attachmentText && (
                 <details className="mt-2 rounded-lg border border-[#075E54]/20 bg-[#075E54]/5 px-2 py-1.5 text-xs">
                   <summary className="cursor-pointer font-semibold text-[#075E54]">הצג תמלול</summary>

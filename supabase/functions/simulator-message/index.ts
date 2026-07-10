@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
     // sign any media so the browser can render the real generated file.
     const { data: outbound } = await database
       .from('messages')
-      .select('id, body, media_type, storage_path, created_at')
+      .select('id, body, media_type, storage_path, interactive_json, created_at')
       .eq('conversation_id', conversation.id)
       .eq('direction', 'outbound')
       .gte('created_at', turnStart)
@@ -152,6 +152,7 @@ Deno.serve(async (req) => {
         body: m.body ?? '',
         mediaType: m.media_type ?? null,
         mediaUrl,
+        interactive: m.interactive_json ?? null,
       });
     }
 

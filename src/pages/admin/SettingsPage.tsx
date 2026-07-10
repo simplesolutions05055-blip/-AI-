@@ -51,6 +51,10 @@ export default function SettingsPage() {
       .then(({ data }) => {
         const next: Settings = {};
         (data ?? []).forEach((row: any) => {
+          // Runtime-managed Twilio Content SIDs must not be copied into the
+          // editable form, otherwise a later admin save could overwrite a
+          // newer cache created by an Edge Function.
+          if (row.key === 'whatsapp_interactive_content_cache') return;
           next[row.key] = row.value_json;
         });
         setSettings(next);
@@ -88,6 +92,7 @@ export default function SettingsPage() {
   const limits = settings.rate_limits ?? {};
   const budget = settings.request_budget_usd ?? { max: 0.08 };
   const outputPermissions = normalizeOutputPermissions(settings.output_permissions);
+  const interactiveWhatsAppEnabled = settings.whatsapp_interactive_messages?.enabled === true;
   // Default to visible: only an explicit stored `false` hides the link.
   const signupVisible = settings.public_signup_visible !== false;
   const requireOnboardingUploads = settings.onboarding_require_uploads === true;
@@ -131,7 +136,31 @@ export default function SettingsPage() {
 
       {activeTab === 'whatsapp' && (
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-        <h2 className="font-semibold mb-3">נוסחי WhatsApp</h2>
+        <h2 className="font-semibold mb-1">WhatsApp</h2>
+        <p className="mb-4 text-xs text-[var(--muted)]">הגדירו את חוויית השיחה ואת נוסחי ההודעות של הבוט.</p>
+
+        <label className="mb-5 flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
+          <span>
+            <span className="block text-sm font-semibold">כפתורים אינטראקטיביים</span>
+            <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+              כשהמתג פעיל, בחירות מוצגות ככפתורים או כרשימה. במקרה תקלה המערכת חוזרת אוטומטית לטקסט.
+            </span>
+          </span>
+          <span className="relative inline-flex shrink-0 items-center">
+            <input
+              type="checkbox"
+              role="switch"
+              className="peer sr-only"
+              checked={interactiveWhatsAppEnabled}
+              aria-label="כפתורים אינטראקטיביים ב-WhatsApp"
+              onChange={(e) => update('whatsapp_interactive_messages', { enabled: e.target.checked })}
+            />
+            <span className="h-7 w-12 rounded-full bg-gray-300 transition peer-checked:bg-brand peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" />
+            <span className="pointer-events-none absolute start-1 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5 rtl:peer-checked:-translate-x-5" />
+          </span>
+        </label>
+
+        <h3 className="mb-3 text-sm font-semibold">נוסחי הודעות</h3>
         <Field label="קבלת בקשה">
           <input className={input} dir="auto" value={tpl.received ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, received: e.target.value })} />
         </Field>

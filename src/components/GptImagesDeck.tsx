@@ -314,7 +314,7 @@ export default function GptImagesDeck({
         try {
           const db = createSupabaseBrowserClient();
           const markdown = serializeDeckSlidesToMarkdown(deck);
-          await db.from('outputs').update({ text_content: markdown }).eq('request_id', requestId);
+          await db.from('outputs').update({ text_content: markdown } as never).eq('request_id', requestId);
         } catch (e) {
           console.error('Failed to auto-save presentation slides:', e);
         }
@@ -377,7 +377,7 @@ export default function GptImagesDeck({
       try {
         const db = createSupabaseBrowserClient();
         const markdown = serializeDeckSlidesToMarkdown(contentSlides);
-        await db.from('outputs').update({ text_content: markdown }).eq('request_id', requestId);
+        await db.from('outputs').update({ text_content: markdown } as never).eq('request_id', requestId);
       } catch (e) {
         console.error('Failed to save presentation slides:', e);
       }

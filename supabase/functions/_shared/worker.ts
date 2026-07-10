@@ -13,7 +13,15 @@ import {
   round4,
 } from './util.ts';
 import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption } from './openai.ts';
-import { sendWhatsApp, sendWhatsAppTemplate, sendWhatsAppMedia } from './twilio.ts';
+import {
+  createWhatsAppInteractiveContent,
+  interactiveFingerprint,
+  sendWhatsApp,
+  sendWhatsAppContent,
+  sendWhatsAppTemplate,
+  sendWhatsAppMedia,
+  type WhatsAppInteractive,
+} from './twilio.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { loadPdfBrandSettings, sendDeliverableCopy } from './deliverableEmail.ts';
 import { deliverableTitle } from './deliverableTitle.ts';
@@ -26,7 +34,7 @@ import {
   buildTemplateLockBlock,
   maybeLockTemplate,
 } from './learning.ts';
-import { buildPostDeliveryMenu } from './flow.ts';
+import { buildPostDeliveryInteraction, buildPostDeliveryMenu } from './flow.ts';
 import {
   AbuseGuardError,
   enforceAiLimit,
@@ -336,6 +344,21 @@ async function windowOpen(database: DB, conversationId: string): Promise<boolean
   return Date.now() - new Date(data.created_at as string).getTime() < 24 * 60 * 60 * 1000;
 }
 
+async function interactiveContentSid(database: DB, content: WhatsAppInteractive): Promise<string> {
+  const key = await interactiveFingerprint(content);
+  const cache = await getSettingOr<Record<string, string>>(
+    database, 'whatsapp_interactive_content_cache', {}
+  );
+  if (cache[key]) return cache[key];
+
+  const contentSid = await createWhatsAppInteractiveContent(content, key);
+  await database.from('settings').upsert({
+    key: 'whatsapp_interactive_content_cache',
+    value_json: { ...cache, [key]: contentSid },
+  }, { onConflict: 'key' });
+  return contentSid;
+}
+
 // Returns true when the message actually reached the user (real send or
 // simulated), false when delivery failed (Twilio error, daily limit, or
 // outside the 24h window with no template). Callers that advance request
@@ -347,14 +370,37 @@ export async function sendOut(
   requestId: string | null,
   to: string,
   body: string,
-  simulated: boolean
+  simulated: boolean,
+  interactive?: WhatsAppInteractive,
 ): Promise<boolean> {
   try {
     let sid: string;
+    let sentInteractive = false;
+    const interactiveSetting = interactive
+      ? await getSettingOr<{ enabled: boolean }>(database, 'whatsapp_interactive_messages', { enabled: false })
+      : { enabled: false };
+    const useInteractive = Boolean(interactive && interactiveSetting.enabled);
     if (simulated || isProductionFormTarget(to)) {
       sid = `sim-${crypto.randomUUID()}`;
+      sentInteractive = useInteractive && !isProductionFormTarget(to);
     } else if (await windowOpen(database, conversationId)) {
-      sid = await sendWhatsApp(to, body);
+      if (useInteractive && interactive) {
+        try {
+          const contentSid = await interactiveContentSid(database, interactive);
+          sid = await sendWhatsAppContent(to, contentSid);
+          sentInteractive = true;
+        } catch (interactiveError) {
+          await logEvent(database, {
+            requestId,
+            severity: 'warning',
+            action: 'whatsapp_interactive_fallback',
+            message: String(interactiveError),
+          });
+          sid = await sendWhatsApp(to, body);
+        }
+      } else {
+        sid = await sendWhatsApp(to, body);
+      }
     } else {
       // Outside the 24h window — free-form is blocked by WhatsApp. Use the
       // approved template if configured, otherwise record the miss for the admin.
@@ -380,8 +426,9 @@ export async function sendOut(
       conversation_id: conversationId,
       request_id: requestId,
       direction: 'outbound',
-      body,
+      body: sentInteractive && interactive ? interactive.body : body,
       twilio_message_sid: sid,
+      interactive_json: sentInteractive ? interactive : null,
     });
     return true;
   } catch (e) {
@@ -995,7 +1042,8 @@ async function deliverOutput(database: DB, requestId: string): Promise<void> {
   await logEvent(database, { requestId, action: 'delivered_whatsapp_only' });
   await sleep(POST_DELIVERY_MENU_DELAY_MS);
   await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-    buildPostDeliveryMenu(output.output_type), conversation.simulated);
+    buildPostDeliveryMenu(output.output_type), conversation.simulated,
+    buildPostDeliveryInteraction(output.output_type));
   await database.from('conversations').update({
     status: 'active', current_request_id: null,
     flow_state: 'post_delivery', last_delivered_request_id: requestId,
@@ -1139,7 +1187,10 @@ export async function sendOutput(requestId: string): Promise<void> {
       await logEvent(database, { requestId, action: 'email_sent', message: 'simulated (skipped Resend)' });
       await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, true);
       await sleep(POST_DELIVERY_MENU_DELAY_MS);
-      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, buildPostDeliveryMenu(output.output_type), true);
+      await sendOut(
+        database, conversation.id, requestId, conversation.whatsapp_from,
+        buildPostDeliveryMenu(output.output_type), true, buildPostDeliveryInteraction(output.output_type)
+      );
       await database.from('conversations').update({
         status: 'active', current_request_id: null,
         flow_state: 'post_delivery', last_delivered_request_id: requestId,
@@ -1158,7 +1209,10 @@ export async function sendOutput(requestId: string): Promise<void> {
     }
     await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, conversation.simulated);
     await sleep(POST_DELIVERY_MENU_DELAY_MS);
-    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, buildPostDeliveryMenu(output.output_type), conversation.simulated);
+    await sendOut(
+      database, conversation.id, requestId, conversation.whatsapp_from,
+      buildPostDeliveryMenu(output.output_type), conversation.simulated, buildPostDeliveryInteraction(output.output_type)
+    );
     await database.from('conversations').update({
       status: 'active', current_request_id: null,
       flow_state: 'post_delivery', last_delivered_request_id: requestId,

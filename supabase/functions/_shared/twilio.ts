@@ -3,6 +3,19 @@ const sid = () => Deno.env.get('TWILIO_ACCOUNT_SID')!;
 const token = () => Deno.env.get('TWILIO_AUTH_TOKEN')!;
 const from = () => Deno.env.get('TWILIO_WHATSAPP_FROM')!;
 
+export type WhatsAppInteractiveOption = {
+  id: string;
+  title: string;
+  description?: string;
+};
+
+export type WhatsAppInteractive = {
+  kind: 'quick_reply' | 'list_picker';
+  body: string;
+  button?: string;
+  options: WhatsAppInteractiveOption[];
+};
+
 function basicAuth(): string {
   return 'Basic ' + btoa(`${sid()}:${token()}`);
 }
@@ -58,6 +71,62 @@ async function postMessage(form: URLSearchParams): Promise<string> {
   if (!res.ok) throw new Error(`Twilio send ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.sid;
+}
+
+export async function interactiveFingerprint(content: WhatsAppInteractive): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(content));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest)).slice(0, 12)
+    .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// Content resources do not require Meta approval when used inside the active
+// 24-hour WhatsApp session. They are created once and their SID is cached in
+// the settings table by worker.sendOut.
+export async function createWhatsAppInteractiveContent(
+  content: WhatsAppInteractive,
+  fingerprint: string,
+): Promise<string> {
+  const type = content.kind === 'list_picker'
+    ? {
+        'twilio/list-picker': {
+          body: content.body.slice(0, 1024),
+          button: (content.button || 'בחירת אפשרות').slice(0, 20),
+          items: content.options.slice(0, 10).map((option) => ({
+            item: option.title.slice(0, 24),
+            id: option.id.slice(0, 200),
+            description: (option.description || option.title).slice(0, 72),
+          })),
+        },
+      }
+    : {
+        'twilio/quick-reply': {
+          body: content.body.slice(0, 1024),
+          actions: content.options.slice(0, 3).map((option) => ({
+            type: 'QUICK_REPLY',
+            title: option.title.slice(0, 20),
+            id: option.id.slice(0, 200),
+          })),
+        },
+      };
+  const res = await fetch('https://content.twilio.com/v1/Content', {
+    method: 'POST',
+    headers: { Authorization: basicAuth(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      friendly_name: `primeos_${content.kind}_${fingerprint}`,
+      language: 'he',
+      types: type,
+    }),
+  });
+  if (!res.ok) throw new Error(`Twilio content create ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  if (!data.sid) throw new Error('Twilio content create returned no SID');
+  return data.sid as string;
+}
+
+export async function sendWhatsAppContent(to: string, contentSid: string): Promise<string> {
+  const target = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+  return postMessage(new URLSearchParams({ From: from(), To: target, ContentSid: contentSid }));
 }
 
 export async function sendWhatsApp(to: string, body: string): Promise<string> {

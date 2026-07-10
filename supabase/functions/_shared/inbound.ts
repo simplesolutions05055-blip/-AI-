@@ -191,7 +191,8 @@ export async function handleInbound(
   const { conversation, from, phone, body, messageSid, numMedia, templates, simulated, resolveMedia } = opts;
 
   // Flow messages are conversation-level (no request yet).
-  const send: SendFn = (text) => sendOut(database, conversation.id, null, from, text, simulated);
+  const send: SendFn = (text, interactive) =>
+    sendOut(database, conversation.id, null, from, text, simulated, interactive);
 
   // ── who is this? phone → site profile (+ their single brand) ─────────────
   const identity = await resolveIdentity(database, conversation, phone, simulated);
