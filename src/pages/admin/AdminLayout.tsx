@@ -12,7 +12,7 @@ import { Spinner } from '@/components/ui/Spinner';
 
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
 // further by can_create_outputs. Files is view-only for regular users.
-const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/branding', '/admin/holidays', '/admin/user-settings'];
+const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/branding', '/admin/holidays', '/admin/user-settings', '/admin/meta-connection'];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile, hasBrand, requireUploads } = useProfile();
@@ -65,6 +65,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (loading) return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]"><Spinner /></main>;
   if (!profile) return <Navigate to="/login" replace />;
+
+  // DEBUG: Log profile data
+  console.log('=== AdminLayout Debug ===');
+  console.log('Profile:', profile);
+  console.log('Role:', profile.role);
+  console.log('Onboarding:', profile.onboarding);
+  console.log('Has Brand:', hasBrand);
+  console.log('Require Uploads:', requireUploads);
+  console.log('needsOnboardingGate result:', needsOnboardingGate(profile, hasBrand, requireUploads));
+  console.log('========================');
 
   // Force onboarding before the app: user details always, plus the upload steps
   // when the admin made them mandatory and the user has a brand.

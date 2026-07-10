@@ -18,6 +18,11 @@ interface Body {
     storage_path?: string | null;
     mime_type?: string | null;
   }>;
+  // Meta-specific fields
+  connection_id?: string | null;
+  target_platform_id?: string | null; // page_id or instagram_id
+  target_name?: string | null; // page name or @username
+  image_url?: string | null; // direct image URL
 }
 
 const corsHeaders = {
@@ -29,11 +34,15 @@ const corsHeaders = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
+    
     const authHeader = req.headers.get('Authorization') ?? '';
     const callerId = await resolveUserId(authHeader);
-    if (!callerId) return json({ error: 'unauthorized' }, 401);
+    if (!callerId) {
+      return json({ error: 'unauthorized' }, 401);
+    }
 
     const body = await req.json() as Body;
+    
     const platform = body.platform;
     if (platform !== 'facebook' && platform !== 'instagram') return json({ error: 'invalid_platform' }, 400);
 
@@ -46,13 +55,25 @@ Deno.serve(async (req) => {
     if (scheduledAt.getTime() <= Date.now() + 60_000) return json({ error: 'scheduled_at_must_be_future' }, 400);
 
     const media = normalizeMedia(body.media ?? []);
-    if (platform === 'instagram' && media.length === 0) {
+    if (platform === 'instagram' && media.length === 0 && !body.image_url) {
       return json({ error: 'instagram_requires_media' }, 400);
     }
 
+    // Meta-specific validation
+    if (body.connection_id) {
+      if (!body.target_platform_id) {
+        return json({ error: 'target_platform_id_required' }, 400);
+      }
+      if (platform === 'instagram' && !body.image_url && media.length === 0) {
+        return json({ error: 'instagram_requires_image_url' }, 400);
+      }
+    }
+
     const database = db();
-    const canUse = await canUseOutput(database, callerId, body.request_id ?? null, body.output_id ?? null, body.brand_id ?? null);
-    if (!canUse) return json({ error: 'forbidden' }, 403);
+    const canUse = await canUseOutput(database, callerId, body.request_id ?? null, body.output_id ?? null, body.brand_id ?? null, body.connection_id ?? null);
+    if (!canUse) {
+      return json({ error: 'forbidden' }, 403);
+    }
 
     const { data, error } = await database
       .from('scheduled_social_posts')
@@ -67,14 +88,26 @@ Deno.serve(async (req) => {
         media,
         status: 'scheduled',
         created_by: callerId,
+        // Meta-specific fields
+        connection_id: body.connection_id ?? null,
+        target_platform_id: body.target_platform_id ?? null,
+        target_name: body.target_name ?? null,
+        image_url: body.image_url ?? null,
       })
       .select('id, title, platform, scheduled_at, status')
       .single();
-    if (error) throw error;
+    if (error) {
+      throw error;
+    }
 
     return json({ ok: true, schedule: data });
   } catch (e) {
-    return json({ error: String(e) }, 500);
+    const errorMessage = e instanceof Error 
+      ? e.message 
+      : typeof e === 'object' && e !== null && 'message' in e
+        ? String((e as any).message)
+        : String(e);
+    return json({ error: errorMessage }, 500);
   }
 });
 
@@ -99,9 +132,20 @@ async function canUseOutput(
   requestId: string | null,
   outputId: string | null,
   brandId: string | null,
+  connectionId: string | null,
 ): Promise<boolean> {
   const { data: profile } = await database.from('profiles').select('role').eq('id', callerId).maybeSingle();
   if (profile?.role === 'admin') return true;
+
+  // Check Meta connection ownership
+  if (connectionId) {
+    const { data } = await database
+      .from('meta_connections')
+      .select('user_id')
+      .eq('id', connectionId)
+      .maybeSingle();
+    if (data?.user_id === callerId) return true;
+  }
 
   if (brandId && !requestId && !outputId) {
     const { data } = await database
