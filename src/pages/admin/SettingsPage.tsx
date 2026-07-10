@@ -39,6 +39,8 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<SettingsTab>('permissions');
+  const [resetting, setResetting] = useState(false);
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
 
   useEffect(() => {
     setProfileGender(profile?.gender ?? '');
@@ -78,6 +80,27 @@ export default function SettingsPage() {
     }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function resetLiveConversation() {
+    if (resetting) return;
+    if (!window.confirm('לאפס את השיחות החיות ב-WhatsApp? כל שיחה פעילה תחזור לתפריט הראשי וההודעה הבאה תתחיל מחדש.')) return;
+    setResetting(true);
+    setResetMsg(null);
+    try {
+      const { data, error } = await createSupabaseBrowserClient().functions.invoke('reset-conversation', { body: {} });
+      if (error || (data as any)?.error) {
+        setResetMsg('האיפוס נכשל. נסו שוב.');
+      } else {
+        const count = (data as any)?.reset ?? 0;
+        setResetMsg(count > 0 ? `אופסו ${count} שיחות.` : 'אין כרגע שיחות פעילות לאיפוס.');
+      }
+    } catch {
+      setResetMsg('האיפוס נכשל. נסו שוב.');
+    } finally {
+      setResetting(false);
+      setTimeout(() => setResetMsg(null), 4000);
+    }
   }
 
   const tpl = settings.whatsapp_templates ?? {};
@@ -173,6 +196,25 @@ export default function SettingsPage() {
         <Field label="דחיית מדיה">
           <input className={input} dir="auto" value={tpl.rejected_media ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, rejected_media: e.target.value })} />
         </Field>
+
+        <div className="mt-5 border-t border-[var(--border)] pt-4">
+          <h3 className="mb-1 text-sm font-semibold">איפוס שיחה</h3>
+          <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
+            מאפס את השיחות החיות ב-WhatsApp — סוגר בקשה פתוחה, מנקה את מצב התפריט ומחזיר לתפריט הראשי.
+            ההודעה הבאה של הלקוח תתחיל מחדש. לא משפיע על תוצרים שכבר נשלחו.
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={resetLiveConversation}
+              disabled={resetting}
+              className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+            >
+              {resetting ? 'מאפס…' : 'אפס שיחה חיה'}
+            </button>
+            {resetMsg && <span className="text-sm text-[var(--muted)]">{resetMsg}</span>}
+          </div>
+        </div>
       </section>
       )}
 
