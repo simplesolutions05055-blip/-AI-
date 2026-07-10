@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDays as CalendarDaysIcon,
   Check as CheckIcon,
@@ -38,34 +38,6 @@ import type { IsraelHoliday, OutputType, QaResult, RequestStatus, StructuredBrie
 type ProductionType = OutputType;
 type Step = 'form' | 'brief' | 'generating' | 'result';
 type ProductionBrief = StructuredBrief & { admin_note?: string; revision_count?: number; source?: string };
-
-interface FieldConfig {
-  key: keyof ProductionForm;
-  label: string;
-  type?: 'text' | 'textarea' | 'select' | 'number';
-  placeholder?: string;
-  options?: string[];
-  required?: boolean;
-}
-
-interface ProductionForm {
-  goal: string;
-  audience: string;
-  channel: string;
-  requiredText: string;
-  mustInclude: string;
-  style: string;
-  colors: string;
-  dimensions: string;
-  forbidden: string;
-  topic: string;
-  slideCount: string;
-  tone: string;
-  sourceMaterials: string;
-  language: string;
-  sendEmail: boolean;
-  customerEmail: string;
-}
 
 interface BrandOption {
   id: string;
@@ -112,8 +84,6 @@ const PRIMARY_BUTTON =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] bg-brand px-5 py-3 text-sm font-semibold text-white shadow-none transition duration-150 hover:bg-brand-dark active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] disabled:cursor-not-allowed disabled:border disabled:border-[var(--border-warm)] disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)] disabled:shadow-none';
 const SECONDARY_BUTTON =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-3 text-sm font-semibold text-[var(--text-strong)] shadow-none transition duration-150 hover:border-brand/40 hover:bg-[var(--surface-2)] hover:text-brand active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] disabled:cursor-not-allowed disabled:opacity-50';
-const CHIP_BUTTON =
-  'rounded-[9px] border px-3 py-1.5 text-sm transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)]';
 
 // One-off OpenAI key, scoped to the browser session (sessionStorage clears when
 // the tab/session ends, so the next visit falls back to the project's key).
@@ -180,64 +150,6 @@ async function isOpenAiQuotaError(fnError: unknown): Promise<boolean> {
   const message = (fnError as { message?: string }).message ?? String(fnError);
   return /openai_quota|insufficient_quota|exceeded your current quota|\b429\b|billing/i.test(message);
 }
-
-const DEFAULT_FORM: ProductionForm = {
-  goal: '',
-  audience: '',
-  channel: '',
-  requiredText: '',
-  mustInclude: '',
-  style: '',
-  colors: '',
-  dimensions: '',
-  forbidden: '',
-  topic: '',
-  slideCount: '10',
-  tone: '',
-  sourceMaterials: '',
-  language: 'עברית',
-  sendEmail: false,
-  customerEmail: '',
-};
-
-const FIELDS: Record<ProductionType, FieldConfig[]> = {
-  image: [
-    { key: 'goal', label: 'מה מטרת התמונה?', type: 'textarea', required: true },
-    { key: 'channel', label: 'איפה היא תפורסם?', type: 'select', options: ['פייסבוק', 'אינסטגרם', 'וואטסאפ', 'אתר', 'מודעה מודפסת', 'אחר'] },
-    { key: 'audience', label: 'קהל יעד', required: true },
-    { key: 'requiredText', label: 'טקסט שחייב להופיע בתמונה', type: 'textarea' },
-    { key: 'style', label: 'סגנון רצוי', placeholder: 'למשל רשמי, צעיר, יוקרתי, קהילתי' },
-    { key: 'colors', label: 'צבעים / מיתוג' },
-    { key: 'dimensions', label: 'מידות או יחס תמונה', placeholder: 'למשל 1:1, סטורי, 16:9' },
-    { key: 'forbidden', label: 'דברים שאסור שיופיעו', type: 'textarea' },
-  ],
-  presentation: [
-    { key: 'topic', label: 'נושא המצגת', required: true },
-    { key: 'goal', label: 'מטרת המצגת', type: 'textarea', required: true },
-    { key: 'audience', label: 'קהל יעד', required: true },
-    { key: 'slideCount', label: 'מספר שקפים רצוי', type: 'number' },
-    { key: 'tone', label: 'טון', type: 'select', options: ['עסקי', 'שיווקי', 'רשמי', 'פשוט וברור', 'משכנע'] },
-    { key: 'mustInclude', label: 'נקודות שחייבות להופיע', type: 'textarea' },
-    { key: 'sourceMaterials', label: 'חומרי מקור אם יש', type: 'textarea' },
-  ],
-  text: [
-    { key: 'topic', label: 'נושא הטקסט', required: true },
-    { key: 'goal', label: 'מה מטרת הטקסט?', type: 'textarea', required: true },
-    { key: 'audience', label: 'קהל יעד', required: true },
-    { key: 'channel', label: 'איפה הטקסט ישמש?', type: 'select', options: ['פוסט', 'מייל', 'וואטסאפ', 'אתר', 'נאום', 'מסמך פנימי', 'אחר'] },
-    { key: 'tone', label: 'טון', type: 'select', options: ['מקצועי', 'שיווקי', 'רשמי', 'חם ואישי', 'קצר וישיר'] },
-    { key: 'mustInclude', label: 'נקודות שחייבות להופיע', type: 'textarea' },
-    { key: 'sourceMaterials', label: 'חומרי מקור אם יש', type: 'textarea' },
-  ],
-  pdf: [
-    { key: 'topic', label: 'נושא המסמך', required: true },
-    { key: 'goal', label: 'מטרת המסמך', type: 'textarea', required: true },
-    { key: 'audience', label: 'קהל יעד', required: true },
-    { key: 'tone', label: 'טון', type: 'select', options: ['עסקי', 'רשמי', 'שיווקי', 'פשוט וברור'] },
-    { key: 'mustInclude', label: 'תוכן שחייב להופיע', type: 'textarea' },
-    { key: 'sourceMaterials', label: 'חומרי מקור אם יש', type: 'textarea' },
-  ],
-};
 
 export default function ProductionPage() {
   const { type } = useParams();
@@ -1374,7 +1286,7 @@ function ProductionPicker({
                     {interactive && (
                       <span className="flex w-full items-center justify-center gap-1.5 border-t border-[var(--border-soft)] px-2.5 py-2 text-[12px] font-semibold text-brand transition group-hover:bg-brand/5">
                         <LightbulbIcon className="h-3.5 w-3.5 shrink-0 stroke-[1.75]" />
-                        <span className="truncate">פרסמו פוסט ל{label}</span>
+                        <span className="truncate">פרסמו פוסט</span>
                       </span>
                     )}
                   </button>
@@ -1502,7 +1414,6 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   const location = useLocation();
   const navState = (location.state as { freeText?: string; brandId?: string | null; pickedImages?: DeckImage[] | null; pickedKeys?: string[] } | null) ?? null;
   const freeText = navState?.freeText?.trim() ?? '';
-  const [form, setForm] = useState<ProductionForm>(DEFAULT_FORM);
   const [step, setStep] = useState<Step>('form');
   const [brief, setBrief] = useState<ProductionBrief | null>(null);
   const [revision, setRevision] = useState('');
@@ -1512,9 +1423,9 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<RequestStatus | null>(null);
+  const [customerEmail, setCustomerEmail] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
-  const [formMode, setFormMode] = useState<'wizard' | 'classic'>('wizard');
   // Brands the current user may produce with. RLS already limits this list:
   // admins see every active brand, a regular user sees only their granted ones.
   const [brands, setBrands] = useState<BrandOption[]>([]);
@@ -1541,7 +1452,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   // to yourself is a single click. Never overrides something already typed.
   useEffect(() => {
     if (profile?.email) {
-      setForm((f) => (f.customerEmail ? f : { ...f, customerEmail: profile.email }));
+      setCustomerEmail((current) => current || profile.email);
     }
   }, [profile?.email]);
 
@@ -1693,20 +1604,6 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     };
   }, [effectiveBrand?.id, effectiveBrand?.logo_path]);
 
-  const fields = FIELDS[type];
-  const missingRequired = useMemo(
-    () => fields.filter((field) => field.required && !String(form[field.key] ?? '').trim()).map((field) => field.label),
-    [fields, form],
-  );
-  const canSubmit =
-    missingRequired.length === 0 &&
-    (!form.sendEmail || isValidEmail(form.customerEmail)) &&
-    (!brandRequired || !!brandId);
-
-  function update<K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) {
-    setForm((current) => ({ ...current, [key]: value }));
-  }
-
   function updateBrand(nextBrandId: string) {
     setBrandId(nextBrandId);
     setPickedImages(null);
@@ -1722,19 +1619,6 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       return;
     }
     setPickerOpen(true);
-  }
-
-  function prepareBrief() {
-    if (brandRequired && !brandId) {
-      setError('יש לבחור מותג לפני יצירת המצגת.');
-      return;
-    }
-    if (!canSubmit) return;
-    setError(null);
-    const nextBrief = buildBrief(type, form, revisionCount, selectedBrand);
-    setBrief(nextBrief);
-    void generate(nextBrief);
-    setError(null);
   }
 
   function applyRevision() {
@@ -1838,7 +1722,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   }
 
   async function sendEmail() {
-    if (!requestId || !isValidEmail(form.customerEmail)) return;
+    if (!requestId || !isValidEmail(customerEmail)) return;
     await sendEmailForRequest(requestId);
   }
 
@@ -1848,7 +1732,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     try {
       const client = createSupabaseBrowserClient();
       const { error: updateError } = await client.functions.invoke('create-production-request', {
-        body: { request_id: id, customer_email: form.customerEmail },
+        body: { request_id: id, customer_email: customerEmail },
       });
       if (updateError) throw updateError;
       const { error: sendError } = await client.functions.invoke('send-output', { body: { request_id: id } });
@@ -1874,28 +1758,6 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold leading-tight tracking-normal text-[var(--text-strong)]">הפקת {OUTPUT_LABEL[type]}</h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {step === 'form' && !showBriefLoader && (
-            <div className="inline-flex rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-1.5 text-sm shadow-[var(--warm-shadow-card)]">
-              <button
-                onClick={() => setFormMode('wizard')}
-                className={`rounded-xl px-4 py-2 font-semibold transition duration-200 ${
-                  formMode === 'wizard' ? 'bg-brand text-white shadow-sm' : 'text-[var(--text-muted)] hover:bg-brand/5 hover:text-brand'
-                }`}
-              >
-                שאלה אחר שאלה
-              </button>
-              <button
-                onClick={() => setFormMode('classic')}
-                className={`rounded-xl px-4 py-2 font-semibold transition duration-200 ${
-                  formMode === 'classic' ? 'bg-brand text-white shadow-sm' : 'text-[var(--text-muted)] hover:bg-brand/5 hover:text-brand'
-                }`}
-              >
-                טופס מלא
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -1961,36 +1823,6 @@ function ProductionFlow({ type }: { type: ProductionType }) {
         <ClarificationModal onClose={() => setClarifyOpen(false)} onSubmit={submitClarification} />
       )}
 
-      {step === 'form' && !showBriefLoader && !freeTextError &&
-        (formMode === 'wizard' ? (
-          <FormWizard
-            type={type}
-            fields={fields}
-            form={form}
-            update={update}
-            onComplete={prepareBrief}
-            hasImageStep={type === 'presentation'}
-            brandId={brandId}
-            pickedCount={pickedImages?.length ?? null}
-            onOpenPicker={openImagePicker}
-            onResetPicked={() => { setPickedImages(null); setPickedKeys([]); }}
-          />
-        ) : (
-          <ClassicForm
-            fields={fields}
-            form={form}
-            update={update}
-            missingRequired={missingRequired}
-            canSubmit={canSubmit}
-            onComplete={prepareBrief}
-            showImagePicker={type === 'presentation'}
-            pickedCount={pickedImages?.length ?? null}
-            imagePickerNeedsBrand={!brandId}
-            onOpenPicker={openImagePicker}
-            onResetPicked={() => { setPickedImages(null); setPickedKeys([]); }}
-          />
-        ))}
-
       {step === 'brief' && brief && (
         <div className="grid lg:grid-cols-[1fr_360px] gap-5">
           <BriefCard type={type} brief={brief} revisionCount={revisionCount} />
@@ -2054,8 +1886,8 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           requestId={requestId}
           brandId={brandId || null}
           brandLogoUrl={brandLogoUrl}
-          email={form.customerEmail}
-          setEmail={(value) => update('customerEmail', value)}
+          email={customerEmail}
+          setEmail={setCustomerEmail}
           sendEmail={sendEmail}
           sendingEmail={sendingEmail}
           emailSent={emailSent}
@@ -2087,48 +1919,6 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           setPickerOpen(false);
         }}
       />
-    </div>
-  );
-}
-
-function PresentationImagePickerPanel({
-  pickedCount,
-  needsBrand = false,
-  onOpenPicker,
-  onResetPicked,
-}: {
-  pickedCount?: number | null;
-  needsBrand?: boolean;
-  onOpenPicker?: () => void;
-  onResetPicked?: () => void;
-}) {
-  return (
-    <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] p-4">
-      <p className="mb-3 text-sm text-[var(--text-muted)]">
-        {pickedCount
-          ? `נבחרו ${pickedCount} תמונות שייכנסו למצגת.`
-          : 'עדיין לא נבחרו תמונות. אפשר לבחור עכשיו, או להמשיך ולבחור בעמוד התוצר.'}
-      </p>
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => onOpenPicker?.()}
-          className={SECONDARY_BUTTON}
-        >
-          <SparkIcon className="h-4 w-4" />
-          בחירת תמונות
-        </button>
-        {pickedCount ? (
-          <button
-            type="button"
-            onClick={onResetPicked}
-            className="text-xs font-semibold text-[var(--text-muted)] hover:text-brand hover:underline"
-          >
-            איפוס
-          </button>
-        ) : null}
-      </div>
-      {needsBrand && <p className="mt-2 text-xs text-[var(--warn-fg)]">יש לבחור מותג כדי לטעון תמונות.</p>}
     </div>
   );
 }
@@ -2323,315 +2113,6 @@ function BrandLogo({ name, url, size = 'default' }: { name: string; url: string 
         <img src={url} alt={`לוגו ${name}`} className="h-full w-full object-contain p-1.5" />
       ) : (
         <span className="px-2 text-center text-xl font-bold text-brand">{name.slice(0, 2)}</span>
-      )}
-    </div>
-  );
-}
-
-function ClassicForm({
-  fields,
-  form,
-  update,
-  missingRequired,
-  canSubmit,
-  onComplete,
-  showImagePicker = false,
-  pickedCount,
-  imagePickerNeedsBrand = false,
-  onOpenPicker,
-  onResetPicked,
-}: {
-  fields: FieldConfig[];
-  form: ProductionForm;
-  update: <K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) => void;
-  missingRequired: string[];
-  canSubmit: boolean;
-  onComplete: () => void;
-  showImagePicker?: boolean;
-  pickedCount?: number | null;
-  imagePickerNeedsBrand?: boolean;
-  onOpenPicker?: () => void;
-  onResetPicked?: () => void;
-}) {
-  return (
-    <div className={`${PANEL} p-5`}>
-      <div className="grid md:grid-cols-2 gap-4">
-        {fields.map((field) => (
-          <Field key={field.key} field={field} value={form[field.key]} onChange={update} />
-        ))}
-      </div>
-      {showImagePicker && (
-        <div className="mt-5">
-          <PresentationImagePickerPanel
-            pickedCount={pickedCount}
-            needsBrand={imagePickerNeedsBrand}
-            onOpenPicker={onOpenPicker}
-            onResetPicked={onResetPicked}
-          />
-        </div>
-      )}
-      {missingRequired.length > 0 && (
-        <div className="mt-4 text-sm text-[var(--text-muted)]">חסרים שדות חובה: {missingRequired.join(', ')}</div>
-      )}
-      <button onClick={onComplete} disabled={!canSubmit} className={`mt-5 ${PRIMARY_BUTTON}`}>
-        <SparkIcon className="h-4 w-4" />
-        יצירת תוצר
-      </button>
-    </div>
-  );
-}
-
-function Field({
-  field,
-  value,
-  onChange,
-}: {
-  field: FieldConfig;
-  value: string | boolean;
-  onChange: <K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) => void;
-}) {
-  const common = 'w-full rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] px-3 py-3 text-[var(--text-strong)] shadow-sm transition placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15';
-  return (
-    <label className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
-      <span className="block text-sm font-semibold mb-1">
-        {field.label}
-        {field.required ? ' *' : ''}
-      </span>
-      {field.type === 'textarea' ? (
-        <textarea
-          value={String(value)}
-          onChange={(e) => onChange(field.key, e.target.value as never)}
-          rows={4}
-          placeholder={field.placeholder}
-          className={common}
-        />
-      ) : field.type === 'select' ? (
-        <select value={String(value)} onChange={(e) => onChange(field.key, e.target.value as never)} className={common}>
-          <option value="">בחירה</option>
-          {field.options?.map((option) => <option key={option} value={option}>{option}</option>)}
-        </select>
-      ) : (
-        <input
-          type={field.type ?? 'text'}
-          value={String(value)}
-          onChange={(e) => onChange(field.key, e.target.value as never)}
-          placeholder={field.placeholder}
-          className={common}
-        />
-      )}
-    </label>
-  );
-}
-
-function FormWizard({
-  type,
-  fields,
-  form,
-  update,
-  onComplete,
-  hasImageStep = false,
-  brandId,
-  pickedCount,
-  onOpenPicker,
-  onResetPicked,
-}: {
-  type: ProductionType;
-  fields: FieldConfig[];
-  form: ProductionForm;
-  update: <K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) => void;
-  onComplete: () => void;
-  // For presentations: append a final "choose images" step before creating the brief.
-  hasImageStep?: boolean;
-  brandId?: string;
-  pickedCount?: number | null;
-  onOpenPicker?: () => void;
-  onResetPicked?: () => void;
-}) {
-  // One question per content field, plus an optional final image-selection step.
-  // The email decision happens later, only after the output exists.
-  const total = fields.length + (hasImageStep ? 1 : 0);
-
-  const [index, setIndex] = useState(0);
-  // RTL motion: advancing moves the filmstrip rightward (new question enters from
-  // the left); going back moves it leftward (new question enters from the right).
-  const [dir, setDir] = useState<'fwd' | 'back'>('fwd');
-
-  // The image step sits at index === fields.length (after the last field).
-  const onImageStep = hasImageStep && index === fields.length;
-  const current = onImageStep ? null : fields[index];
-
-  const stepValid = useMemo(() => {
-    if (current?.required) {
-      return String(form[current.key] ?? '').trim().length > 0;
-    }
-    return true; // image step + optional fields are always passable
-  }, [current, form]);
-
-  const isLast = index === total - 1;
-  const isOptionalEmpty = !onImageStep && !current?.required && !String(form[current!.key] ?? '').trim();
-
-  function goNext() {
-    if (!stepValid) return;
-    if (isLast) {
-      onComplete();
-      return;
-    }
-    setDir('fwd');
-    setIndex((i) => i + 1);
-  }
-
-  function goBack() {
-    if (index === 0) return;
-    setDir('back');
-    setIndex((i) => i - 1);
-  }
-
-  function handleKeyDown(e: KeyboardEvent) {
-    if (e.key !== 'Enter') return;
-
-    const isTextarea = e.target instanceof HTMLTextAreaElement;
-    const isSubmitShortcut = e.metaKey || e.ctrlKey;
-
-    // Plain Enter advances, except inside a textarea where it should add a new line.
-    // Cmd+Enter / Ctrl+Enter submits textarea steps without losing multiline editing.
-    if (!isTextarea || isSubmitShortcut) {
-      e.preventDefault();
-      goNext();
-    }
-  }
-
-  const progressPct = Math.round(((index + 1) / total) * 100);
-  const heading = onImageStep ? 'בחירת תמונות למצגת' : current!.label;
-
-  return (
-    <div className={`${PANEL} p-5 sm:p-8`}>
-      <style>{wizardKeyframes}</style>
-
-      {/* Progress: fills from the right (inline-start) leftward, per RTL time model. */}
-      <div className="mb-1 flex items-center justify-between gap-3 text-sm text-[var(--text-muted)]">
-        <span>שאלה {index + 1} מתוך {total}</span>
-        <span>{OUTPUT_LABEL[type]}</span>
-      </div>
-      <div className="mb-8 h-2 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-        <div className="h-full bg-brand rounded-full transition-[width] duration-500 ease-out" style={{ width: `${progressPct}%` }} />
-      </div>
-
-      <div
-        key={index}
-        onKeyDown={handleKeyDown}
-        style={{ animation: `${dir === 'fwd' ? 'wizSlideFwd' : 'wizSlideBack'} 320ms cubic-bezier(0.22,1,0.36,1)` }}
-      >
-        <h2 className="text-2xl sm:text-3xl font-bold mb-2 leading-snug">{heading}</h2>
-        <p className="mb-5 text-sm text-[var(--text-muted)]">
-          {onImageStep ? 'לא חובה — בחרו תמונות מותג / AI שייכנסו למצגת ולבריף' : current!.required ? 'שדה חובה' : 'לא חובה — אפשר להמשיך גם בלי למלא'}
-        </p>
-        {onImageStep ? (
-          <PresentationImagePickerPanel
-            pickedCount={pickedCount}
-            needsBrand={!brandId}
-            onOpenPicker={onOpenPicker}
-            onResetPicked={onResetPicked}
-          />
-        ) : (
-          <WizardInput field={current!} value={form[current!.key]} onChange={update} autoFocus />
-        )}
-      </div>
-
-      {/* Thumb-zone action row: primary forward action on the left (RTL progression). */}
-      <div className="sticky bottom-[calc(var(--safe-bottom)+0.75rem)] -mx-2 mt-8 flex items-center justify-between gap-2 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)]/95 p-2 shadow-lg backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0 sm:gap-3 sm:shadow-none">
-        <button
-          type="button"
-          onClick={goBack}
-          disabled={index === 0}
-          className="shrink-0 rounded-lg px-3 py-2 text-xs font-semibold text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] disabled:opacity-40 sm:px-4 sm:py-3 sm:text-sm"
-        >
-          → חזרה
-        </button>
-        <button
-          type="button"
-          onClick={goNext}
-          disabled={!stepValid}
-          className="bg-brand text-white rounded-lg px-4 py-2 sm:px-8 sm:py-3 text-sm sm:text-base font-semibold disabled:opacity-50 flex-1 sm:flex-none sm:min-w-[140px]"
-        >
-          {isLast ? 'יצירת תוצר' : isOptionalEmpty ? 'דילוג' : 'המשך'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-const wizardKeyframes = `
-@keyframes wizSlideFwd {
-  from { opacity: 0; transform: translateX(-36px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-@keyframes wizSlideBack {
-  from { opacity: 0; transform: translateX(36px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-`;
-
-function WizardInput({
-  field,
-  value,
-  onChange,
-  autoFocus,
-}: {
-  field: FieldConfig;
-  value: string | boolean;
-  onChange: <K extends keyof ProductionForm>(key: K, value: ProductionForm[K]) => void;
-  autoFocus?: boolean;
-}) {
-  const common = 'w-full rounded-lg border border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 text-lg text-[var(--text-strong)] placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15';
-  if (field.type === 'textarea') {
-    return (
-      <textarea
-        autoFocus={autoFocus}
-        value={String(value)}
-        onChange={(e) => onChange(field.key, e.target.value as never)}
-        rows={5}
-        placeholder={field.placeholder}
-        className={common}
-      />
-    );
-  }
-  // 'select' fields render as an OPEN text box plus clickable suggestion chips —
-  // the user can type anything or tap a common option.
-  return (
-    <div>
-      <input
-        autoFocus={autoFocus}
-        type={field.type === 'number' ? 'number' : 'text'}
-        value={String(value)}
-        onChange={(e) => onChange(field.key, e.target.value as never)}
-        placeholder={field.placeholder ?? (field.options ? 'כתבו או בחרו מההצעות' : undefined)}
-        className={common}
-      />
-      {field.options && field.options.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {field.options.map((option) => {
-            // Chips are multi-select: tapping one toggles it in a comma-separated
-            // list, so several can be combined (e.g. "שיווקי, משכנע").
-            const parts = String(value).split(',').map((p) => p.trim()).filter(Boolean);
-            const active = parts.includes(option);
-            const toggle = () => {
-              const next = active ? parts.filter((p) => p !== option) : [...parts, option];
-              onChange(field.key, next.join(', ') as never);
-            };
-            return (
-              <button
-                key={option}
-                type="button"
-                onClick={toggle}
-                className={`${CHIP_BUTTON} ${
-                  active ? 'border-brand bg-brand/10 text-brand font-semibold shadow-sm' : 'border-[var(--border-warm)] text-[var(--text-strong)] hover:bg-brand/5 hover:text-brand'
-                }`}
-              >
-                {option}
-              </button>
-            );
-          })}
-        </div>
       )}
     </div>
   );
@@ -2855,7 +2336,7 @@ function ResultCard({
     <div className={output.output_type === 'presentation' ? 'grid gap-5' : 'grid lg:grid-cols-[1fr_360px] gap-5'}>
       <div className={`${PANEL} p-5`}>
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-xl font-bold">התוצר מוכן</h2>
+          <h2 className="text-xl font-bold">{output.output_type === 'presentation' ? 'התוכן למצגת מוכן' : 'התוצר מוכן'}</h2>
           <Tooltip content="חזרה לתוצרים">
             <Link
               to="/admin/files"
@@ -3346,40 +2827,6 @@ const generatingKeyframes = `
 }
 `;
 
-function buildBrief(
-  type: ProductionType,
-  form: ProductionForm,
-  revisionCount: number,
-  brand?: BrandOption | null,
-): ProductionBrief {
-  const mustInclude = splitLines(form.mustInclude);
-  if (form.requiredText.trim()) mustInclude.push(`טקסט חובה: ${form.requiredText.trim()}`);
-  if (form.colors.trim()) mustInclude.push(`צבעים/מיתוג: ${form.colors.trim()}`);
-  if (brand) {
-    const hexes = (brand.color_palette ?? []).map((c) => c?.hex).filter(Boolean).join(', ');
-    mustInclude.push(`מותג: ${brand.name}${hexes ? ` (צבעים: ${hexes})` : ''}`);
-    if (brand.style_notes?.trim()) mustInclude.push(`הנחיות מותג: ${brand.style_notes.trim()}`);
-  }
-  if (form.forbidden.trim()) mustInclude.push(`לא לכלול: ${form.forbidden.trim()}`);
-  if (form.channel.trim()) mustInclude.push(`פלטפורמה/שימוש: ${form.channel.trim()}`);
-  if (type === 'presentation' && form.slideCount.trim()) mustInclude.push(`מספר שקפים רצוי: ${form.slideCount.trim()}`);
-
-  return {
-    output_type: type,
-    goal: [form.topic, form.goal].filter(Boolean).join(' - ') || form.goal,
-    audience: form.audience || 'קהל יעד כללי',
-    language: form.language || 'עברית',
-    must_include: mustInclude,
-    style: [form.style, form.tone].filter(Boolean).join(', ') || defaultStyle(type),
-    source_materials: form.sourceMaterials || undefined,
-    dimensions: form.dimensions || defaultDimensions(type),
-    customer_email: form.sendEmail ? form.customerEmail : undefined,
-    ready: true,
-    missing: [],
-    admin_note: revisionCount ? `הבריף עבר ${revisionCount} תיקוני משתמש.` : undefined,
-  } as ProductionBrief;
-}
-
 // Build a ready brief from a single free-text description. The user may give as
 // much or as little as they like — anything not stated falls back to a sensible
 // default, and the full description is preserved as the goal + a must-include so
@@ -3406,13 +2853,6 @@ function buildFreeTextBrief(type: ProductionType, freeText: string, brand?: Bran
     missing: [],
     source: 'fallback',
   } as ProductionBrief;
-}
-
-function splitLines(value: string): string[] {
-  return value
-    .split(/\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function defaultStyle(type: ProductionType): string {

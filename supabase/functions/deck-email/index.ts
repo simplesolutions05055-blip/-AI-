@@ -364,17 +364,34 @@ async function runBuildStep(database: Database, jobId: string, step: BuildStep) 
       let pdf = false;
       let pdfError: string | null = null;
       try {
-        const imagesBySlide = await loadBuildImages(database, p);
-        let pdfBase64: string;
         if (p.mode === 'fullslide') {
-          const fullImages = [...imagesBySlide.entries()].sort((a, b) => a[0] - b[0]).map(([, url]) => url);
-          pdfBase64 = await buildFullSlidePdfBase64(fullImages);
+          // Stream one image at a time straight from storage into pdf-lib —
+          // holding every image as a base64 data URL at once used to OOM-kill
+          // the isolate on 3+ slide decks (an uncatchable death that left the
+          // job stalled on 'running'). The soft timeout turns a hung build
+          // into a caught error so the send step still ships the PPTX.
+          const rows = await loadApprovedImageRows(database, p.requestId, p.approvedSlideIndexes, p.mode);
+          if (p.approvedSlideIndexes.some((idx) => !rows.has(idx))) {
+            throw new Error('לא נמצאו תמונות לכל השקפים שנבחרו.');
+          }
+          const ordered = [...rows.entries()].sort((a, b) => a[0] - b[0]).map(([, r]) => r);
+          const pdfBytes = await withSoftTimeout(
+            buildFullSlidePdfBytesFromStorage(database, ordered),
+            150_000,
+            'pdf build timed out',
+          );
+          await uploadBytes(database, jobFile(jobId, 'deck.pdf'), pdfBytes, 'application/pdf');
         } else {
+          const imagesBySlide = await loadBuildImages(database, p);
           const brand = await loadBrand(database, p.brandId);
           const slides = p.slides.map((s, i) => ({ ...s, aiImage: imagesBySlide.get(i) ?? null }));
-          pdfBase64 = await renderPdfBase64(buildDeckHtml(p.brief, brand, slides));
+          const pdfBase64 = await withSoftTimeout(
+            renderPdfBase64(buildDeckHtml(p.brief, brand, slides)),
+            150_000,
+            'pdf render timed out',
+          );
+          await uploadBase64(database, jobFile(jobId, 'deck.pdf'), pdfBase64, 'application/pdf');
         }
-        await uploadBase64(database, jobFile(jobId, 'deck.pdf'), pdfBase64, 'application/pdf');
         pdf = true;
       } catch (e) {
         pdfError = String(e);
@@ -442,6 +459,10 @@ async function sendBuiltDeck(
     } catch (e) {
       await logEvent(database, { requestId: p.requestId, severity: 'warning', action: 'deck_email_recipient_failed', message: `${to}: ${String(e)}` });
     }
+  }
+
+  if (!sentTo.length) {
+    throw new Error('המצגת נבנתה אך לא נשלחה לאף כתובת מייל. נסו שוב או פנו למנהל המערכת.');
   }
 
   await writeJob(database, jobId, { status: 'done', sentTo, total: p.emails.length, selectedSlideIndexes: p.approvedSlideIndexes, pdf: !!pdfBase64, pdfError: meta.pdfError, generated: meta.generated, reused: meta.reused, mode: p.mode, message: 'ההפקה הסתיימה והמיילים נשלחו.' });
@@ -527,6 +548,10 @@ async function buildAndSendInline(
     }
   }
 
+  if (!sentTo.length) {
+    throw new Error('המצגת נבנתה אך לא נשלחה לאף כתובת מייל. נסו שוב או פנו למנהל המערכת.');
+  }
+
   await writeJob(database, jobId, { status: 'done', sentTo, total: p.emails.length, selectedSlideIndexes: p.approvedSlideIndexes, pdf: !!pdfBase64, pdfError, generated: generatedCount, reused: reusedCount, mode: p.mode, message: 'ההפקה הסתיימה והמיילים נשלחו.' });
   await logEvent(database, {
     requestId: p.requestId,
@@ -600,13 +625,17 @@ async function loadBrand(database: Database, brandId: string | null): Promise<De
   return { name: (brand as { name?: string }).name ?? null, palette, logoDataUrl };
 }
 
-async function loadApprovedImages(
+type ApprovedImageRow = { slide_index: number; storage_path: string; mime_type: string | null };
+
+// The newest matching deck_ai_images row per approved slide index — metadata
+// only, no file downloads, so callers can stream the bytes one image at a time.
+async function loadApprovedImageRows(
   database: Database,
   requestId: string | null,
   approvedSlideIndexes: number[],
   mode: 'template' | 'fullslide',
-): Promise<Map<number, string>> {
-  const out = new Map<number, string>();
+): Promise<Map<number, ApprovedImageRow>> {
+  const out = new Map<number, ApprovedImageRow>();
   if (!requestId || !approvedSlideIndexes.length) return out;
   const { data } = await database
     .from('deck_ai_images')
@@ -620,11 +649,25 @@ async function loadApprovedImages(
     const isFullSlideImage = String(r.prompt || '').includes('צור שקופית מצגת שלמה');
     if (mode === 'fullslide' && !isFullSlideImage) continue;
     if (mode === 'template' && isFullSlideImage) continue;
+    out.set(r.slide_index, { slide_index: r.slide_index, storage_path: r.storage_path, mime_type: r.mime_type });
+  }
+  return out;
+}
+
+async function loadApprovedImages(
+  database: Database,
+  requestId: string | null,
+  approvedSlideIndexes: number[],
+  mode: 'template' | 'fullslide',
+): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  const rows = await loadApprovedImageRows(database, requestId, approvedSlideIndexes, mode);
+  for (const [idx, r] of rows) {
     const { data: file } = await database.storage.from(BUCKET).download(r.storage_path);
     if (!file) continue;
     const bytes = new Uint8Array(await file.arrayBuffer());
     const mime = r.mime_type || 'image/png';
-    out.set(r.slide_index, `data:${mime};base64,${encodeBase64(bytes)}`);
+    out.set(idx, `data:${mime};base64,${encodeBase64(bytes)}`);
   }
   return out;
 }
@@ -975,6 +1018,43 @@ async function buildFullSlidePptxBase64(slideImages: string[]): Promise<string> 
 // Full-slide PDF: one 16:9 page per slide, the image embedded directly with
 // pdf-lib (contain, centered). No HTML/chromium involved, so big high-quality
 // image decks don't hit any render-endpoint payload limit.
+// Race a build against a deadline. A build that hangs (e.g. a stuck fetch)
+// becomes a caught error instead of a silent heartbeat-stall.
+function withSoftTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(label)), ms)),
+  ]);
+}
+
+async function uploadBytes(database: Database, path: string, bytes: Uint8Array, contentType: string) {
+  const { error } = await database.storage.from(BUCKET).upload(path, bytes, { contentType, upsert: true });
+  if (error) throw error;
+}
+
+// Full-slide PDF built one image at a time straight from storage — peak memory
+// stays at a single image + the growing document, never the whole deck as
+// base64 strings (that combined peak OOM-killed the isolate on 3+ slides).
+async function buildFullSlidePdfBytesFromStorage(
+  database: Database,
+  rows: ApprovedImageRow[],
+): Promise<Uint8Array> {
+  const W = 1280;
+  const H = 720;
+  const doc = await PDFDocument.create();
+  for (const r of rows) {
+    const { data: file } = await database.storage.from(BUCKET).download(r.storage_path);
+    if (!file) throw new Error(`תמונת שקף חסרה באחסון: ${r.storage_path}`);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const isJpeg = /jpe?g/i.test(r.mime_type || '') || (bytes[0] === 0xff && bytes[1] === 0xd8);
+    const img = isJpeg ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
+    const box = containBox(img.width, img.height, W, H);
+    const page = doc.addPage([W, H]);
+    page.drawImage(img, { x: box.x, y: box.y, width: box.w, height: box.h });
+  }
+  return await doc.save();
+}
+
 async function buildFullSlidePdfBase64(slideImages: string[]): Promise<string> {
   const W = 1280;
   const H = 720;

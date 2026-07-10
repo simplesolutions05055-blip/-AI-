@@ -321,15 +321,49 @@ export async function analyzeBrief(
   return { brief: parsed, nextQuestion, usage };
 }
 
-// Generate rich, marketing-grade slide content (exactly 10 slides) as
-// structured JSON, expanding the brief/user input into a full deck.
+// Detect an explicit requested slide count inside a free-text deck prompt
+// (e.g. "מצגת של 5 שקפים על..."). Returns null when the user did not specify
+// one — the WhatsApp deck flow then asks for it explicitly.
+export async function extractSlideCountFromPrompt(
+  prompt: string
+): Promise<{ count: number | null; usage: ChatUsage; model: string }> {
+  const model = textModel();
+  const { content, usage } = await chat(
+    [
+      { role: 'system', content: 'אתה מחלץ פרמטרים מבקשה ליצירת מצגת. החזר JSON תקין בלבד.' },
+      {
+        role: 'user',
+        content: `האם הבקשה הבאה מציינת כמה שקפים המשתמש רוצה במצגת (במפורש, כמו "5 שקפים" או "שני שקפים")?
+החזר JSON: {"slide_count": <מספר שלם או null>}
+אם לא צוין מספר שקפים בבקשה — החזר null. אל תנחש ואל תמציא ברירת מחדל.
+
+הבקשה:
+"""${prompt}"""`,
+      },
+    ],
+    { json: true, temperature: 0, model }
+  );
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    parsed = {};
+  }
+  const n = Number(parsed?.slide_count);
+  const count = Number.isInteger(n) && n >= 1 && n <= 30 ? n : null;
+  return { count, usage, model };
+}
+
+// Generate rich, marketing-grade slide content using the exact count requested
+// in the brief. A deck with extra slides is not a valid result.
 export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
+  const requestedSlideCount = requestedDeckSlideCount(brief);
   const { content, usage } = await chat(
     [
       { role: 'system', content: systemPrompt },
       {
         role: 'user',
-        content: `אתה כותב תוכן שיווקי מקצועי בעברית. הפק מצגת אינפורמטיבית ומשכנעת של בדיוק 10 שקפים על בסיס הבריף. הרחב את מה שנמסר לתוכן מלא, עשיר ומעשי — אל תכתוב משפטים ריקים או כלליים. כל שקף חייב להיות אינפורמטיבי ובעל ערך לקהל היעד.
+        content: `אתה כותב תוכן שיווקי מקצועי בעברית. הפק מצגת אינפורמטיבית ומשכנעת של בדיוק ${requestedSlideCount} שקפים על בסיס הבריף. הרחב את מה שנמסר לתוכן מלא, עשיר ומעשי — אל תכתוב משפטים ריקים או כלליים. כל שקף חייב להיות אינפורמטיבי ובעל ערך לקהל היעד.
 החזר JSON תקין בלבד במבנה:
 {
   "slides": [
@@ -343,7 +377,7 @@ export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
   ]
 }
 דרישות:
-- בדיוק 10 שקפים.
+- בדיוק ${requestedSlideCount} שקפים. אין להוסיף שקפים מעבר למספר שהתבקש.
 - שקף 1 = פתיחה/כותרת.
 - שקף אחרון = סיכום + קריאה לפעולה.
 - 3-5 נקודות מהותיות בכל שקף תוכן.
@@ -370,7 +404,22 @@ export async function generateDeckSlides(systemPrompt: string, brief: unknown) {
     (Array.isArray(parsed?.presentation_spec?.slide_structure) && parsed.presentation_spec.slide_structure) ||
     (Array.isArray(parsed?.brief?.presentation_spec?.slide_structure) && parsed.brief.presentation_spec.slide_structure) ||
     [];
-  return { slides: sanitizeDeckSlides(slides), usage, raw: content };
+  const sanitized = sanitizeDeckSlides(slides, requestedSlideCount);
+  if (sanitized.length !== requestedSlideCount) {
+    throw new Error(`התקבלו ${sanitized.length} שקפים במקום ${requestedSlideCount} שהתבקשו.`);
+  }
+  return { slides: sanitized, usage, raw: content };
+}
+
+function requestedDeckSlideCount(brief: unknown): number {
+  const source = brief && typeof brief === 'object' ? brief as Record<string, unknown> : {};
+  const spec = source.presentation_spec as Record<string, unknown> | undefined;
+  const direct = [source.slide_count, source.slideCount, spec?.slide_count]
+    .find((value) => value !== undefined && value !== null && String(value).trim() !== '');
+  const mustInclude = Array.isArray(source.must_include) ? source.must_include.join(' ') : String(source.must_include ?? '');
+  const match = String(direct ?? '').match(/\d+/) ?? mustInclude.match(/מספר\s*שקפים(?:\s*רצוי)?\s*[:：-]?\s*(\d+)/);
+  const value = Number(match?.[1] ?? match?.[0]);
+  return Number.isInteger(value) && value >= 1 && value <= 30 ? value : 10;
 }
 
 // Rewrite the content of ONE deck slide per a free-text instruction from the
@@ -440,7 +489,7 @@ ${JSON.stringify(current, null, 2)}
   return { slide: sanitizeDeckSlides([rewritten])[0] ?? rewritten, usage, raw: content };
 }
 
-function sanitizeDeckSlides(slides: any[]): any[] {
+function sanitizeDeckSlides(slides: any[], limit = 10): any[] {
   const metaRe = /פלטת|צבעי?\s*מותג|צבעים?\s*שנבחר|הנחיות?\s*עיצוב|סגנון\s*עיצוב|טיפוגרפ|קומפוזיצ|מפרט\s*שקף|brand\s*color|palette|design\s*guidelines/i;
   return slides
     .filter((slide) => {
@@ -452,7 +501,7 @@ function sanitizeDeckSlides(slides: any[]): any[] {
       ].filter(Boolean).join(' ');
       return !metaRe.test(text);
     })
-    .slice(0, 10);
+    .slice(0, limit);
 }
 
 // Build a structured Hebrew price-quote ("הצעת מחיר") from a free brief. Mirrors

@@ -176,15 +176,40 @@ export async function buildDeckSlides(
   requestId: string | null,
   outlineText: string | null,
 ): Promise<DeckSlide[]> {
+  const parsed = parseOutlineSlides(outlineText);
+  // The output screen receives a compact brief that can omit slide_count.
+  // Its approved outline is authoritative, so forward that count to the Edge
+  // function instead of silently falling back to ten slides.
+  const requestedBrief = parsed.length
+    ? { ...(brief && typeof brief === 'object' ? brief as Record<string, unknown> : {}), slide_count: parsed.length }
+    : brief;
+  const expectedCount = parsed.length || requestedDeckSlideCount(requestedBrief);
   let deck: DeckSlide[] = [];
   try {
-    deck = await fetchDeckSlides(brief, requestId);
+    deck = await fetchDeckSlides(requestedBrief, requestId);
   } catch {
     deck = [];
   }
-  if (deck.length >= 3) return deck;
-  const parsed = parseOutlineSlides(outlineText);
-  return parsed.length > deck.length ? parsed : deck;
+  if (deck.length >= 3) return assertDeckSlideCount(deck, expectedCount);
+  return assertDeckSlideCount(parsed.length > deck.length ? parsed : deck, expectedCount);
+}
+
+function requestedDeckSlideCount(brief: unknown): number {
+  const source = brief && typeof brief === 'object' ? brief as Record<string, unknown> : {};
+  const spec = source.presentation_spec as Record<string, unknown> | undefined;
+  const direct = [source.slide_count, source.slideCount, spec?.slide_count]
+    .find((value) => value !== undefined && value !== null && String(value).trim() !== '');
+  const mustInclude = Array.isArray(source.must_include) ? source.must_include.join(' ') : String(source.must_include ?? '');
+  const match = String(direct ?? '').match(/\d+/) ?? mustInclude.match(/מספר\s*שקפים(?:\s*רצוי)?\s*[:：-]?\s*(\d+)/);
+  const value = Number(match?.[1] ?? match?.[0]);
+  return Number.isInteger(value) && value >= 1 && value <= 30 ? value : 10;
+}
+
+function assertDeckSlideCount(slides: DeckSlide[], expectedCount: number): DeckSlide[] {
+  if (slides.length !== expectedCount) {
+    throw new Error(`נמצאו ${slides.length} שקפים במקום ${expectedCount} שהתבקשו. נסו להפיק מחדש.`);
+  }
+  return slides;
 }
 
 // Rewrite a single slide's text content per a free-text instruction, via the

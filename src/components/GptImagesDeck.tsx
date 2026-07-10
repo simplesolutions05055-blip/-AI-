@@ -34,8 +34,7 @@ const TEMPLATE_MODE_EMAIL = 'itayk93@gmail.com';
 // WHICH slides should get an AI-generated image ("1-5", "1,3"), the images are
 // generated per slide, reviewed/approved in a modal (with regenerate-with-
 // feedback), and only then the deck is built as PPTX/PDF with rich RTL layouts
-// (full-bleed cover, split content slides). A cost panel shows what this
-// presentation cost so far (images + text), read from usage_events.
+// (full-bleed cover, split content slides).
 
 interface SlideImageState {
   image: DeckImage;
@@ -581,15 +580,17 @@ export default function GptImagesDeck({
     <div className="mb-5 rounded-xl border-2 border-brand/25 bg-brand/[0.03] p-4" dir="rtl">
       <div className="mb-3 flex items-center gap-2">
         <span className="text-sm font-bold">יצירת תמונות למצגת</span>
-        <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-bold text-brand">חדש</span>
         <InfoHint title="יצירת תמונות למצגת" label="איך זה עובד?" className="mr-auto">
           <p>
             ⚠️ אפשרות זו <b>יוצרת תמונות ייעודיות למצגת</b> — כל שקף שתבחרו מקבל תמונה שנוצרת במיוחד עבורו
-            לפי הבריף וצבעי המותג (יש עלות לפי מספר התמונות). כתבו אילו שקפים להפיק — למשל <b>1-5</b> —
+            לפי הבריף וצבעי המותג. כתבו אילו שקפים להפיק — למשל <b>1-5</b> —
             כדי לבחון את התוצאה לפני שמפיקים את כל המצגת. ההפקה רצה בשרת ברקע ותישלח למיילים שתבחרו בסיום.
           </p>
         </InfoHint>
       </div>
+      <p className="mb-3 text-xs text-[var(--muted)]">
+        התוכן למצגת מוכן. עברו עליו ואשרו הכנת שקפים.
+      </p>
 
       {/* Slide-by-slide viewer + per-slide AI editor for an already-generated
           deck. Opens automatically when saved images exist (see effect above),
@@ -675,22 +676,25 @@ export default function GptImagesDeck({
           the images. Sits above the design/range controls so the copy can be
           refined (directly or with an AI prompt) before "approving" a slide. */}
       <div className="mb-3 rounded-lg border border-[var(--border)] bg-white p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span className="text-sm font-semibold">תוכן המצגת</span>
-              <InfoHint title="תוכן המצגת">
+              <InfoHint title="תוכן המצגת" label="">
                 צפייה ועריכה של תוכן כל שקף — ישירות או לפי הנחיה ל-AI — לפני יצירת התמונות.
               </InfoHint>
             </div>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">
+              צפייה ועריכה של כל שקף לפני יצירת התמונות
+            </p>
           </div>
           <button
             type="button"
             onClick={openContentEditor}
             disabled={contentLoading}
-            className="shrink-0 rounded-lg border border-brand px-4 py-2 text-sm font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+            className="w-full shrink-0 rounded-lg border border-brand px-4 py-2 text-sm font-semibold text-brand hover:bg-brand/5 disabled:opacity-50 sm:w-auto"
           >
-            {contentLoading ? 'טוען תוכן…' : 'צפייה ועריכת תוכן המצגת'}
+            {contentLoading ? 'טוען תוכן…' : 'צפייה ועריכה'}
           </button>
         </div>
       </div>
@@ -809,7 +813,7 @@ export default function GptImagesDeck({
             ? 'מתחיל הפקה ברקע…'
             : emailJobStatus === 'running'
               ? 'ההפקה רצה ברקע…'
-              : `הפקה ברקע ושליחה ל-${validEmails.length || ''} ${validEmails.length === 1 ? 'נמען' : 'נמענים'}`}
+              : `אישור והכנת שקפים ושליחה ${validEmails.length === 1 ? 'לנמען' : `ל-${validEmails.length} נמענים`}`}
         </button>
         {(emailStarting || emailJobStatus === 'running') && (
           <div className="relative mt-3 overflow-hidden rounded-lg border border-brand/20 bg-brand/5 p-3 text-xs text-[var(--muted)]" aria-live="polite" aria-busy="true">
@@ -947,7 +951,7 @@ export default function GptImagesDeck({
                 ? 'מתחיל…'
                 : emailJobStatus === 'running'
                   ? 'מפיק ושולח ברקע…'
-                  : `הפקה ושליחה ל-${validEmails.length || ''} ${validEmails.length === 1 ? 'נמען' : 'נמענים'}`}
+                  : `אישור והכנת שקפים ושליחה ${validEmails.length === 1 ? 'לנמען' : `ל-${validEmails.length} נמענים`}`}
             </button>
 
             {emailJobStatus === 'running' && (
@@ -973,8 +977,6 @@ export default function GptImagesDeck({
           </div>
         </div>
       )}
-
-      {requestId && <DeckCostPanel requestId={requestId} refreshKey={costRefresh} />}
 
       {phase === 'review' && slides && (
         <ImageReviewModal
@@ -1184,7 +1186,7 @@ function ImageReviewModal({
                     <span className="truncate text-sm font-bold">
                       שקף {idx + 1}: {slide?.title || ''}
                     </span>
-                    {st.fromCache && <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-600">קיימת — ללא עלות</span>}
+                    {st.fromCache && <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-600">תמונה קיימת</span>}
                   </div>
                   <div className="relative mb-2 h-40 w-full overflow-hidden rounded-lg bg-gray-50">
                     <img src={st.image.dataUrl} alt={`תמונה לשקף ${idx + 1}`} className="h-full w-full object-cover" />
@@ -1241,57 +1243,6 @@ function ImageReviewModal({
           >
             אישור והמשך לבניית המצגת
           </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Cost panel: everything this presentation's request cost so far, split into
-// AI images vs text work (brief/slides/captions), from usage_events. Rows are
-// admin-readable (RLS) — for non-admins the panel simply stays empty/hidden. ──
-function DeckCostPanel({ requestId, refreshKey }: { requestId: string; refreshKey: number }) {
-  const [rows, setRows] = useState<Array<{ model: string | null; output_units: number; estimated_cost: number }> | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    const db = createSupabaseBrowserClient();
-    db.from('usage_events')
-      .select('model, output_units, estimated_cost')
-      .eq('request_id', requestId)
-      .then(({ data }) => {
-        if (alive) setRows((data as Array<{ model: string | null; output_units: number; estimated_cost: number }>) ?? []);
-      });
-    return () => { alive = false; };
-  }, [requestId, refreshKey]);
-
-  if (!rows || !rows.length) return null;
-
-  const isImage = (m: string | null) => /image|dall/i.test(m ?? '');
-  const imageRows = rows.filter((r) => isImage(r.model));
-  const textRows = rows.filter((r) => !isImage(r.model));
-  const imageCost = imageRows.reduce((s, r) => s + Number(r.estimated_cost || 0), 0);
-  const textCost = textRows.reduce((s, r) => s + Number(r.estimated_cost || 0), 0);
-  // output_units carries the image count on newer rows; older rows logged 0 —
-  // fall back to counting rows so the number is never misleadingly zero.
-  const imageCount = Math.max(imageRows.reduce((s, r) => s + Number(r.output_units || 0), 0), imageRows.length);
-  const usd = (n: number) => `$${n.toFixed(3)}`;
-
-  return (
-    <div className="rounded-lg border border-[var(--border)] bg-white p-3">
-      <div className="mb-2 text-xs font-bold">עלות הפקת המצגת (מצטבר לבקשה זו)</div>
-      <div className="space-y-1 text-xs text-[var(--muted)]">
-        <div className="flex justify-between">
-          <span>תמונות AI ({imageCount} תמונות, {imageRows.length} קריאות)</span>
-          <span dir="ltr">{usd(imageCost)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>טקסט — בריף, תוכן שקפים וכתוביות ({textRows.length} קריאות)</span>
-          <span dir="ltr">{usd(textCost)}</span>
-        </div>
-        <div className="flex justify-between border-t border-[var(--border)] pt-1 font-bold text-[var(--text-strong,#111)]">
-          <span>סה"כ</span>
-          <span dir="ltr">{usd(imageCost + textCost)}</span>
         </div>
       </div>
     </div>

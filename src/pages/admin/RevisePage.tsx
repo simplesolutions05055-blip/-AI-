@@ -118,6 +118,10 @@ export default function RevisePage() {
   // request; all of them are attached to the schedule modal alongside the main
   // image, in creation order.
   const [carouselImages, setCarouselImages] = useState<Array<{ requestId: string; storagePath: string; previewUrl: string }>>([]);
+  const [selectedCarouselRequestId, setSelectedCarouselRequestId] = useState<string | null>(null);
+  const [carouselEditInstruction, setCarouselEditInstruction] = useState('');
+  const [carouselEditing, setCarouselEditing] = useState(false);
+  const [carouselEditError, setCarouselEditError] = useState<string | null>(null);
   const [carouselModalOpen, setCarouselModalOpen] = useState(false);
   // Last value persisted to the DB. Blur only saves when the text actually changed.
   const persistedPostRef = useRef('');
@@ -679,6 +683,39 @@ export default function RevisePage() {
 
   // ── post text actions (image outputs) ──────────────────────────────────────
   const activeImageRequestId = result?.request_id || source?.request_id || requestId || null;
+  const selectedCarouselImage = carouselImages.find((image) => image.requestId === selectedCarouselRequestId) ?? null;
+
+  async function editSelectedCarouselImage() {
+    const feedback = carouselEditInstruction.trim();
+    if (!selectedCarouselImage || !feedback || carouselEditing) return;
+    setCarouselEditing(true);
+    setCarouselEditError(null);
+    try {
+      const client = createSupabaseBrowserClient();
+      const { data, error } = await client.functions.invoke('edit-image', {
+        body: { request_id: selectedCarouselImage.requestId, feedback },
+      });
+      if (error) throw error;
+      const edited = data as { request_id?: string; storage_path?: string; error?: string } | null;
+      if (edited?.error) throw new Error(edited.error);
+      if (!edited?.request_id || !edited.storage_path) throw new Error('לא התקבלה תמונה מתוקנת');
+      const previewUrl = await signedOutputUrl(client, edited.storage_path, 3600);
+      if (!previewUrl) throw new Error('התמונה תוקנה אבל לא התקבל קישור תצוגה');
+      setCarouselImages((current) =>
+        current.map((image) =>
+          image.requestId === selectedCarouselImage.requestId
+            ? { requestId: edited.request_id as string, storagePath: edited.storage_path as string, previewUrl }
+            : image,
+        ),
+      );
+      setSelectedCarouselRequestId(edited.request_id);
+      setCarouselEditInstruction('');
+    } catch (e) {
+      setCarouselEditError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setCarouselEditing(false);
+    }
+  }
 
   function postBrief(): Brief {
     const b = (brief ?? {}) as Brief;
@@ -1013,13 +1050,19 @@ export default function RevisePage() {
       ) : (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
           <div className="bg-white border border-[var(--border)] rounded-lg p-5">
-            <h2 className="font-bold mb-3">{result ? 'התמונה הערוכה' : 'התמונה הנוכחית'}</h2>
-            {(result?.previewUrl || source?.previewUrl) && (
+            <h2 className="font-bold mb-3">
+              {selectedCarouselImage
+                ? `תמונת קרוסלה ${carouselImages.findIndex((image) => image.requestId === selectedCarouselImage.requestId) + 2}`
+                : result
+                  ? 'התמונה הערוכה'
+                  : 'התמונה הנוכחית'}
+            </h2>
+            {(selectedCarouselImage?.previewUrl || result?.previewUrl || source?.previewUrl) && (
               <>
                 <div className="relative overflow-hidden rounded-lg">
                   <img
-                    src={result?.previewUrl || source?.previewUrl}
-                    alt="תוצר"
+                    src={selectedCarouselImage?.previewUrl || result?.previewUrl || source?.previewUrl}
+                    alt={selectedCarouselImage ? 'תמונת קרוסלה שנבחרה' : 'תוצר'}
                     className={`w-full max-h-[560px] object-contain rounded-lg bg-gray-50 transition-[filter] duration-300 ${
                       working ? 'blur-[2px] brightness-90' : ''
                     }`}
@@ -1040,10 +1083,35 @@ export default function RevisePage() {
                     </div>
                   )}
                 </div>
+                {selectedCarouselImage && (
+                  <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50/40 p-4">
+                    <label className="mb-2 block text-sm font-semibold" htmlFor="carousel-main-edit-instruction">
+                      מה לשנות בתמונת הקרוסלה הזו?
+                    </label>
+                    <textarea
+                      id="carousel-main-edit-instruction"
+                      value={carouselEditInstruction}
+                      onChange={(event) => setCarouselEditInstruction(event.target.value)}
+                      disabled={carouselEditing}
+                      rows={3}
+                      placeholder="למשל: החליפו את הכותרת, ושמרו על הצבעים, הפריסה ושאר הטקסט ללא שינוי."
+                      className="w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                    />
+                    {carouselEditError && <p className="mt-2 text-sm text-red-700">{carouselEditError}</p>}
+                    <button
+                      type="button"
+                      onClick={editSelectedCarouselImage}
+                      disabled={carouselEditing || !carouselEditInstruction.trim()}
+                      className="mt-2 min-h-11 rounded-lg bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {carouselEditing ? 'עורך את תמונת הקרוסלה...' : 'עריכה עם AI'}
+                    </button>
+                  </div>
+                )}
                 {/* Mobile: actions below the image. Hidden on desktop (shown in sidebar). */}
                 <ImageActions
-                  imageUrl={(result?.previewUrl || source?.previewUrl) as string}
-                  resultUrl={result?.previewUrl}
+                  imageUrl={(selectedCarouselImage?.previewUrl || result?.previewUrl || source?.previewUrl) as string}
+                  resultUrl={selectedCarouselImage?.previewUrl || result?.previewUrl}
                   onDownload={downloadImage}
                   className="mt-4 lg:hidden"
                 />
@@ -1163,7 +1231,19 @@ export default function RevisePage() {
                 <CarouselImagesStrip
                   images={carouselImages}
                   onAdd={() => setCarouselModalOpen(true)}
-                  onRemove={(reqId) => setCarouselImages((cur) => cur.filter((img) => img.requestId !== reqId))}
+                  onRemove={(reqId) => {
+                    setCarouselImages((cur) => cur.filter((img) => img.requestId !== reqId));
+                    setSelectedCarouselRequestId((selected) => (selected === reqId ? null : selected));
+                  }}
+                  onSelect={(reqId) => {
+                    setSelectedCarouselRequestId(reqId);
+                    setCarouselEditError(null);
+                  }}
+                  onReplace={(previousRequestId, updatedImage) =>
+                    setCarouselImages((cur) =>
+                      cur.map((image) => (image.requestId === previousRequestId ? updatedImage : image)),
+                    )
+                  }
                 />
                 <SocialScheduleSection
                   requestId={result?.request_id || source?.request_id || null}
@@ -1766,11 +1846,47 @@ function CarouselImagesStrip({
   images,
   onAdd,
   onRemove,
+  onReplace,
+  onSelect,
 }: {
   images: Array<{ requestId: string; storagePath: string; previewUrl: string }>;
   onAdd: () => void;
   onRemove: (requestId: string) => void;
+  onReplace: (previousRequestId: string, updatedImage: { requestId: string; storagePath: string; previewUrl: string }) => void;
+  onSelect: (requestId: string) => void;
 }) {
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [editInstruction, setEditInstruction] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const selectedImage = images.find((image) => image.requestId === selectedRequestId) ?? null;
+
+  async function editSelectedImage() {
+    const feedback = editInstruction.trim();
+    if (!selectedImage || !feedback || editing) return;
+    setEditing(true);
+    setEditError(null);
+    try {
+      const client = createSupabaseBrowserClient();
+      const { data, error } = await client.functions.invoke('edit-image', {
+        body: { request_id: selectedImage.requestId, feedback },
+      });
+      if (error) throw error;
+      const edited = data as { request_id?: string; storage_path?: string; error?: string } | null;
+      if (edited?.error) throw new Error(edited.error);
+      if (!edited?.request_id || !edited.storage_path) throw new Error('לא התקבלה תמונה מתוקנת');
+      const previewUrl = await signedOutputUrl(client, edited.storage_path, 3600);
+      if (!previewUrl) throw new Error('התמונה תוקנה אבל לא התקבל קישור תצוגה');
+      onReplace(selectedImage.requestId, { requestId: edited.request_id, storagePath: edited.storage_path, previewUrl });
+      setSelectedRequestId(edited.request_id);
+      setEditInstruction('');
+    } catch (e) {
+      setEditError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setEditing(false);
+    }
+  }
+
   return (
     <div>
       <button
@@ -1788,7 +1904,18 @@ function CarouselImagesStrip({
         <div className="mt-2 grid grid-cols-4 gap-2">
           {images.map((img, idx) => (
             <div key={img.requestId} className="relative aspect-square overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
-              <img src={img.previewUrl} alt={`תמונת קרוסלה ${idx + 2}`} className="h-full w-full object-cover" />
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedRequestId(img.requestId);
+                  setEditError(null);
+                  onSelect(img.requestId);
+                }}
+                aria-label={`עריכת תמונת קרוסלה ${idx + 2} עם AI`}
+                className={`h-full w-full ${selectedRequestId === img.requestId ? 'ring-2 ring-violet-600 ring-inset' : ''}`}
+              >
+                <img src={img.previewUrl} alt={`תמונת קרוסלה ${idx + 2}`} className="h-full w-full object-cover" />
+              </button>
               <button
                 type="button"
                 onClick={() => onRemove(img.requestId)}
@@ -1802,6 +1929,31 @@ function CarouselImagesStrip({
               </span>
             </div>
           ))}
+        </div>
+      )}
+      {selectedImage && (
+        <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50/40 p-3">
+          <label className="mb-2 block text-sm font-semibold" htmlFor="carousel-sidebar-edit-instruction">
+            עריכת תמונת הקרוסלה עם AI
+          </label>
+          <textarea
+            id="carousel-sidebar-edit-instruction"
+            value={editInstruction}
+            onChange={(event) => setEditInstruction(event.target.value)}
+            disabled={editing}
+            rows={3}
+            placeholder="למשל: החליפו את הטקסט בכותרת ושמרו על שאר העיצוב ללא שינוי."
+            className="w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm"
+          />
+          {editError && <p className="mt-2 text-xs text-red-700">{editError}</p>}
+          <button
+            type="button"
+            onClick={editSelectedImage}
+            disabled={editing || !editInstruction.trim()}
+            className="mt-2 min-h-10 rounded-lg bg-violet-700 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {editing ? 'עורך את התמונה...' : 'עריכה עם AI'}
+          </button>
         </div>
       )}
     </div>
@@ -1827,6 +1979,9 @@ function CarouselImageModal({
   onAdd: (image: { requestId: string; storagePath: string; previewUrl: string }) => void;
 }) {
   const [instruction, setInstruction] = useState('');
+  // Unlike the initial instruction (which describes a new slide), this is
+  // applied to the generated carousel image itself via the img2img endpoint.
+  const [editInstruction, setEditInstruction] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -1910,6 +2065,35 @@ function CarouselImageModal({
     }
   }
 
+  async function editGeneratedImage() {
+    const feedback = editInstruction.trim();
+    if (!result || !feedback || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const client = createSupabaseBrowserClient();
+      setStatus('מתקנים את התמונה לפי ההנחיה');
+      const { data, error: editError } = await client.functions.invoke('edit-image', {
+        body: { request_id: result.requestId, feedback },
+      });
+      if (editError) throw editError;
+      const edited = data as { request_id?: string; storage_path?: string; error?: string } | null;
+      if (edited?.error) throw new Error(edited.error);
+      if (!edited?.request_id || !edited.storage_path) throw new Error('לא התקבלה תמונה מתוקנת');
+      const previewUrl = await signedOutputUrl(client, edited.storage_path, 3600);
+      if (!previewUrl) throw new Error('התמונה תוקנה אבל לא התקבל קישור תצוגה');
+      // Keep only the edited version: this is the image that will be attached
+      // when the user confirms adding the carousel slide.
+      setResult({ requestId: edited.request_id, storagePath: edited.storage_path, previewUrl });
+      setEditInstruction('');
+    } catch (e) {
+      setError(String((e as { message?: string })?.message ?? e));
+    } finally {
+      setBusy(false);
+      setStatus('');
+    }
+  }
+
   return (
     <div dir="rtl" className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4" onClick={onClose}>
       <div
@@ -1953,11 +2137,33 @@ function CarouselImageModal({
           {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
           {result && (
-            <img
-              src={result.previewUrl}
-              alt="התמונה הנוספת לקרוסלה"
-              className="mb-3 max-h-[360px] w-full rounded-lg bg-gray-50 object-contain"
-            />
+            <>
+              <img
+                src={result.previewUrl}
+                alt="התמונה הנוספת לקרוסלה"
+                className="mb-4 max-h-[360px] w-full rounded-lg bg-gray-50 object-contain"
+              />
+              <label className="mb-2 block text-sm font-semibold" htmlFor="carousel-image-edit-instruction">
+                מה לשנות בתמונה הזו?
+              </label>
+              <textarea
+                id="carousel-image-edit-instruction"
+                value={editInstruction}
+                onChange={(e) => setEditInstruction(e.target.value)}
+                disabled={busy}
+                rows={3}
+                placeholder="למשל: החליפו את הכותרת ל׳בדיקה 3׳ ושמרו על העיצוב, הצבעים ושאר הטקסט ללא שינוי."
+                className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+              />
+              <button
+                type="button"
+                onClick={editGeneratedImage}
+                disabled={busy || !editInstruction.trim()}
+                className="mt-2 min-h-11 rounded-lg border border-brand px-4 py-2.5 text-sm font-semibold text-brand hover:bg-brand/5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                שליחה לתיקון התמונה
+              </button>
+            </>
           )}
         </div>
 

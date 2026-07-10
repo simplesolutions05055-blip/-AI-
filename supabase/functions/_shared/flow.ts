@@ -8,7 +8,7 @@
 // `send` callback the caller supplies (inbound.ts passes worker.sendOut).
 import { type DB } from './db.ts';
 import { sendWhatsAppMedia } from './twilio.ts';
-import { generateSocialCaption, classifyPostDeliveryIntent } from './openai.ts';
+import { generateSocialCaption, classifyPostDeliveryIntent, generateDeckSlides, rewriteDeckSlide, extractSlideCountFromPrompt } from './openai.ts';
 import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail, MAX_MEDIA_BYTES } from './util.ts';
 import { normalizeHe } from './brand.ts';
 import { sendDeliverableCopy, loadPdfBrandSettings } from './deliverableEmail.ts';
@@ -144,9 +144,10 @@ export function buildMainMenu(displayName: string): string {
     '',
     '1️⃣ תמונה / פוסט',
     '2️⃣ מסמך',
-    '3️⃣ תזמון פוסט לרשתות 📅',
+    '3️⃣ מצגת 📊',
+    '4️⃣ תזמון פוסט לרשתות 📅',
     '',
-    'אפשר להשיב במספר (1/2/3) או במילה.',
+    'אפשר להשיב במספר (1/2/3/4) או במילה.',
   ].join('\n');
 }
 
@@ -285,10 +286,11 @@ export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'p
   const t = norm(text);
   if (!t || t.length > 30) return null;
   // Schedule keywords win over the generic "פוסט" (which alone means option 1).
-  if (/^3\.?$/.test(t) || /(תזמון|לתזמן|תזמן|פרסום|לפרסם|schedule)/.test(t)) return 'schedule_post';
+  if (/^4\.?$/.test(t) || /(תזמון|לתזמן|תזמן|פרסום|לפרסם|schedule)/.test(t)) return 'schedule_post';
   if (/^1\.?$/.test(t) || /(תמונה|פוסט|גרפיק|image|post)/.test(t)) return 'image';
-  if (/^2\.?$/.test(t) || /(מסמך|document|pdf|מכתב)/.test(t)) return 'pdf';
-  if (/(מצגת|presentation|שקפים)/.test(t)) return 'presentation';
+  if (/^2\.?$/.test(t) || /(מסמך|document|מכתב)/.test(t)) return 'pdf';
+  if (/^3\.?$/.test(t) || /(מצגת|presentation|שקפים)/.test(t)) return 'presentation';
+  if (/pdf/.test(t)) return 'pdf';
   return null;
 }
 
@@ -929,6 +931,383 @@ async function startDocxCopy(
   return { kind: 'handled', background };
 }
 
+// ── WhatsApp deck (מצגת) flow — mirrors the site's GPT-Images deck steps ─────
+// prompt → (AI-detected or asked) slide count → content shown slide-by-slide →
+// approve / edit-with-AI → slide selection → emails → deck-email production.
+const DECK_MAX_SLIDES = 15; // matches generate-presentation's MAX_DECK_IMAGES
+
+const DECK_SYSTEM_MESSAGE =
+  'אתה סוכן AI ארגוני. הפק חבילת תוכן למצגת בעברית RTL: שם מצגת, מטרה, מבנה שקפים, תוכן מלא לכל שקף, הנחיות עיצוב.';
+
+const DECK_PROMPT_MSG = [
+  'מעולה, מצגת 📊',
+  'כתבו לי את נושא המצגת — מה המטרה, למי היא מיועדת ומה חשוב שיופיע בה.',
+  'אפשר לציין גם כמה שקפים תרצו (למשל: "מצגת של 5 שקפים על...").',
+  '',
+  LONG_TEXT_WARNING,
+].join('\n');
+
+type DeckSlideContent = {
+  title?: string;
+  subtitle?: string | null;
+  bullets?: string[];
+  body?: string | null;
+  image_suggestion?: string | null;
+};
+
+type DeckContext = {
+  request_id?: string | null;
+  prompt?: string;
+  slide_count?: number;
+  slides?: DeckSlideContent[];
+  selected?: number[];
+  suggested_email?: string | null;
+};
+
+function deckFromCtx(ctx: Record<string, unknown>): DeckContext | null {
+  const deck = ctx.deck as DeckContext | undefined;
+  return deck && typeof deck === 'object' ? deck : null;
+}
+
+function parseDeckSlideCountAnswer(text: string): number | null {
+  const m = norm(text).match(/\d+/);
+  if (!m) return null;
+  const n = parseInt(m[0], 10);
+  return Number.isInteger(n) && n >= 1 && n <= DECK_MAX_SLIDES ? n : null;
+}
+
+function formatDeckSlideMessage(slide: DeckSlideContent, index: number, total: number): string {
+  const lines = [`📊 שקף ${index + 1}/${total}: ${(slide.title ?? '').trim() || 'ללא כותרת'}`];
+  const subtitle = (slide.subtitle ?? '').trim();
+  if (subtitle) lines.push(subtitle);
+  for (const b of Array.isArray(slide.bullets) ? slide.bullets : []) {
+    const bullet = String(b ?? '').trim();
+    if (bullet) lines.push(`• ${bullet}`);
+  }
+  const body = (slide.body ?? '').trim();
+  if (body) lines.push('', body);
+  return lines.join('\n');
+}
+
+function deckReviewQuestion(): string {
+  return [
+    'מה אומרים? ✨',
+    'אם תרצו לשנות משהו — כתבו מה לשנות ובאיזה שקף (למשל: "שקף 2 — תוסיף נתונים על התוצאות").',
+    'אם הכול טוב — השיבו "מאשר" ונתקדם להכנת המצגת.',
+  ].join('\n');
+}
+
+function deckSlideSelectionPrompt(total: number): string {
+  return [
+    `איזה שקפים להכין? 🎨 (יש ${total} שקפים)`,
+    'כתבו למשל: 1-2 (טווח), או 1,3 (רשימה), או "הכל" — איך שנוח לכם.',
+  ].join('\n');
+}
+
+function deckEmailsPrompt(suggested: string | null): string {
+  const lines = [
+    'לאילו כתובות מייל לשלוח את המצגת המוכנה? 📧',
+    'אפשר כמה כתובות — כתבו אותן מופרדות בפסיק או ברווח ואני אבין, למשל:',
+    'name@gmail.com, other@walla.co.il',
+  ];
+  if (suggested) lines.push('', `אפשר גם להשיב "כן" לשליחה ל-${suggested}.`);
+  return lines.join('\n');
+}
+
+// "1-2" / "1,3,5" / "1 3" / "הכל" → 0-based unique sorted indexes, or null.
+function parseDeckSlideSelection(text: string, total: number): number[] | null {
+  const t = norm(text);
+  if (!t) return null;
+  if (/(הכל|הכול|כולם|כל השקפים|all)/.test(t)) return Array.from({ length: total }, (_, i) => i);
+  if (!/^[\d\s,.\-–]+$/.test(t)) return null;
+  const picked = new Set<number>();
+  for (const seg of t.split(/[,\s]+/).map((s) => s.replace(/\.+$/, '')).filter(Boolean)) {
+    const range = seg.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (range) {
+      const a = parseInt(range[1], 10);
+      const b = parseInt(range[2], 10);
+      if (a < 1 || b > total || a > b) return null;
+      for (let i = a; i <= b; i++) picked.add(i - 1);
+    } else if (/^\d+$/.test(seg)) {
+      const n = parseInt(seg, 10);
+      if (n < 1 || n > total) return null;
+      picked.add(n - 1);
+    } else {
+      return null;
+    }
+  }
+  return picked.size ? [...picked].sort((x, y) => x - y) : null;
+}
+
+function extractAllEmails(text: string): string[] {
+  const found = (text ?? '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? [];
+  return [...new Set(found.map((e) => e.toLowerCase()))].filter(isValidEmail);
+}
+
+// Cancel out of any deck state → main menu.
+async function handleDeckCancel(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  send: SendFn,
+  text: string,
+  messageSid: string
+): Promise<boolean> {
+  const t = norm(text);
+  const isCancel = isNoText(text) || /^(תפריט|חזור|חזרה|back|menu)\.?$/.test(t);
+  if (!isCancel) return false;
+  if (!(await claimMessage(database, conversation.id, text, messageSid))) return true;
+  await send('ביטלתי את יצירת המצגת.');
+  await showMainMenu(database, conversation, identity, send);
+  return true;
+}
+
+// Enter the deck flow from the main menu / brief step.
+async function startDeckFlow(
+  database: DB,
+  conversation: FlowConversation,
+  send: SendFn
+): Promise<void> {
+  const delivered = await send(DECK_PROMPT_MSG);
+  if (delivered) {
+    await setFlow(database, conversation.id, {
+      flow_state: 'deck_awaiting_prompt',
+      selected_output_type: 'presentation',
+      flow_context: {},
+    });
+  }
+}
+
+// Write the deck content with AI, show it slide-by-slide, wait 5 seconds and
+// ask for approval/changes. Runs in the background (LLM call takes a while).
+async function generateDeckAndPresent(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  send: SendFn,
+  prompt: string,
+  slideCount: number
+): Promise<void> {
+  let requestId: string | null = null;
+  try {
+    await enforceAiLimit(database, { userId: identity.userId ?? undefined, phone: conversation.whatsapp_from }, {
+      kind: 'utility',
+      promptChars: prompt.length,
+    });
+    const brief: Record<string, unknown> = {
+      topic: prompt,
+      goal: prompt,
+      slide_count: slideCount,
+      output_type: 'presentation',
+      source: 'whatsapp_deck',
+      ...(identity.brandId ? { brand_id: identity.brandId } : {}),
+    };
+    // A request row anchors cost tracking, persists the generated images
+    // (deck_ai_images) and powers the "edit on the site" link in the email.
+    const { data: req } = await database
+      .from('requests')
+      .insert({
+        conversation_id: conversation.id,
+        status: 'received',
+        output_type: 'presentation',
+        created_by: identity.userId,
+        brand_id: identity.brandId,
+        structured_brief: { ...brief, ready: true, output_type_locked: true, ack_sent: true },
+      })
+      .select('id')
+      .single();
+    requestId = (req?.id as string | undefined) ?? null;
+
+    const { slides, usage } = await generateDeckSlides(DECK_SYSTEM_MESSAGE, brief);
+    await recordUsageAndCost(database, requestId, {
+      provider: 'openai',
+      model: 'chat',
+      input: usage?.prompt_tokens ?? 0,
+      output: usage?.completion_tokens ?? 0,
+      cost: estimateTextCost(usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0),
+    });
+    if (requestId) {
+      await database
+        .from('requests')
+        .update({ structured_brief: { ...brief, ready: true, output_type_locked: true, ack_sent: true, deck_slides: slides } })
+        .eq('id', requestId);
+    }
+
+    await send(`הנה תוכן המצגת שהכנתי — ${slides.length} שקפים 👇`);
+    for (let i = 0; i < slides.length; i++) {
+      await send(formatDeckSlideMessage(slides[i], i, slides.length));
+    }
+    // Move to review BEFORE the pause so a fast reply lands in the right state.
+    await setFlow(database, conversation.id, {
+      flow_state: 'deck_review',
+      flow_context: { deck: { request_id: requestId, prompt, slide_count: slideCount, slides } },
+    });
+    await new Promise((r) => setTimeout(r, 5000));
+    await send(deckReviewQuestion());
+    await logEvent(database, {
+      requestId,
+      action: 'whatsapp_deck_content_generated',
+      metadata: { slide_count: slides.length, user_id: identity.userId },
+    });
+  } catch (e) {
+    if (e instanceof AbuseGuardError) {
+      await send(e.message);
+    } else {
+      await logEvent(database, {
+        requestId,
+        severity: 'error',
+        action: 'whatsapp_deck_generate_failed',
+        message: String(e),
+      });
+      await send('משהו השתבש ביצירת תוכן המצגת 😕 נסו שוב עוד רגע.');
+    }
+    await showMainMenu(database, conversation, identity, send);
+  }
+}
+
+// Rewrite ONE slide per the user's free-text instruction (AI edit), keep the
+// rest of the deck untouched, and re-show the updated slide.
+async function startDeckSlideRewrite(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  send: SendFn,
+  deck: DeckContext,
+  slideNumber: number,
+  instruction: string
+): Promise<FlowResult> {
+  await send(`משכתב את שקף ${slideNumber} עם AI ✍️ רגע אחד...`);
+  const background = async () => {
+    try {
+      await enforceAiLimit(database, { userId: identity.userId ?? undefined, phone: conversation.whatsapp_from }, {
+        kind: 'utility',
+        promptChars: instruction.length,
+      });
+      const slides = Array.isArray(deck.slides) ? deck.slides : [];
+      const { slide, usage } = await rewriteDeckSlide(
+        { topic: deck.prompt ?? '', goal: deck.prompt ?? '' },
+        slides[slideNumber - 1] ?? {},
+        instruction,
+        slideNumber
+      );
+      await recordUsageAndCost(database, deck.request_id ?? null, {
+        provider: 'openai',
+        model: 'chat',
+        input: usage?.prompt_tokens ?? 0,
+        output: usage?.completion_tokens ?? 0,
+        cost: estimateTextCost(usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0),
+      });
+      const updated = [...slides];
+      updated[slideNumber - 1] = slide;
+      await setFlow(database, conversation.id, {
+        flow_state: 'deck_review',
+        flow_context: { deck: { ...deck, slides: updated } },
+      });
+      if (deck.request_id) {
+        const { data: reqRow } = await database
+          .from('requests')
+          .select('structured_brief')
+          .eq('id', deck.request_id)
+          .maybeSingle();
+        await database
+          .from('requests')
+          .update({ structured_brief: { ...((reqRow?.structured_brief ?? {}) as Record<string, unknown>), deck_slides: updated } })
+          .eq('id', deck.request_id);
+      }
+      await send(formatDeckSlideMessage(slide, slideNumber - 1, updated.length));
+      await send('עדכנתי את השקף ✅\nרוצים לשנות עוד משהו? כתבו מה. אם הכול טוב — השיבו "מאשר".');
+      await logEvent(database, {
+        requestId: deck.request_id ?? null,
+        action: 'whatsapp_deck_slide_rewritten',
+        metadata: { slide_number: slideNumber },
+      });
+    } catch (e) {
+      if (e instanceof AbuseGuardError) {
+        await send(e.message);
+        return;
+      }
+      await logEvent(database, {
+        requestId: deck.request_id ?? null,
+        severity: 'error',
+        action: 'whatsapp_deck_rewrite_failed',
+        message: String(e),
+      });
+      await send('לא הצלחתי לעדכן את השקף 😕 נסו לנסח שוב, או השיבו "מאשר" להמשך.');
+    }
+  };
+  return { kind: 'handled', background };
+}
+
+// Kick off the server-side deck production (deck-email 'start'): generates the
+// slide images, builds PPTX + PDF and emails them — all in the background on
+// the server, exactly like the site's flow.
+async function startDeckEmailProduction(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  send: SendFn,
+  deck: DeckContext,
+  selected: number[],
+  emails: string[]
+): Promise<FlowResult> {
+  const background = async () => {
+    try {
+      const url = `${Deno.env.get('SUPABASE_URL')}/functions/v1/deck-email`;
+      const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, apikey: key },
+        body: JSON.stringify({
+          requestId: deck.request_id ?? null,
+          brandId: identity.brandId,
+          brief: {
+            topic: deck.prompt ?? '',
+            goal: deck.prompt ?? '',
+            slide_count: deck.slide_count ?? (deck.slides?.length ?? selected.length),
+            ...(identity.brandId ? { brand_id: identity.brandId } : {}),
+          },
+          slides: deck.slides ?? [],
+          approvedSlideIndexes: selected,
+          emails,
+          mode: 'fullslide',
+          generateMissingImages: true,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) throw new Error(String(data?.error ?? `deck-email ${res.status}`));
+      await logEvent(database, {
+        requestId: deck.request_id ?? null,
+        action: 'whatsapp_deck_production_started',
+        metadata: { jobId: data?.jobId ?? null, slides: selected.length, emails: emails.length, user_id: identity.userId },
+      });
+      await send(
+        [
+          `יוצא לדרך! 🎨 מפיק עכשיו ${selected.length === 1 ? 'שקף אחד' : `${selected.length} שקפים`} עם עיצוב AI.`,
+          'זה לוקח כמה דקות. בסיום המצגת תישלח כקובץ PowerPoint וגם כ-PDF אל:',
+          emails.join('\n'),
+          '',
+          'שווה לבדוק גם בתיקיית הספאם 😉 ובינתיים אפשר להמשיך לעבוד איתי כרגיל.',
+        ].join('\n')
+      );
+      await setFlow(database, conversation.id, {
+        flow_state: 'main_menu',
+        flow_context: {},
+        selected_output_type: null,
+      });
+    } catch (e) {
+      await logEvent(database, {
+        requestId: deck.request_id ?? null,
+        severity: 'error',
+        action: 'whatsapp_deck_production_failed',
+        message: String(e),
+      });
+      // State stays on deck_awaiting_emails so re-sending the addresses retries.
+      await send('לא הצלחתי להתחיל את הפקת המצגת 😕 שלחו שוב את כתובות המייל לניסיון נוסף, או "בטל" לביטול.');
+    }
+  };
+  return { kind: 'handled', background };
+}
+
 // Build a ready revision request for a text/pdf/presentation deliverable.
 async function buildRevisionResult(
   database: DB,
@@ -1010,6 +1389,13 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         }
         return { kind: 'handled' };
       }
+      // Presentations get their own guided deck flow (like the site) instead
+      // of the legacy brief pipeline.
+      if (choice === 'presentation') {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await startDeckFlow(database, conversation, send);
+        return { kind: 'handled' };
+      }
       if (choice) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
         const delivered = await send(BRIEF_PROMPTS[choice]);
@@ -1053,6 +1439,12 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
             flow_context: {},
           });
         }
+        return { kind: 'handled' };
+      }
+      // Changed their mind — they want the guided deck flow, not this brief.
+      if (choice === 'presentation') {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await startDeckFlow(database, conversation, send);
         return { kind: 'handled' };
       }
       // Re-tapping the same option (double-click / impatience) must not become
@@ -1694,6 +2086,164 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await sendPostDeliveryMenu(database, conversation, send);
       }
       return { kind: 'handled' };
+    }
+
+    // ── deck flow: collect the presentation prompt ───────────────────────────
+    case 'deck_awaiting_prompt': {
+      if (await handleDeckCancel(database, conversation, identity, send, text, messageSid)) return { kind: 'handled' };
+      if (numMedia > 0) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await send('לצורך המצגת כתבו לי את הנושא כטקסט 🙂');
+        return { kind: 'handled' };
+      }
+      if (isGreetingOnly(text) || text.trim().length < 6) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await send(DECK_PROMPT_MSG);
+        return { kind: 'handled' };
+      }
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      const prompt = text.trim();
+      // Slide-count detection is an AI call → background so the channel gets
+      // its fast 200 first.
+      const background = async () => {
+        let count: number | null = null;
+        try {
+          const det = await extractSlideCountFromPrompt(prompt);
+          count = det.count;
+          await recordUsageAndCost(database, null, {
+            provider: 'openai',
+            model: det.model,
+            input: det.usage.prompt_tokens,
+            output: det.usage.completion_tokens,
+            cost: estimateTextCost(det.usage.prompt_tokens, det.usage.completion_tokens),
+          });
+        } catch (e) {
+          await logEvent(database, {
+            severity: 'warning',
+            action: 'whatsapp_deck_slide_count_detect_failed',
+            message: String(e),
+          });
+        }
+        if (count && count > DECK_MAX_SLIDES) count = DECK_MAX_SLIDES;
+        if (!count) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'deck_awaiting_slide_count',
+            flow_context: { deck: { prompt } },
+          });
+          await send(`כמה שקפים להכין? כתבו מספר בין 1 ל-${DECK_MAX_SLIDES} 🔢`);
+          return;
+        }
+        await send(`קיבלתי! כותב עכשיו את תוכן המצגת (${count} שקפים) ✍️ זה לוקח עד דקה...`);
+        await generateDeckAndPresent(database, conversation, identity, send, prompt, count);
+      };
+      return { kind: 'handled', background };
+    }
+
+    // ── deck flow: the prompt didn't specify a slide count — ask for it ──────
+    case 'deck_awaiting_slide_count': {
+      if (await handleDeckCancel(database, conversation, identity, send, text, messageSid)) return { kind: 'handled' };
+      const deck = deckFromCtx(ctx);
+      if (!deck?.prompt) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await showMainMenu(database, conversation, identity, send);
+        return { kind: 'handled' };
+      }
+      const count = numMedia === 0 ? parseDeckSlideCountAnswer(text) : null;
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (!count) {
+        await send(`לא הבנתי 🙂 כתבו מספר שקפים בין 1 ל-${DECK_MAX_SLIDES}, או "בטל" לביטול.`);
+        return { kind: 'handled' };
+      }
+      await send(`קיבלתי! כותב עכשיו את תוכן המצגת (${count} שקפים) ✍️ זה לוקח עד דקה...`);
+      const prompt = deck.prompt;
+      return {
+        kind: 'handled',
+        background: () => generateDeckAndPresent(database, conversation, identity, send, prompt, count),
+      };
+    }
+
+    // ── deck flow: content shown — approve or edit a slide with AI ───────────
+    case 'deck_review': {
+      if (await handleDeckCancel(database, conversation, identity, send, text, messageSid)) return { kind: 'handled' };
+      const deck = deckFromCtx(ctx);
+      if (!deck || !Array.isArray(deck.slides) || !deck.slides.length) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await send('איבדתי את טיוטת המצגת 😕 בואו נתחיל מחדש:');
+        await showMainMenu(database, conversation, identity, send);
+        return { kind: 'handled' };
+      }
+      if (numMedia > 0) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await send('כתבו לי בטקסט מה לשנות, או השיבו "מאשר" להמשך 🙂');
+        return { kind: 'handled' };
+      }
+      const isApprove = isYesText(text) || /^(מאשר|מאשרת|מאושר|אישור|תכין|הכן|approve)\.?!?$/.test(norm(text));
+      if (isApprove) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        const delivered = await send(deckSlideSelectionPrompt(deck.slides.length));
+        if (delivered) await setFlow(database, conversation.id, { flow_state: 'deck_slide_selection' });
+        return { kind: 'handled' };
+      }
+      if (text.trim().length < 4) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await send(deckReviewQuestion());
+        return { kind: 'handled' };
+      }
+      // Edit instruction — find the target slide ("שקף 2 — ...").
+      const slideMatch = norm(text).match(/שקף\s*(\d+)/) ?? text.match(/slide\s*(\d+)/i);
+      const slideNumber = slideMatch ? parseInt(slideMatch[1], 10) : deck.slides.length === 1 ? 1 : null;
+      if (!slideNumber || slideNumber < 1 || slideNumber > deck.slides.length) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await send(`באיזה שקף לבצע את השינוי? כתבו את מספר השקף יחד עם הבקשה, למשל: "שקף 2 — ${text.trim().slice(0, 40)}"`);
+        return { kind: 'handled' };
+      }
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      return await startDeckSlideRewrite(database, conversation, identity, send, deck, slideNumber, text.trim());
+    }
+
+    // ── deck flow: which slides to produce ───────────────────────────────────
+    case 'deck_slide_selection': {
+      if (await handleDeckCancel(database, conversation, identity, send, text, messageSid)) return { kind: 'handled' };
+      const deck = deckFromCtx(ctx);
+      if (!deck || !Array.isArray(deck.slides) || !deck.slides.length) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await showMainMenu(database, conversation, identity, send);
+        return { kind: 'handled' };
+      }
+      const selected = numMedia === 0 ? parseDeckSlideSelection(text, deck.slides.length) : null;
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (!selected) {
+        await send(`לא הצלחתי להבין את הבחירה 🙂 ${deckSlideSelectionPrompt(deck.slides.length)}`);
+        return { kind: 'handled' };
+      }
+      const suggested = await profileEmail(database, identity.userId);
+      const delivered = await send(deckEmailsPrompt(suggested));
+      if (delivered) {
+        await setFlow(database, conversation.id, {
+          flow_state: 'deck_awaiting_emails',
+          flow_context: { deck: { ...deck, selected, suggested_email: suggested } },
+        });
+      }
+      return { kind: 'handled' };
+    }
+
+    // ── deck flow: recipient emails → kick off server-side production ────────
+    case 'deck_awaiting_emails': {
+      if (await handleDeckCancel(database, conversation, identity, send, text, messageSid)) return { kind: 'handled' };
+      const deck = deckFromCtx(ctx);
+      if (!deck || !Array.isArray(deck.slides) || !deck.slides.length || !Array.isArray(deck.selected) || !deck.selected.length) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await showMainMenu(database, conversation, identity, send);
+        return { kind: 'handled' };
+      }
+      let emails = extractAllEmails(text);
+      if (!emails.length && isYesText(text) && deck.suggested_email) emails = [deck.suggested_email];
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (!emails.length) {
+        await send('לא זיהיתי כתובת מייל תקינה 🙂 כתבו כתובת אחת או יותר (מופרדות בפסיק או רווח), או "בטל" לביטול.');
+        return { kind: 'handled' };
+      }
+      return await startDeckEmailProduction(database, conversation, identity, send, deck, deck.selected, emails);
     }
 
     default:
