@@ -1365,24 +1365,46 @@ function ProductionPicker({
                   );
                 })}
               </div>
-              {recentCarouselItems.length > 1 && (
-                <div className="mt-3 flex items-center justify-center gap-1.5">
-                  {recentCarouselItems.map((file, idx) => (
-                    <button
-                      key={file.id}
-                      type="button"
-                      onClick={() => {
-                        const target = recentCarouselRef.current?.children[idx] as HTMLElement | undefined;
-                        target?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-                      }}
-                      className={`h-1.5 rounded-full transition-all ${
-                        idx === recentCarouselIndex ? 'w-5 bg-brand' : 'w-1.5 bg-[var(--border-warm)]'
-                      }`}
-                      aria-label={`תוצר ${idx + 1}`}
-                    />
-                  ))}
-                </div>
-              )}
+              {recentCarouselItems.length > 1 && (() => {
+                // Instagram-style sliding window: cap visible dots at ~7 and
+                // shrink the ones near the edges so it stays compact for any count.
+                const total = recentCarouselItems.length;
+                const maxVisible = 7;
+                const half = Math.floor(maxVisible / 2);
+                let start = recentCarouselIndex - half;
+                let end = recentCarouselIndex + half;
+                if (start < 0) { end -= start; start = 0; }
+                if (end > total - 1) { start -= end - (total - 1); end = total - 1; }
+                start = Math.max(0, start);
+                return (
+                  <div className="mt-3 flex items-center justify-center gap-1.5">
+                    {recentCarouselItems.map((file, idx) => {
+                      if (idx < start || idx > end) return null;
+                      const active = idx === recentCarouselIndex;
+                      const moreBefore = start > 0;
+                      const moreAfter = end < total - 1;
+                      const atStartEdge = moreBefore && idx - start === 0;
+                      const atEndEdge = moreAfter && end - idx === 0;
+                      let sizeClass = 'h-1.5 w-1.5';
+                      if (atStartEdge || atEndEdge) sizeClass = 'h-1 w-1 opacity-60';
+                      return (
+                        <button
+                          key={file.id}
+                          type="button"
+                          onClick={() => {
+                            const target = recentCarouselRef.current?.children[idx] as HTMLElement | undefined;
+                            target?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                          }}
+                          className={`rounded-full transition-all ${
+                            active ? 'h-1.5 w-5 bg-brand' : `${sizeClass} bg-[var(--border-warm)]`
+                          }`}
+                          aria-label={`תוצר ${idx + 1}`}
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </section>
