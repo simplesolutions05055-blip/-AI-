@@ -180,6 +180,14 @@ export const BRIEF_PROMPTS: Record<string, string> = {
     `מעולה, מסמך 📄\nכתבו את נושא המסמך, מטרתו ומה חייב להופיע בו. אפשר גם לצרף קובץ עם חומר גלם.\n\n${LONG_TEXT_WARNING}`,
 };
 
+function backToStartInteraction(body: string): WhatsAppInteractive {
+  return {
+    kind: 'quick_reply',
+    body,
+    options: [{ id: 'main_menu', title: 'חזרה להתחלה' }],
+  };
+}
+
 // Scheduling to social networks applies only to images and post texts —
 // documents/presentations (PDF files) cannot be published as social posts.
 export function canScheduleOutput(outputType: string | null | undefined): boolean {
@@ -255,12 +263,14 @@ export function buildPostDeliveryInteraction(outputType: string | null | undefin
 }
 
 const SCHEDULE_PLATFORM_INTERACTION: WhatsAppInteractive = {
-  kind: 'quick_reply',
+  kind: 'list_picker',
   body: 'איפה לפרסם? 📅',
+  button: 'בחירת אפשרות',
   options: [
-    { id: '1', title: 'פייסבוק' },
-    { id: '2', title: 'אינסטגרם' },
-    { id: '3', title: 'שניהם' },
+    { id: '1', title: 'פייסבוק', description: 'פרסום בפייסבוק' },
+    { id: '2', title: 'אינסטגרם', description: 'פרסום באינסטגרם' },
+    { id: '3', title: 'שניהם', description: 'פרסום בשתי הרשתות' },
+    { id: 'main_menu', title: 'חזרה להתחלה', description: 'חזרה לתפריט הראשי' },
   ],
 };
 
@@ -270,10 +280,11 @@ const SCHEDULE_PLATFORM_MENU = [
   '1️⃣ פייסבוק',
   '2️⃣ אינסטגרם',
   '3️⃣ שניהם',
+  '4️⃣ חזרה להתחלה',
 ].join('\n');
 
 const SCHEDULE_DATETIME_PROMPT =
-  'מתי לפרסם? כתבו תאריך ושעה, למשל:\n25/12 18:00\nאו: מחר 10:00 / היום 18:30';
+  'מתי לפרסם? כתבו תאריך ושעה, למשל:\n25/12 18:00\nאו: מחר 10:00 / היום 18:30\n\nלחזרה להתחלה כתבו "תפריט".';
 
 // ── standalone "schedule a post" flow (main menu option 3) ──────────────────
 const SCHEDULE_SOURCE_MENU = [
@@ -281,6 +292,7 @@ const SCHEDULE_SOURCE_MENU = [
   '',
   "1️⃣ אכתוב טקסט ואצרף תמונה כאן בצ'אט",
   '2️⃣ תוצר קיים שלי מהאתר',
+  '3️⃣ חזרה להתחלה',
   '',
   'אפשר להשיב במספר, או "בטל" לחזרה לתפריט.',
 ].join('\n');
@@ -291,6 +303,7 @@ const SCHEDULE_SOURCE_INTERACTION: WhatsAppInteractive = {
   options: [
     { id: '1', title: 'אכתוב כאן בצ׳אט' },
     { id: '2', title: 'תוצר קיים באתר' },
+    { id: 'main_menu', title: 'חזרה להתחלה' },
   ],
 };
 
@@ -1529,7 +1542,8 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       if (choice) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        const delivered = await send(BRIEF_PROMPTS[choice]);
+        const prompt = BRIEF_PROMPTS[choice];
+        const delivered = await send(prompt, backToStartInteraction(prompt));
         if (delivered) {
           await setFlow(database, conversation.id, {
             flow_state: 'awaiting_brief',
@@ -1555,7 +1569,8 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // A bare greeting is not a brief — re-show the prompt.
       if (numMedia === 0 && isGreetingOnly(text)) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send(BRIEF_PROMPTS[conversation.selected_output_type ?? 'image']);
+        const prompt = BRIEF_PROMPTS[conversation.selected_output_type ?? 'image'];
+        await send(prompt, backToStartInteraction(prompt));
         return { kind: 'handled' };
       }
       const choice = numMedia === 0 ? parseMainMenuChoice(text) : null;
@@ -1582,13 +1597,15 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // a garbage brief like "1" — just re-show the prompt.
       if (choice && choice === conversation.selected_output_type) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send(BRIEF_PROMPTS[choice]);
+        const prompt = BRIEF_PROMPTS[choice];
+        await send(prompt, backToStartInteraction(prompt));
         return { kind: 'handled' };
       }
       // Allow changing the mind ("מצגת" while asked for image brief).
       if (choice && choice !== conversation.selected_output_type) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        const delivered = await send(BRIEF_PROMPTS[choice]);
+        const prompt = BRIEF_PROMPTS[choice];
+        const delivered = await send(prompt, backToStartInteraction(prompt));
         if (delivered) await setFlow(database, conversation.id, { selected_output_type: choice });
         return { kind: 'handled' };
       }
