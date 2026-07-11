@@ -48,6 +48,13 @@ export function groupTarget(groupId: string, sender: string): string {
   return `group:${groupId}:${sender}`;
 }
 
+// Simulated brand group: ONE persistent group chat per brand, shared by every
+// user assigned to that brand. Rehearses the real-group experience before a
+// real number exists. UUIDs contain no ':' so the composed target stays parseable.
+export function brandGroupId(brandId: string): string {
+  return `brand-${brandId}@sim.group`;
+}
+
 export function isGroupTarget(to: string): boolean {
   return to.startsWith('group:');
 }
@@ -65,7 +72,10 @@ export async function findOrCreateGroupConversation(
   database: DB,
   groupId: string,
   sender: string,
-  simulated: boolean
+  simulated: boolean,
+  // When the sender is already a known site user (brand-group simulator), link
+  // the conversation up front so resolveIdentity picks their name + brand.
+  userId?: string | null
 ) {
   const from = groupTarget(groupId, sender);
   const { data: existing } = await database
@@ -79,7 +89,11 @@ export async function findOrCreateGroupConversation(
   if (existing) return existing;
   const { data: created } = await database
     .from('conversations')
-    .insert({ whatsapp_from: from, status: 'active', simulated, group_id: groupId, group_sender: sender })
+    .insert({
+      whatsapp_from: from, status: 'active', simulated,
+      group_id: groupId, group_sender: sender,
+      ...(userId ? { user_id: userId } : {}),
+    })
     .select()
     .single();
   return created ?? null;

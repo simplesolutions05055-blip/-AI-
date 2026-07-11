@@ -383,7 +383,9 @@ export async function sendOut(
     const useInteractive = Boolean(interactive && interactiveSetting.enabled);
     if (simulated || isProductionFormTarget(to)) {
       sid = `sim-${crypto.randomUUID()}`;
-      sentInteractive = useInteractive && !isProductionFormTarget(to);
+      // Groups never get interactive buttons (platform limit) — the simulated
+      // brand group mirrors that and stores the numbered-text fallback.
+      sentInteractive = useInteractive && !isProductionFormTarget(to) && !isGroupTarget(to);
     } else if (isGroupTarget(to)) {
       // Real WhatsApp group via the Whapi gateway. No 24h window and no Twilio
       // Content templates there — always plain text (body already carries the

@@ -11,6 +11,9 @@ interface ChatMessage {
   id: string;
   mine: boolean;
   body: string;
+  // Brand-group mode: who wrote the message ("מאור", "הבוט 🤖").
+  senderName?: string;
+  createdAt?: string;
   imageUrl?: string;
   imageName?: string;
   // Uploaded non-image files (docx/txt/md/audio) and the text extracted from
@@ -60,6 +63,14 @@ export default function SimulatorPage() {
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [groupMode, setGroupMode] = useState(false);
+  // Brand-group chat: one persistent group per brand, shared by all its users.
+  const [groupBrands, setGroupBrands] = useState<Array<{ id: string; name: string }>>([]);
+  const [groupBrandId, setGroupBrandId] = useState<string | null>(null);
+  const [groupChat, setGroupChat] = useState<ChatMessage[]>([]);
+  const [groupTrigger, setGroupTrigger] = useState('גרפיקה');
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const groupMeRef = useRef<string | null>(null);
+  const groupCursorRef = useRef<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -81,7 +92,117 @@ export default function SimulatorPage() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, generating, responding, attachment]);
+  }, [messages, groupChat, generating, responding, attachment]);
+
+  // ── brand-group mode: persistent shared chat + live polling ───────────────
+  type GroupServerMessage = {
+    id: string; direction: 'inbound' | 'outbound'; senderId: string | null;
+    senderName: string | null; body: string; mediaType: string | null;
+    mediaUrl: string | null; createdAt: string;
+  };
+
+  function toGroupChatMessage(m: GroupServerMessage): ChatMessage {
+    const isImage = Boolean(m.mediaType && m.mediaType.startsWith('image/') && m.mediaUrl);
+    const isOtherMedia = Boolean(m.mediaUrl && m.mediaType && !m.mediaType.startsWith('image/'));
+    const mine = m.direction === 'inbound' && !!m.senderId && m.senderId === groupMeRef.current;
+    return {
+      id: `grp-${m.id}`,
+      mine,
+      senderName: m.direction === 'outbound' ? 'הבוט 🤖' : (m.senderName || 'משתמש'),
+      body: m.body,
+      createdAt: m.createdAt,
+      imageUrl: isImage ? m.mediaUrl! : undefined,
+      imageName: isImage ? 'generated-image.png' : undefined,
+      meta: isOtherMedia ? { deckUrl: m.mediaUrl!, deckName: 'output.pdf' } : undefined,
+    };
+  }
+
+  // Append only unseen messages; a confirmed message of mine replaces the
+  // oldest optimistic temp bubble (the stored body may differ — the engine
+  // strips the trigger word — so we match by ownership, not text).
+  function mergeGroup(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+    const known = new Set(current.map((m) => m.id));
+    const fresh = incoming.filter((m) => !known.has(m.id));
+    if (!fresh.length) return current;
+    const next = [...current];
+    for (const msg of fresh) {
+      if (msg.mine) {
+        const tempIdx = next.findIndex((m) => m.id.startsWith('grptmp-'));
+        if (tempIdx !== -1) next.splice(tempIdx, 1);
+      }
+      next.push(msg);
+    }
+    return next;
+  }
+
+  async function pollGroup(brandId: string, initial: boolean) {
+    const { data } = await createSupabaseBrowserClient().functions.invoke('group-chat', {
+      body: { action: 'history', brandId, after: initial ? undefined : groupCursorRef.current ?? undefined },
+    });
+    if (!data?.ok) return;
+    const serverMessages: GroupServerMessage[] = Array.isArray(data.messages) ? data.messages : [];
+    if (serverMessages.length) {
+      groupCursorRef.current = serverMessages[serverMessages.length - 1].createdAt;
+      const mapped = serverMessages.map(toGroupChatMessage);
+      setGroupChat((current) => (initial ? mapped : mergeGroup(current, mapped)));
+    } else if (initial) {
+      groupCursorRef.current = null;
+      setGroupChat([]);
+    }
+  }
+
+  useEffect(() => {
+    if (!groupMode) return;
+    let cancelled = false;
+    (async () => {
+      setGroupError(null);
+      const { data, error } = await createSupabaseBrowserClient().functions.invoke('group-chat', {
+        body: { action: 'context' },
+      });
+      if (cancelled) return;
+      if (error || !data?.ok) {
+        setGroupError('טעינת הקבוצה נכשלה. נסו שוב.');
+        return;
+      }
+      groupMeRef.current = data.me?.id ?? null;
+      setGroupTrigger(data.triggerWord || 'גרפיקה');
+      const brands: Array<{ id: string; name: string }> = data.brands ?? [];
+      setGroupBrands(brands);
+      if (!brands.length) {
+        setGroupError('אין מותג משויך למשתמש — אי אפשר להיכנס לקבוצת מותג.');
+        return;
+      }
+      setGroupBrandId((current) => (current && brands.some((b) => b.id === current) ? current : brands[0].id));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [groupMode]);
+
+  useEffect(() => {
+    if (!groupMode || !groupBrandId) return;
+    groupCursorRef.current = null;
+    setGroupChat([]);
+    void pollGroup(groupBrandId, true);
+    const interval = setInterval(() => void pollGroup(groupBrandId, false), 2500);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupMode, groupBrandId]);
+
+  async function sendGroupMessage(body: string) {
+    if (!body || !groupBrandId) return;
+    setText('');
+    setGroupChat((current) => [
+      ...current,
+      { id: `grptmp-${Date.now()}`, mine: true, senderName: 'אני', body },
+    ]);
+    const { data, error } = await createSupabaseBrowserClient().functions.invoke('group-chat', {
+      body: { action: 'send', brandId: groupBrandId, body },
+    });
+    if (error || data?.error) setGroupError('השליחה נכשלה. נסו שוב.');
+    // Pick up the stored message (and fast bot replies) right away.
+    setTimeout(() => void pollGroup(groupBrandId, false), 700);
+  }
 
   useEffect(() => {
     if (messages.length === 0) return;
@@ -216,6 +337,11 @@ export default function SimulatorPage() {
   }
 
   async function sendBody(body: string, includeAttachment: boolean) {
+    // Brand-group chat: server-side storage + polling, text only.
+    if (groupMode) {
+      await sendGroupMessage(body);
+      return;
+    }
     const currentAttachment = includeAttachment ? attachment : null;
     if ((!body && !currentAttachment) || busy) return;
 
@@ -249,24 +375,9 @@ export default function SimulatorPage() {
         sessionId: conversationIdRef.current,
         body,
         attachments: outboundAttachments,
-        groupMode,
       },
     });
     setResponding(false);
-
-    // Group mode: a message without the trigger word is ignored by design —
-    // show that explicitly so it's clear the bot stayed silent on purpose.
-    if (data?.ignored) {
-      setMessages((current) => [
-        ...current,
-        {
-          id: `ignored-${Date.now()}`,
-          mine: false,
-          body: `🤫 הבוט לא הגיב — בקבוצה הוא עונה רק להודעות שמתחילות במילת ההפעלה "${data?.triggerWord ?? 'גרפיקה'}".`,
-        },
-      ]);
-      return;
-    }
 
     if (error || !data?.ok) {
       setMessages((current) => [
@@ -317,16 +428,32 @@ export default function SimulatorPage() {
       <div className="mb-4 flex items-start justify-between gap-3" dir="rtl">
         <div>
           <h1 className="text-xl font-semibold tracking-normal">סימולטור שיחה</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">בדקו את זרימת הבקשה לפני הפעלה אמיתית.</p>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            {groupMode ? 'קבוצת המותג — צ׳אט משותף לכל חברי המותג.' : 'בדקו את זרימת הבקשה לפני הפעלה אמיתית.'}
+          </p>
         </div>
-        <label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm font-semibold">
-          <input
-            type="checkbox"
-            checked={groupMode}
-            onChange={(e) => setGroupMode(e.target.checked)}
-          />
-          מצב קבוצה 👥
-        </label>
+        <div className="flex shrink-0 items-center gap-2">
+          {groupMode && groupBrands.length > 1 && (
+            <select
+              value={groupBrandId ?? ''}
+              onChange={(e) => setGroupBrandId(e.target.value)}
+              className="rounded-lg border border-[var(--border)] bg-white px-2 py-2 text-sm"
+              aria-label="בחירת קבוצת מותג"
+            >
+              {groupBrands.map((brand) => (
+                <option key={brand.id} value={brand.id}>{brand.name}</option>
+              ))}
+            </select>
+          )}
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm font-semibold">
+            <input
+              type="checkbox"
+              checked={groupMode}
+              onChange={(e) => setGroupMode(e.target.checked)}
+            />
+            מצב קבוצה 👥
+          </label>
+        </div>
       </div>
       <div
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-sm"
@@ -345,12 +472,28 @@ export default function SimulatorPage() {
           <div className="inline-flex rounded-md bg-white/95 px-2 py-1">
             <img src="/primeos-logo.png" alt="PrimeOS" className="h-6 w-auto object-contain" />
           </div>
-          <div className="text-[11px] text-white/80">צ׳אט + הפקת תמונה</div>
+          <div className="text-[11px] text-white/80">
+            {groupMode
+              ? `קבוצה 👥 ${groupBrands.find((b) => b.id === groupBrandId)?.name ?? ''} · הבוט עונה רק ל"${groupTrigger}"`
+              : 'צ׳אט + הפקת תמונה'}
+          </div>
         </div>
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2" style={{ background: '#ECE5DD' }} dir="rtl">
-          {messages.length === 0 && <p className="text-center text-[#667781] text-sm mt-8">שלחו הודעה כדי להתחיל לתרגל</p>}
-          {messages.map((message) => (
+          {groupMode && groupError && (
+            <p className="mx-auto mt-8 max-w-xs rounded-lg bg-white/80 px-3 py-2 text-center text-sm text-red-700">{groupError}</p>
+          )}
+          {(groupMode ? groupChat : messages).length === 0 && !groupError && (
+            <p className="text-center text-[#667781] text-sm mt-8">
+              {groupMode ? `זו קבוצת המותג. כתבו חופשי — הבוט יענה רק להודעות שמתחילות ב"${groupTrigger}"` : 'שלחו הודעה כדי להתחיל לתרגל'}
+            </p>
+          )}
+          {(groupMode ? groupChat : messages).map((message) => (
             <div key={message.id} className={`max-w-[80%] rounded-lg px-3 py-2 text-sm shadow-sm ${message.mine ? 'ms-auto bg-[#DCF8C6]' : 'me-auto bg-white'}`}>
+              {groupMode && !message.mine && message.senderName && (
+                <div className={`mb-0.5 text-[11px] font-bold ${message.senderName.includes('🤖') ? 'text-[#00A884]' : 'text-[#E542A3]'}`}>
+                  {message.senderName}
+                </div>
+              )}
               {message.imageUrl && (
                 <figure className="mb-2 overflow-hidden rounded-lg border border-black/5 bg-white/60">
                   <img src={message.imageUrl} alt={message.imageName ?? 'תמונה מצורפת'} className="max-h-64 w-full object-cover" />
@@ -477,12 +620,16 @@ export default function SimulatorPage() {
             </div>
           ) : (
             <>
-              <button onClick={() => fileInputRef.current?.click()} disabled={busy} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#075E54] border border-[var(--border)] text-lg disabled:opacity-50" aria-label="צירוף קובץ">
-                +
-              </button>
-              <button onClick={startRecording} disabled={busy} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#075E54] border border-[var(--border)] text-base disabled:opacity-50" aria-label="הקלטה">
-                🎙️
-              </button>
+              {!groupMode && (
+                <>
+                  <button onClick={() => fileInputRef.current?.click()} disabled={busy} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#075E54] border border-[var(--border)] text-lg disabled:opacity-50" aria-label="צירוף קובץ">
+                    +
+                  </button>
+                  <button onClick={startRecording} disabled={busy} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#075E54] border border-[var(--border)] text-base disabled:opacity-50" aria-label="הקלטה">
+                    🎙️
+                  </button>
+                </>
+              )}
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}

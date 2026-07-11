@@ -6,6 +6,12 @@ interface Body {
   // Optional. When set, reset only this sender (e.g. "whatsapp:+972500000000").
   // When omitted, reset every live real WhatsApp conversation.
   phone?: string;
+  // Group-chat reset: close every live conversation of a group so its visible
+  // history clears (group-chat history skips closed rows) and the next message
+  // starts fresh. brandId targets one brand's simulated group; omit it (with
+  // group: true) to reset ALL group conversations — simulated and real.
+  group?: boolean;
+  brandId?: string;
 }
 
 const corsHeaders = {
@@ -47,7 +53,37 @@ Deno.serve(async (req) => {
 
     if (callerProfile?.role !== 'admin') return json({ error: 'forbidden' });
 
-    const { phone } = ((await req.json().catch(() => ({}))) ?? {}) as Body;
+    const { phone, group, brandId } = ((await req.json().catch(() => ({}))) ?? {}) as Body;
+
+    // ── group-chat reset ──────────────────────────────────────────────────────
+    if (group) {
+      let groupQuery = database
+        .from('conversations')
+        .select('id, group_id, current_request_id')
+        .not('group_id', 'is', null)
+        .in('status', ['active', 'waiting_for_user', 'soft_closed']);
+      if (brandId) groupQuery = groupQuery.eq('group_id', `brand-${brandId}@sim.group`);
+      const { data: groupRows, error: groupErr } = await groupQuery;
+      if (groupErr) return json({ error: 'select_failed' });
+      for (const row of groupRows ?? []) {
+        if (row.current_request_id) {
+          await database.from('requests')
+            .update({ status: 'closed', closed_at: new Date().toISOString(), processing_locked_at: null })
+            .eq('id', row.current_request_id)
+            .not('status', 'in', '(sent,approved,sending)');
+        }
+        // Hard-close: group history skips closed rows, and the next message in
+        // the group opens a brand-new conversation for that sender.
+        await database.from('conversations')
+          .update({ status: 'closed', current_request_id: null, flow_state: null, flow_context: {}, selected_output_type: null })
+          .eq('id', row.id);
+      }
+      await logEvent(database, {
+        action: 'group_chat_reset',
+        metadata: { reason: 'admin_button', brand_id: brandId ?? 'all', count: (groupRows ?? []).length },
+      });
+      return json({ ok: true, reset: (groupRows ?? []).length });
+    }
 
     // Target: live real WhatsApp conversations (never the simulator/e2e rows).
     let query = database

@@ -54,7 +54,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'תוכן',
     links: [
       { href: '/admin/files', label: 'תוצרים', icon: 'files' },
-      { href: '/admin/simulator', label: 'סימולטור צ׳אט', adminOnly: true, icon: 'chat' },
+      { href: '/admin/simulator', label: 'סימולטור צ׳אט', icon: 'chat' },
     ],
   },
   {

@@ -13,7 +13,7 @@ import { Spinner } from '@/components/ui/Spinner';
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
 // further by can_create_outputs. Files is view-only for regular users.
 // Branding is admin-only; regular users manage their brand via onboarding.
-const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/holidays', '/admin/user-settings'];
+const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/holidays', '/admin/user-settings', '/admin/simulator'];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile, hasBrand, requireUploads } = useProfile();

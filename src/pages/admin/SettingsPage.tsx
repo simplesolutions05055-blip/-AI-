@@ -41,6 +41,10 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('permissions');
   const [resetting, setResetting] = useState(false);
   const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+  const [groupResetBrand, setGroupResetBrand] = useState('');
+  const [groupResetting, setGroupResetting] = useState(false);
+  const [groupResetMsg, setGroupResetMsg] = useState<string | null>(null);
 
   useEffect(() => {
     setProfileGender(profile?.gender ?? '');
@@ -62,6 +66,12 @@ export default function SettingsPage() {
         setSettings(next);
         setLoading(false);
       });
+    createSupabaseBrowserClient()
+      .from('brands')
+      .select('id, name')
+      .eq('is_active', true)
+      .order('name')
+      .then(({ data }) => setBrands((data ?? []) as Array<{ id: string; name: string }>));
   }, []);
 
   function update(key: string, value: any) {
@@ -80,6 +90,32 @@ export default function SettingsPage() {
     }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function resetGroupChat() {
+    if (groupResetting) return;
+    const target = groupResetBrand
+      ? `קבוצת "${brands.find((b) => b.id === groupResetBrand)?.name ?? ''}"`
+      : 'כל הקבוצות';
+    if (!window.confirm(`לאפס את ${target}? היסטוריית הצ'אט תנוקה לכל המשתתפים והשיחה תתחיל מחדש.`)) return;
+    setGroupResetting(true);
+    setGroupResetMsg(null);
+    try {
+      const { data, error } = await createSupabaseBrowserClient().functions.invoke('reset-conversation', {
+        body: { group: true, ...(groupResetBrand ? { brandId: groupResetBrand } : {}) },
+      });
+      if (error || (data as any)?.error) {
+        setGroupResetMsg('האיפוס נכשל. נסו שוב.');
+      } else {
+        const count = (data as any)?.reset ?? 0;
+        setGroupResetMsg(count > 0 ? `הקבוצה אופסה (${count} שיחות נסגרו).` : 'הקבוצה כבר ריקה — אין מה לאפס.');
+      }
+    } catch {
+      setGroupResetMsg('האיפוס נכשל. נסו שוב.');
+    } finally {
+      setGroupResetting(false);
+      setTimeout(() => setGroupResetMsg(null), 4000);
+    }
   }
 
   async function resetLiveConversation() {
@@ -229,6 +265,36 @@ export default function SettingsPage() {
               onChange={(e) => update('whatsapp_group_settings', { ...groupSettings, trigger_word: e.target.value })}
             />
           </Field>
+
+          <div className="mt-4 rounded-xl border border-[var(--border)] bg-gray-50 p-3">
+            <div className="mb-1 text-sm font-semibold">איפוס צ'אט קבוצה</div>
+            <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
+              מנקה את היסטוריית הקבוצה לכל המשתתפים וסוגר בקשות פתוחות בה (תוצרים שכבר נשלחו לא נפגעים).
+              ההודעה הבאה בקבוצה מתחילה שיחה נקייה.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className="rounded-lg border border-[var(--border)] bg-white px-2 py-2 text-sm"
+                value={groupResetBrand}
+                onChange={(e) => setGroupResetBrand(e.target.value)}
+                aria-label="בחירת קבוצה לאיפוס"
+              >
+                <option value="">כל הקבוצות</option>
+                {brands.map((brand) => (
+                  <option key={brand.id} value={brand.id}>{brand.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={resetGroupChat}
+                disabled={groupResetting}
+                className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+              >
+                {groupResetting ? 'מאפס…' : 'אפס צ׳אט קבוצה'}
+              </button>
+              {groupResetMsg && <span className="text-sm text-[var(--muted)]">{groupResetMsg}</span>}
+            </div>
+          </div>
         </div>
 
         <div className="mt-5 border-t border-[var(--border)] pt-4">

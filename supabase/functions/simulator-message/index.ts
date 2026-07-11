@@ -7,7 +7,6 @@
 import { db } from '../_shared/db.ts';
 import { processRequest } from '../_shared/worker.ts';
 import { findOrCreateConversation, handleInbound } from '../_shared/inbound.ts';
-import { findOrCreateGroupConversation, getGroupSettings, matchGroupTrigger } from '../_shared/group.ts';
 import { getSettingOr, getTemplates, logEvent } from '../_shared/util.ts';
 import { processInboundMediaItem } from '../_shared/inbound_media.ts';
 import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
@@ -40,30 +39,13 @@ Deno.serve(async (req) => {
 
   const database = db();
   try {
-    const { sessionId, body, attachments, groupMode } = await req.json();
+    const { sessionId, body, attachments } = await req.json();
     if (!sessionId || typeof sessionId !== 'string') return json({ error: 'sessionId required' }, 400);
-    let text = typeof body === 'string' ? body : '';
+    const text = typeof body === 'string' ? body : '';
     const uploaded = Array.isArray(attachments) ? attachments as SimulatorAttachment[] : [];
     if (!text.trim() && uploaded.length === 0) return json({ error: 'body or attachment required' }, 400);
 
-    // ── group mode: simulate a WhatsApp group message ─────────────────────────
-    // Exercises the exact trigger-word gate the real group webhook applies: a
-    // message without the trigger is ignored (the bot stays silent), a matched
-    // one is stripped and runs the normal engine on a per-(group,sender)
-    // conversation. Everything stays simulated — no gateway involved.
-    const isGroup = groupMode === true;
-    let triggerWord = '';
-    if (isGroup) {
-      const groupSettings = await getGroupSettings(database);
-      triggerWord = groupSettings.trigger_word;
-      const trigger = matchGroupTrigger(text, triggerWord);
-      if (!trigger.matched) {
-        return json({ ok: true, ignored: true, triggerWord, replies: [] });
-      }
-      text = trigger.rest;
-    }
-
-    const from = isGroup ? `group:sim-${sessionId}@g.us:sim-sender` : `simulator:${sessionId}`;
+    const from = `simulator:${sessionId}`;
     try {
       await enforceMessageLimit(database, {
         sessionId,
@@ -75,9 +57,7 @@ Deno.serve(async (req) => {
       throw e;
     }
 
-    const conversation = isGroup
-      ? await findOrCreateGroupConversation(database, `sim-${sessionId}@g.us`, 'sim-sender', true)
-      : await findOrCreateConversation(database, from, true);
+    const conversation = await findOrCreateConversation(database, from, true);
     if (!conversation) return json({ error: 'conversation failed' }, 500);
 
     const templates = await getTemplates(database);
