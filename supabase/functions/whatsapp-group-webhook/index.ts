@@ -100,6 +100,11 @@ Deno.serve(async (req) => {
       }),
     });
 
+    // Keep the stored row faithful to what the member actually typed (trigger
+    // word included) — the group transcript is shared, and the engine already
+    // consumed the stripped `trigger.rest`.
+    await database.from('messages').update({ body }).eq('twilio_message_sid', messageSid);
+
     if (background) {
       // @ts-ignore EdgeRuntime is provided by the Supabase runtime
       EdgeRuntime.waitUntil(background());

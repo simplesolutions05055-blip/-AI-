@@ -198,6 +198,12 @@ Deno.serve(async (req) => {
         }),
       });
 
+      // Restore the ORIGINAL text (trigger word included) on the stored row so
+      // every group member sees the message exactly as typed — otherwise the
+      // bot looks like it answered out of nowhere. The engine already consumed
+      // the stripped `trigger.rest`.
+      await database.from('messages').update({ body: text }).eq('twilio_message_sid', messageSid);
+
       // Fast 200 — the client polls history and sees replies as they land,
       // exactly like a real group would behave.
       if (background) {
