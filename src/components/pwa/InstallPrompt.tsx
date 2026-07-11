@@ -21,14 +21,14 @@ export default function InstallPrompt() {
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-3 pb-[calc(var(--safe-bottom)+12px)] sm:items-center" dir="rtl">
       <section className="w-[calc(100vw-24px)] max-w-md rounded-xl bg-white p-5 text-right shadow-2xl">
         <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2>
-              <span className="sr-only">להתקין את PrimeOS?</span>
-              <img src="/primeos-logo.png" alt="" className="h-9 w-auto object-contain" />
-            </h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              פתיחה מהירה ממסך הבית, תצוגת אפליקציה ועדכוני גרסה חלקים יותר.
-            </p>
+          <div className="flex min-w-0 items-center gap-3">
+            <img src="/primeos-icon-192.png" alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+            <div>
+              <h2 className="text-lg font-bold text-[var(--text)]">להתקין את PrimeOS?</h2>
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                גישה מהירה ליצירה ולניהול של תוצרים ותהליכי עבודה, ישירות ממסך הבית.
+              </p>
+            </div>
           </div>
           <button onClick={() => dismiss(false)} className="shrink-0 rounded-lg px-2 text-xl leading-none text-[var(--muted)]" aria-label="סגירה">
             ×

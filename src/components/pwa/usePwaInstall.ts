@@ -16,8 +16,7 @@ const PROMPT_KEY = 'pwa_install';
 const DISMISS_AT_KEY = 'pwa_install_dismissed_at';
 const DISMISS_COUNT_KEY = 'pwa_install_dismiss_count';
 const PERMANENT_KEY = 'pwa_install_dismissed_permanent';
-const DAY_MS = 24 * 60 * 60 * 1000;
-const WEEK_MS = 7 * DAY_MS;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 function isIos() {
   if (typeof navigator === 'undefined') return false;
@@ -43,10 +42,8 @@ function isDismissedByRow(row: DismissalRow | null) {
 function isDismissedByLocalStorage() {
   if (window.localStorage.getItem(PERMANENT_KEY) === '1') return true;
   const dismissedAt = Number(window.localStorage.getItem(DISMISS_AT_KEY) ?? 0);
-  const count = Number(window.localStorage.getItem(DISMISS_COUNT_KEY) ?? 0);
   if (!dismissedAt) return false;
-  const duration = count <= 1 ? DAY_MS : WEEK_MS;
-  return Date.now() - dismissedAt <= duration;
+  return Date.now() - dismissedAt <= WEEK_MS;
 }
 
 function persistLocalDismissal(permanent: boolean) {
@@ -56,7 +53,7 @@ function persistLocalDismissal(permanent: boolean) {
   }
   const count = Number(window.localStorage.getItem(DISMISS_COUNT_KEY) ?? 0) + 1;
   window.localStorage.setItem(DISMISS_COUNT_KEY, String(count));
-  if (count >= 3) window.localStorage.setItem(PERMANENT_KEY, '1');
+  if (count >= 2) window.localStorage.setItem(PERMANENT_KEY, '1');
   window.localStorage.setItem(DISMISS_AT_KEY, String(Date.now()));
 }
 
@@ -192,9 +189,9 @@ export function usePwaInstall() {
     if (!userId) return;
 
     const now = new Date();
-    const nextCount = permanent ? Math.max((dismissal?.dismiss_count ?? 0) + 1, 3) : (dismissal?.dismiss_count ?? 0) + 1;
-    const permanentlyDismissed = permanent || nextCount >= 3;
-    const dismissedUntil = permanentlyDismissed ? null : addMs(now, nextCount === 1 ? DAY_MS : WEEK_MS);
+    const nextCount = permanent ? Math.max((dismissal?.dismiss_count ?? 0) + 1, 2) : (dismissal?.dismiss_count ?? 0) + 1;
+    const permanentlyDismissed = permanent || nextCount >= 2;
+    const dismissedUntil = permanentlyDismissed ? null : addMs(now, WEEK_MS);
     const next = {
       dismiss_count: nextCount,
       dismissed_until: dismissedUntil,

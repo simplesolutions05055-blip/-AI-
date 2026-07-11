@@ -1,10 +1,10 @@
 {
-  "name": "whatsapp-ai-agent",
+  "name": "primeos",
   "version": "1.0.0",
   "private": true,
   "packageManager": "npm@10.9.8",
   "type": "module",
-  "description": "סוכן AI ארגוני דרך WhatsApp — Vite React + Supabase",
+  "description": "PrimeOS — מערכת חכמה ליצירה ולניהול של תוצרים עסקיים ותהליכי עבודה בעזרת AI",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
