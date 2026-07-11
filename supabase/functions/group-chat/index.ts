@@ -7,10 +7,12 @@
 //   - the bot answers ONLY trigger-word messages, silently ignoring the rest
 //     (the ignored messages still appear in the chat — like a real group).
 //
-// Engine-wise each (brand-group, user) pair is its own conversation — the same
-// per-sender model the real group webhook uses — so parallel briefs never mix.
-// The merged timeline for display is simply: all messages of all conversations
-// whose group_id is this brand group.
+// Engine-wise the whole group is ONE shared conversation with the bot — that's
+// the point of a group: user X summons the bot ("גרפיקה"), user Y can answer
+// the menu ("1") and the flow continues. While the bot is engaged (open flow or
+// request) every member's message reaches the engine without the trigger word;
+// when idle, only the trigger wakes it. Sender attribution lives on each
+// message (sender_id) since many people share the conversation.
 //
 // Actions (POST, authenticated site user):
 //   { action: 'context' }                          → me, brands I can enter, trigger word
@@ -119,14 +121,21 @@ Deno.serve(async (req) => {
 
       let query = database
         .from('messages')
-        .select('id, conversation_id, direction, body, media_type, storage_path, created_at')
+        .select('id, conversation_id, direction, body, media_type, storage_path, created_at, sender_id, sender_label')
         .in('conversation_id', [...convUser.keys()])
         .order('created_at', { ascending: true })
         .limit(300);
       if (after) query = query.gt('created_at', after);
       const { data: rows } = await query;
 
-      const senderIds = [...new Set([...convUser.values()].filter(Boolean))] as string[];
+      // Sender per MESSAGE (shared conversation); conversation.user_id remains
+      // as a fallback for rows stamped before the send call finished.
+      const senderIds = [
+        ...new Set([
+          ...(rows ?? []).map((m: any) => m.sender_id as string | null),
+          ...convUser.values(),
+        ].filter(Boolean)),
+      ] as string[];
       const names = new Map<string, string>();
       if (senderIds.length) {
         const { data: profiles } = await database.from('profiles').select('id, full_name').in('id', senderIds);
@@ -140,12 +149,13 @@ Deno.serve(async (req) => {
           const { data: signed } = await database.storage.from('outputs').createSignedUrl(m.storage_path as string, 3600);
           mediaUrl = signed?.signedUrl ?? null;
         }
-        const senderId = convUser.get(m.conversation_id as string) ?? null;
+        const senderId = (m.sender_id as string | null) ?? convUser.get(m.conversation_id as string) ?? null;
+        const senderName = (senderId ? names.get(senderId) : null) || (m.sender_label as string | null) || 'משתמש';
         messages.push({
           id: m.id,
           direction: m.direction,
           senderId: m.direction === 'inbound' ? senderId : null,
-          senderName: m.direction === 'inbound' ? (senderId ? names.get(senderId) || 'משתמש' : 'משתמש') : null,
+          senderName: m.direction === 'inbound' ? senderName : null,
           body: m.body ?? '',
           mediaType: m.media_type ?? null,
           mediaUrl,
@@ -155,54 +165,64 @@ Deno.serve(async (req) => {
       return json({ ok: true, messages });
     }
 
-    // ── send: store the message; run the engine only when the trigger matches ──
+    // ── send: one shared bot session for the whole group ─────────────────────
+    // Trigger word → wakes the bot. While the bot is engaged (open flow/request)
+    // ANY member's message continues the session without the trigger — user X
+    // opens with "גרפיקה", user Y answers "1", the flow moves on. When idle,
+    // non-trigger chatter is stored for everyone but the bot stays silent.
     if (action === 'send') {
       const text = typeof body === 'string' ? body.trim() : '';
       if (!text) return json({ error: 'body required' });
 
-      const conversation = await findOrCreateGroupConversation(database, groupId, callerId, true, callerId);
+      const conversation = await findOrCreateGroupConversation(database, groupId, 'shared', true, callerId);
       if (!conversation) return json({ error: 'conversation failed' });
 
       const settings = await getGroupSettings(database);
       const trigger = matchGroupTrigger(text, settings.trigger_word);
+      const engaged =
+        conversation.status !== 'soft_closed' &&
+        Boolean(conversation.flow_state || conversation.current_request_id);
       const messageSid = `simgrp-${crypto.randomUUID()}`;
 
-      if (!trigger.matched) {
-        // Regular group chatter: visible to everyone, the bot stays silent.
+      if (!trigger.matched && !engaged) {
+        // Idle bot + no trigger: regular group chatter, visible to everyone.
         await database.from('messages').insert({
           conversation_id: conversation.id,
           request_id: null,
           direction: 'inbound',
           body: text,
           twilio_message_sid: messageSid,
+          sender_id: callerId,
         });
         await database.from('conversations').update({ last_message_at: new Date().toISOString() }).eq('id', conversation.id);
         return json({ ok: true, triggered: false });
       }
 
+      const engineBody = trigger.matched ? trigger.rest : text;
       const templates = await getTemplates(database);
       const { requestIdToProcess, background } = await handleInbound(database, {
         conversation,
         from: conversation.whatsapp_from,
         phone: callerId,
-        body: trigger.rest,
+        body: engineBody,
         messageSid,
         numMedia: 0,
         templates,
         simulated: true,
         resolveMedia: async () => ({
-          effectiveBody: trigger.rest,
+          effectiveBody: engineBody,
           firstStoragePath: null,
           firstMediaType: null,
           anyRejected: false,
         }),
       });
 
-      // Restore the ORIGINAL text (trigger word included) on the stored row so
-      // every group member sees the message exactly as typed — otherwise the
-      // bot looks like it answered out of nowhere. The engine already consumed
-      // the stripped `trigger.rest`.
-      await database.from('messages').update({ body: text }).eq('twilio_message_sid', messageSid);
+      // Restore the ORIGINAL text (trigger word included) and stamp the sender
+      // on the stored row — the conversation is shared, so attribution lives on
+      // the message. The engine already consumed the stripped text.
+      await database.from('messages')
+        .update({ body: text, sender_id: callerId })
+        .eq('twilio_message_sid', messageSid);
 
       // Fast 200 — the client polls history and sees replies as they land,
       // exactly like a real group would behave.

@@ -68,32 +68,52 @@ Deno.serve(async (req) => {
 
     // Pilot scope: text only (a media message's caption counts as its text).
     const body = (msg.text?.body ?? msg.caption ?? '').trim();
-    const trigger = matchGroupTrigger(body, settings.trigger_word);
-    if (!trigger.matched) continue; // the bot stays silent on regular group chatter
+    if (!body) continue;
 
     const sender = (msg.from ?? '').replace(/\D/g, '');
     if (!sender) continue;
     const messageSid = msg.id || `whapi-${crypto.randomUUID()}`;
 
-    const conversation = await findOrCreateGroupConversation(database, chatId, sender, false);
+    // ONE shared bot session per group: the trigger wakes the bot; while it is
+    // engaged (open flow/request) any member's reply continues the session —
+    // user X opens with the trigger, user Y answers "1", the flow moves on.
+    const conversation = await findOrCreateGroupConversation(database, chatId, 'shared', false);
     if (!conversation) continue;
+    const trigger = matchGroupTrigger(body, settings.trigger_word);
+    const engaged =
+      conversation.status !== 'soft_closed' &&
+      Boolean(conversation.flow_state || conversation.current_request_id);
+    if (!trigger.matched && !engaged) {
+      // Idle bot + no trigger: keep the group transcript, stay silent.
+      await database.from('messages').insert({
+        conversation_id: conversation.id,
+        request_id: null,
+        direction: 'inbound',
+        body,
+        twilio_message_sid: messageSid,
+        sender_label: msg.from_name || sender,
+      });
+      await database.from('conversations').update({ last_message_at: new Date().toISOString() }).eq('id', conversation.id);
+      continue;
+    }
 
     await logEvent(database, {
       action: 'group_message_triggered',
-      metadata: { group_id: chatId, sender, from_name: msg.from_name ?? null },
+      metadata: { group_id: chatId, sender, from_name: msg.from_name ?? null, engaged },
     });
 
+    const engineBody = trigger.matched ? trigger.rest : body;
     const { requestIdToProcess, background } = await handleInbound(database, {
       conversation,
-      from: conversation.whatsapp_from, // "group:<id>:<sender>" — replies go to the group
+      from: conversation.whatsapp_from, // "group:<id>:shared" — replies go to the group
       phone: sender,                    // identity: match the SENDER to a site profile
-      body: trigger.rest,               // trigger word stripped
+      body: engineBody,
       messageSid,
       numMedia: 0,
       templates,
       simulated: false,
       resolveMedia: async () => ({
-        effectiveBody: trigger.rest,
+        effectiveBody: engineBody,
         firstStoragePath: null,
         firstMediaType: null,
         anyRejected: false,
@@ -101,9 +121,10 @@ Deno.serve(async (req) => {
     });
 
     // Keep the stored row faithful to what the member actually typed (trigger
-    // word included) — the group transcript is shared, and the engine already
-    // consumed the stripped `trigger.rest`.
-    await database.from('messages').update({ body }).eq('twilio_message_sid', messageSid);
+    // word included) and stamp who sent it — the transcript is shared.
+    await database.from('messages')
+      .update({ body, sender_label: msg.from_name || sender })
+      .eq('twilio_message_sid', messageSid);
 
     if (background) {
       // @ts-ignore EdgeRuntime is provided by the Supabase runtime
