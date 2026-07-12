@@ -51,7 +51,8 @@ export type FlowResult =
   | { kind: 'not_handled' }
   | { kind: 'handled'; background?: (() => Promise<void>) | null }
   // Create a fresh request from the collected brief, with a locked output type.
-  | { kind: 'new_request'; outputType: string }
+  // briefText (events flow) replaces the raw user message as the request brief.
+  | { kind: 'new_request'; outputType: string; briefText?: string }
   // Create a revision request (brief already ready) for the last deliverable.
   | { kind: 'revision_request'; outputType: string; brief: Record<string, unknown> };
 
@@ -147,8 +148,9 @@ export function buildMainMenu(displayName: string): string {
     '2️⃣ מסמך',
     '3️⃣ מצגת 📊',
     '4️⃣ תזמון פוסט לרשתות 📅',
+    '5️⃣ אירועים וחגים 🗓️',
     '',
-    'אפשר להשיב במספר (1/2/3/4) או במילה.',
+    'אפשר להשיב במספר (1/2/3/4/5) או במילה.',
   ].join('\n');
 }
 
@@ -162,6 +164,7 @@ export function buildMainMenuInteraction(): WhatsAppInteractive {
       { id: '2', title: 'מסמך', description: 'יצירת מסמך חדש' },
       { id: '3', title: 'מצגת', description: 'יצירת מצגת חדשה' },
       { id: '4', title: 'תזמון פוסט', description: 'תזמון פרסום לרשתות' },
+      { id: '5', title: 'אירועים וחגים', description: 'רעיונות לתוכן לפי אירועים וחגים קרובים' },
     ],
   };
 }
@@ -357,7 +360,7 @@ function norm(text: string): string {
   return normalizeHe(text);
 }
 
-export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'pdf' | 'schedule_post' | null {
+export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'pdf' | 'schedule_post' | 'events' | null {
   const t = norm(text);
   if (!t || t.length > 30) return null;
   // Schedule keywords win over the generic "פוסט" (which alone means option 1).
@@ -366,6 +369,9 @@ export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'p
   if (/^2\.?$/.test(t) || /(מסמך|document|מכתב)/.test(t)) return 'pdf';
   if (/^3\.?$/.test(t) || /(מצגת|presentation|שקפים)/.test(t)) return 'presentation';
   if (/pdf/.test(t)) return 'pdf';
+  // Events last: "תמונה לאירוע" should stay an image request — only a message
+  // that matched nothing else lands here.
+  if (/^5\.?$/.test(t) || /(אירוע|חגים|לוח שנה|מועדים|events)/.test(t) || /^חג\.?$/.test(t)) return 'events';
   return null;
 }
 
@@ -1479,6 +1485,331 @@ async function buildRevisionResult(
   return { kind: 'revision_request', outputType, brief };
 }
 
+// ── events & holidays browsing (mirrors the site's holidays calendar) ────────
+// Main menu option 5: browse israel_holidays (the same table the site calendar
+// shows) either by upcoming dates or by a specific month, pick an event, and
+// turn it into a deliverable — the WhatsApp twin of the site's "קבלו רעיון".
+type FlowEventItem = {
+  id: string;
+  date: string; // YYYY-MM-DD
+  title: string; // hebrew_title preferred, like the site
+  memo: string | null;
+  major: boolean;
+  modern: boolean;
+};
+
+const EVENT_MONTHS_HE = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+const EVENT_WEEKDAYS_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
+const EVENTS_MENU_TEXT = [
+  'אירועים וחגים 🗓️',
+  'אציג לכם אירועים וחגים מהלוח, ולכל אירוע אפשר לקבל רעיון לתוכן מוכן 💡',
+  '',
+  '1️⃣ אירועים קרובים',
+  '2️⃣ לפי חודש',
+  '3️⃣ חזרה להתחלה',
+  '',
+  'אפשר להשיב במספר או במילה.',
+].join('\n');
+
+const EVENTS_MENU_INTERACTION: WhatsAppInteractive = {
+  kind: 'quick_reply',
+  body: 'אירועים וחגים 🗓️ מה להציג?',
+  options: [
+    { id: '1', title: 'אירועים קרובים' },
+    { id: '2', title: 'לפי חודש' },
+    { id: 'main_menu', title: 'חזרה להתחלה' },
+  ],
+};
+
+// Same visual language as the site calendar tones: major = amber, modern = blue.
+function eventEmoji(event: FlowEventItem): string {
+  if (event.major) return '⭐';
+  if (event.modern) return '🇮🇱';
+  return '📅';
+}
+
+// "יום שלישי, 14/07/2026" — the site's dd/mm/yyyy label plus a weekday.
+function eventDateLabel(date: string): string {
+  const [y, mo, d] = date.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, mo - 1, d)).getUTCDay();
+  const dayName = dow === 6 ? 'שבת' : `יום ${EVENT_WEEKDAYS_HE[dow]}`;
+  return `${dayName}, ${String(d).padStart(2, '0')}/${String(mo).padStart(2, '0')}/${y}`;
+}
+
+function isoFromParts(y: number, mo: number, d: number): string {
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+async function fetchHolidayEvents(
+  database: DB,
+  fromIso: string,
+  toIso: string,
+  limit: number
+): Promise<FlowEventItem[]> {
+  const { data } = await database
+    .from('israel_holidays')
+    .select('id, date, title, hebrew_title, memo, is_major, subcategory')
+    .gte('date', fromIso)
+    .lte('date', toIso)
+    .order('date', { ascending: true })
+    .limit(limit);
+  return (data ?? []).map((h: Record<string, unknown>) => ({
+    id: h.id as string,
+    date: h.date as string,
+    title: ((h.hebrew_title as string | null) || (h.title as string)) ?? '',
+    memo: (h.memo as string | null) ?? null,
+    major: h.is_major === true,
+    modern: h.subcategory === 'modern',
+  }));
+}
+
+function buildEventsListMessage(events: FlowEventItem[], header: string): string {
+  const lines = [header, ''];
+  events.forEach((event, i) => {
+    lines.push(`${i + 1}️⃣ ${eventEmoji(event)} ${event.title} — ${eventDateLabel(event.date)}`);
+  });
+  lines.push(
+    '',
+    'השיבו במספר של אירוע כדי לקבל רעיון לתוכן 💡',
+    'אפשר גם לכתוב "חודש" לבחירת חודש אחר, או "תפריט" לחזרה להתחלה.',
+  );
+  return lines.join('\n');
+}
+
+function buildEventsListInteraction(events: FlowEventItem[]): WhatsAppInteractive {
+  return {
+    kind: 'list_picker',
+    body: 'בחרו אירוע לקבלת רעיון לתוכן 💡',
+    button: 'בחירת אירוע',
+    options: events.slice(0, 10).map((event, i) => ({
+      id: String(i + 1),
+      title: event.title.slice(0, 24),
+      description: eventDateLabel(event.date),
+    })),
+  };
+}
+
+// The next 10 months (list-picker platform limit), starting from the current one.
+function buildMonthOptions(): Array<{ id: string; y: number; mo: number; label: string }> {
+  const now = israelNowParts();
+  return Array.from({ length: 10 }, (_, i) => {
+    const total = now.mo - 1 + i;
+    const y = now.y + Math.floor(total / 12);
+    const mo = (total % 12) + 1;
+    return { id: `m-${y}-${String(mo).padStart(2, '0')}`, y, mo, label: `${EVENT_MONTHS_HE[mo - 1]} ${y}` };
+  });
+}
+
+function buildMonthPromptMessage(): string {
+  const names = buildMonthOptions().map((m, i) => `${i + 1}️⃣ ${m.label}`);
+  return [
+    'לאיזה חודש להציג אירועים וחגים? 🗓️',
+    '',
+    ...names,
+    '',
+    'אפשר להשיב במספר, בשם חודש (למשל "אוקטובר" או "מרץ 2027"), או "תפריט" לחזרה.',
+  ].join('\n');
+}
+
+function buildMonthPickerInteraction(): WhatsAppInteractive {
+  return {
+    kind: 'list_picker',
+    body: 'לאיזה חודש להציג אירועים וחגים? 🗓️',
+    button: 'בחירת חודש',
+    options: buildMonthOptions().map((m) => ({
+      id: m.id,
+      title: m.label,
+      description: `אירועים וחגים ב${m.label}`,
+    })),
+  };
+}
+
+function parseMonthChoice(text: string): { y: number; mo: number } | null {
+  const raw = (text ?? '').trim().toLowerCase();
+  const t = norm(text);
+  if (!t || t.length > 30) return null;
+  const now = israelNowParts();
+  const options = buildMonthOptions();
+  // list-picker id ("m-2026-08") — checked on the RAW text because norm()
+  // strips dashes. Real WhatsApp replies with the item id/title.
+  const idMatch = raw.match(/^m-(\d{4})-(\d{2})$/);
+  if (idMatch) return { y: Number(idMatch[1]), mo: Number(idMatch[2]) };
+  // Hebrew month name, optional year ("אוקטובר", "מרץ 2027").
+  const nameIndex = EVENT_MONTHS_HE.findIndex((name) => t.includes(name));
+  const yearMatch = t.match(/(20\d{2})/);
+  if (nameIndex >= 0) {
+    const mo = nameIndex + 1;
+    let y = yearMatch ? Number(yearMatch[1]) : now.y;
+    if (!yearMatch && mo < now.mo) y += 1; // a month already behind us means next year
+    return { y, mo };
+  }
+  // A menu ordinal (1 = current month, 2 = next…) — matches the numbered text menu.
+  const numMatch = t.match(/^(\d{1,2})\.?$/);
+  if (numMatch) {
+    const pick = options[Number(numMatch[1]) - 1];
+    if (pick) return { y: pick.y, mo: pick.mo };
+    return null;
+  }
+  // "8/2026" style — raw text, since norm() strips "." and "-".
+  const slashMatch = raw.match(/^(\d{1,2})[\/.\-](\d{4})$/);
+  if (slashMatch) {
+    const mo = Number(slashMatch[1]);
+    if (mo < 1 || mo > 12) return null;
+    return { y: Number(slashMatch[2]), mo };
+  }
+  return null;
+}
+
+function parseEventsScopeChoice(text: string): 'upcoming' | 'month' | null {
+  const t = norm(text);
+  if (!t || t.length > 30) return null;
+  if (/^1\.?$/.test(t) || /(קרובים|קרוב|upcoming)/.test(t)) return 'upcoming';
+  if (/^2\.?$/.test(t) || /(חודש|month)/.test(t)) return 'month';
+  return null;
+}
+
+function parseSelectedEventIndex(text: string, events: FlowEventItem[]): number | null {
+  const t = norm(text);
+  if (!t || t.length > 40) return null;
+  const numMatch = t.match(/^(\d{1,2})\.?$/);
+  if (numMatch) {
+    const idx = Number(numMatch[1]) - 1;
+    return idx >= 0 && idx < events.length ? idx : null;
+  }
+  // Tapping a list-picker item echoes its (possibly truncated) title back.
+  const idx = events.findIndex(
+    (event) => norm(event.title) === t || norm(event.title.slice(0, 24)) === t
+  );
+  return idx >= 0 ? idx : null;
+}
+
+function buildEventTypeMessage(event: FlowEventItem): string {
+  const lines = [`${eventEmoji(event)} ${event.title}`, eventDateLabel(event.date)];
+  if (event.memo) lines.push(event.memo);
+  lines.push(
+    '',
+    'מה להכין לאירוע הזה? 💡',
+    '',
+    '1️⃣ תמונה / פוסט',
+    '2️⃣ מסמך',
+    '3️⃣ מצגת',
+    '4️⃣ חזרה לרשימת האירועים',
+  );
+  return lines.join('\n');
+}
+
+function buildEventTypeInteraction(event: FlowEventItem): WhatsAppInteractive {
+  return {
+    kind: 'list_picker',
+    body: `${eventEmoji(event)} ${event.title} — ${eventDateLabel(event.date)}\nמה להכין לאירוע הזה? 💡`,
+    button: 'בחירת תוצר',
+    options: [
+      { id: '1', title: 'תמונה / פוסט', description: 'פוסט או גרפיקה לאירוע' },
+      { id: '2', title: 'מסמך', description: 'מסמך לאירוע' },
+      { id: '3', title: 'מצגת', description: 'מצגת לאירוע' },
+      { id: 'back', title: 'חזרה לרשימה', description: 'חזרה לרשימת האירועים' },
+    ],
+  };
+}
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  image: 'תמונה / פוסט',
+  pdf: 'מסמך',
+  presentation: 'מצגת',
+};
+
+function buildEventDetailsPrompt(event: FlowEventItem, outputType: string): string {
+  return [
+    `מעולה! ${EVENT_TYPE_LABELS[outputType] ?? outputType} עבור ${event.title} ✨`,
+    '',
+    'רוצים להוסיף דגשים משלכם? כתבו אותם עכשיו (קהל יעד, מסר, סגנון...),',
+    'או השיבו "הכן לפי האירוע" ואבנה רעיון מוכן לפי האירוע.',
+  ].join('\n');
+}
+
+const EVENT_DETAILS_INTERACTION: WhatsAppInteractive = {
+  kind: 'quick_reply',
+  body: 'אפשר לכתוב דגשים משלכם, או:',
+  options: [
+    { id: 'auto', title: 'הכן לפי האירוע' },
+    { id: 'back', title: 'חזרה לרשימה' },
+  ],
+};
+
+// The WhatsApp twin of the site calendar's buildProductionIdeaPrompt — the
+// synthesized brief that feeds the normal generation pipeline.
+function buildEventIdeaBrief(event: FlowEventItem, outputType: string, notes: string | null): string {
+  const typeLabel = outputType === 'image'
+    ? 'תמונה / פוסט לרשתות החברתיות'
+    : outputType === 'presentation' ? 'מצגת' : 'מסמך';
+  const lines = [
+    `צרו ${typeLabel} עבור האירוע/החג: ${event.title}.`,
+    `תאריך: ${eventDateLabel(event.date)}.`,
+  ];
+  if (event.memo) lines.push(`פרטי האירוע: ${event.memo}`);
+  if (notes && notes.trim()) lines.push(`דגשים מהמשתמש: ${notes.trim()}`);
+  lines.push(
+    'הציעו רעיון מרכזי ברור לתוכן עבור האירוע, בהתאמה לעסק.',
+    'כתבו בשפה עברית עסקית, קצרה וברורה, עם רעיון מרכזי, קהל יעד, מסר מוביל וקריאה לפעולה.',
+  );
+  return lines.join('\n');
+}
+
+// Fetch + show the nearest upcoming events (next half year, up to 8 — enough to
+// mirror the site's "what's coming" view without flooding the chat).
+async function showUpcomingEvents(
+  database: DB,
+  conversation: FlowConversation,
+  send: SendFn
+): Promise<FlowResult> {
+  const now = israelNowParts();
+  const to = new Date(Date.UTC(now.y, now.mo - 1, now.d));
+  to.setUTCDate(to.getUTCDate() + 180);
+  const events = await fetchHolidayEvents(
+    database,
+    isoFromParts(now.y, now.mo, now.d),
+    isoFromParts(to.getUTCFullYear(), to.getUTCMonth() + 1, to.getUTCDate()),
+    8
+  );
+  if (!events.length) {
+    const delivered = await send(
+      'לא מצאתי אירועים קרובים בלוח 🤷 נסו לבחור חודש:',
+      buildMonthPickerInteraction()
+    );
+    if (delivered) await setFlow(database, conversation.id, { flow_state: 'events_month', flow_context: {} });
+    return { kind: 'handled' };
+  }
+  const delivered = await send(
+    buildEventsListMessage(events, 'האירועים והחגים הקרובים 🗓️'),
+    buildEventsListInteraction(events)
+  );
+  if (delivered) {
+    await setFlow(database, conversation.id, { flow_state: 'events_list', flow_context: { events } });
+  }
+  return { kind: 'handled' };
+}
+
+// Re-show the last events list (or fall back to the events menu when the
+// context was lost, e.g. a very old conversation row).
+async function showEventsListAgain(
+  database: DB,
+  conversation: FlowConversation,
+  send: SendFn,
+  events: FlowEventItem[]
+): Promise<void> {
+  if (events.length) {
+    const delivered = await send(
+      buildEventsListMessage(events, 'רשימת האירועים 🗓️'),
+      buildEventsListInteraction(events)
+    );
+    if (delivered) await setFlow(database, conversation.id, { flow_state: 'events_list', flow_context: { events } });
+    return;
+  }
+  const delivered = await send(EVENTS_MENU_TEXT, EVENTS_MENU_INTERACTION);
+  if (delivered) await setFlow(database, conversation.id, { flow_state: 'events_menu', flow_context: {} });
+}
+
 export async function showMainMenu(
   database: DB,
   conversation: FlowConversation,
@@ -1544,6 +1875,18 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await startDeckFlow(database, conversation, send);
         return { kind: 'handled' };
       }
+      if (choice === 'events') {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        const delivered = await send(EVENTS_MENU_TEXT, EVENTS_MENU_INTERACTION);
+        if (delivered) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'events_menu',
+            selected_output_type: null,
+            flow_context: {},
+          });
+        }
+        return { kind: 'handled' };
+      }
       if (choice) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
         const prompt = BRIEF_PROMPTS[choice];
@@ -1595,6 +1938,19 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (choice === 'presentation') {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
         await startDeckFlow(database, conversation, send);
+        return { kind: 'handled' };
+      }
+      // Changed their mind — they want to browse events, not write a brief.
+      if (choice === 'events') {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        const delivered = await send(EVENTS_MENU_TEXT, EVENTS_MENU_INTERACTION);
+        if (delivered) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'events_menu',
+            selected_output_type: null,
+            flow_context: {},
+          });
+        }
         return { kind: 'handled' };
       }
       // Re-tapping the same option (double-click / impatience) must not become
@@ -2407,6 +2763,164 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       return await startDeckEmailProduction(database, conversation, identity, send, deck, deck.selected, emails);
+    }
+
+    // ── events & holidays: scope (upcoming / by month) ───────────────────────
+    case 'events_menu': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const scope = parseEventsScopeChoice(text);
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      // "3" = back to start (the "חזרה להתחלה" title itself is caught upstream
+      // by the global reset command).
+      if (!scope && /^3\.?$/.test(norm(text))) {
+        await showMainMenu(database, conversation, identity, send);
+        return { kind: 'handled' };
+      }
+      if (scope === 'upcoming') {
+        return await showUpcomingEvents(database, conversation, send);
+      }
+      if (scope === 'month') {
+        const delivered = await send(buildMonthPromptMessage(), buildMonthPickerInteraction());
+        if (delivered) await setFlow(database, conversation.id, { flow_state: 'events_month', flow_context: {} });
+        return { kind: 'handled' };
+      }
+      await send(EVENTS_MENU_TEXT, EVENTS_MENU_INTERACTION);
+      return { kind: 'handled' };
+    }
+
+    // ── events & holidays: month selection ───────────────────────────────────
+    case 'events_month': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const month = parseMonthChoice(text);
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (!month) {
+        await send(buildMonthPromptMessage(), buildMonthPickerInteraction());
+        return { kind: 'handled' };
+      }
+      const lastDay = new Date(Date.UTC(month.y, month.mo, 0)).getUTCDate();
+      const events = await fetchHolidayEvents(
+        database,
+        isoFromParts(month.y, month.mo, 1),
+        isoFromParts(month.y, month.mo, lastDay),
+        10
+      );
+      const label = `${EVENT_MONTHS_HE[month.mo - 1]} ${month.y}`;
+      if (!events.length) {
+        await send(`לא מצאתי אירועים או חגים ב${label} 🤷 בחרו חודש אחר:`, buildMonthPickerInteraction());
+        return { kind: 'handled' };
+      }
+      const delivered = await send(
+        buildEventsListMessage(events, `אירועים וחגים ב${label} 🗓️`),
+        buildEventsListInteraction(events)
+      );
+      if (delivered) await setFlow(database, conversation.id, { flow_state: 'events_list', flow_context: { events } });
+      return { kind: 'handled' };
+    }
+
+    // ── events & holidays: pick an event from the shown list ─────────────────
+    case 'events_list': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const events = Array.isArray(ctx.events) ? (ctx.events as FlowEventItem[]) : [];
+      const t = norm(text);
+      if (t.length <= 20 && /(חודש|month)/.test(t)) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        const delivered = await send(buildMonthPromptMessage(), buildMonthPickerInteraction());
+        if (delivered) await setFlow(database, conversation.id, { flow_state: 'events_month', flow_context: {} });
+        return { kind: 'handled' };
+      }
+      const idx = parseSelectedEventIndex(text, events);
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (idx == null || !events[idx]) {
+        await send('לא זיהיתי את הבחירה 🤔 השיבו במספר של אירוע מהרשימה, "חודש" לבחירת חודש אחר, או "תפריט" לחזרה.');
+        return { kind: 'handled' };
+      }
+      const event = events[idx];
+      const delivered = await send(buildEventTypeMessage(event), buildEventTypeInteraction(event));
+      if (delivered) {
+        await setFlow(database, conversation.id, {
+          flow_state: 'events_output_type',
+          flow_context: { events, selected_event: event },
+        });
+      }
+      return { kind: 'handled' };
+    }
+
+    // ── events & holidays: which deliverable to create for the event ─────────
+    case 'events_output_type': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const events = Array.isArray(ctx.events) ? (ctx.events as FlowEventItem[]) : [];
+      const event = (ctx.selected_event ?? null) as FlowEventItem | null;
+      if (!event) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await showEventsListAgain(database, conversation, send, events);
+        return { kind: 'handled' };
+      }
+      const t = norm(text);
+      const wantsBack = /^4\.?$/.test(t) || (t.length <= 20 && /(חזרה|רשימה|back)/.test(t));
+      const choice = wantsBack ? null : parseMainMenuChoice(text);
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (wantsBack) {
+        await showEventsListAgain(database, conversation, send, events);
+        return { kind: 'handled' };
+      }
+      if (choice === 'image' || choice === 'pdf' || choice === 'presentation') {
+        const delivered = await send(buildEventDetailsPrompt(event, choice), EVENT_DETAILS_INTERACTION);
+        if (delivered) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'events_details',
+            flow_context: { events, selected_event: event, event_output_type: choice },
+          });
+        }
+        return { kind: 'handled' };
+      }
+      await send(buildEventTypeMessage(event), buildEventTypeInteraction(event));
+      return { kind: 'handled' };
+    }
+
+    // ── events & holidays: optional user notes → synthesized brief ───────────
+    case 'events_details': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const events = Array.isArray(ctx.events) ? (ctx.events as FlowEventItem[]) : [];
+      const event = (ctx.selected_event ?? null) as FlowEventItem | null;
+      const outputType = typeof ctx.event_output_type === 'string' ? ctx.event_output_type : 'image';
+      if (!event) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await showEventsListAgain(database, conversation, send, events);
+        return { kind: 'handled' };
+      }
+      const t = norm(text);
+      if (t.length <= 20 && /(חזרה|רשימה|back)/.test(t)) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await showEventsListAgain(database, conversation, send, events);
+        return { kind: 'handled' };
+      }
+      // Full-match skip words only — notes that merely START with "צור" must
+      // stay notes ("צור פוסט מרגש" is a real instruction).
+      const isAuto = /^(הכן( לפי האירוע)?|הכן רעיון|צור|דלג|אין( דגשים)?|בלי( דגשים)?|אוטומטי|auto|skip|go)\.?$/.test(t);
+      if (!isAuto && text.trim().length < 2) {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await send(buildEventDetailsPrompt(event, outputType), EVENT_DETAILS_INTERACTION);
+        return { kind: 'handled' };
+      }
+      const notes = isAuto ? null : text.trim();
+      // Not claiming here — the caller creates the request and claims the
+      // message onto it (same as the awaiting_brief path).
+      return { kind: 'new_request', outputType, briefText: buildEventIdeaBrief(event, outputType, notes) };
     }
 
     default:

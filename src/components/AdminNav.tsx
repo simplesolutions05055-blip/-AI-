@@ -176,19 +176,14 @@ export function AdminBottomNav({
 }) {
   const { pathname } = useLocation();
   const allLinks = visibleSections(isAdmin, canCreateOutputs).flatMap((sec) => sec.links);
-  // Desktop: dashboard, production, files, requests
-  // Mobile: dashboard, production, files, branding (for easy brand access)
-  const primaryHrefs = isAdmin
-    ? ['/admin', '/admin/production', '/admin/files', '/admin/requests']
-    : ['/admin/production', '/admin/files'];
-  // Mobile version: show branding instead of requests (admins only)
+  // Keep the mobile bar to five destinations including "More". Secondary
+  // destinations remain available in the full menu so compact phones retain
+  // comfortable 48px+ touch targets.
   const mobileHrefs = isAdmin
-    ? ['/admin', '/admin/production', '/admin/files', '/admin/holidays', '/admin/branding']
+    ? ['/admin', '/admin/production', '/admin/files', '/admin/holidays']
     : ['/admin/production', '/admin/files', '/admin/holidays', '/admin/user-settings'];
 
-  // Use mobile version which swaps requests for branding for better mobile UX
-  const itemHrefs = mobileHrefs;
-  const items = itemHrefs
+  const items = mobileHrefs
     .map((href) => allLinks.find((link) => link.href === href))
     .filter(Boolean) as NavLink[];
   const activeInPrimary = items.some((item) => isActivePath(pathname, item.href));
@@ -196,9 +191,9 @@ export function AdminBottomNav({
   return (
     <nav
       aria-label="ניווט ראשי"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-[#d7e3e0] bg-white/95 px-[max(0.5rem,var(--safe-right))] pb-[calc(var(--safe-bottom)+0.375rem)] pt-1.5 shadow-[0_-10px_28px_rgba(7,26,51,0.1)] backdrop-blur lg:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-[#d7e3e0] bg-white/95 pb-[max(0.5rem,var(--safe-bottom))] pl-[max(0.75rem,var(--safe-left))] pr-[max(0.75rem,var(--safe-right))] pt-2 shadow-[0_-10px_28px_rgba(7,26,51,0.1)] backdrop-blur lg:hidden"
     >
-      <div className="mx-auto grid max-w-md items-end gap-1" style={{ gridTemplateColumns: `repeat(${items.length + 1}, minmax(0, 1fr))` }}>
+      <div className="mx-auto grid max-w-lg items-stretch gap-1" style={{ gridTemplateColumns: `repeat(${items.length + 1}, minmax(0, 1fr))` }}>
         {items.map((item) => {
           const active = isActivePath(pathname, item.href);
           return (
@@ -206,7 +201,7 @@ export function AdminBottomNav({
               key={item.href}
               to={item.href}
               aria-current={active ? 'page' : undefined}
-              className={`flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${
+              className={`flex min-h-[3.75rem] touch-manipulation select-none flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${
                 active ? 'bg-[#edf4f2] text-[#071a33] shadow-[inset_0_3px_0_#10b981]' : 'text-[#526372] hover:bg-[#edf4f2] hover:text-[#071a33]'
               }`}
             >
@@ -219,7 +214,7 @@ export function AdminBottomNav({
           type="button"
           onClick={onOpenMenu}
           aria-label="פתיחת כל התפריט"
-          className={`flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${
+          className={`flex min-h-[3.75rem] touch-manipulation select-none flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${
             activeInPrimary ? 'text-[#526372] hover:bg-[#edf4f2] hover:text-[#071a33]' : 'text-[#10b981] hover:bg-[#edf4f2]'
           }`}
         >

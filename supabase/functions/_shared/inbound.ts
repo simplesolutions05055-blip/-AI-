@@ -419,7 +419,7 @@ async function createFlowRequest(
   userId: string | null,
   brandId: string | null,
   flow:
-    | { kind: 'new_request'; outputType: string }
+    | { kind: 'new_request'; outputType: string; briefText?: string }
     | { kind: 'revision_request'; outputType: string; brief: Record<string, unknown> }
 ): Promise<InboundResult> {
   const { conversation, from, body, messageSid, numMedia, templates, simulated, resolveMedia } = opts;
@@ -445,7 +445,12 @@ async function createFlowRequest(
     // must not send its own "אני עובד על זה" preflight (message economy).
     structured_brief: isRevision
       ? { ...flow.brief, ack_sent: true }
-      : { output_type: flow.outputType, output_type_locked: true, source: 'whatsapp_menu', ack_sent: true },
+      : {
+          output_type: flow.outputType,
+          output_type_locked: true,
+          source: flow.briefText ? 'whatsapp_events' : 'whatsapp_menu',
+          ack_sent: true,
+        },
   }).select('id').single();
   if (reqErr || !newReq) {
     await logEvent(database, { severity: 'error', action: 'flow_request_create_failed', message: String(reqErr) });
@@ -492,15 +497,18 @@ async function createFlowRequest(
   if (media.anyRejected) {
     await sendOut(database, conversation.id, requestId, from, templates.rejected_media, simulated);
   }
+  // Events flow: the synthesized event-idea brief IS the request brief (the raw
+  // user text — "הכן" or their notes — is already folded into it).
+  const briefText = !isRevision && flow.kind === 'new_request' ? flow.briefText ?? null : null;
   await database.from('messages').update({
-    body: media.effectiveBody, media_type: media.firstMediaType, storage_path: media.firstStoragePath,
+    body: briefText ?? media.effectiveBody, media_type: media.firstMediaType, storage_path: media.firstStoragePath,
   }).eq('twilio_message_sid', messageSid);
   await database.from('jobs').insert({ request_id: requestId, job_type: 'process-request', status: 'pending' });
 
   await logEvent(database, {
     requestId,
     action: isRevision ? 'whatsapp_revision_started' : 'whatsapp_menu_brief_received',
-    metadata: { output_type: flow.outputType, user_id: userId, num_media: numMedia },
+    metadata: { output_type: flow.outputType, user_id: userId, num_media: numMedia, source: briefText ? 'events' : 'menu' },
   });
 
   return { requestIdToProcess: requestId };
