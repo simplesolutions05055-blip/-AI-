@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, ChevronLeft, ChevronRight, Copy, Download, Eye, Lightbulb, Trash2, X } from 'lucide-react';
 import { randomUUID } from '@/lib/uuid';
@@ -143,10 +143,22 @@ function hebrewDateLabel(date: string) {
   return new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(year, month - 1, day));
 }
 
+function monthFromSearchParam(value: string | null) {
+  const match = /^(\d{4})-(\d{2})$/.exec(value ?? '');
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (year < 2000 || year > 2200 || month < 1 || month > 12) return null;
+  return new Date(year, month - 1, 1);
+}
+
 export default function HolidaysCalendarPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { profile } = useProfile();
   const [visibleMonth, setVisibleMonth] = useState(() => {
+    const linkedMonth = monthFromSearchParam(searchParams.get('month'));
+    if (linkedMonth) return linkedMonth;
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
   });
@@ -191,6 +203,7 @@ export default function HolidaysCalendarPage() {
   const month = visibleMonth.getMonth();
   const hasSingleBrand = brands.length === 1;
   const selectedBrand = brands.find((brand) => brand.id === selectedBrandId) ?? null;
+  const deepLinkedPostId = searchParams.get('post')?.trim() || null;
 
   useEffect(() => {
     const db = createSupabaseBrowserClient();
@@ -429,6 +442,12 @@ export default function HolidaysCalendarPage() {
     setMobileAgendaDate(mobileActiveDate);
   }, [mobileActiveDate, mobileAgendaDate]);
 
+  useEffect(() => {
+    if (!deepLinkedPostId || editPostId) return;
+    const linkedPost = scheduledPosts.find((post) => post.id === deepLinkedPostId);
+    if (linkedPost) openEditSchedule(linkedPost);
+  }, [deepLinkedPostId, editPostId, scheduledPosts]);
+
   function moveMonth(delta: number) {
     setVisibleMonth((value) => new Date(value.getFullYear(), value.getMonth() + delta, 1));
   }
@@ -471,6 +490,12 @@ export default function HolidaysCalendarPage() {
       for (const item of current) if (item.source === 'upload' && !item.storagePath) URL.revokeObjectURL(item.url);
       return [];
     });
+    if (editPostId && searchParams.get('post') === editPostId) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('post');
+      nextParams.delete('month');
+      setSearchParams(nextParams, { replace: true });
+    }
     setEditPostId(null);
   }
 
@@ -556,6 +581,13 @@ export default function HolidaysCalendarPage() {
     }
 
     setScheduledPosts((current) => current.filter((item) => item.id !== post.id));
+    if (searchParams.get('post') === post.id) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('post');
+      nextParams.delete('month');
+      setSearchParams(nextParams, { replace: true });
+    }
+    setEditPostId((current) => current === post.id ? null : current);
     setSelectedPostId(null);
     setDeleteConfirmPostId(null);
     setScheduleRefreshKey((value) => value + 1);

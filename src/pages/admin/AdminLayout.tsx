@@ -20,7 +20,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [navOpen, setNavOpen] = useState(false);
   const [navMounted, setNavMounted] = useState(false);
   const [navVisible, setNavVisible] = useState(false);
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
   const navigate = useNavigate();
 
   // Theme the whole app with the user's brand color when exactly one brand is
@@ -65,7 +66,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }, [navOpen]);
 
   if (loading) return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]"><Spinner /></main>;
-  if (!profile) return <Navigate to="/login" replace />;
+  if (!profile) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
 
   // Force onboarding before the app: user details always, plus the upload steps
   // when the admin made them mandatory and the user has a brand.

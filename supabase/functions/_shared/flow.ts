@@ -17,6 +17,29 @@ import { renderDocxBase64 } from './docx.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from './abuseGuard.ts';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const APP_BASE_URL = (
+  Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || 'https://primeos.co.il'
+).replace(/\/+$/, '');
+
+function scheduleCalendarUrl(postId: string | null | undefined, scheduledAt: string) {
+  const url = new URL('/admin/holidays', `${APP_BASE_URL}/`);
+  if (postId) url.searchParams.set('post', postId);
+
+  const date = new Date(scheduledAt);
+  if (!Number.isNaN(date.getTime())) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Jerusalem',
+      year: 'numeric',
+      month: '2-digit',
+    }).formatToParts(date);
+    const year = parts.find((part) => part.type === 'year')?.value;
+    const month = parts.find((part) => part.type === 'month')?.value;
+    if (year && month) url.searchParams.set('month', `${year}-${month}`);
+  }
+
+  return url.toString();
+}
+
 function decodeBase64(b64: string): Uint8Array {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -147,10 +170,11 @@ export function buildMainMenu(displayName: string): string {
     '1️⃣ תמונה / פוסט',
     '2️⃣ מסמך',
     '3️⃣ מצגת 📊',
-    '4️⃣ תזמון פוסט לרשתות 📅',
-    '5️⃣ אירועים וחגים 🗓️',
+    '4️⃣ קבלו רעיון 💡',
+    '5️⃣ תזמון פוסט לרשתות 📅',
+    '6️⃣ ניהול תזמונים 🗂️',
     '',
-    'אפשר להשיב במספר (1/2/3/4/5) או במילה.',
+    'אפשר להשיב במספר (1-6) או במילה.',
   ].join('\n');
 }
 
@@ -163,8 +187,9 @@ export function buildMainMenuInteraction(): WhatsAppInteractive {
       { id: '1', title: 'תמונה / פוסט', description: 'יצירת תמונה או פוסט חדש' },
       { id: '2', title: 'מסמך', description: 'יצירת מסמך חדש' },
       { id: '3', title: 'מצגת', description: 'יצירת מצגת חדשה' },
-      { id: '4', title: 'תזמון פוסט', description: 'תזמון פרסום לרשתות' },
-      { id: '5', title: 'אירועים וחגים', description: 'רעיונות לתוכן לפי אירועים וחגים קרובים' },
+      { id: '4', title: 'קבלו רעיון', description: 'רעיון לתוכן לפי אירועים וחגים קרובים' },
+      { id: '5', title: 'תזמון פוסט', description: 'תזמון פרסום לרשתות' },
+      { id: '6', title: 'ניהול תזמונים', description: 'צפייה ועריכה של התזמונים הקרובים' },
     ],
   };
 }
@@ -360,18 +385,21 @@ function norm(text: string): string {
   return normalizeHe(text);
 }
 
-export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'pdf' | 'schedule_post' | 'events' | null {
+export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'pdf' | 'schedule_post' | 'events' | 'manage_schedules' | null {
   const t = norm(text);
   if (!t || t.length > 30) return null;
+  // Managing schedules must be checked before creating one — "ניהול תזמון"
+  // contains the schedule keyword.
+  if (/^6\.?$/.test(t) || /(ניהול|לנהל|תזמונים)/.test(t)) return 'manage_schedules';
   // Schedule keywords win over the generic "פוסט" (which alone means option 1).
-  if (/^4\.?$/.test(t) || /(תזמון|לתזמן|תזמן|פרסום|לפרסם|schedule)/.test(t)) return 'schedule_post';
+  if (/^5\.?$/.test(t) || /(תזמון|לתזמן|תזמן|פרסום|לפרסם|schedule)/.test(t)) return 'schedule_post';
   if (/^1\.?$/.test(t) || /(תמונה|פוסט|גרפיק|image|post)/.test(t)) return 'image';
   if (/^2\.?$/.test(t) || /(מסמך|document|מכתב)/.test(t)) return 'pdf';
   if (/^3\.?$/.test(t) || /(מצגת|presentation|שקפים)/.test(t)) return 'presentation';
   if (/pdf/.test(t)) return 'pdf';
   // Events last: "תמונה לאירוע" should stay an image request — only a message
   // that matched nothing else lands here.
-  if (/^5\.?$/.test(t) || /(אירוע|חגים|לוח שנה|מועדים|events)/.test(t) || /^חג\.?$/.test(t)) return 'events';
+  if (/^4\.?$/.test(t) || /(רעיון|אירוע|חגים|לוח שנה|מועדים|events|idea)/.test(t) || /^חג\.?$/.test(t)) return 'events';
   return null;
 }
 
@@ -1502,8 +1530,8 @@ const EVENT_MONTHS_HE = ['ינואר', 'פברואר', 'מרץ', 'אפריל', '
 const EVENT_WEEKDAYS_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
 const EVENTS_MENU_TEXT = [
-  'אירועים וחגים 🗓️',
-  'אציג לכם אירועים וחגים מהלוח, ולכל אירוע אפשר לקבל רעיון לתוכן מוכן 💡',
+  'קבלו רעיון 💡',
+  'אציג לכם אירועים וחגים מהלוח, ולכל אירוע אפשר לקבל רעיון לתוכן מוכן.',
   '',
   '1️⃣ אירועים קרובים',
   '2️⃣ לפי חודש',
@@ -1514,7 +1542,7 @@ const EVENTS_MENU_TEXT = [
 
 const EVENTS_MENU_INTERACTION: WhatsAppInteractive = {
   kind: 'quick_reply',
-  body: 'אירועים וחגים 🗓️ מה להציג?',
+  body: 'קבלו רעיון 💡 מה להציג?',
   options: [
     { id: '1', title: 'אירועים קרובים' },
     { id: '2', title: 'לפי חודש' },
@@ -1810,6 +1838,225 @@ async function showEventsListAgain(
   if (delivered) await setFlow(database, conversation.id, { flow_state: 'events_menu', flow_context: {} });
 }
 
+// ── scheduled-posts management (mirrors the site calendar's edit dialog) ─────
+// Main menu option 6: list the upcoming scheduled social posts and manage each
+// one — reschedule, rewrite the caption, cancel, or mark it published (the
+// exact actions the site's לוח פרסומים exposes).
+type FlowScheduleItem = {
+  id: string;
+  title: string | null;
+  platform: string;
+  caption: string;
+  scheduled_at: string;
+  status: string;
+  media_count: number;
+};
+
+const WEEKDAY_EN_TO_INDEX: Record<string, number> = {
+  Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+};
+
+// "יום רביעי 29/07/2026, 18:00" in Israel time.
+function scheduleWhenLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jerusalem',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const wdEn = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jerusalem', weekday: 'short' }).format(d);
+  const dow = WEEKDAY_EN_TO_INDEX[wdEn] ?? 0;
+  const dayName = dow === 6 ? 'שבת' : `יום ${EVENT_WEEKDAYS_HE[dow]}`;
+  return `${dayName} ${get('day')}/${get('month')}/${get('year')}, ${get('hour')}:${get('minute')}`;
+}
+
+function schedulePlatformHe(platform: string): string {
+  return platform === 'facebook' ? '📘 פייסבוק' : '📸 אינסטגרם';
+}
+
+function scheduleIsDue(post: FlowScheduleItem): boolean {
+  return post.status === 'scheduled' && new Date(post.scheduled_at).getTime() <= Date.now();
+}
+
+function scheduleDisplayTitle(post: FlowScheduleItem): string {
+  return (post.title ?? '').trim() || post.caption.split('\n')[0].slice(0, 60) || 'פוסט מתוזמן';
+}
+
+// The user's schedules: their brand's (like the site's per-brand calendar),
+// falling back to their own rows for brand-less (anonymous simulator) sessions.
+async function fetchUpcomingSchedules(
+  database: DB,
+  identity: Identity,
+  limit: number
+): Promise<FlowScheduleItem[]> {
+  let query = database
+    .from('scheduled_social_posts')
+    .select('id, title, platform, caption, scheduled_at, status, media')
+    .eq('status', 'scheduled')
+    .order('scheduled_at', { ascending: true })
+    .limit(limit);
+  if (identity.brandId) query = query.eq('brand_id', identity.brandId);
+  else if (identity.userId) query = query.eq('created_by', identity.userId);
+  else query = query.is('brand_id', null);
+  const { data } = await query;
+  return (data ?? []).map((r: Record<string, unknown>) => ({
+    id: r.id as string,
+    title: (r.title as string | null) ?? null,
+    platform: (r.platform as string) ?? 'facebook',
+    caption: (r.caption as string) ?? '',
+    scheduled_at: r.scheduled_at as string,
+    status: (r.status as string) ?? 'scheduled',
+    media_count: Array.isArray(r.media) ? r.media.length : 0,
+  }));
+}
+
+async function fetchScheduleById(database: DB, id: string): Promise<FlowScheduleItem | null> {
+  const { data } = await database
+    .from('scheduled_social_posts')
+    .select('id, title, platform, caption, scheduled_at, status, media')
+    .eq('id', id)
+    .maybeSingle();
+  if (!data) return null;
+  const r = data as Record<string, unknown>;
+  return {
+    id: r.id as string,
+    title: (r.title as string | null) ?? null,
+    platform: (r.platform as string) ?? 'facebook',
+    caption: (r.caption as string) ?? '',
+    scheduled_at: r.scheduled_at as string,
+    status: (r.status as string) ?? 'scheduled',
+    media_count: Array.isArray(r.media) ? r.media.length : 0,
+  };
+}
+
+function buildSchedulesListMessage(posts: FlowScheduleItem[]): string {
+  const lines = ['התזמונים הקרובים 🗂️', ''];
+  posts.forEach((post, i) => {
+    const due = scheduleIsDue(post) ? ' ⚠️ ממתין לפרסום ידני' : '';
+    lines.push(`${i + 1}️⃣ ${schedulePlatformHe(post.platform)} · ${scheduleWhenLabel(post.scheduled_at)}${due}`);
+    lines.push(`    ${scheduleDisplayTitle(post)}`);
+  });
+  lines.push(
+    '',
+    'השיבו במספר של תזמון כדי לנהל אותו (שינוי מועד / עריכה / ביטול) 🛠️',
+    'לחזרה להתחלה כתבו "תפריט".',
+  );
+  return lines.join('\n');
+}
+
+function buildSchedulesListInteraction(posts: FlowScheduleItem[]): WhatsAppInteractive {
+  return {
+    kind: 'list_picker',
+    body: 'בחרו תזמון לניהול 🗂️',
+    button: 'בחירת תזמון',
+    options: posts.slice(0, 10).map((post, i) => ({
+      id: String(i + 1),
+      title: scheduleDisplayTitle(post).slice(0, 24),
+      description: `${schedulePlatformHe(post.platform)} · ${scheduleWhenLabel(post.scheduled_at)}`.slice(0, 72),
+    })),
+  };
+}
+
+function buildScheduleManageMessage(post: FlowScheduleItem, dueShown: boolean): string {
+  const lines = [
+    'ניהול תזמון 🛠️',
+    `${schedulePlatformHe(post.platform)} · ${scheduleWhenLabel(post.scheduled_at)}`,
+  ];
+  if (dueShown) lines.push('⚠️ המועד עבר — הפוסט ממתין לפרסום ידני');
+  lines.push(`כותרת: ${scheduleDisplayTitle(post)}`);
+  if (post.media_count > 0) lines.push(`📎 ${post.media_count} קבצי מדיה`);
+  const caption = post.caption.trim();
+  if (caption) {
+    lines.push('', 'הטקסט:', caption.length > 400 ? `${caption.slice(0, 400)}…` : caption);
+  }
+  lines.push(
+    '',
+    'מה לעשות?',
+    '1️⃣ שינוי מועד 🕒',
+    '2️⃣ עריכת הטקסט 📝',
+    '3️⃣ ביטול התזמון ❌',
+    ...(dueShown ? ['4️⃣ סימון כפורסם ✅', '5️⃣ חזרה לרשימה'] : ['4️⃣ חזרה לרשימה']),
+  );
+  return lines.join('\n');
+}
+
+function buildScheduleManageInteraction(post: FlowScheduleItem, dueShown: boolean): WhatsAppInteractive {
+  const options = [
+    { id: '1', title: 'שינוי מועד', description: 'בחירת תאריך ושעה חדשים' },
+    { id: '2', title: 'עריכת הטקסט', description: 'החלפת טקסט הפוסט' },
+    { id: '3', title: 'ביטול התזמון', description: 'ביטול הפרסום המתוזמן' },
+    ...(dueShown ? [{ id: '4', title: 'סימון כפורסם', description: 'הפוסט פורסם ידנית' }] : []),
+    { id: 'back', title: 'חזרה לרשימה', description: 'חזרה לרשימת התזמונים' },
+  ];
+  return {
+    kind: 'list_picker',
+    body: `${scheduleDisplayTitle(post)} — מה לעשות? 🛠️`,
+    button: 'בחירת פעולה',
+    options,
+  };
+}
+
+type ScheduleManageAction = 'time' | 'caption' | 'cancel' | 'published' | 'back';
+
+function parseScheduleManageAction(text: string, dueShown: boolean): ScheduleManageAction | null {
+  const t = norm(text);
+  if (!t || t.length > 30) return null;
+  if (/^1\.?$/.test(t) || /(מועד|תאריך|שעה|לדחות|דחיה|להקדים)/.test(t)) return 'time';
+  if (/^2\.?$/.test(t) || /(טקסט|כיתוב|קפשן|caption|עריכה|לערוך)/.test(t)) return 'caption';
+  if (/^3\.?$/.test(t) || /(ביטול|בטל|למחוק|מחיקה|מחק|cancel)/.test(t)) return 'cancel';
+  if (/(פורסם|סימון|published)/.test(t)) return 'published';
+  if (/(חזרה|רשימה|back)/.test(t)) return 'back';
+  if (/^4\.?$/.test(t)) return dueShown ? 'published' : 'back';
+  if (/^5\.?$/.test(t) && dueShown) return 'back';
+  return null;
+}
+
+// Fetch + show the schedules list; empty state routes back to the main menu.
+async function showSchedulesList(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  send: SendFn
+): Promise<FlowResult> {
+  const posts = await fetchUpcomingSchedules(database, identity, 8);
+  if (!posts.length) {
+    await send('אין כרגע תזמונים קרובים 📭\nאפשר לתזמן פוסט חדש מהתפריט (אפשרות 5).');
+    await showMainMenu(database, conversation, identity, send);
+    return { kind: 'handled' };
+  }
+  const delivered = await send(buildSchedulesListMessage(posts), buildSchedulesListInteraction(posts));
+  if (delivered) {
+    await setFlow(database, conversation.id, {
+      flow_state: 'schedules_list',
+      flow_context: { schedules: posts.map((p) => ({ id: p.id, title: scheduleDisplayTitle(p) })) },
+    });
+  }
+  return { kind: 'handled' };
+}
+
+// Show one schedule's detail + actions; dueShown is stamped into the context so
+// the numbered menu stays stable even if the due state flips mid-conversation.
+async function showScheduleManage(
+  database: DB,
+  conversation: FlowConversation,
+  send: SendFn,
+  post: FlowScheduleItem
+): Promise<void> {
+  const dueShown = scheduleIsDue(post);
+  const delivered = await send(
+    buildScheduleManageMessage(post, dueShown),
+    buildScheduleManageInteraction(post, dueShown)
+  );
+  if (delivered) {
+    await setFlow(database, conversation.id, {
+      flow_state: 'schedule_manage',
+      flow_context: { schedule_id: post.id, due_shown: dueShown },
+    });
+  }
+}
+
 export async function showMainMenu(
   database: DB,
   conversation: FlowConversation,
@@ -1887,6 +2134,10 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         }
         return { kind: 'handled' };
       }
+      if (choice === 'manage_schedules') {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        return await showSchedulesList(database, conversation, identity, send);
+      }
       if (choice) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
         const prompt = BRIEF_PROMPTS[choice];
@@ -1952,6 +2203,12 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
           });
         }
         return { kind: 'handled' };
+      }
+      // Changed their mind — they want to manage schedules, not write a brief.
+      if (choice === 'manage_schedules') {
+        if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+        await setFlow(database, conversation.id, { selected_output_type: null });
+        return await showSchedulesList(database, conversation, identity, send);
       }
       // Re-tapping the same option (double-click / impatience) must not become
       // a garbage brief like "1" — just re-show the prompt.
@@ -2479,20 +2736,23 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
           return { kind: 'handled' };
         }
         try {
-          const { error } = await database.from('scheduled_social_posts').insert(
-            customPlatforms.map((platform) => ({
-              request_id: null,
-              output_id: null,
-              brand_id: identity.brandId,
-              title: caption.split('\n')[0].slice(0, 160) || null,
-              platform,
-              caption: caption.slice(0, 5000),
-              scheduled_at: customAtIso,
-              media,
-              status: 'scheduled',
-              created_by: identity.userId,
-            }))
-          );
+          const { data: scheduledRows, error } = await database
+            .from('scheduled_social_posts')
+            .insert(
+              customPlatforms.map((platform) => ({
+                request_id: null,
+                output_id: null,
+                brand_id: identity.brandId,
+                title: caption.split('\n')[0].slice(0, 160) || null,
+                platform,
+                caption: caption.slice(0, 5000),
+                scheduled_at: customAtIso,
+                media,
+                status: 'scheduled',
+                created_by: identity.userId,
+              }))
+            )
+            .select('id');
           if (error) throw error;
           await logEvent(database, {
             action: 'whatsapp_custom_post_scheduled',
@@ -2506,7 +2766,10 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
           const platformsLabel = customPlatforms
             .map((p) => (p === 'facebook' ? 'פייסבוק' : 'אינסטגרם'))
             .join(' + ');
-          await send(`נקבע! 📅 הפוסט תוזמן ל${platformsLabel} ב-${customLabel}. אפשר לראות ולנהל אותו בלוח התזמונים באתר.`);
+          const calendarUrl = scheduleCalendarUrl(scheduledRows?.[0]?.id as string | undefined, customAtIso);
+          await send(
+            `נקבע! 📅 הפוסט תוזמן ל${platformsLabel} ב-${customLabel}.\n\nלצפייה וניהול בתזמון:\n${calendarUrl}`
+          );
           await showMainMenu(database, conversation, identity, send);
         } catch (e) {
           await logEvent(database, {
@@ -2553,20 +2816,23 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
                 mime_type: output.mime_type,
               }]
             : [];
-        const { error } = await database.from('scheduled_social_posts').insert(
-          platforms.map((platform) => ({
-            request_id: requestId,
-            output_id: output?.id ?? null,
-            brand_id: (req?.brand_id as string | null) ?? identity.brandId,
-            title: String(brief.goal ?? '').slice(0, 160) || null,
-            platform,
-            caption: caption.slice(0, 5000),
-            scheduled_at: scheduleAtIso,
-            media,
-            status: 'scheduled',
-            created_by: identity.userId,
-          }))
-        );
+        const { data: scheduledRows, error } = await database
+          .from('scheduled_social_posts')
+          .insert(
+            platforms.map((platform) => ({
+              request_id: requestId,
+              output_id: output?.id ?? null,
+              brand_id: (req?.brand_id as string | null) ?? identity.brandId,
+              title: String(brief.goal ?? '').slice(0, 160) || null,
+              platform,
+              caption: caption.slice(0, 5000),
+              scheduled_at: scheduleAtIso,
+              media,
+              status: 'scheduled',
+              created_by: identity.userId,
+            }))
+          )
+          .select('id');
         if (error) throw error;
         await logEvent(database, {
           requestId,
@@ -2576,7 +2842,10 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         const platformLabel = platforms
           .map((p) => (p === 'facebook' ? 'פייסבוק' : 'אינסטגרם'))
           .join(' + ');
-        await send(`נקבע! 📅 הפוסט תוזמן ל${platformLabel} ב-${label}. אפשר לראות ולנהל אותו בלוח התזמונים באתר.`);
+        const calendarUrl = scheduleCalendarUrl(scheduledRows?.[0]?.id as string | undefined, scheduleAtIso);
+        await send(
+          `נקבע! 📅 הפוסט תוזמן ל${platformLabel} ב-${label}.\n\nלצפייה וניהול בתזמון:\n${calendarUrl}`
+        );
         scheduled = true;
       } catch (e) {
         await logEvent(database, {
@@ -2921,6 +3190,229 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // Not claiming here — the caller creates the request and claims the
       // message onto it (same as the awaiting_brief path).
       return { kind: 'new_request', outputType, briefText: buildEventIdeaBrief(event, outputType, notes) };
+    }
+
+    // ── schedules management: pick a scheduled post from the list ────────────
+    case 'schedules_list': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const schedules = Array.isArray(ctx.schedules)
+        ? (ctx.schedules as Array<{ id: string; title: string }>)
+        : [];
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      const t = norm(text);
+      let idx: number | null = null;
+      const numMatch = t.match(/^(\d{1,2})\.?$/);
+      if (numMatch) {
+        const n = Number(numMatch[1]) - 1;
+        idx = n >= 0 && n < schedules.length ? n : null;
+      } else {
+        // Tapping a list-picker item echoes its (truncated) title back.
+        const found = schedules.findIndex(
+          (s) => norm(s.title) === t || norm(s.title.slice(0, 24)) === t
+        );
+        idx = found >= 0 ? found : null;
+      }
+      if (idx == null) {
+        await send('לא זיהיתי את הבחירה 🤔 השיבו במספר של תזמון מהרשימה, או "תפריט" לחזרה.');
+        return { kind: 'handled' };
+      }
+      const post = await fetchScheduleById(database, schedules[idx].id);
+      if (!post || post.status !== 'scheduled') {
+        await send('התזמון הזה כבר לא פעיל (בוטל או פורסם בינתיים). הנה הרשימה המעודכנת:');
+        return await showSchedulesList(database, conversation, identity, send);
+      }
+      await showScheduleManage(database, conversation, send, post);
+      return { kind: 'handled' };
+    }
+
+    // ── schedules management: actions on one scheduled post ──────────────────
+    case 'schedule_manage': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const scheduleId = typeof ctx.schedule_id === 'string' ? ctx.schedule_id : null;
+      const dueShown = ctx.due_shown === true;
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (!scheduleId) return await showSchedulesList(database, conversation, identity, send);
+      const post = await fetchScheduleById(database, scheduleId);
+      if (!post || post.status !== 'scheduled') {
+        await send('התזמון הזה כבר לא פעיל. הנה הרשימה המעודכנת:');
+        return await showSchedulesList(database, conversation, identity, send);
+      }
+      const action = parseScheduleManageAction(text, dueShown);
+      if (action === 'back') {
+        return await showSchedulesList(database, conversation, identity, send);
+      }
+      if (action === 'time') {
+        const delivered = await send(
+          `לאיזה מועד להעביר את הפוסט? 🕒 (עכשיו: ${scheduleWhenLabel(post.scheduled_at)})\nכתבו תאריך ושעה, למשל:\n25/12 18:00\nאו: מחר 10:00 / היום 18:30\n\nלחזרה כתבו "חזרה".`
+        );
+        if (delivered) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'schedule_manage_datetime',
+            flow_context: { schedule_id: scheduleId, due_shown: dueShown },
+          });
+        }
+        return { kind: 'handled' };
+      }
+      if (action === 'caption') {
+        const delivered = await send('שלחו את הטקסט החדש לפוסט 📝 (הוא יחליף את הטקסט הנוכחי)\n\nלחזרה כתבו "חזרה".');
+        if (delivered) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'schedule_manage_caption',
+            flow_context: { schedule_id: scheduleId, due_shown: dueShown },
+          });
+        }
+        return { kind: 'handled' };
+      }
+      if (action === 'cancel') {
+        const delivered = await send(
+          `לבטל את התזמון של "${scheduleDisplayTitle(post)}" (${scheduleWhenLabel(post.scheduled_at)})? ❌\nהשיבו כן לביטול, או לא לחזרה.`,
+          {
+            kind: 'quick_reply',
+            body: 'לבטל את התזמון? ❌',
+            options: [
+              { id: 'yes', title: 'כן, לבטל' },
+              { id: 'no', title: 'לא, חזרה' },
+            ],
+          }
+        );
+        if (delivered) {
+          await setFlow(database, conversation.id, {
+            flow_state: 'schedule_manage_cancel',
+            flow_context: { schedule_id: scheduleId, due_shown: dueShown },
+          });
+        }
+        return { kind: 'handled' };
+      }
+      if (action === 'published') {
+        await database.from('scheduled_social_posts').update({ status: 'published' }).eq('id', scheduleId);
+        await logEvent(database, {
+          action: 'whatsapp_schedule_marked_published',
+          metadata: { schedule_id: scheduleId, user_id: identity.userId },
+        });
+        await send('סומן כפורסם ✅');
+        return await showSchedulesList(database, conversation, identity, send);
+      }
+      await showScheduleManage(database, conversation, send, post);
+      return { kind: 'handled' };
+    }
+
+    // ── schedules management: new date/time ──────────────────────────────────
+    case 'schedule_manage_datetime': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const scheduleId = typeof ctx.schedule_id === 'string' ? ctx.schedule_id : null;
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (!scheduleId) return await showSchedulesList(database, conversation, identity, send);
+      const post = await fetchScheduleById(database, scheduleId);
+      if (!post || post.status !== 'scheduled') {
+        await send('התזמון הזה כבר לא פעיל. הנה הרשימה המעודכנת:');
+        return await showSchedulesList(database, conversation, identity, send);
+      }
+      const t = norm(text);
+      if (isNoText(text) || /^(חזרה|חזור|back)\.?$/.test(t)) {
+        await showScheduleManage(database, conversation, send, post);
+        return { kind: 'handled' };
+      }
+      const parsed = parseScheduleDateTime(text);
+      if ('error' in parsed) {
+        await send(
+          parsed.error === 'past'
+            ? 'המועד הזה כבר עבר 🙂 כתבו תאריך ושעה עתידיים, למשל: 25/12 18:00'
+            : 'לא הצלחתי להבין את המועד 🙂 כתבו למשל: 25/12 18:00 או מחר 10:00\nלחזרה כתבו "חזרה".'
+        );
+        return { kind: 'handled' };
+      }
+      await database
+        .from('scheduled_social_posts')
+        .update({ scheduled_at: parsed.at.toISOString() })
+        .eq('id', scheduleId);
+      await logEvent(database, {
+        action: 'whatsapp_schedule_rescheduled',
+        metadata: { schedule_id: scheduleId, scheduled_at: parsed.at.toISOString(), user_id: identity.userId },
+      });
+      await send(`עודכן! 🕒 הפוסט מתוזמן עכשיו ל-${parsed.label}.`);
+      const updated = await fetchScheduleById(database, scheduleId);
+      if (updated) await showScheduleManage(database, conversation, send, updated);
+      else return await showSchedulesList(database, conversation, identity, send);
+      return { kind: 'handled' };
+    }
+
+    // ── schedules management: new caption ────────────────────────────────────
+    case 'schedule_manage_caption': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const scheduleId = typeof ctx.schedule_id === 'string' ? ctx.schedule_id : null;
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (!scheduleId) return await showSchedulesList(database, conversation, identity, send);
+      const post = await fetchScheduleById(database, scheduleId);
+      if (!post || post.status !== 'scheduled') {
+        await send('התזמון הזה כבר לא פעיל. הנה הרשימה המעודכנת:');
+        return await showSchedulesList(database, conversation, identity, send);
+      }
+      const t = norm(text);
+      if (isNoText(text) || /^(חזרה|חזור|back)\.?$/.test(t)) {
+        await showScheduleManage(database, conversation, send, post);
+        return { kind: 'handled' };
+      }
+      const caption = text.trim();
+      if (caption.length < 2) {
+        await send('הטקסט קצר מדי 🙂 שלחו את טקסט הפוסט המלא, או "חזרה" לחזרה.');
+        return { kind: 'handled' };
+      }
+      await database
+        .from('scheduled_social_posts')
+        .update({ caption: caption.slice(0, 5000) })
+        .eq('id', scheduleId);
+      await logEvent(database, {
+        action: 'whatsapp_schedule_caption_updated',
+        metadata: { schedule_id: scheduleId, user_id: identity.userId },
+      });
+      await send('הטקסט עודכן 📝');
+      const updated = await fetchScheduleById(database, scheduleId);
+      if (updated) await showScheduleManage(database, conversation, send, updated);
+      else return await showSchedulesList(database, conversation, identity, send);
+      return { kind: 'handled' };
+    }
+
+    // ── schedules management: cancel confirmation ────────────────────────────
+    case 'schedule_manage_cancel': {
+      if (numMedia > 0) {
+        await setFlow(database, conversation.id, { flow_state: null });
+        return { kind: 'not_handled' };
+      }
+      const scheduleId = typeof ctx.schedule_id === 'string' ? ctx.schedule_id : null;
+      if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+      if (!scheduleId) return await showSchedulesList(database, conversation, identity, send);
+      const t = norm(text);
+      if (isYesText(text) || /^(כן לבטל|לבטל)\.?$/.test(t)) {
+        await database.from('scheduled_social_posts').update({ status: 'cancelled' }).eq('id', scheduleId);
+        await logEvent(database, {
+          action: 'whatsapp_schedule_cancelled',
+          metadata: { schedule_id: scheduleId, user_id: identity.userId },
+        });
+        await send('התזמון בוטל ❌');
+        return await showSchedulesList(database, conversation, identity, send);
+      }
+      if (isNoText(text) || /^(לא חזרה|חזרה|חזור|back)\.?$/.test(t)) {
+        const post = await fetchScheduleById(database, scheduleId);
+        if (post && post.status === 'scheduled') {
+          await showScheduleManage(database, conversation, send, post);
+          return { kind: 'handled' };
+        }
+        return await showSchedulesList(database, conversation, identity, send);
+      }
+      await send('השיבו כן לביטול התזמון, או לא לחזרה.');
+      return { kind: 'handled' };
     }
 
     default:

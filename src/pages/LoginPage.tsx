@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import LegalLinks from '@/components/legal/LegalLinks';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const supabase = createSupabaseBrowserClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -38,7 +39,11 @@ export default function LoginPage() {
       setError('הכניסה נכשלה. בדקו את כתובת המייל והסיסמה.');
       return;
     }
-    navigate('/admin', { replace: true });
+    const requestedPath = (location.state as { from?: unknown } | null)?.from;
+    const destination = typeof requestedPath === 'string' && requestedPath.startsWith('/admin')
+      ? requestedPath
+      : '/admin';
+    navigate(destination, { replace: true });
   }
 
   return (
