@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, Navigate } from 'react-router-dom';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
@@ -20,6 +20,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [navOpen, setNavOpen] = useState(false);
   const [navMounted, setNavMounted] = useState(false);
   const [navVisible, setNavVisible] = useState(false);
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const hasOpenedNavRef = useRef(false);
   const location = useLocation();
   const { pathname } = location;
   const navigate = useNavigate();
@@ -47,6 +50,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     if (navOpen) {
+      hasOpenedNavRef.current = true;
       setNavMounted(true);
       const frame = window.requestAnimationFrame(() => setNavVisible(true));
       return () => window.cancelAnimationFrame(frame);
@@ -57,13 +61,40 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }, [navOpen]);
 
   useEffect(() => {
-    if (!navOpen) return;
+    if (!navMounted || !navOpen) return;
+    const drawer = drawerRef.current;
+    const focusable = drawer?.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    focusable?.[0]?.focus();
+
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setNavOpen(false);
+      if (event.key === 'Escape') {
+        setNavOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab' || !focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
+
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [navOpen]);
+  }, [navMounted, navOpen]);
+
+  useEffect(() => {
+    if (hasOpenedNavRef.current && !navMounted && !navOpen) {
+      menuButtonRef.current?.focus();
+      hasOpenedNavRef.current = false;
+    }
+  }, [navMounted, navOpen]);
 
   if (loading) return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]"><Spinner /></main>;
   if (!profile) {
@@ -123,9 +154,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[#f6f9f8] text-[#071a33]">
+    <div className="theme-warm flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[var(--bg-page)] text-[var(--text-strong)]">
+      <a href="#main-content" className="skip-link">דילוג לתוכן הראשי</a>
       {/* desktop sidebar */}
-      <div className="hidden lg:flex lg:h-[100dvh] lg:w-60 lg:shrink-0 lg:border-l lg:border-[#d7e3e0] lg:bg-white">
+      <div className="hidden lg:flex lg:h-[100dvh] lg:w-60 lg:shrink-0 lg:border-l lg:border-[var(--border-warm)] lg:bg-[var(--bg-surface)]">
         <div className="lg:h-[100dvh] lg:w-full">
           <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} />
         </div>
@@ -148,6 +180,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             onClick={() => setNavOpen(false)}
           />
           <div
+            ref={drawerRef}
             className={`absolute bottom-0 right-0 top-0 w-[min(84vw,320px)] origin-right overflow-hidden shadow-xl transition duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
               navVisible ? 'translate-x-0 opacity-100 scale-100' : 'translate-x-full opacity-0 scale-[0.985]'
             }`}
@@ -161,6 +194,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         {showBanner && <OnboardingBanner userId={profile.id} onboarding={profile.onboarding} />}
         {/* mobile top bar */}
         <main
+          id="main-content"
+          tabIndex={-1}
           className={
             isProductionLanding
               ? 'min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-0'
@@ -170,7 +205,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {children}
         </main>
       </div>
-      <AdminBottomNav isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} onOpenMenu={() => setNavOpen(true)} />
+      <AdminBottomNav
+        isAdmin={isAdmin}
+        canCreateOutputs={profile.can_create_outputs}
+        onOpenMenu={() => setNavOpen(true)}
+        menuButtonRef={menuButtonRef}
+      />
       <InstallPrompt />
     </div>
   );

@@ -46,6 +46,8 @@
   --danger-bg: #fdebec;
   --danger-fg: #9f2840;
   --danger-border: #f0cccf;
+  --focus-ring: #1268d8;
+  --focus-ring-offset: #ffffff;
 }
 
 * {
@@ -92,6 +94,40 @@ button {
 
 button:disabled {
   cursor: not-allowed;
+}
+
+button,
+a,
+input,
+textarea,
+select,
+[tabindex]:not([tabindex='-1']) {
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus-ring, #1268d8);
+  outline-offset: 3px;
+}
+
+.skip-link {
+  position: fixed;
+  inset-block-start: max(0.75rem, var(--safe-top));
+  inset-inline-start: max(0.75rem, var(--safe-left));
+  z-index: 1000;
+  min-height: 44px;
+  transform: translateY(calc(-100% - 2rem));
+  border-radius: 0.75rem;
+  background: #071a33;
+  color: #ffffff;
+  padding: 0.7rem 1rem;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(7, 26, 51, 0.22);
+  transition: transform 160ms ease-out;
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
 }
 
 input,
@@ -202,6 +238,15 @@ select {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
   .pick-me-glow {
     animation: none;
     border-color: var(--border-warm);

@@ -1,3 +1,4 @@
+import type { RefObject } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -118,18 +119,18 @@ export default function AdminNav({
 
   return (
     // RTL playbook §17: primary navigation on the right
-    <aside className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-[#d7e3e0] bg-white p-4 pb-[calc(var(--safe-bottom)+1rem)] pt-[calc(var(--safe-top)+1rem)] lg:w-60">
+    <aside className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 pb-[calc(var(--safe-bottom)+1rem)] pt-[calc(var(--safe-top)+1rem)] lg:w-60">
       <div className="mb-6 shrink-0">
-        <Link to="/" onClick={onNavigate} className="flex justify-center">
+        <Link to="/" onClick={onNavigate} className="flex justify-center rounded-xl py-1">
           <img src="/primeos-logo.png" alt="PrimeOS" className="h-10 w-auto object-contain" />
         </Link>
-        <div className="ltr mt-2 truncate text-center text-xs text-[#526372]">{email}</div>
+        <div className="ltr mt-2 truncate text-center text-xs text-[var(--text-muted)]">{email}</div>
       </div>
       <nav className={`flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pe-1 ${isAdmin ? 'gap-5' : 'gap-1.5'}`}>
         {sections.map((sec) => (
           <div key={sec.title}>
             {isAdmin && (
-              <div className="px-3 py-1.5 text-xs font-bold uppercase text-[#526372]">
+              <div className="px-3 py-1.5 text-xs font-bold text-[var(--text-muted)]">
                 {sec.title}
               </div>
             )}
@@ -141,8 +142,9 @@ export default function AdminNav({
                     key={l.href}
                     to={l.href}
                     onClick={onNavigate}
-                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                      active ? 'bg-[#edf4f2] text-[#071a33] shadow-[inset_-3px_0_0_#10b981]' : 'text-[#071a33] hover:bg-[#edf4f2] hover:text-[#10b981]'
+                    aria-current={active ? 'page' : undefined}
+                    className={`flex min-h-11 items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                      active ? 'bg-[var(--warm-accent-soft)] text-[var(--warm-accent-dark)] shadow-[inset_-3px_0_0_var(--warm-accent)]' : 'text-[var(--text-strong)] hover:bg-[var(--bg-subtle)] hover:text-[var(--warm-accent)]'
                     }`}
                   >
                     <NavIcon name={l.icon} active={active} className="h-4 w-4 shrink-0" />
@@ -156,7 +158,7 @@ export default function AdminNav({
       </nav>
       <button
         onClick={logout}
-        className="mt-3 flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-start text-sm text-[#526372] transition hover:bg-[#fdebec] hover:text-[#9f2840]"
+        className="mt-3 flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-start text-sm font-semibold text-[var(--text-muted)] transition hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)]"
       >
         <NavIcon name="logout" className="h-4 w-4 shrink-0" />
         יציאה
@@ -169,10 +171,12 @@ export function AdminBottomNav({
   isAdmin,
   canCreateOutputs,
   onOpenMenu,
+  menuButtonRef,
 }: {
   isAdmin: boolean;
   canCreateOutputs: boolean;
   onOpenMenu: () => void;
+  menuButtonRef?: RefObject<HTMLButtonElement>;
 }) {
   const { pathname } = useLocation();
   const allLinks = visibleSections(isAdmin, canCreateOutputs).flatMap((sec) => sec.links);
@@ -191,7 +195,7 @@ export function AdminBottomNav({
   return (
     <nav
       aria-label="ניווט ראשי"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-[#d7e3e0] bg-white/95 pb-[max(0.5rem,var(--safe-bottom))] pl-[max(0.75rem,var(--safe-left))] pr-[max(0.75rem,var(--safe-right))] pt-2 shadow-[0_-10px_28px_rgba(7,26,51,0.1)] backdrop-blur lg:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border-warm)] bg-white/95 pb-[max(0.5rem,var(--safe-bottom))] pl-[max(0.75rem,var(--safe-left))] pr-[max(0.75rem,var(--safe-right))] pt-2 shadow-[0_-10px_28px_rgba(7,26,51,0.1)] backdrop-blur lg:hidden"
     >
       <div className="mx-auto grid max-w-lg items-stretch gap-1" style={{ gridTemplateColumns: `repeat(${items.length + 1}, minmax(0, 1fr))` }}>
         {items.map((item) => {
@@ -202,7 +206,7 @@ export function AdminBottomNav({
               to={item.href}
               aria-current={active ? 'page' : undefined}
               className={`flex min-h-[3.75rem] touch-manipulation select-none flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${
-                active ? 'bg-[#edf4f2] text-[#071a33] shadow-[inset_0_3px_0_#10b981]' : 'text-[#526372] hover:bg-[#edf4f2] hover:text-[#071a33]'
+                active ? 'bg-[var(--warm-accent-soft)] text-[var(--warm-accent-dark)] shadow-[inset_0_3px_0_var(--warm-accent)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-strong)]'
               }`}
             >
               <NavIcon name={item.icon} active={active} className="h-5 w-5" />
@@ -211,11 +215,12 @@ export function AdminBottomNav({
           );
         })}
         <button
+          ref={menuButtonRef}
           type="button"
           onClick={onOpenMenu}
           aria-label="פתיחת כל התפריט"
           className={`flex min-h-[3.75rem] touch-manipulation select-none flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 ${
-            activeInPrimary ? 'text-[#526372] hover:bg-[#edf4f2] hover:text-[#071a33]' : 'text-[#10b981] hover:bg-[#edf4f2]'
+            activeInPrimary ? 'text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-strong)]' : 'text-[var(--warm-accent)] hover:bg-[var(--bg-subtle)]'
           }`}
         >
           <NavIcon name="menu" active={!activeInPrimary} className="h-5 w-5" />

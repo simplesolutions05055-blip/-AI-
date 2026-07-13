@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { OUTPUT_LABEL, STATUS_COLOR, STATUS_LABEL, senderLabel } from '@/lib/labels';
 import { formatUsd, formatHebrewDate } from '@/lib/format';
@@ -6,7 +6,19 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { Tooltip } from '@/components/ui/Tooltip';
 import type { OutputType, RequestStatus } from '@/types/db';
 import { Spinner } from '@/components/ui/Spinner';
-import { Image as ImageIcon, FileText, Presentation, File, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  CircleDollarSign,
+  Clock3,
+  File,
+  FileText,
+  Image as ImageIcon,
+  Layers3,
+  Presentation,
+  RefreshCw,
+  Send,
+  X,
+} from 'lucide-react';
 
 // How many users the
 // per-user chart shows before collapsing the rest into "אחרים".
@@ -39,6 +51,7 @@ type KpiCard = {
   value: string | number;
   ltr?: boolean;
   subtext: string;
+  icon: React.ReactNode;
 };
 
 type RequestDrillRow = {
@@ -102,9 +115,13 @@ export default function DashboardPage() {
   const [timeFilter, setTimeFilter] = useState<number>(14);
   const [activeKpi, setActiveKpi] = useState<KpiKey | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     const db = createSupabaseBrowserClient();
     // Removed todayIso since it's no longer used for the top metrics.
 
@@ -131,63 +148,78 @@ export default function DashboardPage() {
       return plain.data ?? [];
     }
 
-    Promise.all([
-      db.from('requests').select('status').gte('created_at', windowIso),
-      db.from('requests').select('id', { count: 'exact', head: true }).gte('created_at', windowIso),
-      db.from('usage_events').select('estimated_cost').gte('created_at', windowIso),
-      db.from('outputs').select('id', { count: 'exact', head: true }).gte('created_at', windowIso),
-      fetchRecentOutputs(),
-      db.from('requests').select('id', { count: 'exact', head: true }),
-      db.from('usage_events').select('estimated_cost'),
-      db.from('outputs').select('id', { count: 'exact', head: true }),
-      db.from('requests').select('id', { count: 'exact', head: true }).eq('status', 'waiting_for_approval'),
-      db
-        .from('outputs')
-        .select('id, output_type, text_content, storage_path, created_at, requests(structured_brief)')
-        .order('created_at', { ascending: false })
-        .limit(30),
-    ]).then(([statuses, pReq, pCost, pOut, recentOutputs, tReq, tCost, tOut, tWait, recentFilesData]) => {
-      setStatusRows((statuses.data ?? []) as Array<{ status: RequestStatus }>);
-      setPeriodReqsCount(pReq.count ?? 0);
-      setPeriodCost((pCost.data ?? []).reduce((sum, row: any) => sum + Number(row.estimated_cost ?? 0), 0));
-      setPeriodOutputsCount(pOut.count ?? 0);
-      setOutputRows((recentOutputs ?? []) as unknown as OutputRow[]);
+    async function loadDashboard() {
+      try {
+        const results = await Promise.all([
+          db.from('requests').select('status').gte('created_at', windowIso),
+          db.from('requests').select('id', { count: 'exact', head: true }).gte('created_at', windowIso),
+          db.from('usage_events').select('estimated_cost').gte('created_at', windowIso),
+          db.from('outputs').select('id', { count: 'exact', head: true }).gte('created_at', windowIso),
+          fetchRecentOutputs(),
+          db.from('requests').select('id', { count: 'exact', head: true }),
+          db.from('usage_events').select('estimated_cost'),
+          db.from('outputs').select('id', { count: 'exact', head: true }),
+          db.from('requests').select('id', { count: 'exact', head: true }).eq('status', 'waiting_for_approval'),
+          db
+            .from('outputs')
+            .select('id, output_type, text_content, storage_path, created_at, requests(structured_brief)')
+            .order('created_at', { ascending: false })
+            .limit(30),
+        ]);
+        if (cancelled) return;
+        const [statuses, pReq, pCost, pOut, recentOutputs, tReq, tCost, tOut, tWait, recentFilesData] = results;
+        const queryError = [statuses, pReq, pCost, pOut, tReq, tCost, tOut, tWait, recentFilesData]
+          .find((result) => result.error)?.error;
+        if (queryError) throw queryError;
 
-      setTotals({
-        requests: tReq.count ?? 0,
-        cost: (tCost.data ?? []).reduce((sum, row: any) => sum + Number(row.estimated_cost ?? 0), 0),
-        outputs: tOut.count ?? 0,
-        waiting: tWait.count ?? 0,
-      });
+        setStatusRows((statuses.data ?? []) as Array<{ status: RequestStatus }>);
+        setPeriodReqsCount(pReq.count ?? 0);
+        setPeriodCost((pCost.data ?? []).reduce((sum, row: any) => sum + Number(row.estimated_cost ?? 0), 0));
+        setPeriodOutputsCount(pOut.count ?? 0);
+        setOutputRows((recentOutputs ?? []) as unknown as OutputRow[]);
+        setTotals({
+          requests: tReq.count ?? 0,
+          cost: (tCost.data ?? []).reduce((sum, row: any) => sum + Number(row.estimated_cost ?? 0), 0),
+          outputs: tOut.count ?? 0,
+          waiting: tWait.count ?? 0,
+        });
 
-      // Group recent files by type, taking 2 per type
-      const grouped: Record<OutputType, RecentFileRow[]> = {
-        image: [],
-        pdf: [],
-        presentation: [],
-        text: [],
-      };
-      for (const file of (recentFilesData.data ?? []) as RecentFileRow[]) {
-        if (file.requests?.structured_brief?.source === 'quote') continue;
-        if (grouped[file.output_type].length < 2) {
-          grouped[file.output_type].push(file);
+        const grouped: Record<OutputType, RecentFileRow[]> = {
+          image: [],
+          pdf: [],
+          presentation: [],
+          text: [],
+        };
+        for (const file of (recentFilesData.data ?? []) as RecentFileRow[]) {
+          if (file.requests?.structured_brief?.source === 'quote') continue;
+          if (grouped[file.output_type].length < 2) grouped[file.output_type].push(file);
         }
-      }
-      setRecentFiles(grouped);
-      setLoading(false);
+        setRecentFiles(grouped);
 
-      // Generate signed thumbnail URLs for the image outputs shown in the boxes.
-      const images = grouped.image.filter((f) => f.storage_path);
-      Promise.all(
-        images.map(async (f) => {
-          const { data: s } = await db.storage.from('outputs').createSignedUrl(f.storage_path as string, 600);
-          return [f.id, s?.signedUrl] as const;
-        }),
-      ).then((pairs) => {
-        setPreviews(Object.fromEntries(pairs.filter(([, url]) => url)) as Record<string, string>);
-      });
-    });
-  }, [timeFilter]);
+        const images = grouped.image.filter((file) => file.storage_path);
+        const pairs = await Promise.all(
+          images.map(async (file) => {
+            const { data } = await db.storage.from('outputs').createSignedUrl(file.storage_path as string, 600);
+            return [file.id, data?.signedUrl] as const;
+          }),
+        );
+        if (!cancelled) {
+          setPreviews(Object.fromEntries(pairs.filter(([, url]) => url)) as Record<string, string>);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Dashboard load failed:', error);
+        setLoadError('לא הצלחנו לטעון את לוח הבקרה. אפשר לנסות שוב בעוד רגע.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void loadDashboard();
+    return () => {
+      cancelled = true;
+    };
+  }, [timeFilter, refreshKey]);
 
   const byStatus: Record<string, number> = {};
   statusRows.forEach((r) => {
@@ -198,45 +230,68 @@ export default function DashboardPage() {
   const perUser = buildPerUserSeries(outputRows);
 
   const cards: KpiCard[] = [
-    { key: 'requests', label: 'בקשות בתקופה', value: periodReqsCount, subtext: `סה״כ: ${totals.requests}` },
-    { key: 'cost', label: 'עלות בתקופה', value: formatUsd(periodCost), ltr: true, subtext: `סה״כ: ${formatUsd(totals.cost)}` },
-    { key: 'outputs', label: 'תוצרים בתקופה', value: periodOutputsCount, subtext: `סה״כ: ${totals.outputs}` },
+    { key: 'requests', label: 'בקשות בתקופה', value: periodReqsCount, subtext: `סה״כ: ${totals.requests}`, icon: <Send className="h-5 w-5" /> },
+    { key: 'outputs', label: 'תוצרים בתקופה', value: periodOutputsCount, subtext: `סה״כ: ${totals.outputs}`, icon: <Layers3 className="h-5 w-5" /> },
+    { key: 'cost', label: 'עלות בתקופה', value: formatUsd(periodCost), ltr: true, subtext: `סה״כ: ${formatUsd(totals.cost)}`, icon: <CircleDollarSign className="h-5 w-5" /> },
+    { key: 'waiting', label: 'ממתינות לאישור', value: byStatus.waiting_for_approval ?? 0, subtext: `סה״כ: ${totals.waiting}`, icon: <Clock3 className="h-5 w-5" /> },
   ];
 
-  if (loading) return <p className="text-[var(--muted)]"><Spinner /></p>;
+  if (loading) return <DashboardSkeleton />;
+
+  if (loadError) {
+    return (
+      <div className="flex min-h-72 flex-col items-center justify-center rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-bg)] p-6 text-center">
+        <p role="alert" className="max-w-md text-sm font-semibold text-[var(--danger-fg)]">{loadError}</p>
+        <button
+          type="button"
+          onClick={() => setRefreshKey((value) => value + 1)}
+          className="mt-4 inline-flex items-center gap-2 rounded-xl border border-[var(--danger-border)] bg-white px-4 py-2 text-sm font-bold text-[var(--danger-fg)] transition hover:bg-white/70"
+        >
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          ניסיון נוסף
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div dir="rtl" className="min-w-0">
-      <div className="mb-5 flex items-start justify-between gap-3">
+    <div dir="rtl" className="min-w-0 pb-2">
+      <div className="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <h1 className="text-xl font-semibold leading-tight tracking-normal">לוח בקרה</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">מבט מהיר על תוצרים, שימוש ועלויות.</p>
+          <h1 className="text-2xl font-bold leading-tight tracking-normal text-[var(--text-strong)] sm:text-3xl">לוח בקרה</h1>
+          <p className="mt-1.5 text-sm text-[var(--text-muted)]">מבט מהיר על הפעילות, התוצרים והעלויות במערכת.</p>
         </div>
-        <select
-          value={timeFilter}
-          onChange={(e) => setTimeFilter(Number(e.target.value))}
-          className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-sm font-semibold shadow-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
-        >
-          <option value={1}>היום האחרון</option>
-          <option value={7}>השבוע האחרון</option>
-          <option value={14}>14 ימים אחרונים</option>
-          <option value={30}>החודש האחרון</option>
-          <option value={365}>השנה האחרונה</option>
-        </select>
+        <label className="flex w-full flex-col gap-1.5 text-xs font-bold text-[var(--text-muted)] sm:w-auto">
+          טווח נתונים
+          <select
+            value={timeFilter}
+            onChange={(e) => setTimeFilter(Number(e.target.value))}
+            className="min-h-11 w-full rounded-xl border border-[var(--border-warm)] bg-white px-4 py-2 text-sm font-semibold text-[var(--text-strong)] shadow-[var(--warm-shadow-card)] outline-none transition focus:border-brand sm:w-auto"
+          >
+            <option value={1}>היום האחרון</option>
+            <option value={7}>השבוע האחרון</option>
+            <option value={14}>14 ימים אחרונים</option>
+            <option value={30}>החודש האחרון</option>
+            <option value={365}>השנה האחרונה</option>
+          </select>
+        </label>
       </div>
 
-      <section className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4 lg:mb-8">
+      <section aria-label="מדדים מרכזיים" className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4 lg:mb-8">
         {cards.map((card) => (
           <button
             key={card.key}
             type="button"
             onClick={() => setActiveKpi(card.key)}
-            className="flex min-w-0 flex-col rounded-xl border border-[var(--border)] bg-white p-3 text-right transition hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand/30 sm:p-4"
+            className="group flex min-w-0 flex-col rounded-2xl border border-[var(--border-warm)] bg-white p-3 text-right shadow-[var(--warm-shadow-card)] transition duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-[var(--warm-shadow-soft)] sm:p-4"
             aria-haspopup="dialog"
           >
-            <div className="mb-1 truncate text-sm text-[var(--muted)]">{card.label}</div>
-            <div className={`truncate text-[26px] font-bold leading-tight sm:text-2xl ${card.ltr ? 'ltr max-w-full' : ''}`}>{card.value}</div>
-            <div className="mt-1 text-[11px] text-[var(--muted)] font-medium ltr text-right">{card.subtext}</div>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <span className="truncate text-sm font-semibold text-[var(--text-muted)]">{card.label}</span>
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--warm-accent-soft)] text-[var(--warm-accent)] transition group-hover:bg-brand group-hover:text-white" aria-hidden="true">{card.icon}</span>
+            </div>
+            <div className={`truncate text-2xl font-bold leading-tight tabular-nums text-[var(--text-strong)] sm:text-[28px] ${card.ltr ? 'ltr max-w-full text-right' : ''}`}>{card.value}</div>
+            <div className="mt-1.5 text-xs font-medium text-[var(--text-muted)] ltr text-right">{card.subtext}</div>
           </button>
         ))}
       </section>
@@ -246,14 +301,18 @@ export default function DashboardPage() {
         <PerUserOutputsChart data={perUser} windowDays={timeFilter} />
       </div>
 
-      <section className="mt-5 rounded-[14px] border border-[#EAECF0] bg-white px-5 py-6 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8 mb-8">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-[18px] font-bold text-[#1A1A2E]">תוצרים אחרונים</h2>
-          <Link to="/admin/files" className="rounded-lg border border-[#EAECF0] px-4 py-1.5 text-[13px] font-semibold text-[#1A1A2E] hover:bg-[#F8FAFC] transition-colors">
+      <section className="mb-8 mt-5 rounded-2xl border border-[var(--border-warm)] bg-white p-4 shadow-[var(--warm-shadow-card)] sm:p-6">
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-[var(--text-strong)]">תוצרים אחרונים</h2>
+            <p className="mt-0.5 text-sm text-[var(--text-muted)]">גישה מהירה לתוצרים האחרונים לפי סוג.</p>
+          </div>
+          <Link to="/admin/files" className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-[var(--border-warm)] px-3 py-2 text-sm font-semibold text-[var(--text-strong)] transition hover:border-brand/30 hover:bg-[var(--bg-subtle)] sm:px-4">
             כל התוצרים
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
         </div>
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {(['image', 'pdf', 'presentation', 'text'] as const).map((type) => {
             const bgColors: Record<OutputType, string> = {
               image: '#FEF3C7',
@@ -272,28 +331,28 @@ export default function DashboardPage() {
               <Link
                 key={type}
                 to={`/admin/files?type=${type}`}
-                className="group flex flex-col overflow-hidden rounded-[12px] border border-[#EAECF0] bg-white text-right transition hover:-translate-y-0.5 hover:border-[#BFDBFE] hover:shadow-sm"
+                className="group flex min-h-64 flex-col overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-white text-right transition duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[var(--warm-shadow-soft)]"
               >
                 {/* Header band — category color + icon + name */}
-                <div className="flex items-center gap-2 px-3 py-2.5" style={{ backgroundColor: bgColors[type] }}>
+                <div className="flex min-h-12 items-center gap-2 px-3 py-2.5" style={{ backgroundColor: bgColors[type] }}>
                   {typeIcon[type]}
-                  <span className="text-[13px] font-bold text-[#1A1A2E]">{OUTPUT_LABEL[type]}</span>
+                  <span className="text-sm font-bold text-[var(--text-strong)]">{OUTPUT_LABEL[type]}</span>
                 </div>
 
                 {/* Up to 2 real recent products from this category */}
                 <div className="flex flex-1 flex-col gap-2 p-3">
                   {items.length === 0 ? (
-                    <div className="flex flex-1 items-center justify-center py-6 text-[11px] text-[#94A3B8]">
+                    <div className="flex flex-1 items-center justify-center rounded-xl bg-[var(--surface-2)] py-6 text-sm text-[var(--text-muted)]">
                       אין תוצרים עדיין
                     </div>
                   ) : (
                     items.map((file) => (
-                      <div key={file.id} className="flex items-center gap-2 rounded-[8px] border border-[#F1F5F9] p-1.5">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-[#F8FAFC]">
+                      <div key={file.id} className="flex min-h-14 items-center gap-2.5 rounded-xl border border-[var(--border-soft)] p-2 transition group-hover:border-[var(--border-warm)]">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--surface-2)]">
                           {file.output_type === 'image' && previews[file.id] ? (
-                            <img src={previews[file.id]} alt="" className="h-full w-full object-cover" />
+                            <img src={previews[file.id]} alt={`תצוגה מקדימה של ${OUTPUT_LABEL[file.output_type]}`} className="h-full w-full object-cover" />
                           ) : file.text_content ? (
-                            <span className="px-0.5 text-[6px] leading-[7px] text-[#94A3B8] line-clamp-3 break-all">
+                            <span className="line-clamp-3 break-all px-0.5 text-[7px] leading-[8px] text-[var(--text-faint)]">
                               {file.text_content.slice(0, 60)}
                             </span>
                           ) : (
@@ -303,10 +362,10 @@ export default function DashboardPage() {
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[11px] font-medium text-[#1A1A2E]">
+                          <div className="truncate text-sm font-semibold text-[var(--text-strong)]">
                             {file.text_content ? file.text_content.slice(0, 30) : OUTPUT_LABEL[file.output_type]}
                           </div>
-                          <div className="text-[10px] text-[#94A3B8] ltr text-start">{formatHebrewDate(file.created_at)}</div>
+                          <div className="mt-0.5 text-xs text-[var(--text-muted)] ltr text-start">{formatHebrewDate(file.created_at)}</div>
                         </div>
                       </div>
                     ))
@@ -314,7 +373,7 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="p-3 pt-0">
-                  <div className="flex w-full items-center justify-center rounded-[8px] bg-[#F8FAFC] py-2 text-[12px] font-semibold text-[#1E293B] transition-colors group-hover:bg-[#F1F5F9] border border-[#F1F5F9] group-hover:border-[#E2E8F0]">
+                  <div className="flex min-h-11 w-full items-center justify-center rounded-xl border border-[var(--border-soft)] bg-[var(--surface-2)] px-2 py-2 text-sm font-semibold text-[var(--text-strong)] transition-colors group-hover:border-brand/20 group-hover:bg-[var(--warm-accent-soft)] group-hover:text-[var(--warm-accent)]">
                     צפייה בכל ה{OUTPUT_LABEL[type]}
                   </div>
                 </div>
@@ -333,6 +392,38 @@ export default function DashboardPage() {
         />
       )}
 
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div role="status" aria-label="טוען את לוח הבקרה" className="animate-pulse" aria-live="polite">
+      <span className="sr-only">לוח הבקרה נטען</span>
+      <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <div className="h-8 w-40 rounded-lg bg-[var(--bg-subtle)]" />
+          <div className="mt-3 h-4 w-64 max-w-full rounded bg-[var(--bg-subtle)]" />
+        </div>
+        <div className="h-11 w-full rounded-xl bg-[var(--bg-subtle)] sm:w-40" />
+      </div>
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4 lg:mb-8">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="h-36 rounded-2xl border border-[var(--border-soft)] bg-white p-4">
+            <div className="h-4 w-2/3 rounded bg-[var(--bg-subtle)]" />
+            <div className="mt-7 h-8 w-1/2 rounded bg-[var(--bg-subtle)]" />
+            <div className="mt-3 h-3 w-3/4 rounded bg-[var(--bg-subtle)]" />
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-8">
+        {Array.from({ length: 2 }).map((_, index) => (
+          <div key={index} className="h-64 rounded-2xl border border-[var(--border-soft)] bg-white p-4">
+            <div className="h-5 w-36 rounded bg-[var(--bg-subtle)]" />
+            <div className="mt-8 h-40 rounded-xl bg-[var(--surface-2)]" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -358,17 +449,48 @@ function KpiDrilldownModal({
   const [data, setData] = useState<DrilldownData>({ requests: [], outputs: [], costs: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
   const card = cards.find((item) => item.key === kpi);
   const title = card?.label ?? 'פירוט';
   const windowLabel = timeFilter === 1 ? 'היום האחרון' : `${timeFilter} ימים אחרונים`;
 
   useEffect(() => {
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
+    onCloseRef.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -439,24 +561,27 @@ function KpiDrilldownModal({
       onPointerDown={onClose}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="kpi-drilldown-title"
-        className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl"
+        aria-describedby="kpi-drilldown-description"
+        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl sm:max-h-[88vh]"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-4 py-4 sm:px-5">
           <div className="min-w-0">
             <h2 id="kpi-drilldown-title" className="text-lg font-bold text-[var(--text)]">{title}</h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">
+            <p id="kpi-drilldown-description" className="mt-1 text-sm text-[var(--muted)]">
               {windowLabel} · מוצגות עד {DRILLDOWN_LIMIT} רשומות אחרונות
             </p>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             aria-label="סגירה"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--muted)] transition hover:bg-gray-100 hover:text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-brand/30"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--muted)] transition hover:bg-gray-100 hover:text-[var(--text)]"
           >
             <X className="h-5 w-5" />
           </button>
@@ -464,7 +589,7 @@ function KpiDrilldownModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
           {loading ? (
-            <div className="flex min-h-44 items-center justify-center text-[var(--muted)]"><Spinner /></div>
+            <div role="status" aria-label="טוען פירוט" className="flex min-h-44 items-center justify-center text-[var(--muted)]"><Spinner /></div>
           ) : error ? (
             <p className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</p>
           ) : rowsCount === 0 ? (
@@ -608,10 +733,10 @@ function DailyOutputsChart({ data, windowDays }: { data: Array<{ key: string; la
   const total = data.reduce((sum, d) => sum + d.count, 0);
 
   return (
-    <section className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-3 sm:p-4">
+    <section aria-labelledby="daily-outputs-title" className="min-w-0 rounded-2xl border border-[var(--border-warm)] bg-white p-4 shadow-[var(--warm-shadow-card)] sm:p-5">
       <div className="mb-4 flex items-start justify-between gap-3 sm:items-baseline">
-        <h2 className="shrink-0 font-semibold">תוצרים לפי יום</h2>
-        <span className="text-start text-xs text-[var(--muted)]">{windowDays === 1 ? 'היום האחרון' : `${windowDays} ימים אחרונים`} · סה״כ {total}</span>
+        <h2 id="daily-outputs-title" className="shrink-0 font-bold text-[var(--text-strong)]">תוצרים לפי יום</h2>
+        <span className="text-start text-xs text-[var(--text-muted)]">{windowDays === 1 ? 'היום האחרון' : `${windowDays} ימים אחרונים`} · סה״כ {total}</span>
       </div>
       {total === 0 ? (
         <p className="text-sm text-[var(--muted)]">אין תוצרים בטווח הזה.</p>
@@ -620,12 +745,17 @@ function DailyOutputsChart({ data, windowDays }: { data: Array<{ key: string; la
           <div className="flex h-40 min-w-min gap-1 sm:h-44 sm:gap-1.5" style={{ minWidth: `${data.length * 28}px` }}>
             {data.map((d) => (
               <Tooltip key={d.key} content={`${d.label}: ${d.count}`}>
-                <div className="flex h-full min-w-0 flex-1 flex-col items-center gap-1.5 cursor-pointer">
+                <div
+                  role="img"
+                  tabIndex={0}
+                  aria-label={`${d.label}: ${d.count} תוצרים`}
+                  className="flex h-full min-w-0 flex-1 cursor-help flex-col items-center gap-1.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                >
                   <span className="text-[10px] font-semibold text-[var(--muted)]">{d.count || ''}</span>
                   {/* flex-1 track has a definite height so the bar's % resolves correctly */}
                   <div className="flex w-full flex-1 flex-col justify-end">
                     <div
-                      className="mx-auto w-full max-w-8 rounded-t bg-brand/80 transition-all hover:bg-brand"
+                      className="mx-auto w-full max-w-8 rounded-t-md bg-brand/80 transition-colors hover:bg-brand"
                       style={{ height: `${Math.max(d.count ? 6 : 2, (d.count / max) * 100)}%` }}
                     />
                   </div>
@@ -662,10 +792,10 @@ function PerUserOutputsChart({ data, windowDays }: { data: Array<{ label: string
   const max = Math.max(1, ...data.map((d) => d.count));
 
   return (
-    <section className="min-w-0 rounded-xl border border-[var(--border)] bg-white p-3 sm:p-4">
+    <section aria-labelledby="user-outputs-title" className="min-w-0 rounded-2xl border border-[var(--border-warm)] bg-white p-4 shadow-[var(--warm-shadow-card)] sm:p-5">
       <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h2 className="font-semibold">תוצרים לפי משתמש</h2>
-        <span className="text-xs text-[var(--muted)]">{windowDays === 1 ? 'היום האחרון' : `${windowDays} ימים אחרונים`}</span>
+        <h2 id="user-outputs-title" className="font-bold text-[var(--text-strong)]">תוצרים לפי משתמש</h2>
+        <span className="text-xs text-[var(--text-muted)]">{windowDays === 1 ? 'היום האחרון' : `${windowDays} ימים אחרונים`}</span>
       </div>
       {data.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">אין תוצרים בטווח הזה.</p>
@@ -682,7 +812,12 @@ function PerUserOutputsChart({ data, windowDays }: { data: Array<{ label: string
                 </div>
               }
             >
-              <div className="flex min-w-0 items-center gap-2 sm:gap-3 cursor-pointer group">
+              <div
+                role="img"
+                tabIndex={0}
+                aria-label={`${d.label}: ${d.count} תוצרים`}
+                className="group flex min-w-0 cursor-help items-center gap-2 rounded-lg sm:gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+              >
                 <span className="w-16 shrink-0 truncate text-sm text-[var(--text)] sm:w-28 text-right" dir="ltr">{d.label}</span>
                 <div className="h-5 flex-1 overflow-hidden rounded bg-gray-100">
                   <div
