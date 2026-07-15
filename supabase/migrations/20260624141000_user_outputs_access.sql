@@ -1,10 +1,12 @@
 -- Allow a regular authenticated user to see the production-form outputs they
 -- created, while admins keep their existing full access policies.
 
+drop policy if exists "requests_creator_select" on public.requests;
 create policy "requests_creator_select" on public.requests
   for select to authenticated
   using ((select auth.uid()) = created_by);
 
+drop policy if exists "outputs_creator_select" on public.outputs;
 create policy "outputs_creator_select" on public.outputs
   for select to authenticated
   using (
@@ -16,6 +18,7 @@ create policy "outputs_creator_select" on public.outputs
     )
   );
 
+drop policy if exists "outputs_creator_storage_read" on storage.objects;
 create policy "outputs_creator_storage_read" on storage.objects
   for select to authenticated
   using (

@@ -14,13 +14,19 @@ CREATE INDEX IF NOT EXISTS scheduled_social_posts_meta_idx
   ON public.scheduled_social_posts(status, scheduled_at, connection_id)
   WHERE platform IN ('facebook', 'instagram');
 
--- Add constraint: Meta posts must have connection_id and target_platform_id
+-- Add constraint: Meta posts must have connection_id and target_platform_id.
+-- Created NOT VALID so legacy rows (scheduled before the Meta-connection flow
+-- existed) don't block the migration; the constraint is still fully enforced on
+-- every new INSERT/UPDATE. On a fresh database this is equivalent to a validated
+-- constraint since there are no pre-existing rows.
 ALTER TABLE public.scheduled_social_posts
-  ADD CONSTRAINT meta_posts_require_connection 
+  DROP CONSTRAINT IF EXISTS meta_posts_require_connection;
+ALTER TABLE public.scheduled_social_posts
+  ADD CONSTRAINT meta_posts_require_connection
   CHECK (
     (platform IN ('facebook', 'instagram') AND connection_id IS NOT NULL AND target_platform_id IS NOT NULL)
     OR platform NOT IN ('facebook', 'instagram')
-  );
+  ) NOT VALID;
 
 COMMENT ON COLUMN public.scheduled_social_posts.connection_id IS 'References meta_connections - which Meta account to use';
 COMMENT ON COLUMN public.scheduled_social_posts.target_platform_id IS 'Facebook page_id or Instagram instagram_id';
