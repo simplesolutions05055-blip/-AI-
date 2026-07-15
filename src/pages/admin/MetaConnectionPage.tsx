@@ -191,37 +191,20 @@ export default function MetaConnectionPage() {
     setConnecting(true);
     setError(null);
 
-    const appId = import.meta.env.VITE_FACEBOOK_APP_ID;
-    const redirectUri = import.meta.env.VITE_META_OAUTH_REDIRECT_URI;
+    // The Facebook app id and redirect uri live only in Supabase Edge Function
+    // secrets. The meta-oauth-start function builds the authorize URL from those
+    // secrets and 302-redirects to Facebook, so no client-side Meta config is
+    // needed here.
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 
-    if (!appId || !redirectUri) {
-      setError('Missing Meta app configuration');
+    if (!supabaseUrl) {
+      setError('Missing Supabase configuration');
       setConnecting(false);
       return;
     }
 
-    // Facebook Login for Business
-    // Scopes: pages_show_list, pages_read_engagement, pages_manage_posts, instagram_basic, instagram_content_publish, business_management
-    const scopes = [
-      'pages_show_list',
-      'pages_read_engagement',
-      'pages_manage_posts',
-      'instagram_basic',
-      'instagram_content_publish',
-      'business_management',
-    ].join(',');
-
-    const authUrl = `https://www.facebook.com/v21.0/dialog/oauth?` +
-      `client_id=${appId}&` +
-      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-      `scope=${encodeURIComponent(scopes)}&` +
-      `response_type=code&` +
-      `config_id=`; // Leave empty - not needed for OAuth
-
-    console.log('🔗 Redirecting to Facebook Login for Business');
-    console.log(`Scopes: ${scopes}`);
-    
-    window.location.href = authUrl;
+    console.log('🔗 Redirecting to Facebook Login for Business (via meta-oauth-start)');
+    window.location.href = `${supabaseUrl}/functions/v1/meta-oauth-start`;
   };
 
   const exchangeCode = async (code: string) => {

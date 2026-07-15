@@ -48,6 +48,9 @@ verify_jwt = false
 [functions.conversation-maintenance]
 verify_jwt = false
 
+[functions.meta-oauth-start]
+verify_jwt = false
+
 [functions.meta-oauth-callback]
 verify_jwt = false
 
