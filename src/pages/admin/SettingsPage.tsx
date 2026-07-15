@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Share2 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile, type ProfileGender } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
@@ -23,6 +25,15 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'approval', label: 'אישור' },
 ];
 
+interface MetaConnection {
+  meta_user_id: string;
+  meta_user_name: string | null;
+  meta_user_picture: string | null;
+  status: string;
+  pages_count: number;
+  instagram_accounts_count: number;
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block mb-3">
@@ -45,6 +56,9 @@ export default function SettingsPage() {
   const [groupResetBrand, setGroupResetBrand] = useState('');
   const [groupResetting, setGroupResetting] = useState(false);
   const [groupResetMsg, setGroupResetMsg] = useState<string | null>(null);
+  const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
+  const [metaLoading, setMetaLoading] = useState(true);
+  const [metaError, setMetaError] = useState<string | null>(null);
 
   useEffect(() => {
     setProfileGender(profile?.gender ?? '');
@@ -72,6 +86,57 @@ export default function SettingsPage() {
       .eq('is_active', true)
       .order('name')
       .then(({ data }) => setBrands((data ?? []) as Array<{ id: string; name: string }>));
+  }, []);
+
+  useEffect(() => {
+    async function fetchMetaConnection() {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          setMetaLoading(false);
+          return;
+        }
+
+        console.log('Fetching Meta connection...');
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-meta-connections`,
+          {
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          }
+        );
+
+        console.log('Response status:', response.status);
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('Meta connection data:', data);
+          if (data.connection) {
+            setMetaConnection({
+              meta_user_id: data.connection.meta_user_id,
+              meta_user_name: data.connection.meta_user_name,
+              meta_user_picture: data.connection.meta_user_picture,
+              status: data.connection.status,
+              pages_count: data.pages?.length || 0,
+              instagram_accounts_count: data.instagram_accounts?.length || 0,
+            });
+          }
+        } else {
+          const errorData = await response.json().catch(() => ({ error: 'unknown' }));
+          console.error('Meta connection error:', errorData);
+          setMetaError(errorData.error || 'Failed to load connection');
+        }
+      } catch (error) {
+        console.error('Failed to fetch Meta connection:', error);
+        setMetaError(error instanceof Error ? error.message : 'Network error');
+      } finally {
+        setMetaLoading(false);
+      }
+    }
+
+    fetchMetaConnection();
   }, []);
 
   function update(key: string, value: any) {
@@ -195,44 +260,44 @@ export default function SettingsPage() {
       </div>
 
       {activeTab === 'whatsapp' && (
-      <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-        <h2 className="font-semibold mb-1">WhatsApp</h2>
-        <p className="mb-4 text-xs text-[var(--muted)]">הגדירו את חוויית השיחה ואת נוסחי ההודעות של הבוט.</p>
+        <section className="bg-white rounded-xl border border-[var(--border)] p-4">
+          <h2 className="font-semibold mb-1">WhatsApp</h2>
+          <p className="mb-4 text-xs text-[var(--muted)]">הגדירו את חוויית השיחה ואת נוסחי ההודעות של הבוט.</p>
 
-        <label className="mb-5 flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
-          <span>
-            <span className="block text-sm font-semibold">כפתורים אינטראקטיביים</span>
-            <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
-              כשהמתג פעיל, בחירות מוצגות ככפתורים או כרשימה. במקרה תקלה המערכת חוזרת אוטומטית לטקסט.
+          <label className="mb-5 flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
+            <span>
+              <span className="block text-sm font-semibold">כפתורים אינטראקטיביים</span>
+              <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+                כשהמתג פעיל, בחירות מוצגות ככפתורים או כרשימה. במקרה תקלה המערכת חוזרת אוטומטית לטקסט.
+              </span>
             </span>
-          </span>
-          <span className="relative inline-flex shrink-0 items-center">
-            <input
-              type="checkbox"
-              role="switch"
-              className="peer sr-only"
-              checked={interactiveWhatsAppEnabled}
-              aria-label="כפתורים אינטראקטיביים ב-WhatsApp"
-              onChange={(e) => update('whatsapp_interactive_messages', { enabled: e.target.checked })}
-            />
-            <span className="h-7 w-12 rounded-full bg-gray-300 transition peer-checked:bg-brand peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" />
-            <span className="pointer-events-none absolute start-1 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5 rtl:peer-checked:-translate-x-5" />
-          </span>
-        </label>
+            <span className="relative inline-flex shrink-0 items-center">
+              <input
+                type="checkbox"
+                role="switch"
+                className="peer sr-only"
+                checked={interactiveWhatsAppEnabled}
+                aria-label="כפתורים אינטראקטיביים ב-WhatsApp"
+                onChange={(e) => update('whatsapp_interactive_messages', { enabled: e.target.checked })}
+              />
+              <span className="h-7 w-12 rounded-full bg-gray-300 transition peer-checked:bg-brand peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" />
+              <span className="pointer-events-none absolute start-1 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5 rtl:peer-checked:-translate-x-5" />
+            </span>
+          </label>
 
-        <h3 className="mb-3 text-sm font-semibold">נוסחי הודעות</h3>
-        <Field label="קבלת בקשה">
-          <input className={input} dir="auto" value={tpl.received ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, received: e.target.value })} />
-        </Field>
-        <Field label="בקשת מייל">
-          <input className={input} dir="auto" value={tpl.ask_email ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, ask_email: e.target.value })} />
-        </Field>
-        <Field label="השלמת שליחה">
-          <input className={input} dir="auto" value={tpl.sent ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, sent: e.target.value })} />
-        </Field>
-        <Field label="דחיית מדיה">
-          <input className={input} dir="auto" value={tpl.rejected_media ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, rejected_media: e.target.value })} />
-        </Field>
+          <h3 className="mb-3 text-sm font-semibold">נוסחי הודעות</h3>
+          <Field label="קבלת בקשה">
+            <input className={input} dir="auto" value={tpl.received ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, received: e.target.value })} />
+          </Field>
+          <Field label="בקשת מייל">
+            <input className={input} dir="auto" value={tpl.ask_email ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, ask_email: e.target.value })} />
+          </Field>
+          <Field label="השלמת שליחה">
+            <input className={input} dir="auto" value={tpl.sent ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, sent: e.target.value })} />
+          </Field>
+          <Field label="דחיית מדיה">
+            <input className={input} dir="auto" value={tpl.rejected_media ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, rejected_media: e.target.value })} />
+          </Field>
 
         <div className="mt-5 border-t border-[var(--border)] pt-4">
           <h3 className="mb-1 text-sm font-semibold">בוט בקבוצות</h3>
@@ -468,9 +533,62 @@ export default function SettingsPage() {
       )}
 
       {activeTab === 'models' && (
-      <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-        <h2 className="font-semibold mb-3">מודלי AI</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <>
+          <section className="bg-white rounded-xl border border-[var(--border)] p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Share2 className="h-5 w-5" />
+              <h2 className="font-semibold">רשתות חברתיות (Facebook & Instagram)</h2>
+            </div>
+
+            {metaLoading ? (
+              <div className="py-4">
+                <Spinner />
+              </div>
+            ) : metaConnection ? (
+              <div>
+                <div className="mb-4 flex items-center gap-3">
+                  {metaConnection.meta_user_picture && (
+                    <img
+                      src={metaConnection.meta_user_picture}
+                      alt={metaConnection.meta_user_name || 'משתמש'}
+                      className="h-12 w-12 rounded-full border-2 border-[var(--border)]"
+                    />
+                  )}
+                  <div className="text-sm">
+                    <div className="font-medium text-[#071a33]">
+                      {metaConnection.meta_user_name || 'משתמש'}
+                    </div>
+                    <div className="mt-0.5 text-[var(--muted)]">
+                      {metaConnection.pages_count} דפי פייסבוק
+                      {metaConnection.instagram_accounts_count > 0
+                        ? ` • ${metaConnection.instagram_accounts_count} חשבונות אינסטגרם`
+                        : ''}
+                    </div>
+                  </div>
+                </div>
+                <Link to="/admin/meta-connection" className="inline-block text-sm text-brand hover:underline">
+                  נהל חיבור ←
+                </Link>
+              </div>
+            ) : (
+              <div>
+                <p className="mb-4 text-sm text-[var(--muted)]">
+                  חבר את חשבון הרשתות החברתיות שלך כדי לפרסם באופן אוטומטי לפייסבוק ואינסטגרם
+                </p>
+                {metaError ? <p className="mb-3 text-xs text-red-600">{metaError}</p> : null}
+                <Link
+                  to="/admin/meta-connection"
+                  className="inline-block rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90"
+                >
+                  חבר עכשיו
+                </Link>
+              </div>
+            )}
+          </section>
+
+          <section className="bg-white rounded-xl border border-[var(--border)] p-4">
+            <h2 className="font-semibold mb-3">מודלי AI</h2>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <Field label="מודל תמונות">
             <select
               className={input}
@@ -506,11 +624,12 @@ export default function SettingsPage() {
               <option value="low">low</option>
             </select>
           </Field>
-        </div>
-        <p className="text-xs text-[var(--muted)] mt-2">
-          ברירת המחדל היא gpt-image-2, המודל המתקדם הנוכחי של OpenAI לתמונות.
-        </p>
-      </section>
+            </div>
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              ברירת המחדל היא gpt-image-2, המודל המתקדם הנוכחי של OpenAI לתמונות.
+            </p>
+          </section>
+        </>
       )}
 
       {activeTab === 'approval' && (

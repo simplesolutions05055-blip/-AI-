@@ -12,10 +12,10 @@
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "db:push": "supabase db push",
-    "db:reset": "supabase db reset",
-    "functions:serve": "supabase functions serve",
-    "functions:deploy": "supabase functions deploy"
+    "db:push": "npx supabase db push",
+    "db:reset": "npx supabase db reset",
+    "functions:serve": "npx supabase functions serve",
+    "functions:deploy": "npx supabase functions deploy"
   },
   "dependencies": {
     "@radix-ui/react-tooltip": "^1.2.10",

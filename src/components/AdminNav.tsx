@@ -19,8 +19,10 @@ import {
   Sparkles,
   Users,
   UserCog,
+  Share2,
 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useEffect, useState } from 'react';
 
 interface NavLink {
   href: string;
@@ -78,7 +80,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
-type NavIconName = 'spark' | 'users' | 'calendar' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings' | 'mail';
+type NavIconName = 'spark' | 'users' | 'calendar' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings' | 'mail' | 'meta';
 
 function visibleSections(isAdmin: boolean, canCreateOutputs: boolean) {
   return NAV_SECTIONS.map((sec) => ({
@@ -109,8 +111,37 @@ export default function AdminNav({
 }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const [metaConnected, setMetaConnected] = useState(false);
 
   const sections = visibleSections(isAdmin, canCreateOutputs);
+
+  useEffect(() => {
+    checkMetaConnection();
+  }, []);
+
+  async function checkMetaConnection() {
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-meta-connections`,
+        {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setMetaConnected(data.connected);
+      }
+    } catch (error) {
+      console.error('Failed to check Meta connection:', error);
+    }
+  }
 
   async function logout() {
     await createSupabaseBrowserClient().auth.signOut();
@@ -156,6 +187,17 @@ export default function AdminNav({
           </div>
         ))}
       </nav>
+      <Link
+        to="/admin/meta-connection"
+        onClick={onNavigate}
+        className="mt-3 flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-start text-sm font-semibold text-[var(--text-muted)] transition hover:bg-[var(--bg-subtle)] hover:text-[#10b981]"
+      >
+        <NavIcon name="meta" className="h-4 w-4 shrink-0" />
+        <span className="flex-1">רשתות חברתיות</span>
+        <span className={`text-lg leading-none ${metaConnected ? 'text-[#10b981]' : 'text-[#526372]'}`}>
+          {metaConnected ? '✓' : '○'}
+        </span>
+      </Link>
       <button
         onClick={logout}
         className="mt-3 flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-start text-sm font-semibold text-[var(--text-muted)] transition hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)]"
@@ -250,6 +292,7 @@ function NavIcon({ name, className = 'h-4 w-4' }: { name: NavIconName; active?: 
     spark: Sparkles,
     users: Users,
     userSettings: UserCog,
+    meta: Share2,
   } satisfies Record<NavIconName, typeof Sparkles>;
 
   const Icon = icons[name];

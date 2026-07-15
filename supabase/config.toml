@@ -27,6 +27,9 @@ enable_signup = false
 enabled = true
 file_size_limit = "10MiB"
 
+[analytics]
+enabled = false
+
 [functions.signup]
 verify_jwt = false
 
@@ -43,4 +46,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.conversation-maintenance]
+verify_jwt = false
+
+[functions.meta-oauth-callback]
+verify_jwt = false
+
+[functions.publish-scheduled-posts]
 verify_jwt = false

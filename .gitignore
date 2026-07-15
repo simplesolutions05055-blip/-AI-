@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 .env.supabase.local
+.env.production
 
 # Dependencies
 node_modules/
@@ -43,3 +44,4 @@ yarn-error.log*
 .vercel
 docs/
 supabase/.temp/
+supabase/.branches/
