@@ -36,6 +36,8 @@ interface ConnectionData {
   meta_user_picture: string | null;
   status: string;
   last_verified_at: string;
+  default_facebook_page_id: string | null;
+  default_instagram_account_id: string | null;
   meta_facebook_pages: FacebookPage[];
   meta_instagram_accounts: InstagramAccount[];
 }
@@ -144,6 +146,8 @@ export default function MetaConnectionPage() {
           meta_user_picture,
           status,
           last_verified_at,
+          default_facebook_page_id,
+          default_instagram_account_id,
           meta_facebook_pages (
             id,
             page_id,
@@ -250,6 +254,26 @@ export default function MetaConnectionPage() {
       setError(err instanceof Error ? err.message : 'Failed to connect');
     } finally {
       setConnecting(false);
+    }
+  };
+
+  // Mark one page / Instagram account as the brand's default publish target.
+  // Scheduling flows (site modal, WhatsApp bot) pre-select it automatically.
+  const setDefaultTarget = async (kind: 'facebook' | 'instagram', rowId: string) => {
+    if (!data) return;
+    const column = kind === 'facebook' ? 'default_facebook_page_id' : 'default_instagram_account_id';
+    try {
+      setError(null);
+      const supabase = createSupabaseBrowserClient();
+      const { error: updateError } = await supabase
+        .from('meta_connections')
+        .update({ [column]: rowId } as never)
+        .eq('id', data.id);
+      if (updateError) throw updateError;
+      setData({ ...data, [column]: rowId });
+      setSuccess(kind === 'facebook' ? 'עמוד ברירת המחדל עודכן' : 'חשבון ברירת המחדל עודכן');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'עדכון ברירת המחדל נכשל');
     }
   };
 
@@ -496,22 +520,43 @@ export default function MetaConnectionPage() {
             </h2>
             {data.meta_facebook_pages && data.meta_facebook_pages.length > 0 ? (
               <div className="space-y-3">
-                {data.meta_facebook_pages.map((page) => (
-                  <div key={page.id} className="flex items-center gap-4 p-3 bg-gray-50 rounded">
-                    {page.page_picture && (
-                      <img
-                        src={page.page_picture}
-                        alt={page.page_name}
-                        className="w-12 h-12 rounded"
-                      />
-                    )}
-                    <div>
-                      <p className="font-medium">{page.page_name}</p>
-                      <p className="text-sm text-gray-500">{page.category}</p>
-                      <p className="text-xs text-gray-400">ID: {page.page_id}</p>
+                <p className="text-sm text-gray-500">
+                  עמוד ברירת המחדל נבחר אוטומטית בכל תזמון פרסום (באתר ובוואטסאפ). אפשר להחליף עמוד בכל תזמון בנפרד.
+                </p>
+                {data.meta_facebook_pages.map((page) => {
+                  const isDefault = data.default_facebook_page_id
+                    ? data.default_facebook_page_id === page.id
+                    : data.meta_facebook_pages.length === 1;
+                  return (
+                    <div key={page.id} className="flex items-center gap-4 p-3 bg-gray-50 rounded">
+                      {page.page_picture && (
+                        <img
+                          src={page.page_picture}
+                          alt={page.page_name}
+                          className="w-12 h-12 rounded"
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium">{page.page_name}</p>
+                        <p className="text-sm text-gray-500">{page.category}</p>
+                        <p className="text-xs text-gray-400">ID: {page.page_id}</p>
+                      </div>
+                      {isDefault ? (
+                        <span className="shrink-0 rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800">
+                          ✓ ברירת מחדל
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setDefaultTarget('facebook', page.id)}
+                          className="shrink-0 rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                        >
+                          קבע כברירת מחדל
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <p className="text-gray-500">לא נמצאו עמודים</p>
@@ -525,21 +570,39 @@ export default function MetaConnectionPage() {
             </h2>
             {data.meta_instagram_accounts && data.meta_instagram_accounts.length > 0 ? (
               <div className="space-y-3">
-                {data.meta_instagram_accounts.map((ig) => (
-                  <div key={ig.id} className="flex items-center gap-4 p-3 bg-gray-50 rounded">
-                    {ig.profile_picture_url && (
-                      <img
-                        src={ig.profile_picture_url}
-                        alt={ig.username}
-                        className="w-12 h-12 rounded-full"
-                      />
-                    )}
-                    <div>
-                      <p className="font-medium">@{ig.username}</p>
-                      <p className="text-xs text-gray-400">ID: {ig.instagram_id}</p>
+                {data.meta_instagram_accounts.map((ig) => {
+                  const isDefault = data.default_instagram_account_id
+                    ? data.default_instagram_account_id === ig.id
+                    : data.meta_instagram_accounts.length === 1;
+                  return (
+                    <div key={ig.id} className="flex items-center gap-4 p-3 bg-gray-50 rounded">
+                      {ig.profile_picture_url && (
+                        <img
+                          src={ig.profile_picture_url}
+                          alt={ig.username}
+                          className="w-12 h-12 rounded-full"
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium">@{ig.username}</p>
+                        <p className="text-xs text-gray-400">ID: {ig.instagram_id}</p>
+                      </div>
+                      {isDefault ? (
+                        <span className="shrink-0 rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800">
+                          ✓ ברירת מחדל
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setDefaultTarget('instagram', ig.id)}
+                          className="shrink-0 rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                        >
+                          קבע כברירת מחדל
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <p className="text-gray-500">לא נמצאו חשבונות Instagram Business</p>

@@ -51,6 +51,28 @@ export type StoredMediaRecord = {
   mime_type: string | null;
 };
 
+// A publish target (Facebook page / Instagram account) from get-meta-connections.
+type MetaTargetOption = {
+  row_id: string;
+  target_id: string;
+  name: string;
+  picture: string | null;
+  is_default: boolean;
+};
+
+// The brand's Meta connection as the modal sees it. 'disconnected' blocks
+// scheduling — a post without a connection can never auto-publish.
+type MetaTargetsState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'disconnected' }
+  | {
+      status: 'ready';
+      connectionId: string;
+      facebook: MetaTargetOption[];
+      instagram: MetaTargetOption[];
+    };
+
 // Turn the in-memory media list into the jsonb records to persist, uploading any
 // device files that don't yet have a storage path. Shared by the create and edit
 // flows so both behave identically.
@@ -336,12 +358,74 @@ function ScheduleModal({
   const [aiCaptionError, setAiCaptionError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
 
+  // Where the post actually publishes: the brand's Meta connection and the
+  // chosen page/account per platform (pre-filled with the brand's default).
+  const [metaTargets, setMetaTargets] = useState<MetaTargetsState>({ status: 'loading' });
+  const [selectedTarget, setSelectedTarget] = useState<{ facebook: string; instagram: string }>({
+    facebook: '',
+    instagram: '',
+  });
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const client = createSupabaseBrowserClient();
+        const { data: session } = await client.auth.getSession();
+        if (!session.session) throw new Error('not_authenticated');
+        const query = brandId ? `?brand_id=${encodeURIComponent(brandId)}` : '';
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-meta-connections${query}`,
+          { headers: { Authorization: `Bearer ${session.session.access_token}` } }
+        );
+        if (!response.ok) throw new Error(`status_${response.status}`);
+        const payload = (await response.json()) as {
+          connected?: boolean;
+          connection?: { id: string; status: string } | null;
+          targets?: {
+            facebook: MetaTargetOption[];
+            instagram: MetaTargetOption[];
+            default_facebook: MetaTargetOption | null;
+            default_instagram: MetaTargetOption | null;
+          } | null;
+        };
+        if (!alive) return;
+        if (!payload.connected || !payload.connection || payload.connection.status !== 'active' || !payload.targets) {
+          setMetaTargets({ status: 'disconnected' });
+          return;
+        }
+        setMetaTargets({
+          status: 'ready',
+          connectionId: payload.connection.id,
+          facebook: payload.targets.facebook,
+          instagram: payload.targets.instagram,
+        });
+        setSelectedTarget({
+          facebook: payload.targets.default_facebook?.target_id ?? '',
+          instagram: payload.targets.default_instagram?.target_id ?? '',
+        });
+      } catch {
+        if (alive) setMetaTargets({ status: 'error' });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [brandId]);
+
   const includesInstagram = platforms.includes('instagram');
   const channelsLabel = platformsLabel(platforms);
   const hasPlatforms = platforms.length > 0;
   const hasAiImage = media.some((m) => m.aiGenerated);
   // Instagram allows at most 10 items in a carousel.
   const igTooManyItems = includesInstagram && media.length > 10;
+  // Every selected platform must have a concrete publish target.
+  const missingTargetPlatforms =
+    metaTargets.status === 'ready'
+      ? platforms.filter((p) => !selectedTarget[p])
+      : [];
+  const targetsReady =
+    metaTargets.status === 'ready' && missingTargetPlatforms.length === 0;
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -362,11 +446,20 @@ function ScheduleModal({
   async function saveSchedule() {
     const cleanTitle = scheduleTitle.trim();
     if (!cleanTitle || !scheduledAt || !caption.trim() || !hasPlatforms || saving || igTooManyItems) return;
+    if (metaTargets.status !== 'ready' || !targetsReady) return;
     setSaving(true);
     setSaveError(null);
     try {
       const client = createSupabaseBrowserClient();
       const uploadedMedia = await uploadPendingMedia(media, requestId || 'manual');
+
+      const targets: Partial<Record<SocialPlatform, { id: string; name: string }>> = {};
+      for (const platform of platforms) {
+        const options = platform === 'facebook' ? metaTargets.facebook : metaTargets.instagram;
+        const chosen = options.find((o) => o.target_id === selectedTarget[platform]);
+        if (!chosen) throw new Error('meta_target_required');
+        targets[platform] = { id: chosen.target_id, name: chosen.name };
+      }
 
       const { data, error } = await client.functions.invoke('schedule-social-post', {
         body: {
@@ -378,6 +471,8 @@ function ScheduleModal({
           caption,
           scheduled_at: new Date(scheduledAt).toISOString(),
           media: uploadedMedia,
+          connection_id: metaTargets.connectionId,
+          targets,
         },
       });
       if (error) throw error;
@@ -468,6 +563,48 @@ function ScheduleModal({
             </div>
             {!hasPlatforms && (
               <p className="mt-2 text-xs text-red-600">בחרו לפחות רשת חברתית אחת לפרסום.</p>
+            )}
+
+            {metaTargets.status === 'loading' && (
+              <p className="mt-2 text-xs text-[var(--muted)]">טוען את חשבונות הפרסום המחוברים…</p>
+            )}
+            {metaTargets.status === 'error' && (
+              <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                לא הצלחנו לטעון את חשבונות הפרסום. רעננו את העמוד ונסו שוב.
+              </p>
+            )}
+            {metaTargets.status === 'disconnected' && (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                המותג עדיין לא מחובר לפייסבוק ואינסטגרם, ולכן אי אפשר לתזמן פרסום אוטומטי.
+                חברו חשבון Meta במסך ההגדרות ונסו שוב.
+              </p>
+            )}
+            {metaTargets.status === 'ready' && (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {platforms.includes('facebook') && (
+                  <TargetSelect
+                    label="עמוד פייסבוק לפרסום"
+                    options={metaTargets.facebook}
+                    value={selectedTarget.facebook}
+                    onChange={(value) => setSelectedTarget((cur) => ({ ...cur, facebook: value }))}
+                    emptyLabel="אין עמודי פייסבוק מחוברים"
+                  />
+                )}
+                {platforms.includes('instagram') && (
+                  <TargetSelect
+                    label="חשבון אינסטגרם לפרסום"
+                    options={metaTargets.instagram}
+                    value={selectedTarget.instagram}
+                    onChange={(value) => setSelectedTarget((cur) => ({ ...cur, instagram: value }))}
+                    emptyLabel="אין חשבונות אינסטגרם מחוברים"
+                  />
+                )}
+              </div>
+            )}
+            {metaTargets.status === 'ready' && missingTargetPlatforms.length > 0 && (
+              <p className="mt-2 text-xs text-red-600">
+                בחרו {missingTargetPlatforms.includes('facebook') ? 'עמוד פייסבוק' : 'חשבון אינסטגרם'} לפרסום.
+              </p>
             )}
           </fieldset>
 
@@ -595,7 +732,7 @@ function ScheduleModal({
           <button
             type="button"
             onClick={saveSchedule}
-            disabled={saving || !hasPlatforms || !scheduleTitle.trim() || !scheduledAt || !caption.trim() || (includesInstagram && media.length === 0) || igTooManyItems}
+            disabled={saving || !hasPlatforms || !targetsReady || !scheduleTitle.trim() || !scheduledAt || !caption.trim() || (includesInstagram && media.length === 0) || igTooManyItems}
             className="min-h-11 min-w-0 rounded-lg bg-brand px-2 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-base"
           >
             {saving ? 'שומר...' : 'תזמון הפרסום'}
@@ -610,6 +747,57 @@ function ScheduleModal({
         </div>
       </div>
     </div>
+  );
+}
+
+// Dropdown of the brand's connected pages/accounts for one platform. A single
+// option renders as a static line — nothing to choose.
+function TargetSelect({
+  label,
+  options,
+  value,
+  onChange,
+  emptyLabel,
+}: {
+  label: string;
+  options: MetaTargetOption[];
+  value: string;
+  onChange: (value: string) => void;
+  emptyLabel: string;
+}) {
+  if (options.length === 0) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        {emptyLabel}
+      </div>
+    );
+  }
+  if (options.length === 1) {
+    return (
+      <div className="min-w-0">
+        <span className="mb-1 block text-xs font-semibold text-[var(--muted)]">{label}</span>
+        <div className="truncate rounded-lg border border-[var(--border)] bg-gray-50 px-3 py-2 text-sm">
+          {options[0].name}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <label className="block min-w-0">
+      <span className="mb-1 block text-xs font-semibold text-[var(--muted)]">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-right text-sm"
+      >
+        <option value="" disabled>בחרו…</option>
+        {options.map((option) => (
+          <option key={option.target_id} value={option.target_id}>
+            {option.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -1341,6 +1529,10 @@ export function scheduleErrorLabel(error?: string | null): string {
   if (error.includes('instagram_requires_media')) return 'לאינסטגרם צריך לצרף תמונה או וידאו.';
   if (error.includes('caption_required')) return 'יש להזין כיתוב לפרסום.';
   if (error.includes('invalid_platform')) return 'פלטפורמת הפרסום לא תקינה.';
+  if (error.includes('meta_not_connected')) return 'המותג עדיין לא מחובר לפייסבוק/אינסטגרם. חברו חשבון Meta במסך ההגדרות ונסו שוב.';
+  if (error.includes('meta_target_required')) return 'בחרו עמוד או חשבון לפרסום לפני שמירת התזמון.';
+  if (error.includes('invalid_target')) return 'העמוד שנבחר כבר לא מחובר לחשבון. רעננו את העמוד ובחרו שוב.';
+  if (error.includes('connection_mismatch')) return 'חיבור ה-Meta שנבחר לא תואם למותג. רעננו את העמוד ונסו שוב.';
   if (error.includes('unauthorized')) return 'צריך להתחבר מחדש כדי לשמור תזמון.';
   if (error.includes('forbidden')) return 'אין הרשאה לתזמן את התוצר הזה.';
   if (error.includes('row-level security') || error.includes('violates row-level') || error.includes('Unauthorized')) {

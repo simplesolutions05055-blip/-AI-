@@ -21,34 +21,64 @@ Deno.serve(async (req) => {
     const token = authHeader.substring(7);
     const database = db();
     const { data: { user }, error: userError } = await database.auth.getUser(token);
-    
+
     if (userError || !user) {
       return json({ error: 'unauthorized' }, 401);
     }
 
-    // Get Meta connection (excluding sensitive tokens)
-    const { data: connection, error: connectionError } = await database
-      .from('meta_connections')
-      .select(`
-        id,
-        meta_user_id,
-        meta_user_name,
-        meta_user_picture,
-        status,
-        token_expires_at,
-        last_verified_at,
-        created_at,
-        updated_at
-      `)
-      .eq('user_id', user.id)
-      .maybeSingle();
+    // Optional brand scope: ?brand_id=... resolves the brand's connection
+    // (used by the scheduling modal). Only brand members and admins may ask.
+    const brandId = new URL(req.url).searchParams.get('brand_id');
+    if (brandId) {
+      const [{ data: profile }, { data: membership }] = await Promise.all([
+        database.from('profiles').select('role').eq('id', user.id).maybeSingle(),
+        database.from('user_brands').select('brand_id').eq('user_id', user.id).eq('brand_id', brandId).maybeSingle(),
+      ]);
+      if (profile?.role !== 'admin' && !membership) {
+        return json({ error: 'forbidden' }, 403);
+      }
+    }
 
-    if (connectionError) {
-      return json({ error: 'database_error' }, 500);
+    const connectionSelect = `
+      id,
+      meta_user_id,
+      meta_user_name,
+      meta_user_picture,
+      status,
+      token_expires_at,
+      last_verified_at,
+      created_at,
+      updated_at,
+      default_facebook_page_id,
+      default_instagram_account_id
+    `;
+
+    // Brand connection first; a connection owned by the caller as fallback
+    // (covers connections created before brand linking). Any status — the
+    // settings page surfaces expired connections for reconnection.
+    let connection: Record<string, unknown> | null = null;
+    if (brandId) {
+      const { data, error } = await database
+        .from('meta_connections')
+        .select(connectionSelect)
+        .eq('brand_id', brandId)
+        .maybeSingle();
+      if (error) return json({ error: 'database_error' }, 500);
+      connection = data as Record<string, unknown> | null;
+    }
+    if (!connection) {
+      const { data, error } = await database
+        .from('meta_connections')
+        .select(connectionSelect)
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (error) return json({ error: 'database_error' }, 500);
+      connection = (data?.[0] ?? null) as Record<string, unknown> | null;
     }
 
     if (!connection) {
-      return json({ connected: false, connection: null, pages: [], instagram_accounts: [] });
+      return json({ connected: false, connection: null, pages: [], instagram_accounts: [], targets: null });
     }
 
     // Get Facebook Pages
@@ -81,6 +111,25 @@ Deno.serve(async (req) => {
       return json({ error: 'database_error' }, 500);
     }
 
+    // Publish-target view for scheduling UIs: every option per platform plus
+    // the effective default (the explicitly chosen one, or the single option).
+    const fbOptions = (pages ?? []).map((p) => ({
+      row_id: p.id as string,
+      target_id: p.page_id as string,
+      name: p.page_name as string,
+      picture: (p.page_picture as string | null) ?? null,
+      is_default: p.id === connection.default_facebook_page_id,
+    }));
+    const igOptions = (instagramAccounts ?? []).map((a) => ({
+      row_id: a.id as string,
+      target_id: a.instagram_id as string,
+      name: `@${a.username as string}`,
+      picture: (a.profile_picture_url as string | null) ?? null,
+      is_default: a.id === connection.default_instagram_account_id,
+    }));
+    const effectiveDefault = <T extends { is_default: boolean }>(options: T[]): T | null =>
+      options.find((o) => o.is_default) ?? (options.length === 1 ? options[0] : null);
+
     return json({
       connected: true,
       connection: {
@@ -96,8 +145,14 @@ Deno.serve(async (req) => {
       },
       pages: pages || [],
       instagram_accounts: instagramAccounts || [],
+      targets: {
+        facebook: fbOptions,
+        instagram: igOptions,
+        default_facebook: effectiveDefault(fbOptions),
+        default_instagram: effectiveDefault(igOptions),
+      },
     });
-  } catch (error) {
+  } catch (_error) {
     return json({ error: 'server_error' }, 500);
   }
 });

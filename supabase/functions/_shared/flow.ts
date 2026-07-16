@@ -15,6 +15,7 @@ import { normalizeHe } from './brand.ts';
 import { sendDeliverableCopy, loadPdfBrandSettings } from './deliverableEmail.ts';
 import { renderDocxBase64 } from './docx.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from './abuseGuard.ts';
+import { resolveMetaConnection } from './meta.ts';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const APP_BASE_URL = (
@@ -832,6 +833,47 @@ async function requestHasEmailCopy(database: DB, requestId: string): Promise<boo
     .limit(1)
     .maybeSingle();
   return Boolean(data);
+}
+
+// Resolve the brand's Meta publish target for each requested platform: the
+// connection id plus the default page/account per platform. Returns a
+// user-facing Hebrew message when the brand isn't connected or a platform has
+// no usable default — scheduling is blocked in that case, because a post
+// without a target can never auto-publish.
+type FlowMetaTargets =
+  | { ok: true; connectionId: string; targets: Partial<Record<'facebook' | 'instagram', { id: string; name: string }>> }
+  | { ok: false; message: string };
+
+async function resolveFlowMetaTargets(
+  database: DB,
+  opts: { brandId: string | null; userId: string | null },
+  platforms: Array<'facebook' | 'instagram'>,
+): Promise<FlowMetaTargets> {
+  const resolved = await resolveMetaConnection(database, opts);
+  if (!resolved) {
+    return {
+      ok: false,
+      message:
+        'עדיין אין חיבור פעיל לפייסבוק/אינסטגרם למותג שלכם, ולכן אי אפשר לתזמן פרסום אוטומטי 🙏\nחברו חשבון Meta במסך ההגדרות באתר ונסו שוב.',
+    };
+  }
+  const targets: Partial<Record<'facebook' | 'instagram', { id: string; name: string }>> = {};
+  for (const platform of platforms) {
+    const options = platform === 'facebook' ? resolved.facebook : resolved.instagram;
+    const fallback = platform === 'facebook' ? resolved.default_facebook : resolved.default_instagram;
+    if (!fallback) {
+      const noun = platform === 'facebook' ? 'עמוד פייסבוק' : 'חשבון אינסטגרם';
+      return {
+        ok: false,
+        message:
+          options.length === 0
+            ? `אין ${noun} מחובר לחשבון ה-Meta של המותג, ולכן אי אפשר לתזמן לשם פרסום 🙏\nבדקו את החיבור במסך ההגדרות באתר.`
+            : `יש כמה ${platform === 'facebook' ? 'עמודי פייסבוק' : 'חשבונות אינסטגרם'} מחוברים ועדיין לא נבחרה ברירת מחדל 🙏\nבחרו ${noun} כברירת מחדל במסך חיבור ה-Meta באתר ונסו שוב.`,
+      };
+    }
+    targets[platform] = { id: fallback.target_id, name: fallback.name };
+  }
+  return { ok: true, connectionId: resolved.connection_id, targets };
 }
 
 async function requestHasScheduledPost(database: DB, requestId: string): Promise<boolean> {
@@ -2735,6 +2777,16 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
           await showMainMenu(database, conversation, identity, send);
           return { kind: 'handled' };
         }
+        const customMeta = await resolveFlowMetaTargets(
+          database,
+          { brandId: identity.brandId, userId: identity.userId },
+          customPlatforms,
+        );
+        if (!customMeta.ok) {
+          await send(customMeta.message);
+          await showMainMenu(database, conversation, identity, send);
+          return { kind: 'handled' };
+        }
         try {
           const { data: scheduledRows, error } = await database
             .from('scheduled_social_posts')
@@ -2750,6 +2802,9 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
                 media,
                 status: 'scheduled',
                 created_by: identity.userId,
+                connection_id: customMeta.connectionId,
+                target_platform_id: customMeta.targets[platform]!.id,
+                target_name: customMeta.targets[platform]!.name,
               }))
             )
             .select('id');
@@ -2816,13 +2871,25 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
                 mime_type: output.mime_type,
               }]
             : [];
+        const postBrandId = (req?.brand_id as string | null) ?? identity.brandId;
+        const requestMeta = await resolveFlowMetaTargets(
+          database,
+          { brandId: postBrandId, userId: identity.userId },
+          platforms,
+        );
+        if (!requestMeta.ok) {
+          await send(requestMeta.message);
+          await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
+          await sendPostDeliveryMenu(database, conversation, send, requestId);
+          return { kind: 'handled' };
+        }
         const { data: scheduledRows, error } = await database
           .from('scheduled_social_posts')
           .insert(
             platforms.map((platform) => ({
               request_id: requestId,
               output_id: output?.id ?? null,
-              brand_id: (req?.brand_id as string | null) ?? identity.brandId,
+              brand_id: postBrandId,
               title: String(brief.goal ?? '').slice(0, 160) || null,
               platform,
               caption: caption.slice(0, 5000),
@@ -2830,6 +2897,9 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
               media,
               status: 'scheduled',
               created_by: identity.userId,
+              connection_id: requestMeta.connectionId,
+              target_platform_id: requestMeta.targets[platform]!.id,
+              target_name: requestMeta.targets[platform]!.name,
             }))
           )
           .select('id');

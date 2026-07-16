@@ -180,17 +180,40 @@ Deno.serve(async (req) => {
       // First, try to get existing connection
       const { data: existingConn } = await database
         .from('meta_connections')
-        .select('id')
+        .select('id, brand_id')
         .eq('user_id', user.id)
         .maybeSingle();
-      
+
+      // Link the connection to the user's brand so brand members share it and
+      // scheduling can resolve targets brand-first. Only when unambiguous: the
+      // user belongs to exactly one brand and that brand isn't already
+      // connected elsewhere (meta_connections.brand_id is unique).
+      let brandId: string | null = existingConn?.brand_id ?? null;
+      if (!brandId) {
+        const { data: memberships } = await database
+          .from('user_brands')
+          .select('brand_id')
+          .eq('user_id', user.id)
+          .limit(2);
+        if (memberships?.length === 1) {
+          const candidate = memberships[0].brand_id as string;
+          const { data: taken } = await database
+            .from('meta_connections')
+            .select('id')
+            .eq('brand_id', candidate)
+            .maybeSingle();
+          if (!taken) brandId = candidate;
+        }
+      }
+
       let connectionId: string;
-      
+
       if (existingConn) {
         // Update existing
         const { data: updated, error: updateError } = await database
           .from('meta_connections')
           .update({
+            brand_id: brandId,
             meta_user_id: meData.id,
             meta_user_name: meData.name || null,
             meta_user_picture: meData.picture?.data?.url || null,
@@ -219,7 +242,7 @@ Deno.serve(async (req) => {
           .from('meta_connections')
           .insert({
             user_id: user.id,
-            brand_id: null, // Will be set later if user has a brand
+            brand_id: brandId,
             meta_user_id: meData.id,
             meta_user_name: meData.name || null,
             meta_user_picture: meData.picture?.data?.url || null,

@@ -8,6 +8,14 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+interface StoredMediaRecord {
+  kind: 'image' | 'video';
+  source: 'upload' | 'output';
+  name: string;
+  storage_path: string | null;
+  mime_type: string | null;
+}
+
 interface ScheduledPost {
   id: string;
   connection_id: string;
@@ -16,6 +24,7 @@ interface ScheduledPost {
   target_name: string;
   caption: string;
   image_url: string | null;
+  media: StoredMediaRecord[] | null;
 }
 
 interface PublishResult {
@@ -47,7 +56,7 @@ Deno.serve(async (req) => {
 
     const { data: duePosts, error: queryError } = await supabase
       .from('scheduled_social_posts')
-      .select('id, connection_id, platform, target_platform_id, target_name, caption, image_url')
+      .select('id, connection_id, platform, target_platform_id, target_name, caption, image_url, media')
       .eq('status', 'scheduled')
       .in('platform', ['facebook', 'instagram'])
       .lte('scheduled_at', now)
@@ -81,6 +90,11 @@ Deno.serve(async (req) => {
           throw new Error(`Meta connection is ${connection.status}`);
         }
 
+        // Build the list of publishable image URLs: sign every stored media
+        // image from the outputs bucket (in the user's chosen order), falling
+        // back to the direct image_url field for posts scheduled with one.
+        const imageUrls = await resolveImageUrls(supabase, post);
+
         // Call post-to-meta Edge Function
         const postUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/post-to-meta`;
         const postResponse = await fetch(postUrl, {
@@ -90,11 +104,12 @@ Deno.serve(async (req) => {
             'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
           },
           body: JSON.stringify({
+            connection_id: post.connection_id,
             user_id: connection.user_id,
             platform: post.platform,
             target_id: post.target_platform_id,
             message: post.caption,
-            image_url: post.image_url,
+            image_urls: imageUrls,
           }),
         });
 
@@ -147,6 +162,40 @@ Deno.serve(async (req) => {
     return json({ error: String(error) }, 500);
   }
 });
+
+// Turn a post's media records into public-fetchable image URLs for the Graph
+// API. Stored media lives in the private 'outputs' bucket, so each image gets
+// a signed URL (Meta fetches it within seconds; 6h leaves ample slack).
+// Video is not supported by the auto-publisher yet — better to fail loudly
+// than to silently publish a partial post.
+async function resolveImageUrls(
+  supabase: ReturnType<typeof createClient>,
+  post: ScheduledPost,
+): Promise<string[]> {
+  const media = Array.isArray(post.media) ? post.media : [];
+
+  if (media.some((m) => m?.kind === 'video')) {
+    throw new Error('פרסום וידאו אוטומטי עדיין לא נתמך — פרסמו את הפוסט הזה ידנית');
+  }
+
+  const urls: string[] = [];
+  for (const item of media) {
+    if (item?.kind !== 'image' || !item.storage_path) continue;
+    const { data: signed, error } = await supabase.storage
+      .from('outputs')
+      .createSignedUrl(item.storage_path, 6 * 60 * 60);
+    if (error || !signed?.signedUrl) {
+      throw new Error(`Failed to sign media URL for ${item.storage_path}`);
+    }
+    urls.push(signed.signedUrl);
+  }
+
+  if (urls.length === 0 && post.image_url) {
+    urls.push(post.image_url);
+  }
+
+  return urls.slice(0, 10);
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
