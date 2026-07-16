@@ -8,8 +8,10 @@ import SocialScheduleSection, {
   uploadPendingMedia,
   hydrateStoredMedia,
   scheduleErrorLabel,
+  fetchBrandMetaTargets,
   type MediaItem,
   type StoredMediaRecord,
+  type MetaTargetOption,
 } from '@/components/SocialScheduleSection';
 import { fetchSocialCaption } from '@/lib/social';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -37,8 +39,19 @@ type ScheduledSocialPost = {
   scheduled_at: string;
   status: 'scheduled' | 'published' | 'failed' | 'cancelled';
   media?: StoredMediaRecord[] | null;
+  connection_id?: string | null;
+  target_platform_id?: string | null;
+  target_name?: string | null;
   brands?: { name?: string | null } | null;
 };
+
+// The brand's connected pages/accounts for the platform being edited, plus the
+// currently chosen target. 'disconnected' blocks re-arming a failed post.
+type EditTargetsState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'disconnected' }
+  | { status: 'ready'; connectionId: string; options: MetaTargetOption[] };
 
 type ScheduleThumb = {
   url: string;
@@ -176,6 +189,10 @@ export default function HolidaysCalendarPage() {
   const [editForm, setEditForm] = useState<EditScheduleForm>({ title: '', scheduledAt: '', caption: '' });
   const [editMedia, setEditMedia] = useState<MediaItem[]>([]);
   const [editMediaLoading, setEditMediaLoading] = useState(false);
+  // The publish target (Facebook page / Instagram account) the edited post
+  // will post to, resolved from the post's brand connection.
+  const [editTargets, setEditTargets] = useState<EditTargetsState>({ status: 'loading' });
+  const [editTargetId, setEditTargetId] = useState('');
   const [editAiLoading, setEditAiLoading] = useState(false);
   const [editAiError, setEditAiError] = useState<string | null>(null);
   const [savingEditPostId, setSavingEditPostId] = useState<string | null>(null);
@@ -239,7 +256,7 @@ export default function HolidaysCalendarPage() {
 
     db
       .from('scheduled_social_posts')
-      .select('id, brand_id, request_id, title, platform, caption, scheduled_at, status, media, brands(name)')
+      .select('id, brand_id, request_id, title, platform, caption, scheduled_at, status, media, connection_id, target_platform_id, target_name, brands(name)')
       .gte('scheduled_at', monthBoundaryIso(year, month))
       .lt('scheduled_at', monthBoundaryIso(year, month + 1))
       .neq('status', 'cancelled')
@@ -483,6 +500,26 @@ export default function HolidaysCalendarPage() {
       .then((items) => setEditMedia(items))
       .catch(() => setEditMedia([]))
       .finally(() => setEditMediaLoading(false));
+
+    // Load the brand's connected pages/accounts so the target can be changed
+    // (and a failed post re-armed) from the edit dialog.
+    setEditTargets({ status: 'loading' });
+    setEditTargetId(post.target_platform_id ?? '');
+    void fetchBrandMetaTargets(post.brand_id)
+      .then((result) => {
+        if (!result) {
+          setEditTargets({ status: 'disconnected' });
+          return;
+        }
+        const options = post.platform === 'facebook' ? result.facebook : result.instagram;
+        setEditTargets({ status: 'ready', connectionId: result.connectionId, options });
+        // Pre-select: keep the post's current target if still valid, else fall
+        // back to the brand default.
+        const current = options.find((o) => o.target_id === post.target_platform_id);
+        const fallback = post.platform === 'facebook' ? result.defaultFacebook : result.defaultInstagram;
+        setEditTargetId(current?.target_id ?? fallback?.target_id ?? '');
+      })
+      .catch(() => setEditTargets({ status: 'error' }));
   }
 
   function closeEditSchedule() {
@@ -527,6 +564,24 @@ export default function HolidaysCalendarPage() {
     const cleanTitle = editForm.title.trim();
     const cleanCaption = editForm.caption.trim();
     if (!cleanTitle || !cleanCaption || !editForm.scheduledAt || savingEditPostId) return;
+
+    // Resolve the chosen publish target. A facebook/instagram post can only be
+    // saved as 'scheduled' with a connection + target (DB constraint), so block
+    // early with a clear message when the brand isn't connected or nothing is
+    // selected.
+    const chosen =
+      editTargets.status === 'ready'
+        ? editTargets.options.find((o) => o.target_id === editTargetId) ?? null
+        : null;
+    if (editTargets.status === 'disconnected') {
+      setEditError('המותג לא מחובר לפייסבוק/אינסטגרם, אז אי אפשר לקבוע יעד פרסום. חברו חשבון Meta במסך ההגדרות.');
+      return;
+    }
+    if (!chosen) {
+      setEditError('בחרו עמוד או חשבון לפרסום לפני השמירה.');
+      return;
+    }
+
     setSavingEditPostId(post.id);
     setEditError(null);
 
@@ -540,6 +595,12 @@ export default function HolidaysCalendarPage() {
       return;
     }
 
+    // Re-arm a failed post: a valid target + a future time send it back into the
+    // publish queue. Already-terminal states (published/cancelled) keep their
+    // status; a still-scheduled post stays scheduled.
+    const rearm = post.status === 'failed' && nextScheduledAt.getTime() > Date.now();
+    const nextStatus = rearm ? 'scheduled' : post.status;
+
     const { error: updateError } = await createSupabaseBrowserClient()
       .from('scheduled_social_posts')
       .update({
@@ -547,6 +608,11 @@ export default function HolidaysCalendarPage() {
         caption: cleanCaption,
         scheduled_at: nextScheduledAt.toISOString(),
         media: storedMedia,
+        connection_id: editTargets.status === 'ready' ? editTargets.connectionId : post.connection_id,
+        target_platform_id: chosen.target_id,
+        target_name: chosen.name,
+        status: nextStatus,
+        error_message: rearm ? null : undefined,
       } as never)
       .eq('id', post.id);
 
@@ -558,7 +624,17 @@ export default function HolidaysCalendarPage() {
 
     setScheduledPosts((current) => current.map((item) => (
       item.id === post.id
-        ? { ...item, title: cleanTitle, caption: cleanCaption, scheduled_at: nextScheduledAt.toISOString(), media: storedMedia }
+        ? {
+            ...item,
+            title: cleanTitle,
+            caption: cleanCaption,
+            scheduled_at: nextScheduledAt.toISOString(),
+            media: storedMedia,
+            connection_id: editTargets.status === 'ready' ? editTargets.connectionId : item.connection_id,
+            target_platform_id: chosen.target_id,
+            target_name: chosen.name,
+            status: nextStatus,
+          }
         : item
     )));
     closeEditSchedule();
@@ -1229,6 +1305,49 @@ export default function HolidaysCalendarPage() {
                   </div>
 
                   <div className="mt-4">
+                    <label className="block text-sm font-semibold">
+                      {editPost.platform === 'facebook' ? 'עמוד פייסבוק לפרסום' : 'חשבון אינסטגרם לפרסום'}
+                    </label>
+                    {editTargets.status === 'loading' && (
+                      <p className="mt-2 text-xs text-[var(--muted)]">טוען את חשבונות הפרסום המחוברים…</p>
+                    )}
+                    {editTargets.status === 'error' && (
+                      <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                        לא הצלחנו לטעון את חשבונות הפרסום. רעננו את העמוד ונסו שוב.
+                      </p>
+                    )}
+                    {editTargets.status === 'disconnected' && (
+                      <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        המותג לא מחובר לפייסבוק/אינסטגרם, ולכן אי אפשר לקבוע יעד פרסום. חברו חשבון Meta במסך ההגדרות.
+                      </p>
+                    )}
+                    {editTargets.status === 'ready' && editTargets.options.length === 0 && (
+                      <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        אין {editPost.platform === 'facebook' ? 'עמודי פייסבוק' : 'חשבונות אינסטגרם'} מחוברים לחשבון ה-Meta של המותג.
+                      </p>
+                    )}
+                    {editTargets.status === 'ready' && editTargets.options.length > 0 && (
+                      <select
+                        value={editTargetId}
+                        onChange={(event) => setEditTargetId(event.target.value)}
+                        className="mt-2 block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm"
+                      >
+                        <option value="" disabled>בחרו…</option>
+                        {editTargets.options.map((option) => (
+                          <option key={option.target_id} value={option.target_id}>
+                            {option.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {editPost.status === 'failed' && (
+                      <p className="mt-2 text-xs text-[var(--muted)]">
+                        הפוסט נכשל. בחירת יעד ומועד עתידי יחזירו אותו לתור הפרסום האוטומטי.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-4">
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <label className="block text-sm font-semibold">כיתוב לפרסום</label>
                       <button
@@ -1296,7 +1415,7 @@ export default function HolidaysCalendarPage() {
               <button
                 type="button"
                 onClick={() => void saveScheduleEdit(editPost)}
-                disabled={savingEditPostId === editPost.id || editMediaLoading || !editForm.title.trim() || !editForm.caption.trim() || !editForm.scheduledAt || (editPost.platform === 'instagram' && editMedia.length === 0)}
+                disabled={savingEditPostId === editPost.id || editMediaLoading || editTargets.status === 'loading' || editTargets.status === 'disconnected' || !editTargetId || !editForm.title.trim() || !editForm.caption.trim() || !editForm.scheduledAt || (editPost.platform === 'instagram' && editMedia.length === 0)}
                 className="min-h-11 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {savingEditPostId === editPost.id ? 'שומר...' : 'שמירת שינויים'}

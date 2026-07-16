@@ -52,13 +52,57 @@ export type StoredMediaRecord = {
 };
 
 // A publish target (Facebook page / Instagram account) from get-meta-connections.
-type MetaTargetOption = {
+export type MetaTargetOption = {
   row_id: string;
   target_id: string;
   name: string;
   picture: string | null;
   is_default: boolean;
 };
+
+// The brand's Meta connection with its publish targets. Shared by the create
+// modal and the calendar edit flow so both resolve targets identically.
+export type BrandMetaTargets = {
+  connectionId: string;
+  facebook: MetaTargetOption[];
+  instagram: MetaTargetOption[];
+  defaultFacebook: MetaTargetOption | null;
+  defaultInstagram: MetaTargetOption | null;
+};
+
+// Load the brand's connected pages/accounts. Returns null when the brand has no
+// active Meta connection (disconnected); throws on network/auth failure.
+export async function fetchBrandMetaTargets(brandId: string | null): Promise<BrandMetaTargets | null> {
+  const client = createSupabaseBrowserClient();
+  const { data: session } = await client.auth.getSession();
+  if (!session.session) throw new Error('not_authenticated');
+  const query = brandId ? `?brand_id=${encodeURIComponent(brandId)}` : '';
+  const response = await fetch(
+    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-meta-connections${query}`,
+    { headers: { Authorization: `Bearer ${session.session.access_token}` } }
+  );
+  if (!response.ok) throw new Error(`status_${response.status}`);
+  const payload = (await response.json()) as {
+    connected?: boolean;
+    connection?: { id: string; status: string } | null;
+    targets?: {
+      facebook: MetaTargetOption[];
+      instagram: MetaTargetOption[];
+      default_facebook: MetaTargetOption | null;
+      default_instagram: MetaTargetOption | null;
+    } | null;
+  };
+  if (!payload.connected || !payload.connection || payload.connection.status !== 'active' || !payload.targets) {
+    return null;
+  }
+  return {
+    connectionId: payload.connection.id,
+    facebook: payload.targets.facebook,
+    instagram: payload.targets.instagram,
+    defaultFacebook: payload.targets.default_facebook,
+    defaultInstagram: payload.targets.default_instagram,
+  };
+}
 
 // The brand's Meta connection as the modal sees it. 'disconnected' blocks
 // scheduling — a post without a connection can never auto-publish.
@@ -370,39 +414,21 @@ function ScheduleModal({
     let alive = true;
     (async () => {
       try {
-        const client = createSupabaseBrowserClient();
-        const { data: session } = await client.auth.getSession();
-        if (!session.session) throw new Error('not_authenticated');
-        const query = brandId ? `?brand_id=${encodeURIComponent(brandId)}` : '';
-        const response = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-meta-connections${query}`,
-          { headers: { Authorization: `Bearer ${session.session.access_token}` } }
-        );
-        if (!response.ok) throw new Error(`status_${response.status}`);
-        const payload = (await response.json()) as {
-          connected?: boolean;
-          connection?: { id: string; status: string } | null;
-          targets?: {
-            facebook: MetaTargetOption[];
-            instagram: MetaTargetOption[];
-            default_facebook: MetaTargetOption | null;
-            default_instagram: MetaTargetOption | null;
-          } | null;
-        };
+        const result = await fetchBrandMetaTargets(brandId);
         if (!alive) return;
-        if (!payload.connected || !payload.connection || payload.connection.status !== 'active' || !payload.targets) {
+        if (!result) {
           setMetaTargets({ status: 'disconnected' });
           return;
         }
         setMetaTargets({
           status: 'ready',
-          connectionId: payload.connection.id,
-          facebook: payload.targets.facebook,
-          instagram: payload.targets.instagram,
+          connectionId: result.connectionId,
+          facebook: result.facebook,
+          instagram: result.instagram,
         });
         setSelectedTarget({
-          facebook: payload.targets.default_facebook?.target_id ?? '',
-          instagram: payload.targets.default_instagram?.target_id ?? '',
+          facebook: result.defaultFacebook?.target_id ?? '',
+          instagram: result.defaultInstagram?.target_id ?? '',
         });
       } catch {
         if (alive) setMetaTargets({ status: 'error' });
