@@ -844,6 +844,8 @@ type FlowMetaTargets =
   | { ok: true; connectionId: string; targets: Partial<Record<'facebook' | 'instagram', { id: string; name: string }>> }
   | { ok: false; message: string };
 
+const META_CONNECTION_URL = `${APP_BASE_URL}/admin/meta-connection`;
+
 async function resolveFlowMetaTargets(
   database: DB,
   opts: { brandId: string | null; userId: string | null },
@@ -854,7 +856,7 @@ async function resolveFlowMetaTargets(
     return {
       ok: false,
       message:
-        'עדיין אין חיבור פעיל לפייסבוק/אינסטגרם למותג שלכם, ולכן אי אפשר לתזמן פרסום אוטומטי 🙏\nחברו חשבון Meta במסך ההגדרות באתר ונסו שוב.',
+        `עדיין אין חיבור פעיל לפייסבוק/אינסטגרם למותג שלכם, ולכן אי אפשר לתזמן פרסום אוטומטי 🙏\nחברו חשבון Meta ובחרו עמוד לפרסום כאן:\n${META_CONNECTION_URL}\n\nאחרי החיבור חזרו לכאן ונסו שוב.`,
     };
   }
   const targets: Partial<Record<'facebook' | 'instagram', { id: string; name: string }>> = {};
@@ -867,8 +869,8 @@ async function resolveFlowMetaTargets(
         ok: false,
         message:
           options.length === 0
-            ? `אין ${noun} מחובר לחשבון ה-Meta של המותג, ולכן אי אפשר לתזמן לשם פרסום 🙏\nבדקו את החיבור במסך ההגדרות באתר.`
-            : `יש כמה ${platform === 'facebook' ? 'עמודי פייסבוק' : 'חשבונות אינסטגרם'} מחוברים ועדיין לא נבחרה ברירת מחדל 🙏\nבחרו ${noun} כברירת מחדל במסך חיבור ה-Meta באתר ונסו שוב.`,
+            ? `אין ${noun} מחובר לחשבון ה-Meta של המותג, ולכן אי אפשר לתזמן לשם פרסום 🙏\nבדקו את החיבור כאן:\n${META_CONNECTION_URL}`
+            : `יש כמה ${platform === 'facebook' ? 'עמודי פייסבוק' : 'חשבונות אינסטגרם'} מחוברים ועדיין לא נבחרה ברירת מחדל 🙏\nבחרו ${noun} כברירת מחדל כאן:\n${META_CONNECTION_URL}\n\nאחרי הבחירה חזרו לכאן ונסו שוב.`,
       };
     }
     targets[platform] = { id: fallback.target_id, name: fallback.name };
@@ -2575,6 +2577,19 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await send(SCHEDULE_PLATFORM_MENU, SCHEDULE_PLATFORM_INTERACTION);
         return { kind: 'handled' };
       }
+      // Block right here — before the user writes the whole post — when the
+      // brand has no Meta connection or no default target for a chosen
+      // platform. The message links to the site page where it's configured.
+      const earlyMeta = await resolveFlowMetaTargets(
+        database,
+        { brandId: identity.brandId, userId: identity.userId },
+        platforms,
+      );
+      if (!earlyMeta.ok) {
+        await send(earlyMeta.message);
+        await showMainMenu(database, conversation, identity, send);
+        return { kind: 'handled' };
+      }
       const delivered = await send(customPostContentPrompt(platforms));
       if (delivered) {
         await setFlow(database, conversation.id, {
@@ -2694,6 +2709,20 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const hasMedia = Boolean(output?.storage_path && (output?.mime_type ?? '').startsWith('image/'));
       if (platforms.includes('instagram') && !hasMedia) {
         await send('פרסום באינסטגרם דורש תמונה, והתוצר הזה הוא טקסט בלבד. אפשר לבחור פייסבוק (1).');
+        return { kind: 'handled' };
+      }
+      // Block right here — before asking for a date — when the brand has no
+      // Meta connection or no default target for a chosen platform. The
+      // message links to the site page where it's configured.
+      const earlyMeta = await resolveFlowMetaTargets(
+        database,
+        { brandId: identity.brandId, userId: identity.userId },
+        platforms,
+      );
+      if (!earlyMeta.ok) {
+        await send(earlyMeta.message);
+        await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
+        await sendPostDeliveryMenu(database, conversation, send, requestId ?? undefined);
         return { kind: 'handled' };
       }
       const schedulePrompt = await buildScheduleDateTimePrompt(database, requestId);
