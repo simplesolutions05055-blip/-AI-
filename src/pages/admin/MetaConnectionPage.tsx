@@ -148,14 +148,14 @@ export default function MetaConnectionPage() {
           last_verified_at,
           default_facebook_page_id,
           default_instagram_account_id,
-          meta_facebook_pages (
+          meta_facebook_pages!connection_id (
             id,
             page_id,
             page_name,
             page_picture,
             category
           ),
-          meta_instagram_accounts (
+          meta_instagram_accounts!connection_id (
             id,
             instagram_id,
             username,

@@ -116,13 +116,13 @@ Deno.serve(async (req) => {
         id,
         meta_user_id,
         status,
-        meta_facebook_pages (
+        meta_facebook_pages!connection_id (
           id,
           page_id,
           page_name,
           page_access_token
         ),
-        meta_instagram_accounts (
+        meta_instagram_accounts!connection_id (
           id,
           instagram_id,
           username,
