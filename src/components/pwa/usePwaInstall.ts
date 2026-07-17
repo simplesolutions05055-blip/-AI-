@@ -134,8 +134,9 @@ export function usePwaInstall() {
     };
   }, [userId]);
 
-  const dismissed = userId ? !dismissalLoaded || isDismissedByRow(dismissal) || localDismissed : localDismissed;
-  const canInstall = !installed && !dismissed && (Boolean(deferredPrompt) || ios);
+  const dismissed = !dismissalLoaded || isDismissedByRow(dismissal) || localDismissed;
+  // Signed-in only: the prompt belongs to the app, not to the login screens.
+  const canInstall = Boolean(userId) && !installed && !dismissed && (Boolean(deferredPrompt) || ios);
 
   useEffect(() => {
     if (!canInstall || !userId || shownLoggedRef.current) return;

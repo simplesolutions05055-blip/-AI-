@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, Navigate } from 'react-router-dom';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
+import SocialConnectPrompt from '@/components/social/SocialConnectPrompt';
 import OnboardingBanner from '@/components/OnboardingBanner';
 import { useProfile } from '@/lib/useProfile';
 import { useBrandTheme } from '@/lib/useBrandTheme';
@@ -212,6 +213,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         menuButtonRef={menuButtonRef}
       />
       <InstallPrompt />
+      <SocialConnectPrompt userId={profile.id} />
     </div>
   );
 }

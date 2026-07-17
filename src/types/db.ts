@@ -184,6 +184,7 @@ export interface IsraelHoliday {
   updated_at: string;
 }
 
+/** One row per (user, prompt_key): 'pwa_install', 'social_connect'. */
 export interface PwaInstallPromptDismissal {
   user_id: string;
   prompt_key: string;
