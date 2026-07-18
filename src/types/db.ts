@@ -184,6 +184,30 @@ export interface IsraelHoliday {
   updated_at: string;
 }
 
+export type AnnualPlanItemStatus = 'draft' | 'to_schedule' | 'to_publish' | 'scheduled' | 'published' | 'error';
+
+/** Persisted draft of the annual content planner (/admin/annual-planner). */
+export interface AnnualPlanItem {
+  id: string;
+  brand_id: string | null;
+  year: number;
+  date: string;
+  event_name: string;
+  title: string;
+  caption: string;
+  hashtags: string[];
+  platform: 'facebook' | 'instagram' | 'both';
+  status: AnnualPlanItemStatus;
+  scheduled_at: string | null;
+  media: unknown[];
+  design_notes: string;
+  production_request_id: string | null;
+  error_message: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 /** One row per (user, prompt_key): 'pwa_install', 'social_connect'. */
 export interface PwaInstallPromptDismissal {
   user_id: string;

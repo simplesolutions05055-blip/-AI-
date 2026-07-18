@@ -6,6 +6,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { processRequest } from '../_shared/worker.ts';
 import { db } from '../_shared/db.ts';
 import { setOpenAiKeyOverride, clearOpenAiKeyOverride } from '../_shared/openai.ts';
+import { logEvent } from '../_shared/util.ts';
 import {
   AbuseGuardError,
   enforceParallelRequestLimit,
@@ -37,6 +38,28 @@ Deno.serve(async (req) => {
     await rejectClientOpenAiKeyIfDisabled(database, openai_key);
     await enforceRequestCost(database, request_id);
     await enforceParallelRequestLimit(database, { ...actor, userId: actor.userId ?? caller }, request_id);
+
+    // An authorized retry uses the same request and brief. Remove the previous
+    // internal error before processing so the UI reflects the new attempt.
+    const { data: retryCandidate } = await database
+      .from('requests')
+      .select('status, structured_brief')
+      .eq('id', request_id)
+      .single();
+    if (retryCandidate?.status === 'failed') {
+      const brief = (retryCandidate.structured_brief ?? {}) as Record<string, unknown>;
+      const { last_error: _lastError, ...retryBrief } = brief;
+      await database.from('requests').update({
+        status: 'queued',
+        structured_brief: retryBrief,
+        processing_locked_at: null,
+      }).eq('id', request_id);
+      await logEvent(database, {
+        requestId: request_id,
+        action: 'failed_request_retried',
+        metadata: { channel: 'site' },
+      });
+    }
 
     await database
       .from('jobs')

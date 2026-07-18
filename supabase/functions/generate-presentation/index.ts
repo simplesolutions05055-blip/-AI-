@@ -1,5 +1,5 @@
 import { db } from '../_shared/db.ts';
-import { generatePresentationOutline, generateDeckSlides, rewriteDeckSlide, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption } from '../_shared/openai.ts';
+import { generatePresentationOutline, generateDeckSlides, rewriteDeckSlide, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption, extractAnnualPlannerEvents } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost, imageUnitCost } from '../_shared/util.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 import {
@@ -31,7 +31,7 @@ Deno.serve(async (req) => {
   const database = db();
 
   try {
-    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, slide, slideNumber, instruction } = await req.json();
+    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, slide, slideNumber, instruction, planner_year } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
     await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
     if (save_only !== true) {
@@ -137,6 +137,15 @@ Deno.serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    if (format === 'annual_planner_events') {
+      const text = typeof (brief as { source_text?: unknown }).source_text === 'string' ? (brief as { source_text: string }).source_text.trim() : '';
+      if (!text) return new Response(JSON.stringify({ error: 'source_text required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const aiModelsPlanner = await getSetting<{ text_model?: string }>(database, 'ai_models');
+      const result = await extractAnnualPlannerEvents(text, Number(planner_year) || new Date().getFullYear(), overrideKey);
+      await recordUsageAndCost(database, requestId ?? null, { provider: 'openai', model: aiModelsPlanner?.text_model || 'gpt-4o', input: result.usage?.prompt_tokens ?? 0, output: result.usage?.completion_tokens ?? 0, cost: estimateTextCost(result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0) });
+      return new Response(JSON.stringify({ ok: true, events: result.events }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // 'deck' mode: return rich structured 10-slide content for the PDF renderer.

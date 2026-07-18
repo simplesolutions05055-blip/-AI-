@@ -8,3 +8,15 @@ export function genderCopy(
   if (gender === 'male') return copy.male;
   return copy.neutral ?? copy.male;
 }
+
+export function worksWithBrandCopy(
+  gender: ProfileGender | null | undefined,
+  brandName: string | null | undefined,
+): string {
+  if (!gender || !brandName) return 'מותג';
+  return genderCopy(gender, {
+    male: `אתה עובד עם ${brandName}`,
+    female: `את עובדת עם ${brandName}`,
+    neutral: 'מותג',
+  });
+}

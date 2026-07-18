@@ -36,6 +36,7 @@ import {
   maybeLockTemplate,
 } from './learning.ts';
 import { buildPostDeliveryInteraction, buildPostDeliveryMenu } from './flow.ts';
+import { genderText, normalizeAddressGender } from './whatsappCopy.ts';
 import {
   AbuseGuardError,
   enforceAiLimit,
@@ -47,6 +48,12 @@ import {
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
 const POST_DELIVERY_MENU_DELAY_MS = 10_000;
+
+async function requestGender(database: DB, userId: string | null | undefined) {
+  if (!userId) return null;
+  const { data } = await database.from('profiles').select('gender').eq('id', userId).maybeSingle();
+  return normalizeAddressGender(data?.gender);
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -163,7 +170,7 @@ async function handleBrandConfirmation(
       await saveBrief({ pending_brand_id: null });
       await logEvent(database, { requestId: request.id, action: 'brand_confirmed', metadata: { brand_id: pendingId } });
       await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-        `מעולה, נתאים את התוצר למיתוג של ${brand?.name ?? ''}.`, conversation.simulated);
+        `מעולה, אתאים את התוצר למיתוג של ${brand?.name ?? ''} ✨`, conversation.simulated);
       return 'continue';
     }
     if (isNo(lastInbound)) {
@@ -186,7 +193,7 @@ async function handleBrandConfirmation(
         // actually delivered — otherwise leave state as-is so the next inbound
         // re-matches and re-asks instead of stranding an unseen pending_brand_id.
         const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-          `הבנתי שמדובר ב${alt.name}, נכון? השב כן או לא.`, conversation.simulated);
+          `נראה שמדובר ב${alt.name}. נכון?`, conversation.simulated);
         if (delivered) {
           await saveBrief({ pending_brand_id: alt.id, brand_unclear_count: 0 });
           await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -196,7 +203,7 @@ async function handleBrandConfirmation(
       }
       await saveBrief({ pending_brand_id: null, brand_declined: true });
       await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-        'הבנתי, נמשיך ללא מיתוג ספציפי.', conversation.simulated);
+        'הבנתי, אמשיך בלי מיתוג ספציפי.', conversation.simulated);
       return 'continue';
     }
     // unclear → re-ask, but cap retries so we never loop forever on "אולי".
@@ -204,13 +211,13 @@ async function handleBrandConfirmation(
     if (unclearCount >= 2) {
       await saveBrief({ pending_brand_id: null, brand_declined: true, brand_unclear_count: unclearCount });
       await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-        'אין בעיה, נמשיך ללא מיתוג ספציפי בינתיים.', conversation.simulated);
+        'אין בעיה, אמשיך בלי מיתוג ספציפי בינתיים.', conversation.simulated);
       return 'continue';
     }
     // Only count this retry if the user actually saw the re-ask; a failed send
     // must not march brand_unclear_count toward the give-up cap on its own.
     const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-      'רק לוודא — להשתמש במיתוג של המקום שזיהיתי? השב כן או לא.', conversation.simulated);
+      'רק לוודא: להשתמש במיתוג שזיהיתי?', conversation.simulated);
     if (delivered) {
       await saveBrief({ brand_unclear_count: unclearCount });
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -232,7 +239,7 @@ async function handleBrandConfirmation(
   // Record the pending guess only on delivery, so an undelivered prompt doesn't
   // strand a pending_brand_id the user never saw (the next inbound re-matches).
   const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-    `הבנתי שמדובר ב${match.name}, נכון? השב כן או לא.`, conversation.simulated);
+    `נראה שמדובר ב${match.name}. נכון?`, conversation.simulated);
   if (delivered) {
     await saveBrief({ pending_brand_id: match.id });
     await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -380,7 +387,7 @@ export async function sendOut(
     const interactiveSetting = interactive
       ? await getSettingOr<{ enabled: boolean }>(database, 'whatsapp_interactive_messages', { enabled: false })
       : { enabled: false };
-    const useInteractive = Boolean(interactive && interactiveSetting.enabled);
+    const useInteractive = Boolean(interactive && (interactiveSetting.enabled || interactive.force));
     if (simulated || isProductionFormTarget(to)) {
       sid = `sim-${crypto.randomUUID()}`;
       // Groups never get interactive buttons (platform limit) — the simulated
@@ -631,7 +638,7 @@ async function runRequestPipeline(
       request.status = 'collecting_details';
     } else {
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-      await sendOut(database, conversation.id, requestId, waFrom, 'כדי להפיק לפי הבריף, כתוב: מאשר. אם צריך שינוי, כתוב מה לשנות.', conversation.simulated);
+      await sendOut(database, conversation.id, requestId, waFrom, 'הבריף מוכן. אם הכול נראה טוב, אפשר לכתוב „מאשר”. לשינוי, אפשר לכתוב לי מה לעדכן.', conversation.simulated);
       return;
     }
   }
@@ -871,7 +878,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       // Skipped entirely when the flow already acked ("קיבלתי! מכין את...").
       if (version === 1 && !productionForm && brief.ack_sent !== true) {
         const delivered = await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-          'מעולה, אני עובד על התמונה עכשיו. זה יכול לקחת רגע.', conversation.simulated);
+          'מעולה, אני מתחיל ליצור את התמונה 🎨 זה יכול לקחת רגע.', conversation.simulated);
         if (!delivered && !conversation.simulated) {
           await logEvent(database, {
             requestId,
@@ -989,9 +996,28 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     // conversation slot so their next message starts fresh instead of hitting
     // the SETTLED guard's silence.
     if (!productionForm) {
-      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-        'משהו השתבש ביצירת התוצר 😕 נסו לשלוח את הבקשה שוב בעוד רגע, או כתבו "תפריט" להתחלה חדשה.',
-        conversation.simulated);
+      const { data: profile } = request.created_by
+        ? await database.from('profiles').select('gender').eq('id', request.created_by).maybeSingle()
+        : { data: null };
+      const failureMessage = genderText(normalizeAddressGender(profile?.gender), {
+        male: 'אוי, לא הצלחתי להפיק את התוצר הפעם 🙈 אפשר לנסות שוב עם אותם הפרטים.',
+        female: 'אוי, לא הצלחתי להפיק את התוצר הפעם 🙈 אפשר לנסות שוב עם אותם הפרטים.',
+        plural: 'אוי, לא הצלחתי להפיק את התוצר הפעם 🙈 אפשר לנסות שוב עם אותם הפרטים.',
+      });
+      await sendOut(
+        database,
+        conversation.id,
+        requestId,
+        conversation.whatsapp_from,
+        `${failureMessage}\n\nאפשר לכתוב "נסה שוב" או ללחוץ על הכפתור.`,
+        conversation.simulated,
+        {
+          kind: 'quick_reply',
+          body: failureMessage,
+          force: true,
+          options: [{ id: 'נסה שוב', title: 'לנסות שוב' }],
+        },
+      );
     }
     await releaseConversationSlot(database, conversation.id);
   }
@@ -1020,6 +1046,7 @@ async function deliverOutput(database: DB, requestId: string): Promise<void> {
   const conversation = request.conversations as Conv;
   const templates = await getTemplates(database);
   const productionForm = isProductionFormConversation(conversation);
+  const gender = await requestGender(database, request.created_by as string | null);
 
   const { data: output } = await database
     .from('outputs')
@@ -1052,8 +1079,8 @@ async function deliverOutput(database: DB, requestId: string): Promise<void> {
   await logEvent(database, { requestId, action: 'delivered_whatsapp_only' });
   await sleep(POST_DELIVERY_MENU_DELAY_MS);
   await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-    buildPostDeliveryMenu(output.output_type), conversation.simulated,
-    buildPostDeliveryInteraction(output.output_type));
+    buildPostDeliveryMenu(output.output_type, gender), conversation.simulated,
+    buildPostDeliveryInteraction(output.output_type, gender));
   await database.from('conversations').update({
     status: 'active', current_request_id: null,
     flow_state: 'post_delivery', last_delivered_request_id: requestId,
@@ -1172,6 +1199,7 @@ export async function sendOutput(requestId: string): Promise<void> {
   if (!request) return;
   const conversation = request.conversations as Conv;
   const productionForm = isProductionFormConversation(conversation);
+  const gender = await requestGender(database, request.created_by as string | null);
 
   if (!request.customer_email) {
     await logEvent(database, { requestId, severity: 'error', action: 'send_no_email' });
@@ -1202,7 +1230,7 @@ export async function sendOutput(requestId: string): Promise<void> {
       await sleep(POST_DELIVERY_MENU_DELAY_MS);
       await sendOut(
         database, conversation.id, requestId, conversation.whatsapp_from,
-        buildPostDeliveryMenu(output.output_type), true, buildPostDeliveryInteraction(output.output_type)
+        buildPostDeliveryMenu(output.output_type, gender), true, buildPostDeliveryInteraction(output.output_type, gender)
       );
       await database.from('conversations').update({
         status: 'active', current_request_id: null,
@@ -1224,7 +1252,7 @@ export async function sendOutput(requestId: string): Promise<void> {
     await sleep(POST_DELIVERY_MENU_DELAY_MS);
     await sendOut(
       database, conversation.id, requestId, conversation.whatsapp_from,
-      buildPostDeliveryMenu(output.output_type), conversation.simulated, buildPostDeliveryInteraction(output.output_type)
+      buildPostDeliveryMenu(output.output_type, gender), conversation.simulated, buildPostDeliveryInteraction(output.output_type, gender)
     );
     await database.from('conversations').update({
       status: 'active', current_request_id: null,

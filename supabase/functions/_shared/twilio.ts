@@ -13,6 +13,7 @@ export type WhatsAppInteractive = {
   kind: 'quick_reply' | 'list_picker';
   body: string;
   button?: string;
+  force?: boolean;
   options: WhatsAppInteractiveOption[];
 };
 

@@ -457,9 +457,15 @@ export default function BrandingPage() {
   }
 
   async function removeAsset(a: BrandAsset) {
-    await db.storage.from('branding').remove([a.storage_path]);
-    await db.from('brand_assets').delete().eq('id', a.id);
+    // Optimistic: drop from the UI first, restore if the delete fails.
+    const snapshot = assets;
     setAssets((cur) => cur.filter((x) => x.id !== a.id));
+    await db.storage.from('branding').remove([a.storage_path]);
+    const { error } = await db.from('brand_assets').delete().eq('id', a.id);
+    if (error) {
+      setAssets(snapshot);
+      await alertDialog('מחיקת הקובץ נכשלה: ' + error.message);
+    }
   }
 
   async function updateAssetCaption(a: BrandAsset, caption: string) {
@@ -517,8 +523,14 @@ export default function BrandingPage() {
   }
 
   async function removeTextSource(source: BusinessTextSource) {
-    await db.from('business_text_sources').delete().eq('id', source.id);
+    // Optimistic: drop from the UI first, restore if the delete fails.
+    const snapshot = textSources;
     setTextSources((cur) => cur.filter((x) => x.id !== source.id));
+    const { error } = await db.from('business_text_sources').delete().eq('id', source.id);
+    if (error) {
+      setTextSources(snapshot);
+      await alertDialog('מחיקת מקור התוכן נכשלה: ' + error.message);
+    }
   }
 
   async function updateTextSource(source: BusinessTextSource, patchValues: Partial<Pick<BusinessTextSource, 'title' | 'content'>>) {

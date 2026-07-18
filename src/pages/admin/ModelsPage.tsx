@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { DEFAULT_SYSTEM_MESSAGE } from '@/lib/defaultSystemMessage';
-import { Spinner } from '@/components/ui/Spinner';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 
 const DEFAULT_MODELS = {
   text_model: 'gpt-5.2',
@@ -41,7 +41,7 @@ export default function ModelsPage() {
 
   const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
-  if (loading) return <p className="text-[var(--muted)]"><Spinner /></p>;
+  if (loading) return <div className="max-w-3xl"><PageSkeleton action rows={5} label="מודלי AI נטענים" /></div>;
 
   return (
     <div className="max-w-3xl">

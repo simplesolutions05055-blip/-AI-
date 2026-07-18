@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { randomUUID } from '@/lib/uuid';
 import { useProfile } from '@/lib/useProfile';
-import { Spinner } from '@/components/ui/Spinner';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 import { confirmDialog } from '@/lib/dialog';
 
 interface ProfileRow {
@@ -139,12 +139,16 @@ export default function PermissionsPage() {
 
   async function toggleCreate(p: ProfileRow) {
     if (p.role === 'admin') return; // locked on for admins
+    // Optimistic: flip in the UI first, roll back if the save fails.
     const next = !p.can_create_outputs;
+    setProfiles((prev) => prev.map((x) => (x.id === p.id ? { ...x, can_create_outputs: next } : x)));
     setSavingId(p.id);
     const { error } = await db.from('profiles').update({ can_create_outputs: next } as never).eq('id', p.id);
     setSavingId(null);
-    if (error) return flash('שמירה נכשלה');
-    setProfiles((prev) => prev.map((x) => (x.id === p.id ? { ...x, can_create_outputs: next } : x)));
+    if (error) {
+      setProfiles((prev) => prev.map((x) => (x.id === p.id ? { ...x, can_create_outputs: !next } : x)));
+      return flash('שמירה נכשלה');
+    }
     flash('נשמר');
   }
 
@@ -231,26 +235,33 @@ export default function PermissionsPage() {
   }
 
   async function toggleRevoke(invite: InviteRow) {
+    // Optimistic: flip in the UI first, roll back if the save fails.
     const next = !invite.revoked;
+    setInvites((prev) => prev.map((x) => (x.id === invite.id ? { ...x, revoked: next } : x)));
     setSavingId(invite.id);
     const { error } = await db.from('brand_invites').update({ revoked: next } as never).eq('id', invite.id);
     setSavingId(null);
-    if (error) return flash('שמירה נכשלה');
-    setInvites((prev) => prev.map((x) => (x.id === invite.id ? { ...x, revoked: next } : x)));
+    if (error) {
+      setInvites((prev) => prev.map((x) => (x.id === invite.id ? { ...x, revoked: !next } : x)));
+      return flash('שמירה נכשלה');
+    }
     flash(next ? 'הקישור בוטל' : 'הקישור הופעל מחדש');
   }
 
   async function deleteInvite(invite: InviteRow) {
     if (!(await confirmDialog({ message: 'למחוק את הקישור? לא יהיה ניתן להירשם דרכו יותר.', danger: true, confirmText: 'מחיקה' }))) return;
-    setSavingId(invite.id);
-    const { error } = await db.from('brand_invites').delete().eq('id', invite.id);
-    setSavingId(null);
-    if (error) return flash('המחיקה נכשלה');
+    // Optimistic: drop the row in the UI first, restore it if the delete fails.
+    const snapshot = invites;
     setInvites((prev) => prev.filter((x) => x.id !== invite.id));
+    const { error } = await db.from('brand_invites').delete().eq('id', invite.id);
+    if (error) {
+      setInvites(snapshot);
+      return flash('המחיקה נכשלה');
+    }
     flash('הקישור נמחק');
   }
 
-  if (loading) return <div className="text-[var(--muted)]"><Spinner /></div>;
+  if (loading) return <div dir="rtl"><PageSkeleton tabs rows={6} label="המשתמשים וההרשאות נטענים" /></div>;
 
   return (
     <div dir="rtl">

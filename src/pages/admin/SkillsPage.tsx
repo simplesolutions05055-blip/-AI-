@@ -3,7 +3,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { genderCopy } from '@/lib/genderCopy';
 import { useProfile } from '@/lib/useProfile';
 import type { Skill, SkillVersion, SkillCategory, SkillEnforcement } from '@/types/db';
-import { Spinner } from '@/components/ui/Spinner';
+import { PageSkeleton } from '@/components/ui/Skeleton';
 import { confirmDialog } from '@/lib/dialog';
 
 const CATEGORIES: { key: SkillCategory; label: string }[] = [
@@ -153,15 +153,20 @@ export default function SkillsPage() {
   }
 
   async function toggleEnabled(skill: Skill) {
+    // Optimistic: flip in the UI first, roll back if the save fails.
+    const next = !skill.enabled;
+    setSkills((prev) => prev.map((s) => (s.key === skill.key ? { ...s, enabled: next } : s)));
     const { error } = await supabase
       .from('skills')
-      .update({ enabled: !skill.enabled } as never)
+      .update({ enabled: next } as never)
       .eq('key', skill.key);
-    if (error) return flash('העדכון נכשל');
-    setSkills((prev) => prev.map((s) => (s.key === skill.key ? { ...s, enabled: !s.enabled } : s)));
+    if (error) {
+      setSkills((prev) => prev.map((s) => (s.key === skill.key ? { ...s, enabled: !next } : s)));
+      flash('העדכון נכשל');
+    }
   }
 
-  if (loading) return <p className="text-[var(--muted)]"><Spinner /></p>;
+  if (loading) return <div className="max-w-6xl"><PageSkeleton tabs rows={4} label="הסקילים נטענים" /></div>;
 
   const list = skills.filter((s) => s.category === activeCat);
 

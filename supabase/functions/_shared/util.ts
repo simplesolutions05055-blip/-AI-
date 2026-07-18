@@ -31,17 +31,17 @@ export async function getSettingOr<T>(database: DB, key: string, fallback: T): P
 // Safe defaults for the WhatsApp copy, so a missing/partial settings row still
 // lets the agent reply. Merged over whatever is in the DB.
 export const DEFAULT_TEMPLATES: Record<string, string> = {
-  received: 'קיבלנו את הבקשה שלך ✅ אנחנו מתחילים לעבוד עליה.',
-  ask_email: 'לאיזו כתובת מייל לשלוח את התוצר?',
-  sent: 'התוצר נשלח למייל שלך 📧 תודה שפנית אלינו!',
-  needs_attention: 'קיבלנו את הבקשה אך חסר לנו מידע. נחזור אליך בהקדם.',
-  rejected_media: 'אפשר לשלוח טקסט, תמונה (PNG/JPG), PDF או DOCX בלבד — עד 10MB.',
-  blocked: 'לא ניתן לטפל בבקשה זו.',
-  in_progress: 'הבקשה שלך כבר בטיפול אצלנו ⏳ נעדכן אותך ברגע שהתוצר מוכן.',
-  timeout_warning: 'נראה שעצרנו כאן. שמרתי את מה שעשינו עד עכשיו. כשתרצה להמשיך, פשוט שלח הודעה.',
-  closed_idle: 'נראה שעצרנו כאן. שמרתי את מה שעשינו עד עכשיו. כשתרצה להמשיך, פשוט שלח הודעה.',
-  reset: 'בטח. שמרתי את התוצר הקודם ופתחתי תוצר חדש. מה ניצור עכשיו?',
-  welcome: 'היי! 👋 אני סוכן ה-AI שמכין עבורך תכנים — טקסטים, תמונות, מצגות ומסמכים. מה תרצה שניצור?',
+  received: 'קיבלתי את הבקשה ✅ אני מתחיל לעבוד עליה עכשיו.',
+  ask_email: 'לאיזה מייל לשלוח את התוצר? 📧',
+  sent: 'שלחתי את התוצר למייל 📧 אם הוא לא מופיע, כדאי לבדוק גם בספאם.',
+  needs_attention: 'חסר לי עוד פרט קטן כדי להמשיך. אשאל מיד מה צריך.',
+  rejected_media: 'לא הצלחתי לקרוא את סוג הקובץ הזה. אפשר לשלוח תמונה, PDF או Word עד 10MB.',
+  blocked: 'לא הצלחתי לטפל בבקשה הזו.',
+  in_progress: 'הבקשה כבר בטיפול ⏳ אעדכן ברגע שהתוצר מוכן.',
+  timeout_warning: 'נראה שעצרנו כאן. שמרתי את מה שעשיתי עד עכשיו. אפשר לשלוח הודעה כשרוצים להמשיך.',
+  closed_idle: 'נראה שעצרנו כאן. שמרתי את מה שעשיתי עד עכשיו. אפשר לשלוח הודעה כשרוצים להמשיך.',
+  reset: 'סגור, שמרתי את התוצר הקודם ✨ מה ניצור עכשיו?',
+  welcome: 'היי! 👋 אני סוכן ה־AI שמכין תכנים, תמונות, מצגות ומסמכים. מה ניצור היום?',
 };
 
 // Detect an explicit "start over / new conversation" command — fuzzy, so typos

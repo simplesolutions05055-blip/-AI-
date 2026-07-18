@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { randomUUID } from '@/lib/uuid';
 import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, plainTextFromBlocks, type RichTextBlock } from '@/lib/richText';
@@ -58,6 +58,16 @@ const BRIEF_FIELDS: Array<{ key: string; label: string; multiline?: boolean; lis
 export default function RevisePage() {
   const { requestId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  // The annual-planner round-trip: when the production flow was entered from a
+  // plan item ("יצירת גרפיקה"), its id arrives here via navigation state. In
+  // that mode the page shows dedicated save-&-return actions — this is the only
+  // path that gets them; a normal visit to this page is unaffected.
+  const plannerState = (location.state as { plannerItemId?: string; plannerReturnTo?: string } | null) ?? null;
+  const plannerItemId = plannerState?.plannerItemId ?? null;
+  const plannerReturnTo = plannerState?.plannerReturnTo ?? '/admin/annual-planner';
+  const [plannerSaving, setPlannerSaving] = useState(false);
+  const [plannerError, setPlannerError] = useState<string | null>(null);
   // When leaving to start a brand-new brief, carry the current output's URL so the
   // production hub can offer a one-click way back here (in case it was a misclick).
   const productionReturnState = { returnTo: `/admin/files/${requestId}/revise` };
@@ -775,6 +785,49 @@ export default function RevisePage() {
     window.setTimeout(() => setPostCopied(false), 1600);
   }
 
+  // The dedicated planner-path action: attach the current graphic (and any
+  // carousel images) to the plan item's media and jump back to the planner,
+  // reopening that exact post. New AI graphics replace the previous planner
+  // graphic; uploads and hand-picked outputs on the item are kept.
+  const PLANNER_MEDIA_NAME = 'גרפיקת AI מהתכנון השנתי';
+  async function savePlannerGraphicAndReturn() {
+    if (!plannerItemId || plannerSaving) return;
+    const mainPath = result?.storagePath || source?.storage_path || null;
+    const records = [
+      ...(mainPath ? [{ kind: 'image', source: 'output', name: PLANNER_MEDIA_NAME, storage_path: mainPath, mime_type: null }] : []),
+      ...carouselImages.map((image) => ({ kind: 'image', source: 'output', name: PLANNER_MEDIA_NAME, storage_path: image.storagePath, mime_type: null })),
+    ];
+    if (records.length === 0) {
+      setPlannerError('אין עדיין תמונה מוכנה לשמירה.');
+      return;
+    }
+    setPlannerSaving(true);
+    setPlannerError(null);
+    try {
+      const client = createSupabaseBrowserClient();
+      const { data, error: readError } = await client.from('annual_plan_items').select('media').eq('id', plannerItemId).single();
+      if (readError) throw readError;
+      const existing = Array.isArray((data as { media?: unknown[] } | null)?.media) ? ((data as { media: unknown[] }).media) : [];
+      const newPaths = new Set(records.map((record) => record.storage_path));
+      const kept = existing.filter((record) => {
+        if (!record || typeof record !== 'object') return false;
+        const row = record as { storage_path?: string | null; name?: string | null };
+        if (row.storage_path && newPaths.has(row.storage_path)) return false;
+        return row.name !== PLANNER_MEDIA_NAME;
+      });
+      const { error: updateError } = await client
+        .from('annual_plan_items')
+        .update({ media: [...kept, ...records], production_request_id: result?.request_id || requestId || null } as never)
+        .eq('id', plannerItemId);
+      if (updateError) throw updateError;
+      navigate(`${plannerReturnTo}?item=${plannerItemId}`);
+    } catch (error) {
+      setPlannerError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPlannerSaving(false);
+    }
+  }
+
   const pageTitle =
     outputType === 'presentation'
       ? 'עריכת מצגת'
@@ -800,6 +853,39 @@ export default function RevisePage() {
           <BackIcon />
         </Link>
       </div>
+
+      {plannerItemId && (
+        <div className="mb-4 rounded-xl border border-brand/40 bg-brand/[0.06] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-brand">מסלול תכנון תוכן שנתי</p>
+              <p className="mt-0.5 text-xs text-[var(--muted)]">
+                כשהגרפיקה מוכנה, שמרו אותה לפוסט — תוחזרו אוטומטית לתוכנית השנתית לאותו פוסט בדיוק.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void savePlannerGraphicAndReturn()}
+                disabled={plannerSaving || working || loading}
+                className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {plannerSaving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+                שמירת הגרפיקה וחזרה לתכנון
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(`${plannerReturnTo}?item=${plannerItemId}`)}
+                disabled={plannerSaving}
+                className="inline-flex min-h-10 items-center rounded-lg border border-[var(--border)] bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+              >
+                חזרה בלי לשמור
+              </button>
+            </div>
+          </div>
+          {plannerError && <p className="mt-2 text-sm text-red-700">{plannerError}</p>}
+        </div>
+      )}
 
       {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 p-3 text-sm">{error}</div>}
 

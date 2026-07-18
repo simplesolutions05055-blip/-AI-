@@ -24,7 +24,7 @@ import RevisePage from '@/pages/admin/RevisePage';
 import ErrorsPage from '@/pages/admin/ErrorsPage';
 import PermissionsPage from '@/pages/admin/PermissionsPage';
 import HolidaysCalendarPage from '@/pages/admin/HolidaysCalendarPage';
-import TestEmailPage from '@/pages/admin/TestEmailPage';
+import AnnualPlannerPage from '@/pages/admin/AnnualPlannerPage';
 import MetaConnectionPage from '@/pages/admin/MetaConnectionPage';
 import ReloadPrompt from '@/components/pwa/ReloadPrompt';
 import TitleManager from '@/components/TitleManager';
@@ -62,9 +62,9 @@ export default function App() {
           <Route path="skills" element={<SkillsPage />} />
           <Route path="permissions" element={<PermissionsPage />} />
           <Route path="holidays" element={<HolidaysCalendarPage />} />
+          <Route path="annual-planner" element={<AnnualPlannerPage />} />
           <Route path="errors" element={<ErrorsPage />} />
           <Route path="settings" element={<SettingsPage />} />
-          <Route path="test-email" element={<TestEmailPage />} />
           <Route path="user-settings" element={<UserSettingsPage />} />
           <Route path="meta-connection" element={<MetaConnectionPage />} />
         </Route>

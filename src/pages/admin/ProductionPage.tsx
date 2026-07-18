@@ -17,7 +17,7 @@ import { formatHebrewDate } from '@/lib/format';
 import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, plainTextFromBlocks } from '@/lib/richText';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
-import { genderCopy } from '@/lib/genderCopy';
+import { genderCopy, worksWithBrandCopy } from '@/lib/genderCopy';
 import {
   canProduceType,
   normalizeOutputPermissions,
@@ -1434,8 +1434,13 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   // Free-text entry point: the picker hands a description + chosen brand here.
   const navigate = useNavigate();
   const location = useLocation();
-  const navState = (location.state as { freeText?: string; brandId?: string | null; pickedImages?: DeckImage[] | null; pickedKeys?: string[] } | null) ?? null;
+  const navState = (location.state as { freeText?: string; brandId?: string | null; pickedImages?: DeckImage[] | null; pickedKeys?: string[]; plannerItemId?: string; plannerReturnTo?: string } | null) ?? null;
   const freeText = navState?.freeText?.trim() ?? '';
+  // The annual-planner round-trip: when the planner sent us here to create a
+  // graphic for a specific plan item, carry its id through to the revise page
+  // so it can offer the dedicated "save & return to the planner" actions.
+  const plannerItemId = navState?.plannerItemId ?? null;
+  const plannerReturnTo = navState?.plannerReturnTo ?? null;
   const [step, setStep] = useState<Step>('form');
   const [brief, setBrief] = useState<ProductionBrief | null>(null);
   const [revision, setRevision] = useState('');
@@ -1687,9 +1692,10 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       setStatus(result.status);
       setOutput(result.output);
       // Hand off to the revise screen — same UI for previewing, fixing, exporting,
-      // and adding AI images to fresh outputs.
+      // and adding AI images to fresh outputs. Planner round-trip state rides
+      // along so the revise page can save the graphic back to the plan item.
       if (type !== 'presentation') {
-        navigate(`/admin/files/${id}/revise`);
+        navigate(`/admin/files/${id}/revise`, plannerItemId ? { state: { plannerItemId, plannerReturnTo } } : undefined);
         return;
       }
       if (result.output.storage_path) {
@@ -1783,6 +1789,21 @@ function ProductionFlow({ type }: { type: ProductionType }) {
         </div>
       </div>
 
+      {plannerItemId && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand/30 bg-[var(--warm-accent-soft)] p-3">
+          <p className="text-sm font-semibold text-[var(--text-strong)]">
+            יצירת גרפיקה לפוסט מתוך התכנון השנתי — בסיום תוחזרו לתוכנית עם התוצר.
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate(`${plannerReturnTo ?? '/admin/annual-planner'}?item=${plannerItemId}`)}
+            className="shrink-0 rounded-lg border border-[var(--border-warm)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]"
+          >
+            ביטול וחזרה לתכנון
+          </button>
+        </div>
+      )}
+
       {error && !freeTextError && (
         <div className="mb-4 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]">
           <p>{error}</p>
@@ -1806,6 +1827,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
           selectedLogoUrl={brandLogoUrl}
           brandId={brandId}
           brandRequired={brandRequired}
+          gender={profile?.gender}
           onChange={updateBrand}
         />
       )}
@@ -1951,6 +1973,7 @@ function BrandProductionHeader({
   selectedLogoUrl,
   brandId,
   brandRequired,
+  gender,
   onChange,
 }: {
   brands: BrandOption[];
@@ -1958,6 +1981,7 @@ function BrandProductionHeader({
   selectedLogoUrl: string | null;
   brandId: string;
   brandRequired: boolean;
+  gender: Parameters<typeof worksWithBrandCopy>[0];
   onChange: (brandId: string) => void;
 }) {
   const hasSingleBrand = brands.length === 1;
@@ -1972,7 +1996,9 @@ function BrandProductionHeader({
         <div className="flex min-w-0 items-center gap-3">
           <BrandLogo name={effectiveBrand?.name ?? 'מותג'} url={selectedLogoUrl} />
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--text-muted)]">מותג ההפקה</div>
+            <div className="text-sm font-semibold text-[var(--text-muted)]">
+              {worksWithBrandCopy(gender, effectiveBrand?.name)}
+            </div>
             <div className="truncate text-xl font-bold text-[var(--text-strong)]">{title}</div>
             <p className="mt-1 text-xs text-[var(--text-muted)]">
               צבעי המותג והנחיות הסגנון שלו ישולבו אוטומטית בתוצר.

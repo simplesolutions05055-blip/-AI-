@@ -271,6 +271,31 @@ function RequestModal({ request, onClose }: { request: Row; onClose: () => void 
     admin_note: null,
   });
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  async function retryRequest() {
+    if (!detail || retrying) return;
+    setRetrying(true);
+    setRetryError(null);
+    const db = createSupabaseBrowserClient();
+    setDetail((current) => current ? { ...current, status: 'queued' } : current);
+    const { error: processError } = await db.functions.invoke('process-request', {
+      body: { request_id: detail.id },
+    });
+    if (processError) {
+      setRetryError('ההפעלה החוזרת נכשלה. ניתן לנסות שוב.');
+      setDetail((current) => current ? { ...current, status: 'failed' } : current);
+    } else {
+      const { data } = await db
+        .from('requests')
+        .select('id, customer_email, output_type, status, estimated_cost, created_at, structured_brief, admin_note, conversation_id, conversations!requests_conversation_id_fkey(whatsapp_from)')
+        .eq('id', detail.id)
+        .maybeSingle();
+      if (data) setDetail(data as unknown as RequestDetail);
+    }
+    setRetrying(false);
+  }
 
   useEffect(() => {
     const db = createSupabaseBrowserClient();
@@ -370,6 +395,22 @@ function RequestModal({ request, onClose }: { request: Row; onClose: () => void 
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm whitespace-pre-wrap">
                     {detail.admin_note}
                   </div>
+                </div>
+              )}
+
+              {detail.status === 'failed' && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                  <div className="text-sm font-semibold text-red-800">הפקת התוצר נכשלה</div>
+                  <div className="mt-1 text-sm text-red-700">אפשר להריץ שוב את אותה הבקשה עם אותם הפרטים.</div>
+                  <button
+                    type="button"
+                    onClick={retryRequest}
+                    disabled={retrying}
+                    className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    {retrying ? 'מנסה שוב…' : 'נסה שוב'}
+                  </button>
+                  {retryError && <div className="mt-2 text-sm text-red-700">{retryError}</div>}
                 </div>
               )}
             </>

@@ -748,6 +748,29 @@ export async function generateSocialCaption(
   return { text: content.trim(), usage };
 }
 
+export async function extractAnnualPlannerEvents(text: string, year: number, apiKey?: string) {
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content: `חלץ מתוך טקסט חופשי אירועים לתכנון תוכן שנתי. החזר JSON בלבד במבנה {"events":[{"title":"...","date":"YYYY-MM-DD","description":"..."}]}. זהה כמה אירועים שיש בטקסט, גם אם הם כתובים בשורות, במשפטים, בנקודות או בצורה לא טבלאית. פרש תאריכים בעברית ובפורמטים כמו 19/07, 19.7, "19 ביולי" או "ביום שישי הבא". אם אין שנה בתאריך, השתמש בשנה ${year}. אל תמציא אירועים או תאריכים שלא ניתן להסיק מהטקסט. אם אין תאריך, השתמש בתאריך ${year}-01-01 רק כאשר ברור שמדובר באירוע ללא תאריך, אחרת דלג עליו.`,
+      },
+      { role: 'user', content: text.slice(0, 12000) },
+    ],
+    { json: true, temperature: 0, model: 'gpt-4o-mini', apiKey },
+  );
+  try {
+    const parsed = JSON.parse(content) as { events?: Array<{ title?: unknown; date?: unknown; description?: unknown }> };
+    const events = Array.isArray(parsed.events)
+      ? parsed.events.filter((event) => typeof event.title === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(String(event.date)))
+        .map((event) => ({ title: String(event.title).trim(), date: String(event.date), description: typeof event.description === 'string' ? event.description.trim() : '' }))
+      : [];
+    return { events, usage };
+  } catch {
+    return { events: [], usage };
+  }
+}
+
 export async function generateDocumentText(systemPrompt: string, brief: unknown, note?: string) {
   const { content, usage } = await chat(
     [

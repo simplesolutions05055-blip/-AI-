@@ -16,6 +16,7 @@ import { sendDeliverableCopy, loadPdfBrandSettings } from './deliverableEmail.ts
 import { renderDocxBase64 } from './docx.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from './abuseGuard.ts';
 import { resolveMetaConnection } from './meta.ts';
+import { genderText, normalizeAddressGender, type AddressGender } from './whatsappCopy.ts';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const APP_BASE_URL = (
@@ -67,6 +68,7 @@ export type Identity = {
   userId: string | null;
   displayName: string;     // "איתי" or "0502032767" (fallback)
   brandId: string | null;  // the user's single brand (user_brands)
+  gender: AddressGender;
 };
 
 export type SendFn = (text: string, interactive?: WhatsAppInteractive) => Promise<boolean>;
@@ -103,7 +105,7 @@ export async function resolveIdentity(
   if (conversation.user_id) {
     const { data: profile } = await database
       .from('profiles')
-      .select('id, full_name, phone')
+      .select('id, full_name, phone, gender')
       .eq('id', conversation.user_id)
       .maybeSingle();
     const brandId = await userBrandId(database, conversation.user_id);
@@ -112,25 +114,26 @@ export async function resolveIdentity(
       userId: conversation.user_id,
       displayName: firstName(profile?.full_name as string | null) ?? normalizePhone(phone),
       brandId,
+      gender: normalizeAddressGender(profile?.gender),
     };
   }
 
   if (simulated) {
     // Simulator sessions aren't tied to a phone — treat as known, generic greeting.
-    return { known: true, userId: null, displayName: '', brandId: null };
+    return { known: true, userId: null, displayName: '', brandId: null, gender: null };
   }
 
   const wanted = normalizePhone(phone);
-  if (!wanted) return { known: false, userId: null, displayName: phone, brandId: null };
+  if (!wanted) return { known: false, userId: null, displayName: phone, brandId: null, gender: null };
 
   const { data: profiles } = await database
     .from('profiles')
-    .select('id, full_name, phone')
+    .select('id, full_name, phone, gender')
     .not('phone', 'is', null);
   const match = (profiles ?? []).find(
     (p: { phone: string | null }) => normalizePhone(p.phone ?? '') === wanted
   );
-  if (!match) return { known: false, userId: null, displayName: wanted, brandId: null };
+  if (!match) return { known: false, userId: null, displayName: wanted, brandId: null, gender: null };
 
   await database.from('conversations').update({ user_id: match.id }).eq('id', conversation.id);
   const brandId = await userBrandId(database, match.id as string);
@@ -143,6 +146,7 @@ export async function resolveIdentity(
     userId: match.id as string,
     displayName: firstName(match.full_name as string | null) ?? wanted,
     brandId,
+    gender: normalizeAddressGender(match.gender),
   };
 }
 
@@ -164,9 +168,13 @@ async function userBrandId(database: DB, userId: string): Promise<string | null>
 }
 
 // ── menu texts ───────────────────────────────────────────────────────────────
-export function buildMainMenu(displayName: string): string {
+export function buildMainMenu(displayName: string, gender: AddressGender = null): string {
   return [
-    `היי${displayName ? ` ${displayName}` : ''}, מה תרצה להכין היום? 👋`,
+    genderText(gender, {
+      male: `היי${displayName ? ` ${displayName}` : ''}, מה תרצה להכין היום? 👋`,
+      female: `היי${displayName ? ` ${displayName}` : ''}, מה תרצי להכין היום? 👋`,
+      plural: `היי${displayName ? ` ${displayName}` : ''}, מה תרצו להכין היום? 👋`,
+    }),
     '',
     '1️⃣ תמונה / פוסט',
     '2️⃣ מסמך',
@@ -199,15 +207,15 @@ export function buildMainMenuInteraction(): WhatsAppInteractive {
 // 21617 — the webhook is never even called, so we can't react after the fact).
 // The only defense is warning up front: long material must arrive as a file.
 const LONG_TEXT_WARNING =
-  '⚠️ שימו לב: וואטסאפ חוסם הודעות טקסט ארוכות (מעל ~1,500 תווים) — הן לא מגיעות אליי בכלל. חומר ארוך שלחו כקובץ מצורף (PDF / Word) 📎';
+  'טיפ קטן: חומר ארוך עדיף לשלוח כ־PDF או Word, כדי ששום דבר לא ילך לאיבוד 📎';
 
 export const BRIEF_PROMPTS: Record<string, string> = {
   image:
-    `מעולה, תמונה/פוסט 🖼️\nתארו מה אתם צריכים — למשל: "גרפיקה לאירוע יזום, כיכר העירייה, כותרת: הצטרפו לחגיגה!".\nאפשר גם לצרף קובץ (תמונה / PDF / Word) עם החומרים.\n\n${LONG_TEXT_WARNING}`,
+    `מעולה, תמונה או פוסט 🖼️\nספרו לי בקצרה מה להכין ומה חשוב שיופיע. אפשר גם לצרף קובץ עם החומרים.\n\n${LONG_TEXT_WARNING}`,
   presentation:
-    `מעולה, מצגת 📊\nכתבו את נושא המצגת, המטרה וכמה נקודות עיקריות. אפשר גם לצרף קובץ עם תוכן.\n\n${LONG_TEXT_WARNING}`,
+    `מעולה, מצגת 📊\nכתבו לי מה הנושא ומה חשוב שיופיע. אפשר גם לצרף קובץ עם התוכן.\n\n${LONG_TEXT_WARNING}`,
   pdf:
-    `מעולה, מסמך 📄\nכתבו את נושא המסמך, מטרתו ומה חייב להופיע בו. אפשר גם לצרף קובץ עם חומר גלם.\n\n${LONG_TEXT_WARNING}`,
+    `מעולה, מסמך 📄\nכתבו לי מה הנושא ומה חשוב שיופיע. אפשר גם לצרף קובץ עם חומרי הגלם.\n\n${LONG_TEXT_WARNING}`,
 };
 
 function backToStartInteraction(body: string): WhatsAppInteractive {
@@ -226,10 +234,15 @@ export function canScheduleOutput(outputType: string | null | undefined): boolea
 
 // One flat actions message after delivery — image outputs expose both fix
 // paths directly; the user can also just write what to change (AI-classified).
-export function buildPostDeliveryMenu(outputType: string | null | undefined): string {
+export function buildPostDeliveryMenu(outputType: string | null | undefined, gender: AddressGender = null): string {
+  const question = genderText(gender, {
+    male: 'מה תרצה לעשות עכשיו?',
+    female: 'מה תרצי לעשות עכשיו?',
+    plural: 'מה תרצו לעשות עכשיו?',
+  });
   if (outputType === 'image') {
     return [
-      'מה תרצה לעשות עכשיו?',
+      question,
       '',
       '1️⃣ לתקן את התמונה עם AI ✏️',
       '2️⃣ לתקן את טקסט הפוסט 📝',
@@ -242,7 +255,7 @@ export function buildPostDeliveryMenu(outputType: string | null | undefined): st
   }
   if (!canScheduleOutput(outputType)) {
     return [
-      'מה תרצה לעשות עכשיו?',
+      question,
       '',
       '1️⃣ לתקן את התוצר ✏️',
       '2️⃣ לקבל כקובץ Word 📄',
@@ -253,7 +266,7 @@ export function buildPostDeliveryMenu(outputType: string | null | undefined): st
     ].join('\n');
   }
   return [
-    'מה תרצה לעשות עכשיו?',
+    question,
     '',
     '1️⃣ לתקן את התוצר ✏️',
     '2️⃣ לתזמן פרסום 📅',
@@ -264,7 +277,7 @@ export function buildPostDeliveryMenu(outputType: string | null | undefined): st
   ].join('\n');
 }
 
-export function buildPostDeliveryInteraction(outputType: string | null | undefined): WhatsAppInteractive {
+export function buildPostDeliveryInteraction(outputType: string | null | undefined, gender: AddressGender = null): WhatsAppInteractive {
   let options: WhatsAppInteractive['options'];
   if (outputType === 'image') {
     options = [
@@ -289,7 +302,16 @@ export function buildPostDeliveryInteraction(outputType: string | null | undefin
       { id: '4', title: 'תוצר חדש', description: 'חזרה לתפריט הראשי' },
     ];
   }
-  return { kind: 'list_picker', body: 'מה תרצה לעשות עכשיו?', button: 'בחירת פעולה', options };
+  return {
+    kind: 'list_picker',
+    body: genderText(gender, {
+      male: 'מה תרצה לעשות עכשיו?',
+      female: 'מה תרצי לעשות עכשיו?',
+      plural: 'מה תרצו לעשות עכשיו?',
+    }),
+    button: 'בחירת פעולה',
+    options,
+  };
 }
 
 const SCHEDULE_PLATFORM_INTERACTION: WhatsAppInteractive = {
@@ -314,7 +336,7 @@ const SCHEDULE_PLATFORM_MENU = [
 ].join('\n');
 
 const SCHEDULE_DATETIME_PROMPT =
-  'מתי לפרסם? כתבו תאריך ושעה, למשל:\n25/12 18:00\nאו: מחר 10:00 / היום 18:30\n\nלחזרה להתחלה כתבו "תפריט".';
+  'מתי לפרסם? אפשר לכתוב תאריך ושעה, למשל:\n25/12 18:00\nאו: מחר 10:00 / היום 18:30\n\nלחזרה להתחלה אפשר לכתוב „תפריט”.';
 
 // ── standalone "schedule a post" flow (main menu option 3) ──────────────────
 const SCHEDULE_SOURCE_MENU = [
@@ -351,11 +373,11 @@ async function buildScheduleFromSiteMessage(database: DB): Promise<string> {
   });
   const base = (site.url ?? '').replace(/\/+$/, '');
   return [
-    'מעולה! כל התוצרים שלכם מחכים כאן:',
+    'מעולה! כל התוצרים מחכים כאן:',
     `${base}/admin/files`,
     '',
-    'מאתרים את התוצר שרוצים לפרסם ולוחצים על כפתור התזמון 📅 שבכרטיס שלו — בוחרים רשת, תאריך ושעה, וזה מתוזמן.',
-    'וכשתרצו אותי שוב — פשוט כתבו לי כאן 🙂',
+    'אפשר למצוא את התוצר הרצוי וללחוץ על כפתור התזמון 📅 שבכרטיס שלו — לבחור רשת, תאריך ושעה, וזה מתוזמן.',
+    'וכשרוצים אותי שוב — פשוט כותבים לי כאן 🙂',
   ].join('\n');
 }
 
@@ -817,11 +839,12 @@ async function sendPostDeliveryMenu(
   database: DB,
   conversation: FlowConversation,
   send: SendFn,
-  requestIdOverride?: string | null
+  requestIdOverride?: string | null,
+  gender: AddressGender = null,
 ): Promise<void> {
   const reqId = requestIdOverride ?? conversation.last_delivered_request_id ?? null;
   const output = reqId ? await latestOutput(database, reqId) : null;
-  await send(buildPostDeliveryMenu(output?.output_type), buildPostDeliveryInteraction(output?.output_type));
+  await send(buildPostDeliveryMenu(output?.output_type, gender), buildPostDeliveryInteraction(output?.output_type, gender));
 }
 
 async function requestHasEmailCopy(database: DB, requestId: string): Promise<boolean> {
@@ -856,7 +879,7 @@ async function resolveFlowMetaTargets(
     return {
       ok: false,
       message:
-        `עדיין אין חיבור פעיל לפייסבוק/אינסטגרם למותג שלכם, ולכן אי אפשר לתזמן פרסום אוטומטי 🙏\nחברו חשבון Meta ובחרו עמוד לפרסום כאן:\n${META_CONNECTION_URL}\n\nאחרי החיבור חזרו לכאן ונסו שוב.`,
+        `עדיין אין חיבור פעיל לפייסבוק או לאינסטגרם, ולכן אני לא יכול לתזמן את הפוסט. אפשר לחבר חשבון Meta ולבחור עמוד כאן:\n${META_CONNECTION_URL}\n\nאחרי החיבור אפשר לחזור ולנסות שוב.`,
     };
   }
   const targets: Partial<Record<'facebook' | 'instagram', { id: string; name: string }>> = {};
@@ -870,7 +893,7 @@ async function resolveFlowMetaTargets(
         message:
           options.length === 0
             ? `אין ${noun} מחובר לחשבון ה-Meta של המותג, ולכן אי אפשר לתזמן לשם פרסום 🙏\nבדקו את החיבור כאן:\n${META_CONNECTION_URL}`
-            : `יש כמה ${platform === 'facebook' ? 'עמודי פייסבוק' : 'חשבונות אינסטגרם'} מחוברים ועדיין לא נבחרה ברירת מחדל 🙏\nבחרו ${noun} כברירת מחדל כאן:\n${META_CONNECTION_URL}\n\nאחרי הבחירה חזרו לכאן ונסו שוב.`,
+            : `מצאתי כמה ${platform === 'facebook' ? 'עמודי פייסבוק' : 'חשבונות אינסטגרם'}, אבל עדיין לא נבחרה ברירת מחדל. אפשר לבחור ${noun} כאן:\n${META_CONNECTION_URL}\n\nאחרי הבחירה אפשר לחזור ולנסות שוב.`,
       };
     }
     targets[platform] = { id: fallback.target_id, name: fallback.name };
@@ -904,7 +927,7 @@ async function sendNextStepAfterShareAction(
     await showMainMenu(database, conversation, identity, send);
     return;
   }
-  await sendPostDeliveryMenu(database, conversation, send, requestId);
+  await sendPostDeliveryMenu(database, conversation, send, requestId, identity.gender);
 }
 
 // Kick off an AI image edit for the last delivered image. Sends the ack now;
@@ -917,7 +940,11 @@ async function startImageFix(
   sourceRequestId: string,
   feedback: string
 ): Promise<FlowResult> {
-  await send('מקבל! מתקן את התמונה עכשיו — זה לוקח בערך דקה ⏳');
+  await send(genderText(identity.gender, {
+    male: 'קיבלתי! מתקן את התמונה עכשיו — זה לוקח בערך דקה ⏳',
+    female: 'קיבלתי! מתקן את התמונה עכשיו — זה לוקח בערך דקה ⏳',
+    plural: 'קיבלתי! מתקן את התמונה עכשיו — זה לוקח בערך דקה ⏳',
+  }));
   await setFlow(database, conversation.id, { flow_state: 'post_delivery' });
   const background = async () => {
     try {
@@ -927,7 +954,7 @@ async function startImageFix(
         flow_state: 'post_delivery',
         last_delivered_request_id: edited.requestId,
       });
-      await send(buildPostDeliveryMenu('image'), buildPostDeliveryInteraction('image'));
+      await send(buildPostDeliveryMenu('image', identity.gender), buildPostDeliveryInteraction('image', identity.gender));
     } catch (e) {
       await logEvent(database, {
         requestId: sourceRequestId,
@@ -935,8 +962,8 @@ async function startImageFix(
         action: 'whatsapp_image_fix_failed',
         message: String(e),
       });
-      await send('משהו השתבש בתיקון התמונה 😕 אפשר לנסות שוב או ליצור תוצר חדש.');
-      await sendPostDeliveryMenu(database, conversation, send, sourceRequestId);
+      await send('אוי, לא הצלחתי לתקן את התמונה הפעם 🙈 אפשר לנסות שוב או להתחיל תוצר חדש.');
+      await sendPostDeliveryMenu(database, conversation, send, sourceRequestId, identity.gender);
     }
   };
   return { kind: 'handled', background };
@@ -950,7 +977,7 @@ async function startCaptionFix(
   requestId: string,
   feedback: string
 ): Promise<FlowResult> {
-  await send('מנסח מחדש את טקסט הפוסט ✍️');
+  await send('קיבלתי, אני מנסח מחדש את טקסט הפוסט ✍️');
   await setFlow(database, conversation.id, { flow_state: 'post_delivery' });
   const background = async () => {
     try {
@@ -993,7 +1020,7 @@ async function startCaptionFix(
         action: 'whatsapp_caption_fix_failed',
         message: String(e),
       });
-      await send('לא הצלחתי לעדכן את הטקסט 😕 נסו שוב עוד רגע.');
+      await send('אוי, לא הצלחתי לעדכן את הטקסט 🙈 אפשר לנסות שוב בעוד רגע.');
       await sendPostDeliveryMenu(database, conversation, send, requestId);
     }
   };
@@ -1027,7 +1054,7 @@ async function startEmailCopy(
   const background = async () => {
     try {
       await sendDeliverableCopy(database, requestId, email);
-      await send(`נשלח ל-${email} 📧 שווה לבדוק גם בספאם אם לא רואים אותו.`);
+      await send(`שלחתי ל־${email} 📧 אם ההודעה לא מופיעה, כדאי לבדוק גם בספאם.`);
     } catch (e) {
       await logEvent(database, {
         requestId,
@@ -1035,7 +1062,7 @@ async function startEmailCopy(
         action: 'whatsapp_email_copy_failed',
         message: String(e),
       });
-      await send('לא הצלחתי לשלוח את המייל 😕 נסו שוב עוד רגע.');
+      await send('אוי, לא הצלחתי לשלוח את המייל 🙈 אפשר לנסות שוב בעוד רגע.');
     }
     await sendNextStepAfterShareAction(database, conversation, identity, send, requestId);
   };
@@ -1051,14 +1078,14 @@ async function startDocxCopy(
   send: SendFn,
   requestId: string
 ): Promise<FlowResult> {
-  await send('מכין את הקובץ ב-Word 📄 רגע אחד...');
+  await send('אני מכין קובץ Word 📄 זה ייקח רגע.');
   await setFlow(database, conversation.id, { flow_state: 'post_delivery' });
   const background = async () => {
     try {
       const output = await latestOutput(database, requestId);
       const text = (output?.text_content ?? '').trim();
       if (!output || !text) {
-        await send('אין תוכן טקסטואלי להמיר ל-Word בתוצר הזה 🤔');
+        await send('לא מצאתי בתוצר טקסט שאפשר להפוך לקובץ Word.');
         await sendPostDeliveryMenu(database, conversation, send, requestId);
         return;
       }
@@ -1080,7 +1107,7 @@ async function startDocxCopy(
         action: 'whatsapp_docx_copy_failed',
         message: String(e),
       });
-      await send('לא הצלחתי להכין את קובץ ה-Word 😕 נסו שוב עוד רגע.');
+      await send('אוי, לא הצלחתי להכין את קובץ ה־Word 🙈 אפשר לנסות שוב בעוד רגע.');
       await sendPostDeliveryMenu(database, conversation, send, requestId);
     }
   };
@@ -1382,7 +1409,7 @@ async function generateDeckAndPresent(
         action: 'whatsapp_deck_generate_failed',
         message: String(e),
       });
-      await send('משהו השתבש ביצירת תוכן המצגת 😕 נסו שוב עוד רגע.');
+      await send('אוי, לא הצלחתי ליצור את המצגת הפעם 🙈 אפשר לנסות שוב בעוד רגע.');
     }
     await showMainMenu(database, conversation, identity, send);
   }
@@ -1455,7 +1482,7 @@ async function startDeckSlideRewrite(
         action: 'whatsapp_deck_rewrite_failed',
         message: String(e),
       });
-      await send('לא הצלחתי לעדכן את השקף 😕 נסו לנסח שוב, או השיבו "מאשר" להמשך.');
+      await send('אוי, לא הצלחתי לעדכן את השקף 🙈 אפשר לנסח את השינוי שוב, או לכתוב „מאשר” כדי להמשיך.');
     }
   };
   return { kind: 'handled', background };
@@ -1525,7 +1552,7 @@ async function startDeckEmailProduction(
         message: String(e),
       });
       // State stays on deck_awaiting_emails so re-sending the addresses retries.
-      await send('לא הצלחתי להתחיל את הפקת המצגת 😕 שלחו שוב את כתובות המייל לניסיון נוסף, או "בטל" לביטול.');
+      await send('אוי, לא הצלחתי להתחיל את הפקת המצגת 🙈 אפשר לשלוח שוב את כתובות המייל, או לכתוב „בטל”.');
     }
   };
   return { kind: 'handled', background };
@@ -2108,7 +2135,7 @@ export async function showMainMenu(
   send: SendFn
 ): Promise<void> {
   const delivered = await send(
-    buildMainMenu(identity.displayName),
+    buildMainMenu(identity.displayName, identity.gender),
     buildMainMenuInteraction(),
   );
   if (delivered) {
@@ -2202,7 +2229,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       // Short unrecognized reply → re-show the menu.
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-      await send(buildMainMenu(opts.identity.displayName), buildMainMenuInteraction());
+      await send(buildMainMenu(opts.identity.displayName, opts.identity.gender), buildMainMenuInteraction());
       return { kind: 'handled' };
     }
 
@@ -2274,7 +2301,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // instead of burning a generation on garbage.
       if (numMedia === 0 && text.trim().length < 6) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send('כתבו קצת יותר פירוט כדי שאכין בדיוק מה שצריך 🙂 למשל: מה האירוע, איפה, מתי ומה הכותרת.');
+        await send('חסר לי עוד קצת מידע כדי לדייק 🙂 מה מכינים, למי ומה חשוב שיופיע?');
         return { kind: 'handled' };
       }
       const outputType = conversation.selected_output_type ?? 'image';
@@ -2308,7 +2335,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // Greeting / thanks — no LLM call, just re-show the actions once.
       if (isGreetingOnly(text) || /^(תודה|מעולה|אחלה|סבבה|וואו|יפה|מושלם|👍|🙏|❤️)+!?$/.test(norm(text))) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send(buildPostDeliveryMenu(output?.output_type), buildPostDeliveryInteraction(output?.output_type));
+        await send(buildPostDeliveryMenu(output?.output_type, opts.identity.gender), buildPostDeliveryInteraction(output?.output_type, opts.identity.gender));
         return { kind: 'handled' };
       }
 
@@ -2367,7 +2394,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
 
       if (!action) {
-        await send(buildPostDeliveryMenu(output?.output_type), buildPostDeliveryInteraction(output?.output_type));
+        await send(buildPostDeliveryMenu(output?.output_type, opts.identity.gender), buildPostDeliveryInteraction(output?.output_type, opts.identity.gender));
         return { kind: 'handled' };
       }
 
@@ -2387,26 +2414,26 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
 
       if (action === 'image_fix') {
         if (isDirectFeedback) return await startImageFix(database, conversation, identity, send, deliveredReqId, text);
-        const delivered = await send('מה לשנות בתמונה? תארו את התיקון (למשל: "תחליף את הרקע לכחול, תגדיל את הכותרת") ✏️');
+        const delivered = await send('מה לשנות בתמונה? אפשר לכתוב לי בדיוק מה לעדכן ✏️');
         if (delivered) await setFlow(database, conversation.id, { flow_state: 'awaiting_image_fix' });
         return { kind: 'handled' };
       }
 
       if (action === 'caption_fix') {
         if (isDirectFeedback) return await startCaptionFix(database, conversation, send, deliveredReqId, text);
-        const delivered = await send('מה לשנות בטקסט הפוסט? כתבו את הבקשה ואנסח מחדש ✏️');
+        const delivered = await send('מה לשנות בטקסט הפוסט? אפשר לכתוב לי ואכין גרסה חדשה ✏️');
         if (delivered) await setFlow(database, conversation.id, { flow_state: 'awaiting_caption_fix' });
         return { kind: 'handled' };
       }
 
       if (action === 'content_fix') {
-        const delivered = await send('מה לשנות בתוצר? כתבו את התיקון המבוקש ואכין גרסה מעודכנת ✏️');
+        const delivered = await send('מה לשנות בתוצר? אפשר לכתוב לי ואכין גרסה מעודכנת ✏️');
         if (delivered) await setFlow(database, conversation.id, { flow_state: 'awaiting_fix_feedback' });
         return { kind: 'handled' };
       }
 
       if (action === 'fix_freetext') {
-        await send('כתבו פשוט מה לשנות — בתמונה או בטקסט הפוסט — ואני כבר אבין לבד 🙂');
+        await send('אפשר לכתוב פשוט מה לשנות — בתמונה או בטקסט — ואני כבר אבין 🙂');
         return { kind: 'handled' };
       }
 
@@ -2442,14 +2469,14 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // and post texts can be scheduled).
       if (!canScheduleOutput(output.output_type)) {
         await send('את התוצר הזה אי אפשר לתזמן לרשתות חברתיות 🙂 תזמון זמין לתמונות ולפוסטים בלבד.');
-        await send(buildPostDeliveryMenu(output.output_type), buildPostDeliveryInteraction(output.output_type));
+        await send(buildPostDeliveryMenu(output.output_type, opts.identity.gender), buildPostDeliveryInteraction(output.output_type, opts.identity.gender));
         return { kind: 'handled' };
       }
       const hasMedia = Boolean(output.storage_path && (output.mime_type ?? '').startsWith('image/'));
       const caption = (output.text_content ?? '').trim();
       if (!caption && !hasMedia) {
         await send('לתוצר הזה אין תוכן שאפשר לתזמן לרשתות. אפשר לתקן אותו או ליצור תוצר חדש.');
-        await send(buildPostDeliveryMenu(output.output_type), buildPostDeliveryInteraction(output.output_type));
+        await send(buildPostDeliveryMenu(output.output_type, opts.identity.gender), buildPostDeliveryInteraction(output.output_type, opts.identity.gender));
         return { kind: 'handled' };
       }
       const delivered = await send(SCHEDULE_PLATFORM_MENU, SCHEDULE_PLATFORM_INTERACTION);
@@ -2501,7 +2528,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (isYesText(text) && suggested) {
         return await startEmailCopy(database, conversation, identity, send, requestId, suggested);
       }
-      await send('השיבו כן לאישור, כתבו כתובת מייל אחרת, או "תפריט" לביטול.');
+      await send('אפשר לכתוב „כן” לאישור, כתובת מייל אחרת, או „תפריט” לביטול.');
       return { kind: 'handled' };
     }
 
@@ -2519,7 +2546,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (typed && isValidEmail(typed)) {
         return await startEmailCopy(database, conversation, identity, send, requestId, typed);
       }
-      await send('זו לא נראית כתובת מייל תקינה 🙂 כתבו כתובת כמו name@example.com, או "תפריט" לביטול.');
+      await send('לא הצלחתי לזהות את כתובת המייל. אפשר לכתוב אותה שוב, למשל name@example.com, או „תפריט” לביטול.');
       return { kind: 'handled' };
     }
 
@@ -2616,14 +2643,14 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
 
       if (numMedia > 0) {
         if (!opts.fetchRawMedia) {
-          await send('לא הצלחתי לקרוא את הקובץ ששלחת 😕 נסו לשלוח שוב.');
+          await send('אוי, לא הצלחתי לקרוא את הקובץ 🙈 אפשר לשלוח אותו שוב?');
         } else {
           try {
             const raw = await opts.fetchRawMedia();
             const { stored, rejectedCount } = await storeCustomPostMedia(database, conversation, raw);
             media = [...media, ...stored].slice(0, 10);
             if (rejectedCount > 0) {
-              await send('חלק מהקבצים לא מתאימים לפרסום (תמונה או וידאו עד 10MB) ולא צורפו.');
+              await send('לא הצלחתי לצרף חלק מהקבצים כי הם לא מתאימים לפרסום. אפשר לצרף תמונה או סרטון עד 10MB.');
             }
           } catch (e) {
             await logEvent(database, {
@@ -2631,7 +2658,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
               action: 'whatsapp_schedule_media_failed',
               message: String(e),
             });
-            await send('משהו השתבש בקליטת הקובץ 😕 נסו לשלוח אותו שוב.');
+            await send('אוי, לא הצלחתי לקלוט את הקובץ 🙈 אפשר לשלוח אותו שוב?');
           }
         }
       }
@@ -2639,7 +2666,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const saidNoImage = /^(בלי תמונה|ללא תמונה|אין תמונה|בלי|דלג|skip)\.?$/.test(norm(text));
       if (saidNoImage && media.length === 0) {
         if (igSelected) {
-          await send('לפרסום באינסטגרם חובה לצרף תמונה או וידאו 🙂 שלחו קובץ, או כתבו "בטל" לביטול.');
+          await send('כדי לפרסם באינסטגרם צריך לצרף תמונה או סרטון. אפשר לשלוח קובץ או לכתוב „בטל”.');
           await setFlow(database, conversation.id, { flow_context: { ...ctx, caption, media } });
           return { kind: 'handled' };
         }
@@ -2787,7 +2814,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       if (!isYesText(text)) {
-        await send('השיבו כן לאישור התזמון, או לא לביטול.');
+        await send('הכול מוכן לתזמון. אפשר לכתוב „כן” לאישור או „לא” לביטול.');
         return { kind: 'handled' };
       }
 
@@ -2802,7 +2829,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         const customAtIso = ctx.schedule_at as string | undefined;
         const customLabel = (ctx.schedule_label as string | undefined) ?? '';
         if (!caption || !customAtIso) {
-          await send('משהו השתבש בתזמון, בואו ננסה שוב.');
+          await send('אוי, לא הצלחתי לשמור את התזמון 🙈 אפשר לנסות שוב.');
           await showMainMenu(database, conversation, identity, send);
           return { kind: 'handled' };
         }
@@ -2862,7 +2889,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
             message: String(e),
           });
           // State stays on schedule_confirm so another "כן" can retry.
-          await send('לא הצלחתי לשמור את התזמון 😕 השיבו כן לניסיון נוסף, או לא לביטול.');
+          await send('אוי, לא הצלחתי לשמור את התזמון 🙈 אפשר לכתוב „כן” כדי לנסות שוב, או „לא” כדי לבטל.');
         }
         return { kind: 'handled' };
       }
@@ -2874,7 +2901,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const scheduleAtIso = ctx.schedule_at as string | undefined;
       const label = (ctx.schedule_label as string | undefined) ?? '';
       if (!requestId || !scheduleAtIso) {
-        await send('משהו השתבש בתזמון, בואו ננסה שוב.');
+        await send('אוי, לא הצלחתי לשמור את התזמון 🙈 אפשר לנסות שוב.');
         await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
         await sendPostDeliveryMenu(database, conversation, send);
         return { kind: 'handled' };
@@ -2953,7 +2980,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
           action: 'whatsapp_schedule_failed',
           message: String(e),
         });
-        await send('לא הצלחתי לשמור את התזמון 😕 נסו שוב עוד רגע.');
+        await send('אוי, לא הצלחתי לשמור את התזמון 🙈 אפשר לנסות שוב בעוד רגע.');
       }
       await setFlow(database, conversation.id, { flow_state: 'post_delivery', flow_context: {} });
       if (scheduled) {
@@ -2969,7 +2996,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (await handleDeckCancel(database, conversation, identity, send, text, messageSid)) return { kind: 'handled' };
       if (numMedia > 0) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send('לצורך המצגת כתבו לי את הנושא כטקסט 🙂');
+        await send('כדי להכין את המצגת, אפשר לכתוב לי את הנושא כטקסט 🙂');
         return { kind: 'handled' };
       }
       if (isGreetingOnly(text) || text.trim().length < 6) {
@@ -3006,7 +3033,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
             flow_state: 'deck_awaiting_slide_count',
             flow_context: { deck: { prompt } },
           });
-          await send(`כמה שקפים להכין? כתבו מספר בין 1 ל-${DECK_MAX_SLIDES} 🔢`);
+          await send(`כמה שקפים להכין? אפשר לבחור מספר בין 1 ל־${DECK_MAX_SLIDES} 🔢`);
           return;
         }
         await send(`קיבלתי! כותב עכשיו את תוכן המצגת (${count} שקפים) ✍️ זה לוקח עד דקה...`);
@@ -3027,7 +3054,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const count = numMedia === 0 ? parseDeckSlideCountAnswer(text) : null;
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       if (!count) {
-        await send(`לא הבנתי 🙂 כתבו מספר שקפים בין 1 ל-${DECK_MAX_SLIDES}, או "בטל" לביטול.`);
+        await send(`לא הצלחתי לזהות את המספר. אפשר לבחור בין 1 ל־${DECK_MAX_SLIDES}, או לכתוב „בטל”.`);
         return { kind: 'handled' };
       }
       await send(`קיבלתי! כותב עכשיו את תוכן המצגת (${count} שקפים) ✍️ זה לוקח עד דקה...`);
@@ -3044,13 +3071,13 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const deck = deckFromCtx(ctx);
       if (!deck || !Array.isArray(deck.slides) || !deck.slides.length) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send('איבדתי את טיוטת המצגת 😕 בואו נתחיל מחדש:');
+        await send('לא מצאתי את טיוטת המצגת. אפשר להתחיל אותה מחדש.');
         await showMainMenu(database, conversation, identity, send);
         return { kind: 'handled' };
       }
       if (numMedia > 0) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send('כתבו לי בטקסט מה לשנות, או השיבו "מאשר" להמשך 🙂');
+        await send('אפשר לכתוב לי מה לשנות, או „מאשר” כדי להמשיך 🙂');
         return { kind: 'handled' };
       }
       const isApprove = isYesText(text) || /^(מאשר|מאשרת|מאושר|אישור|תכין|הכן|approve)\.?!?$/.test(norm(text));
@@ -3081,7 +3108,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       if (!slideNumber || slideNumber < 1 || slideNumber > deck.slides.length) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send(`באיזה שקף לבצע את השינוי? כתבו את מספר השקף יחד עם הבקשה, למשל: "שקף 2 — ${text.trim().slice(0, 40)}"`);
+        await send(`איזה שקף לעדכן? אפשר לכתוב את מספר השקף ואת השינוי, למשל: „שקף 2 — ${text.trim().slice(0, 40)}”`);
         return { kind: 'handled' };
       }
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
@@ -3127,7 +3154,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (!emails.length && isYesText(text) && deck.suggested_email) emails = [deck.suggested_email];
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       if (!emails.length) {
-        await send('לא זיהיתי כתובת מייל תקינה 🙂 כתבו כתובת אחת או יותר (מופרדות בפסיק או רווח), או "בטל" לביטול.');
+        await send('לא הצלחתי לזהות כתובת מייל. אפשר לכתוב כתובת אחת או יותר, או „בטל” כדי לבטל.');
         return { kind: 'handled' };
       }
       return await startDeckEmailProduction(database, conversation, identity, send, deck, deck.selected, emails);
@@ -3208,7 +3235,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const idx = parseSelectedEventIndex(text, events);
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       if (idx == null || !events[idx]) {
-        await send('לא זיהיתי את הבחירה 🤔 השיבו במספר של אירוע מהרשימה, "חודש" לבחירת חודש אחר, או "תפריט" לחזרה.');
+        await send('לא הצלחתי לזהות את הבחירה. אפשר לבחור מספר מהרשימה, „חודש” לחודש אחר או „תפריט” לחזרה.');
         return { kind: 'handled' };
       }
       const event = events[idx];
@@ -3315,7 +3342,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         idx = found >= 0 ? found : null;
       }
       if (idx == null) {
-        await send('לא זיהיתי את הבחירה 🤔 השיבו במספר של תזמון מהרשימה, או "תפריט" לחזרה.');
+        await send('לא הצלחתי לזהות את הבחירה. אפשר לבחור מספר מהרשימה או לכתוב „תפריט” לחזרה.');
         return { kind: 'handled' };
       }
       const post = await fetchScheduleById(database, schedules[idx].id);
@@ -3359,7 +3386,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       if (action === 'caption') {
-        const delivered = await send('שלחו את הטקסט החדש לפוסט 📝 (הוא יחליף את הטקסט הנוכחי)\n\nלחזרה כתבו "חזרה".');
+        const delivered = await send('אפשר לשלוח את הטקסט החדש לפוסט 📝 הוא יחליף את הטקסט הנוכחי.\n\nלחזרה אפשר לכתוב „חזרה”.');
         if (delivered) {
           await setFlow(database, conversation.id, {
             flow_state: 'schedule_manage_caption',
@@ -3465,7 +3492,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       const caption = text.trim();
       if (caption.length < 2) {
-        await send('הטקסט קצר מדי 🙂 שלחו את טקסט הפוסט המלא, או "חזרה" לחזרה.');
+        await send('חסר לי הטקסט המלא של הפוסט כדי לשמור את השינוי. אפשר לשלוח אותו שוב או לכתוב „חזרה”.');
         return { kind: 'handled' };
       }
       await database
@@ -3499,7 +3526,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
           action: 'whatsapp_schedule_cancelled',
           metadata: { schedule_id: scheduleId, user_id: identity.userId },
         });
-        await send('התזמון בוטל ❌');
+        await send('ביטלתי את התזמון.');
         return await showSchedulesList(database, conversation, identity, send);
       }
       if (isNoText(text) || /^(לא חזרה|חזרה|חזור|back)\.?$/.test(t)) {
@@ -3510,7 +3537,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         }
         return await showSchedulesList(database, conversation, identity, send);
       }
-      await send('השיבו כן לביטול התזמון, או לא לחזרה.');
+      await send('אפשר לכתוב „כן” לביטול התזמון או „לא” לחזרה.');
       return { kind: 'handled' };
     }
 

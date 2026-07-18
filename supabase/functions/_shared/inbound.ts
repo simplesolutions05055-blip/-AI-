@@ -32,6 +32,7 @@ import {
   type FlowConversation,
   type SendFn,
 } from './flow.ts';
+import { genderText } from './whatsappCopy.ts';
 
 type Conversation = FlowConversation;
 
@@ -151,7 +152,7 @@ async function resumeSoftClosedConversation(
     conversation.id,
     conversation.current_request_id ?? null,
     from,
-    'ממשיכים מאיפה שעצרנו. כתוב לי מה תרצה לשנות או להוסיף.',
+    'ממשיכים מאיפה שעצרנו. אפשר לכתוב לי מה לשנות או להוסיף.',
     simulated
   );
   return true;
@@ -217,6 +218,63 @@ export async function handleInbound(
   }
 
   // ── "start over / new artifact" command → archive current work + menu ────
+  // A retry reopens the latest failed request and preserves its original brief
+  // and output type. This works for both a WhatsApp quick-reply and typed text.
+  if (/^נסה\s+שוב[.!?\s]*$/i.test(body.trim())) {
+    const { data: failedRequest } = await database
+      .from('requests')
+      .select('id, structured_brief')
+      .eq('conversation_id', conversation.id)
+      .eq('status', 'failed')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!failedRequest) {
+      await send('לא מצאתי תוצר שנכשל ואפשר להריץ שוב. אפשר לכתוב "תפריט" כדי להתחיל בקשה חדשה.');
+      return { requestIdToProcess: null };
+    }
+
+    const brief = (failedRequest.structured_brief ?? {}) as Record<string, unknown>;
+    const { last_error: _lastError, ...retryBrief } = brief;
+    const { error: claimErr } = await database.from('messages').insert({
+      conversation_id: conversation.id,
+      request_id: failedRequest.id,
+      direction: 'inbound',
+      body,
+      twilio_message_sid: messageSid,
+    });
+    if (claimErr) return { requestIdToProcess: null };
+
+    await database.from('requests').update({
+      status: 'queued',
+      structured_brief: retryBrief,
+      processing_locked_at: null,
+    }).eq('id', failedRequest.id);
+    await database.from('conversations').update({
+      current_request_id: failedRequest.id,
+      status: 'active',
+      last_message_at: new Date().toISOString(),
+      timeout_warned_at: null,
+    }).eq('id', conversation.id);
+    await database.from('jobs').insert({
+      request_id: failedRequest.id,
+      job_type: 'process-request',
+      status: 'pending',
+    });
+    await logEvent(database, {
+      requestId: failedRequest.id,
+      action: 'failed_request_retried',
+      metadata: { channel: 'whatsapp' },
+    });
+    await send(genderText(identity.gender, {
+      male: 'מעולה, מנסה שוב עם אותם הפרטים. אשלח לך את התוצר ברגע שהוא מוכן ✨',
+      female: 'מעולה, מנסה שוב עם אותם הפרטים. אשלח לך את התוצר ברגע שהוא מוכן ✨',
+      plural: 'מעולה, מנסה שוב עם אותם הפרטים. אשלח לכם את התוצר ברגע שהוא מוכן ✨',
+    }));
+    return { requestIdToProcess: failedRequest.id };
+  }
+
   if (isResetCommand(body)) {
     const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated });
     if (didReset) await showMainMenu(database, conversation, identity, send);

@@ -9,12 +9,14 @@ import { useBrandTheme } from '@/lib/useBrandTheme';
 import { needsOnboardingGate, shouldShowOnboardingBanner } from '@/lib/onboarding';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { genderCopy } from '@/lib/genderCopy';
-import { Spinner } from '@/components/ui/Spinner';
+import { PageSkeleton, Skeleton } from '@/components/ui/Skeleton';
 
 // Pages a regular (non-admin) user is allowed to reach. Production is gated
 // further by can_create_outputs. Files is view-only for regular users.
 // Branding is admin-only; regular users manage their brand via onboarding.
-const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/holidays', '/admin/user-settings', '/admin/simulator', '/admin/meta-connection'];
+// The annual planner is shared: regular users see the plan for their assigned
+// brand, while admins can work across all brands.
+const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/holidays', '/admin/annual-planner', '/admin/user-settings', '/admin/simulator', '/admin/meta-connection'];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile, hasBrand, requireUploads } = useProfile();
@@ -97,7 +99,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
   }, [navMounted, navOpen]);
 
-  if (loading) return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]"><Spinner /></main>;
+  // While the profile loads, draw the app chrome (sidebar shape + content
+  // skeleton) instead of a blank screen — the layout registers before the data.
+  if (loading) {
+    return (
+      <div className="theme-warm flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[var(--bg-page)] text-[var(--text-strong)]">
+        <div className="hidden lg:flex lg:h-[100dvh] lg:w-60 lg:shrink-0 lg:flex-col lg:gap-2 lg:border-l lg:border-[var(--border-warm)] lg:bg-[var(--bg-surface)] lg:p-4">
+          <Skeleton className="mb-6 h-8 w-28 rounded-lg" />
+          {Array.from({ length: 7 }).map((_, i) => (
+            <Skeleton key={i} className="h-9 w-full rounded-lg" />
+          ))}
+        </div>
+        <main className="min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-3 py-4 sm:px-4 lg:p-6">
+          <PageSkeleton rows={4} label="המערכת נטענת" />
+        </main>
+      </div>
+    );
+  }
   if (!profile) {
     return (
       <Navigate

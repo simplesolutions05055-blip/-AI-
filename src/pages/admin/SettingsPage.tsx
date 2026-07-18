@@ -4,6 +4,9 @@ import { Share2 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile, type ProfileGender } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
+import { PageSkeleton } from '@/components/ui/Skeleton';
+import ModelsPage from '@/pages/admin/ModelsPage';
+import SkillsPage from '@/pages/admin/SkillsPage';
 import {
   PRODUCTION_PERMISSION_TYPES,
   normalizeOutputPermissions,
@@ -13,17 +16,23 @@ import {
 } from '@/lib/outputPermissions';
 
 type Settings = Record<string, any>;
-type SettingsTab = 'whatsapp' | 'signup' | 'permissions' | 'email' | 'models' | 'approval' | 'limits';
+type SettingsTab = 'whatsapp' | 'signup' | 'permissions' | 'email' | 'models' | 'approval' | 'limits' | 'models_page' | 'skills';
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'permissions', label: 'הרשאות תוצרים' },
   { id: 'models', label: 'מודלי AI' },
+  { id: 'models_page', label: 'מודלים' },
+  { id: 'skills', label: 'סקילים' },
   { id: 'limits', label: 'מגבלות' },
   { id: 'whatsapp', label: 'WhatsApp' },
   { id: 'signup', label: 'הרשמה' },
   { id: 'email', label: 'מייל' },
   { id: 'approval', label: 'אישור' },
 ];
+
+// These tabs embed self-contained pages that own their save/state, so the
+// shared "שמירת הגדרות" button doesn't apply to them.
+const SELF_SAVING_TABS: SettingsTab[] = ['models_page', 'skills'];
 
 interface MetaConnection {
   meta_user_id: string;
@@ -223,7 +232,7 @@ export default function SettingsPage() {
   const requireOnboardingUploads = settings.onboarding_require_uploads === true;
   const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
-  if (loading) return <p className="text-[var(--muted)]"><Spinner /></p>;
+  if (loading) return <PageSkeleton action tabs rows={5} label="הגדרות המערכת נטענות" />;
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -232,9 +241,11 @@ export default function SettingsPage() {
           <h1 className="text-xl font-semibold tracking-normal">הגדרות מערכת</h1>
           <p className="mt-1 hidden text-sm text-[var(--muted)] sm:block">נהלו נוסחים, הרשאות, מיילים, מודלים ומגבלות.</p>
         </div>
-        <button onClick={save} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white sm:w-auto">
-          {saved ? 'נשמר' : 'שמירת הגדרות'}
-        </button>
+        {!SELF_SAVING_TABS.includes(activeTab) && (
+          <button onClick={save} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white sm:w-auto">
+            {saved ? 'נשמר' : 'שמירת הגדרות'}
+          </button>
+        )}
       </div>
 
       <div className="rounded-xl border border-[var(--border)] bg-white p-1">
@@ -668,25 +679,47 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="סבבי שאלות מקסימלי">
             <input type="number" inputMode="numeric" className={input} value={settings.question_rounds?.max ?? 3} onChange={(e) => update('question_rounds', { max: Number(e.target.value) })} />
+            <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+              כמה סבבי שאלות הבהרה הבוט רשאי לשאול כדי להשלים את הבריף לפני שהוא מתחיל להפיק. כשמגיעים למקסימום, הוא ממשיך עם המידע שכבר נאסף.
+            </span>
           </Field>
           <Field label="ניסיונות יצירה מקסימלי">
             <input type="number" inputMode="numeric" className={input} value={settings.generation_attempts?.max ?? 3} onChange={(e) => update('generation_attempts', { max: Number(e.target.value) })} />
+            <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+              כמה פעמים המערכת תנסה להפיק תוצר (שאינו תמונה) ולעבור בקרת איכות לפני שמוותרת ומעבירה לטיפול. ערך גבוה יותר משפר איכות אך מגדיל עלות וזמן.
+            </span>
           </Field>
           <Field label="ניסיונות תמונה מקסימלי">
             <input type="number" inputMode="numeric" min={1} className={input} value={settings.image_generation_attempts?.max ?? 1} onChange={(e) => update('image_generation_attempts', { max: Number(e.target.value) })} />
+            <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+              כמו ניסיונות היצירה, אבל לתוצרי תמונה בלבד. יצירת תמונה יקרה יותר, ולכן ברירת המחדל נמוכה (1).
+            </span>
           </Field>
           <Field label="תקרת עלות לבקשה ($)">
             <input type="number" inputMode="decimal" step="0.01" min={0} className={input} value={budget.max ?? 0.08} onChange={(e) => update('request_budget_usd', { max: Number(e.target.value) })} />
+            <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+              תקרת עלות משוערת לבקשה בודדת בדולרים. כשהעלות המשוערת מגיעה לתקרה, המערכת עוצרת את ההפקה ומעבירה את הבקשה לטיפול מנהל — הגנה מפני לולאות או שימוש חריג שמבזבזים כסף. 0 = ללא תקרה.
+            </span>
           </Field>
           <Field label="הודעות ל-24 שעות">
             <input type="number" inputMode="numeric" className={input} value={limits.messages_per_24h ?? 50} onChange={(e) => update('rate_limits', { ...limits, messages_per_24h: Number(e.target.value) })} />
+            <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+              מקסימום הודעות נכנסות ב-WhatsApp ממספר טלפון בודד בחלון של 24 שעות. מעבר לכך ההודעות נחסמות זמנית. 0 = ללא הגבלה.
+            </span>
           </Field>
           <Field label="יצירות ל-24 שעות">
             <input type="number" inputMode="numeric" className={input} value={limits.generations_per_24h ?? 10} onChange={(e) => update('rate_limits', { ...limits, generations_per_24h: Number(e.target.value) })} />
+            <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+              מקסימום תוצרים שניתן להפיק ממספר טלפון בודד ב-24 שעות. הערך נשמר אך אינו נאכף כרגע במערכת — כרגע רק מגבלת ההודעות פעילה בפועל.
+            </span>
           </Field>
         </div>
       </section>
       )}
+
+      {activeTab === 'models_page' && <ModelsPage />}
+
+      {activeTab === 'skills' && <SkillsPage />}
     </div>
   );
 }

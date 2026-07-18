@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Bot,
   CalendarDays,
+  CalendarRange,
   Cpu,
   Files,
   Gauge,
@@ -50,6 +51,7 @@ const NAV_SECTIONS: NavSection[] = [
     links: [
       { href: '/admin/permissions', label: 'משתמשים והרשאות', adminOnly: true, icon: 'users' },
       { href: '/admin/holidays', label: 'גאנט', icon: 'calendar' },
+      { href: '/admin/annual-planner', label: 'תכנון שנתי', icon: 'annualPlanner' },
       { href: '/admin/branding', label: 'מיתוג', adminOnly: true, icon: 'palette' },
     ],
   },
@@ -71,16 +73,13 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'הגדרות',
     links: [
-      { href: '/admin/models', label: 'מודלים', adminOnly: true, icon: 'cpu' },
-      { href: '/admin/skills', label: 'סקילים', adminOnly: true, icon: 'puzzle' },
       { href: '/admin/settings', label: 'הגדרות', adminOnly: true, icon: 'gear' },
-      { href: '/admin/test-email', label: 'מייל ניסיון', adminOnly: true, icon: 'mail' },
       { href: '/admin/user-settings', label: 'הגדרות', userOnly: true, icon: 'userSettings' },
     ],
   },
 ];
 
-type NavIconName = 'spark' | 'users' | 'calendar' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings' | 'mail' | 'meta';
+type NavIconName = 'spark' | 'users' | 'calendar' | 'annualPlanner' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings' | 'mail' | 'meta';
 
 function visibleSections(isAdmin: boolean, canCreateOutputs: boolean) {
   return NAV_SECTIONS.map((sec) => ({
@@ -277,6 +276,7 @@ function NavIcon({ name, className = 'h-4 w-4' }: { name: NavIconName; active?: 
   const icons = {
     alert: AlertTriangle,
     calendar: CalendarDays,
+    annualPlanner: CalendarRange,
     chat: MessageSquare,
     cpu: Cpu,
     dashboard: Gauge,
