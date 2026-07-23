@@ -39,6 +39,12 @@ verify_jwt = false
 [functions.twilio-webhook]
 verify_jwt = false
 
+# GREEN-API sends the instance's "Webhook authorization header" as a plain
+# Bearer token, not a JWT — the platform gate would reject every notification
+# before the function ran. The function checks GROUP_WEBHOOK_SECRET itself.
+[functions.whatsapp-group-webhook]
+verify_jwt = false
+
 [functions.process-request]
 verify_jwt = false
 
