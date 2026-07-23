@@ -394,7 +394,7 @@ export async function sendOut(
       // brand group mirrors that and stores the numbered-text fallback.
       sentInteractive = useInteractive && !isProductionFormTarget(to) && !isGroupTarget(to);
     } else if (isGroupTarget(to)) {
-      // Real WhatsApp group via the Whapi gateway. No 24h window and no Twilio
+      // Real WhatsApp group via the GREEN-API gateway. No 24h window and no Twilio
       // Content templates there — always plain text (body already carries the
       // numbered-menu fallback text).
       const target = parseGroupTarget(to);

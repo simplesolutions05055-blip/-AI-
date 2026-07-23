@@ -3,7 +3,7 @@
 // share brief context. The composed routing target "group:<groupId>:<sender>"
 // travels through the existing engine as the conversation's whatsapp_from, and
 // the outbound layer (worker.ts sendOut / media senders) detects the prefix and
-// ships replies to the GROUP via the Whapi gateway instead of Twilio.
+// ships replies to the GROUP via the GREEN-API gateway instead of Twilio.
 //
 // In a group the bot answers ONLY messages that start with the trigger word
 // (e.g. "גרפיקה תכין לי פוסט" or "@גרפיקה ...") — everything else is ignored,
@@ -42,7 +42,7 @@ export function matchGroupTrigger(body: string, triggerWord: string): { matched:
 }
 
 // ── composed routing target ────────────────────────────────────────────────
-// groupId is Whapi-style ("120363...@g.us" — never contains ':'); sender is
+// groupId is WhatsApp-style ("120363...@g.us" — never contains ':'); sender is
 // digits only. Splitting on ':' is therefore unambiguous.
 export function groupTarget(groupId: string, sender: string): string {
   return `group:${groupId}:${sender}`;
@@ -99,30 +99,50 @@ export async function findOrCreateGroupConversation(
   return created ?? null;
 }
 
-// ── Whapi gateway senders (real groups only — simulated never reaches here) ──
-// Configure via Supabase secrets: WHAPI_TOKEN (required), WHAPI_API_URL
-// (optional, defaults to the public gateway).
-function whapiBase(): string {
-  return (Deno.env.get('WHAPI_API_URL') || 'https://gate.whapi.cloud').replace(/\/$/, '');
+// ── GREEN-API gateway senders (real groups only — simulated never reaches here) ──
+// Configure via Supabase secrets: GREENAPI_ID_INSTANCE + GREENAPI_TOKEN (both
+// required), GREENAPI_API_URL (optional — each instance gets its own host, e.g.
+// https://7107.api.greenapi.com; the shared host is the fallback).
+// GREEN-API puts the credentials in the PATH, not a header:
+//   POST {apiUrl}/waInstance{idInstance}/{method}/{apiTokenInstance}
+// so the URL itself is a secret — never let it reach a log or an error message.
+function greenApiUrl(method: string): string {
+  const base = (Deno.env.get('GREENAPI_API_URL') || 'https://api.green-api.com').replace(/\/$/, '');
+  const idInstance = Deno.env.get('GREENAPI_ID_INSTANCE');
+  const token = Deno.env.get('GREENAPI_TOKEN');
+  if (!idInstance || !token) {
+    throw new Error('GREENAPI_ID_INSTANCE / GREENAPI_TOKEN not configured — cannot send to a real WhatsApp group');
+  }
+  return `${base}/waInstance${idInstance}/${method}/${token}`;
 }
 
-async function whapiPost(path: string, payload: Record<string, unknown>): Promise<string> {
-  const token = Deno.env.get('WHAPI_TOKEN');
-  if (!token) throw new Error('WHAPI_TOKEN not configured — cannot send to a real WhatsApp group');
-  const res = await fetch(`${whapiBase()}${path}`, {
+async function greenApiPost(method: string, payload: Record<string, unknown>): Promise<string> {
+  const res = await fetch(greenApiUrl(method), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`whapi ${path} failed (${res.status}): ${JSON.stringify(data)}`);
-  return (data?.message?.id as string) ?? `whapi-${crypto.randomUUID()}`;
+  if (!res.ok) throw new Error(`green-api ${method} failed (${res.status}): ${JSON.stringify(data)}`);
+  return (data?.idMessage as string) ?? `greenapi-${crypto.randomUUID()}`;
 }
 
 export async function sendGroupText(groupId: string, body: string): Promise<string> {
-  return await whapiPost('/messages/text', { to: groupId, body });
+  return await greenApiPost('sendMessage', { chatId: groupId, message: body });
 }
 
+// sendFileByUrl requires a fileName — WhatsApp shows it on documents and uses the
+// extension to decide whether the file renders inline as an image.
 export async function sendGroupMedia(groupId: string, mediaUrl: string, caption?: string): Promise<string> {
-  return await whapiPost('/messages/image', { to: groupId, media: mediaUrl, caption: caption ?? '' });
+  let fileName = 'image.png';
+  try {
+    const last = new URL(mediaUrl).pathname.split('/').pop();
+    if (last) fileName = decodeURIComponent(last);
+  } catch { /* keep the default */ }
+  return await greenApiPost('sendFileByUrl', {
+    chatId: groupId,
+    urlFile: mediaUrl,
+    fileName,
+    caption: caption ?? '',
+  });
 }

@@ -1,34 +1,87 @@
-// Edge Function: whatsapp-group-webhook — group-chat entry point (Whapi gateway).
+// Edge Function: whatsapp-group-webhook — group-chat entry point (GREEN-API).
 // A THIN ADAPTER, exactly like twilio-webhook: it authenticates the gateway,
 // filters to group messages that start with the trigger word, then hands off to
 // the SAME shared `handleInbound` engine. Replies route back to the group via
 // worker.ts's group send path (whatsapp_from = "group:<id>:<sender>").
 //
-// Gateway contract (Whapi.cloud "messages" webhook):
-//   POST { messages: [{ id, from_me, type, chat_id, from, from_name,
-//                       text?: { body }, caption? }] }
-//   chat_id ends with "@g.us" for groups; `from` is the sender's digits.
+// Gateway contract (GREEN-API webhook — ONE notification object per POST, not
+// an array):
+//   POST { typeWebhook, idMessage,
+//          senderData:  { chatId, chatName, sender, senderName },
+//          messageData: { typeMessage, textMessageData?: { textMessage },
+//                         extendedTextMessageData?: { text },
+//                         fileMessageData?: { caption } } }
+//   senderData.chatId ends with "@g.us" for groups; senderData.sender is the
+//   participant ("972501234567@c.us"). Only typeWebhook ===
+//   "incomingMessageReceived" is a human message — the outgoing* types are the
+//   bot's own echoes and are dropped, which is what Whapi's from_me flag did.
 //
 // Secrets (Supabase → Edge Functions → Secrets):
-//   GROUP_WEBHOOK_SECRET — shared secret; Whapi must send it as a Bearer token
-//                          or ?secret= query param.
-//   WHAPI_TOKEN          — API token for sending replies (used by group.ts).
+//   GROUP_WEBHOOK_SECRET  — shared secret; set it as the instance's "Webhook
+//                           authorization header", which GREEN-API sends as
+//                           `Authorization: Bearer <value>`. ?secret= also works.
+//   GREENAPI_ID_INSTANCE  — instance id, for sending replies (used by group.ts).
+//   GREENAPI_TOKEN        — apiTokenInstance, same.
+//   GREENAPI_API_URL      — the instance's own host, e.g. https://7107.api.greenapi.com
+//
+// Instance settings that must be ON (console → Settings → Webhooks):
+//   Webhook Url → this function's URL, and "Receive webhooks on incoming
+//   messages and files" → Yes. Everything else can stay off.
 import { db } from '../_shared/db.ts';
 import { processRequest } from '../_shared/worker.ts';
 import { handleInbound } from '../_shared/inbound.ts';
 import { getSettingOr, getTemplates, logEvent } from '../_shared/util.ts';
 import { findOrCreateGroupConversation, getGroupSettings, matchGroupTrigger } from '../_shared/group.ts';
 
-type WhapiMessage = {
-  id?: string;
-  from_me?: boolean;
-  type?: string;
-  chat_id?: string;
-  from?: string;
-  from_name?: string;
-  text?: { body?: string };
-  caption?: string;
+type GreenApiNotification = {
+  typeWebhook?: string;
+  idMessage?: string;
+  senderData?: {
+    chatId?: string;
+    chatName?: string;
+    sender?: string;
+    senderName?: string;
+    senderContactName?: string;
+  };
+  messageData?: {
+    typeMessage?: string;
+    textMessageData?: { textMessage?: string };
+    extendedTextMessageData?: { text?: string };
+    // Images, videos and documents all land here; a caption counts as the text.
+    fileMessageData?: { caption?: string };
+  };
 };
+
+// The engine only ever needs these four things out of a notification.
+type InboundGroupMessage = { id: string; chatId: string; sender: string; senderName: string; body: string };
+
+function normalize(n: GreenApiNotification): InboundGroupMessage | null {
+  if (n?.typeWebhook !== 'incomingMessageReceived') return null;
+  const chatId = n.senderData?.chatId ?? '';
+  if (!chatId.endsWith('@g.us')) return null;
+
+  // Pilot scope: text only (a media message's caption counts as its text).
+  const md = n.messageData ?? {};
+  const body = (
+    md.textMessageData?.textMessage ??
+    md.extendedTextMessageData?.text ??
+    md.fileMessageData?.caption ??
+    ''
+  ).trim();
+  if (!body) return null;
+
+  // "972501234567@c.us" → "972501234567"
+  const sender = (n.senderData?.sender ?? '').replace(/\D/g, '');
+  if (!sender) return null;
+
+  return {
+    id: n.idMessage || `greenapi-${crypto.randomUUID()}`,
+    chatId,
+    sender,
+    senderName: n.senderData?.senderName || n.senderData?.senderContactName || '',
+    body,
+  };
+}
 
 function ok(body: Record<string, unknown> = { ok: true }) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -46,14 +99,17 @@ Deno.serve(async (req) => {
     return new Response('Forbidden', { status: 403 });
   }
 
-  let payload: { messages?: WhapiMessage[] };
+  let payload: GreenApiNotification;
   try {
     payload = await req.json();
   } catch {
     return ok({ ok: false, error: 'bad_json' });
   }
-  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-  if (!messages.length) return ok();
+  // GREEN-API posts ONE notification at a time. Wrapping it in a list keeps the
+  // loop below — and its debounce contract — exactly as the old gateway left it.
+  const normalized = normalize(payload);
+  if (!normalized) return ok({ ok: true, skipped: payload?.typeWebhook ?? 'unparsable' });
+  const messages = [normalized];
 
   const settings = await getGroupSettings(database);
   if (!settings.enabled) return ok({ ok: true, skipped: 'groups_disabled' });
@@ -61,18 +117,7 @@ Deno.serve(async (req) => {
   const templates = await getTemplates(database);
 
   for (const msg of messages) {
-    // Only human group messages. from_me filters the bot's own echoes.
-    if (msg.from_me) continue;
-    const chatId = msg.chat_id ?? '';
-    if (!chatId.endsWith('@g.us')) continue;
-
-    // Pilot scope: text only (a media message's caption counts as its text).
-    const body = (msg.text?.body ?? msg.caption ?? '').trim();
-    if (!body) continue;
-
-    const sender = (msg.from ?? '').replace(/\D/g, '');
-    if (!sender) continue;
-    const messageSid = msg.id || `whapi-${crypto.randomUUID()}`;
+    const { chatId, sender, body, id: messageSid } = msg;
 
     // ONE shared bot session per group: the trigger wakes the bot; while it is
     // engaged (open flow/request) any member's reply continues the session —
@@ -91,7 +136,7 @@ Deno.serve(async (req) => {
         direction: 'inbound',
         body,
         twilio_message_sid: messageSid,
-        sender_label: msg.from_name || sender,
+        sender_label: msg.senderName || sender,
       });
       await database.from('conversations').update({ last_message_at: new Date().toISOString() }).eq('id', conversation.id);
       continue;
@@ -99,7 +144,7 @@ Deno.serve(async (req) => {
 
     await logEvent(database, {
       action: 'group_message_triggered',
-      metadata: { group_id: chatId, sender, from_name: msg.from_name ?? null, engaged },
+      metadata: { group_id: chatId, sender, from_name: msg.senderName || null, engaged },
     });
 
     const engineBody = trigger.matched ? trigger.rest : body;
@@ -123,7 +168,7 @@ Deno.serve(async (req) => {
     // Keep the stored row faithful to what the member actually typed (trigger
     // word included) and stamp who sent it — the transcript is shared.
     await database.from('messages')
-      .update({ body, sender_label: msg.from_name || sender })
+      .update({ body, sender_label: msg.senderName || sender })
       .eq('twilio_message_sid', messageSid);
 
     if (background) {
