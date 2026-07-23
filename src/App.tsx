@@ -26,6 +26,7 @@ import PermissionsPage from '@/pages/admin/PermissionsPage';
 import HolidaysCalendarPage from '@/pages/admin/HolidaysCalendarPage';
 import AnnualPlannerPage from '@/pages/admin/AnnualPlannerPage';
 import MetaConnectionPage from '@/pages/admin/MetaConnectionPage';
+import ErrorPage from '@/pages/ErrorPage';
 import ReloadPrompt from '@/components/pwa/ReloadPrompt';
 import TitleManager from '@/components/TitleManager';
 import DialogHost from '@/components/DialogHost';
@@ -68,7 +69,7 @@ export default function App() {
           <Route path="user-settings" element={<UserSettingsPage />} />
           <Route path="meta-connection" element={<MetaConnectionPage />} />
         </Route>
-        <Route path="*" element={<Navigate to="/admin" replace />} />
+        <Route path="*" element={<ErrorPage />} />
       </Routes>
       <ReloadPrompt />
       <DialogHost />
