@@ -13,15 +13,10 @@ import {
   round4,
 } from './util.ts';
 import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption } from './openai.ts';
-import {
-  createWhatsAppInteractiveContent,
-  interactiveFingerprint,
-  sendWhatsApp,
-  sendWhatsAppContent,
-  sendWhatsAppTemplate,
-  sendWhatsAppMedia,
-  type WhatsAppInteractive,
-} from './twilio.ts';
+// WhatsApp goes out through GREEN-API; twilio.ts is now only the shared
+// WhatsApp shapes (the interactive types the simulator still renders).
+import { type WhatsAppInteractive } from './twilio.ts';
+import { sendFile, sendText } from './greenapi.ts';
 import { isGroupTarget, parseGroupTarget, sendGroupText, sendGroupMedia } from './group.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { loadPdfBrandSettings, sendDeliverableCopy } from './deliverableEmail.ts';
@@ -336,40 +331,13 @@ async function releaseLock(database: DB, requestId: string): Promise<void> {
   await database.rpc('release_request_lock', { p_request_id: requestId });
 }
 
-// ── 24h WhatsApp window ──────────────────────────────────────────────────────
-// Free-form messages are only allowed within 24h of the user's last inbound
-// message. Returns true when the window is open.
-async function windowOpen(database: DB, conversationId: string): Promise<boolean> {
-  const { data } = await database
-    .from('messages')
-    .select('created_at')
-    .eq('conversation_id', conversationId)
-    .eq('direction', 'inbound')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!data) return true;
-  return Date.now() - new Date(data.created_at as string).getTime() < 24 * 60 * 60 * 1000;
-}
-
-async function interactiveContentSid(database: DB, content: WhatsAppInteractive): Promise<string> {
-  const key = await interactiveFingerprint(content);
-  const cache = await getSettingOr<Record<string, string>>(
-    database, 'whatsapp_interactive_content_cache', {}
-  );
-  if (cache[key]) return cache[key];
-
-  const contentSid = await createWhatsAppInteractiveContent(content, key);
-  await database.from('settings').upsert({
-    key: 'whatsapp_interactive_content_cache',
-    value_json: { ...cache, [key]: contentSid },
-  }, { onConflict: 'key' });
-  return contentSid;
-}
+// The 24h WhatsApp window and the approved-template fallback were WhatsApp
+// Business API rules enforced by Twilio. GREEN-API drives a linked personal
+// account, where neither exists — the bot can always reply, so both are gone.
 
 // Returns true when the message actually reached the user (real send or
-// simulated), false when delivery failed (Twilio error, daily limit, or
-// outside the 24h window with no template). Callers that advance request
+// simulated), false when delivery failed (a GREEN-API error — most often the
+// instance being unauthorized or rate-limited). Callers that advance request
 // state — question rounds, brand handshake — MUST gate that progress on a
 // true return, so a failed send never silently burns the user's budget.
 export async function sendOut(
@@ -394,50 +362,15 @@ export async function sendOut(
       // brand group mirrors that and stores the numbered-text fallback.
       sentInteractive = useInteractive && !isProductionFormTarget(to) && !isGroupTarget(to);
     } else if (isGroupTarget(to)) {
-      // Real WhatsApp group via the GREEN-API gateway. No 24h window and no Twilio
-      // Content templates there — always plain text (body already carries the
-      // numbered-menu fallback text).
       const target = parseGroupTarget(to);
       if (!target) throw new Error(`bad group target: ${to}`);
       sid = await sendGroupText(target.groupId, body);
-    } else if (await windowOpen(database, conversationId)) {
-      if (useInteractive && interactive) {
-        try {
-          const contentSid = await interactiveContentSid(database, interactive);
-          sid = await sendWhatsAppContent(to, contentSid);
-          sentInteractive = true;
-        } catch (interactiveError) {
-          await logEvent(database, {
-            requestId,
-            severity: 'warning',
-            action: 'whatsapp_interactive_fallback',
-            message: String(interactiveError),
-          });
-          sid = await sendWhatsApp(to, body);
-        }
-      } else {
-        sid = await sendWhatsApp(to, body);
-      }
     } else {
-      // Outside the 24h window — free-form is blocked by WhatsApp. Use the
-      // approved template if configured, otherwise record the miss for the admin.
-      const tpl = await getSettingOr<{ content_sid: string; enabled: boolean }>(
-        database, 'whatsapp_window_template', { content_sid: '', enabled: false }
-      );
-      if (tpl.enabled && tpl.content_sid) {
-        sid = await sendWhatsAppTemplate(to, tpl.content_sid, { 1: body.slice(0, 600) });
-      } else {
-        await logEvent(database, {
-          requestId, severity: 'warning', action: 'whatsapp_outside_window',
-          message: 'Message not delivered: outside 24h window and no approved template configured.',
-        });
-        await database.from('messages').insert({
-          conversation_id: conversationId, request_id: requestId,
-          direction: 'outbound', body: `[לא נשלח — מחוץ לחלון 24 שעות] ${body}`,
-          twilio_message_sid: `undelivered-${crypto.randomUUID()}`,
-        });
-        return false;
-      }
+      // Real 1:1 chat. GREEN-API has no interactive-message equivalent to
+      // Twilio's Content resources, so `body` — which the engine already builds
+      // with the numbered-menu fallback text — is what goes out. `interactive`
+      // still reaches the simulator above, which renders real buttons.
+      sid = await sendText(to, body);
     }
     await database.from('messages').insert({
       conversation_id: conversationId,
@@ -451,15 +384,15 @@ export async function sendOut(
   } catch (e) {
     const message = String(e);
     await logEvent(database, { requestId, severity: 'error', action: 'whatsapp_send_failed', message });
-    if (message.includes('63038') || message.toLowerCase().includes('daily messages limit')) {
-      await database.from('messages').insert({
-        conversation_id: conversationId,
-        request_id: requestId,
-        direction: 'outbound',
-        body: 'לא ניתן לשלוח כרגע דרך WhatsApp: חשבון Twilio הגיע למגבלת ההודעות היומית. ההודעה התקבלה במערכת, אבל תגובות WhatsApp ימשיכו רק אחרי איפוס/הגדלת המגבלה.',
-        twilio_message_sid: `twilio-limit-${crypto.randomUUID()}`,
-      });
-    }
+    // Keep the undelivered text on the transcript so the admin sees exactly what
+    // the user never received, instead of a silent gap.
+    await database.from('messages').insert({
+      conversation_id: conversationId,
+      request_id: requestId,
+      direction: 'outbound',
+      body: `[לא נשלח — שגיאת GREEN-API] ${body}`,
+      twilio_message_sid: `undelivered-${crypto.randomUUID()}`,
+    });
     return false;
   }
 }
@@ -1173,7 +1106,7 @@ async function deliverContentToWhatsApp(
     const groupTarget = isGroupTarget(to) ? parseGroupTarget(to) : null;
     const sid = groupTarget
       ? await sendGroupMedia(groupTarget.groupId, url, mediaCaption.slice(0, 1000))
-      : await sendWhatsAppMedia(to, url, mediaCaption.slice(0, 1000));
+      : await sendFile(to, url, mediaCaption.slice(0, 1000));
     await database.from('messages').insert({
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
       body: mediaCaption, media_type: contentType, storage_path: path, twilio_message_sid: sid,

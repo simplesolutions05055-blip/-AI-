@@ -5,7 +5,7 @@
 // 3. Flags requests stuck mid-processing so the admin can retry.
 // Protected by x-cron-secret (CRON_SECRET); never exposes Twilio creds publicly.
 import { db } from '../_shared/db.ts';
-import { sendWhatsApp } from '../_shared/twilio.ts';
+import { sendText } from '../_shared/greenapi.ts';
 import { getTemplates, getSettingOr, logEvent } from '../_shared/util.ts';
 
 Deno.serve(async (req) => {
@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
           body: text,
         });
       } else {
-        try { await sendWhatsApp(c.whatsapp_from as string, text); } catch { /* ignore */ }
+        try { await sendText(c.whatsapp_from as string, text); } catch { /* ignore */ }
       }
     }
     await database.from('conversations')

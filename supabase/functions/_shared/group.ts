@@ -10,6 +10,7 @@
 // otherwise the bot would butt into every human conversation.
 import { type DB } from './db.ts';
 import { getSettingOr } from './util.ts';
+import { sendFile, sendText } from './greenapi.ts';
 
 export type GroupSettings = { enabled: boolean; trigger_word: string };
 
@@ -99,50 +100,13 @@ export async function findOrCreateGroupConversation(
   return created ?? null;
 }
 
-// ── GREEN-API gateway senders (real groups only — simulated never reaches here) ──
-// Configure via Supabase secrets: GREENAPI_ID_INSTANCE + GREENAPI_TOKEN (both
-// required), GREENAPI_API_URL (optional — each instance gets its own host, e.g.
-// https://7107.api.greenapi.com; the shared host is the fallback).
-// GREEN-API puts the credentials in the PATH, not a header:
-//   POST {apiUrl}/waInstance{idInstance}/{method}/{apiTokenInstance}
-// so the URL itself is a secret — never let it reach a log or an error message.
-function greenApiUrl(method: string): string {
-  const base = (Deno.env.get('GREENAPI_API_URL') || 'https://api.green-api.com').replace(/\/$/, '');
-  const idInstance = Deno.env.get('GREENAPI_ID_INSTANCE');
-  const token = Deno.env.get('GREENAPI_TOKEN');
-  if (!idInstance || !token) {
-    throw new Error('GREENAPI_ID_INSTANCE / GREENAPI_TOKEN not configured — cannot send to a real WhatsApp group');
-  }
-  return `${base}/waInstance${idInstance}/${method}/${token}`;
-}
-
-async function greenApiPost(method: string, payload: Record<string, unknown>): Promise<string> {
-  const res = await fetch(greenApiUrl(method), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`green-api ${method} failed (${res.status}): ${JSON.stringify(data)}`);
-  return (data?.idMessage as string) ?? `greenapi-${crypto.randomUUID()}`;
-}
-
+// ── group senders (real groups only — simulated never reaches here) ──────────
+// A group id IS a GREEN-API chatId ("120363...@g.us"), so these are thin
+// aliases over the shared client. See greenapi.ts for the credential contract.
 export async function sendGroupText(groupId: string, body: string): Promise<string> {
-  return await greenApiPost('sendMessage', { chatId: groupId, message: body });
+  return await sendText(groupId, body);
 }
 
-// sendFileByUrl requires a fileName — WhatsApp shows it on documents and uses the
-// extension to decide whether the file renders inline as an image.
 export async function sendGroupMedia(groupId: string, mediaUrl: string, caption?: string): Promise<string> {
-  let fileName = 'image.png';
-  try {
-    const last = new URL(mediaUrl).pathname.split('/').pop();
-    if (last) fileName = decodeURIComponent(last);
-  } catch { /* keep the default */ }
-  return await greenApiPost('sendFileByUrl', {
-    chatId: groupId,
-    urlFile: mediaUrl,
-    fileName,
-    caption: caption ?? '',
-  });
+  return await sendFile(groupId, mediaUrl, caption);
 }
