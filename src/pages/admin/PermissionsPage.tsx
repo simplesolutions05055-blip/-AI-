@@ -31,6 +31,14 @@ interface InviteRow {
   last_used_at: string | null;
 }
 
+interface ActivityRow {
+  id: string;
+  severity: string;
+  action: string;
+  message: string | null;
+  created_at: string;
+}
+
 function inviteUrl(token: string) {
   return `${window.location.origin}/signup?invite=${token}`;
 }
@@ -60,9 +68,37 @@ export default function PermissionsPage() {
   const [invites, setInvites] = useState<InviteRow[]>([]);
   const [generating, setGenerating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<ProfileRow | null>(null);
+  const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
 
   const admins = profiles.filter((p) => p.role === 'admin');
   const users = profiles.filter((p) => p.role === 'user');
+
+  useEscapeClose(!!selectedUser, () => setSelectedUser(null));
+
+  async function openUserDetails(user: ProfileRow) {
+    setSelectedUser(user);
+    setActivity([]);
+    setActivityLoading(true);
+    const { data: requests } = await db
+      .from('requests')
+      .select('id')
+      .eq('customer_email', user.email);
+    const requestIds = ((requests as { id: string }[] | null) ?? []).map((row) => row.id);
+    if (requestIds.length === 0) {
+      setActivityLoading(false);
+      return;
+    }
+    const { data: logs } = await db
+      .from('logs')
+      .select('id, severity, action, message, created_at')
+      .in('request_id', requestIds)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    setActivity((logs as ActivityRow[]) ?? []);
+    setActivityLoading(false);
+  }
 
   useEffect(() => {
     (async () => {
@@ -394,7 +430,7 @@ export default function PermissionsPage() {
               </div>
 
               {/* brands for regular users */}
-              {!isAdmin && brands.length > 0 && (
+                {!isAdmin && brands.length > 0 && (
                 <>
                   {/* Mobile: modal for many brands */}
                   {brands.length > 2 ? (
@@ -443,14 +479,106 @@ export default function PermissionsPage() {
                     </div>
                   </div>
                 </>
-              )}
+                )}
+
+              <div className="mt-3 border-t border-[var(--border)] pt-3">
+                <button
+                  type="button"
+                  onClick={() => void openUserDetails(p)}
+                  className="w-full rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm font-semibold text-brand transition hover:bg-brand/10"
+                >
+                  פרטים ופעילות
+                </button>
+              </div>
             </div>
           );
         })}
       </div>
       )}
+
+      {selectedUser && (
+        <UserDetailsModal
+          user={selectedUser}
+          brands={brands}
+          userBrandIds={grants[selectedUser.id] ?? new Set<string>()}
+          activity={activity}
+          loading={activityLoading}
+          onClose={() => setSelectedUser(null)}
+        />
+      )}
     </div>
   );
+}
+
+function UserDetailsModal({
+  user, brands, userBrandIds, activity, loading, onClose,
+}: {
+  user: ProfileRow;
+  brands: BrandRow[];
+  userBrandIds: Set<string>;
+  activity: ActivityRow[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  const userBrands = brands.filter((brand) => userBrandIds.has(brand.id));
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4"
+      onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      <div dir="rtl" role="dialog" aria-modal="true" aria-labelledby="user-details-title" className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--border)] bg-white px-5 py-4">
+          <div>
+            <h2 id="user-details-title" className="text-lg font-bold">פרטי משתמש ופעילות</h2>
+            <p className="mt-0.5 text-sm text-[var(--muted)]"><bdi>{user.email}</bdi></p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="סגירת פרטי המשתמש" className="rounded-lg p-2 text-xl text-[var(--muted)] hover:bg-gray-100">×</button>
+        </div>
+
+        <div className="space-y-5 p-5">
+          <section aria-labelledby="user-info-heading">
+            <h3 id="user-info-heading" className="mb-3 font-semibold">פרטים אישיים והרשאות</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Detail label="כתובת מייל"><bdi>{user.email}</bdi></Detail>
+              <Detail label="תפקיד">{user.role === 'admin' ? 'אדמין' : 'משתמש רגיל'}</Detail>
+              <Detail label="תאריך הצטרפות">{new Date(user.created_at).toLocaleDateString('he-IL')}</Detail>
+              <Detail label="הרשאת יצירה">{user.can_create_outputs ? 'מאושרת' : 'חסומה'}</Detail>
+            </div>
+            <div className="mt-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3 text-sm">
+              <span className="font-semibold">מותגים משויכים: </span>
+              {userBrands.length ? userBrands.map((brand) => brand.name).join(' · ') : 'אין שיוך למותג'}
+            </div>
+          </section>
+
+          <section aria-labelledby="activity-heading">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 id="activity-heading" className="font-semibold">Audit log</h3>
+              <span className="text-xs text-[var(--muted)]">עד 50 רשומות אחרונות</span>
+            </div>
+            {loading ? <p className="text-sm text-[var(--muted)]">טוען פעילות…</p> : activity.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">לא נמצאה פעילות מתועדת עבור המשתמש.</p>
+            ) : (
+              <div className="space-y-2">
+                {activity.map((entry) => (
+                  <div key={entry.id} className="rounded-lg border border-[var(--border)] p-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold"><bdi>{entry.action}</bdi></span>
+                      <time className="text-xs text-[var(--muted)]" dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString('he-IL')}</time>
+                    </div>
+                    {entry.message && <p className="mt-1 text-[var(--muted)]">{entry.message}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Detail({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="rounded-lg border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">{label}</div><div className="mt-1 font-medium">{children}</div></div>;
 }
 
 function InvitesTab({

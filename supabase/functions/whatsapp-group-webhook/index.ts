@@ -172,10 +172,18 @@ async function resolveMediaFor(
 async function handleDirect(database: DB, msg: InboundMessage, req: Request) {
   const phone = msg.sender;
   const from = toWhatsAppFrom(msg.chatId);
+  console.log('[greenapi-webhook] handleDirect:start', JSON.stringify({
+    messageSid: msg.id,
+    chatId: msg.chatId,
+    phone,
+    hasMedia: Boolean(msg.mediaUrl),
+    bodyPreview: msg.body.slice(0, 120),
+  }));
 
   const { data: blocked } = await database
     .from('blocked_numbers').select('id').eq('phone_number', phone).maybeSingle();
   if (blocked) {
+    console.log('[greenapi-webhook] handleDirect:blocked', JSON.stringify({ phone, messageSid: msg.id }));
     await logEvent(database, { action: 'blocked_number', metadata: { phone } });
     return ok({ ok: true, skipped: 'blocked' });
   }
@@ -184,6 +192,7 @@ async function handleDirect(database: DB, msg: InboundMessage, req: Request) {
     await enforceMessageLimit(database, { phone, ip: req.headers.get('x-forwarded-for') });
   } catch (e) {
     if (e instanceof AbuseGuardError) {
+      console.log('[greenapi-webhook] handleDirect:rate_limited', JSON.stringify({ phone, code: e.code, messageSid: msg.id }));
       await logEvent(database, { severity: 'warning', action: 'rate_limited_message', metadata: { phone, code: e.code } });
       return ok({ ok: true, skipped: 'rate_limited' });
     }
@@ -202,13 +211,17 @@ async function handleDirect(database: DB, msg: InboundMessage, req: Request) {
       .eq('event_type', 'message_day')
       .gte('created_at', since);
     if ((count ?? 0) > limits.messages_per_24h) {
+      console.log('[greenapi-webhook] handleDirect:rate_limited_legacy', JSON.stringify({ phone, messageSid: msg.id }));
       await logEvent(database, { severity: 'warning', action: 'rate_limited_message_legacy', metadata: { phone } });
       return ok({ ok: true, skipped: 'rate_limited_legacy' });
     }
   }
 
   const conversation = await findOrCreateConversation(database, from, false);
-  if (!conversation) return ok({ ok: true, skipped: 'no_conversation' });
+  if (!conversation) {
+    console.log('[greenapi-webhook] handleDirect:no_conversation', JSON.stringify({ from, messageSid: msg.id }));
+    return ok({ ok: true, skipped: 'no_conversation' });
+  }
 
   const templates = await getTemplates(database);
   const { requestIdToProcess, background } = await handleInbound(database, {
@@ -217,6 +230,12 @@ async function handleDirect(database: DB, msg: InboundMessage, req: Request) {
     templates, simulated: false,
     resolveMedia: (requestId) => resolveMediaFor(database, msg, conversation.id, requestId),
   });
+  console.log('[greenapi-webhook] handleDirect:inbound_result', JSON.stringify({
+    messageSid: msg.id,
+    conversationId: conversation.id,
+    requestIdToProcess,
+    hasBackground: Boolean(background),
+  }));
 
   if (background) {
     // @ts-ignore EdgeRuntime is provided by the Supabase runtime
@@ -230,7 +249,16 @@ async function handleDirect(database: DB, msg: InboundMessage, req: Request) {
 // ── group chat ──────────────────────────────────────────────────────────────
 async function handleGroup(database: DB, msg: InboundMessage) {
   const settings = await getGroupSettings(database);
-  if (!settings.enabled) return ok({ ok: true, skipped: 'groups_disabled' });
+  console.log('[greenapi-webhook] handleGroup:start', JSON.stringify({
+    messageSid: msg.id,
+    chatId: msg.chatId,
+    sender: msg.sender,
+    bodyPreview: msg.body.slice(0, 120),
+  }));
+  if (!settings.enabled) {
+    console.log('[greenapi-webhook] handleGroup:disabled', JSON.stringify({ messageSid: msg.id, chatId: msg.chatId }));
+    return ok({ ok: true, skipped: 'groups_disabled' });
+  }
 
   const { chatId, sender, body, id: messageSid } = msg;
 
@@ -238,12 +266,22 @@ async function handleGroup(database: DB, msg: InboundMessage) {
   // engaged (open flow/request) any member's reply continues the session —
   // user X opens with the trigger, user Y answers "1", the flow moves on.
   const conversation = await findOrCreateGroupConversation(database, chatId, 'shared', false);
-  if (!conversation) return ok({ ok: true, skipped: 'no_conversation' });
+  if (!conversation) {
+    console.log('[greenapi-webhook] handleGroup:no_conversation', JSON.stringify({ chatId, messageSid }));
+    return ok({ ok: true, skipped: 'no_conversation' });
+  }
 
   const trigger = matchGroupTrigger(body, settings.trigger_word);
   const engaged =
     conversation.status !== 'soft_closed' &&
     Boolean(conversation.flow_state || conversation.current_request_id);
+  console.log('[greenapi-webhook] handleGroup:trigger_state', JSON.stringify({
+    messageSid,
+    chatId,
+    matched: trigger.matched,
+    engaged,
+    triggerWord: settings.trigger_word,
+  }));
   if (!trigger.matched && !engaged) {
     // Idle bot + no trigger: keep the group transcript, stay silent.
     await database.from('messages').insert({
@@ -256,6 +294,7 @@ async function handleGroup(database: DB, msg: InboundMessage) {
     });
     await database.from('conversations')
       .update({ last_message_at: new Date().toISOString() }).eq('id', conversation.id);
+    console.log('[greenapi-webhook] handleGroup:no_trigger', JSON.stringify({ messageSid, chatId }));
     return ok({ ok: true, skipped: 'no_trigger' });
   }
 
@@ -282,6 +321,13 @@ async function handleGroup(database: DB, msg: InboundMessage) {
       anyRejected: false,
     }),
   });
+  console.log('[greenapi-webhook] handleGroup:inbound_result', JSON.stringify({
+    messageSid,
+    chatId,
+    conversationId: conversation.id,
+    requestIdToProcess,
+    hasBackground: Boolean(background),
+  }));
 
   // Keep the stored row faithful to what the member actually typed (trigger
   // word included) and stamp who sent it — the transcript is shared.
@@ -300,30 +346,69 @@ async function handleGroup(database: DB, msg: InboundMessage) {
 
 Deno.serve(async (req) => {
   const database = db();
+  const requestUrl = new URL(req.url);
+  console.log('[greenapi-webhook] request:start', JSON.stringify({
+    method: req.method,
+    pathname: requestUrl.pathname,
+    hasAuthHeader: Boolean(req.headers.get('Authorization')),
+    hasSecretQuery: requestUrl.searchParams.has('secret'),
+  }));
 
   // ── auth: shared secret from the gateway ──────────────────────────────────
   const secret = Deno.env.get('GROUP_WEBHOOK_SECRET') ?? '';
   const bearer = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-  const querySecret = new URL(req.url).searchParams.get('secret') ?? '';
+  const querySecret = requestUrl.searchParams.get('secret') ?? '';
   if (!secret || (bearer !== secret && querySecret !== secret)) {
+    console.log('[greenapi-webhook] request:bad_secret');
     await logEvent(database, { severity: 'warning', action: 'group_webhook_bad_secret' });
     return new Response('Forbidden', { status: 403 });
   }
+  console.log('[greenapi-webhook] request:auth_ok');
 
   let payload: GreenApiNotification;
   try {
     payload = await req.json();
   } catch {
+    console.log('[greenapi-webhook] request:bad_json');
     return ok({ ok: false, error: 'bad_json' });
   }
+  console.log('[greenapi-webhook] request:payload', JSON.stringify({
+    typeWebhook: payload?.typeWebhook ?? null,
+    idMessage: payload?.idMessage ?? null,
+    chatId: payload?.senderData?.chatId ?? null,
+    sender: payload?.senderData?.sender ?? null,
+    typeMessage: payload?.messageData?.typeMessage ?? null,
+  }));
 
   const msg = normalize(payload);
-  if (!msg) return ok({ ok: true, skipped: payload?.typeWebhook ?? 'unparsable' });
+  if (!msg) {
+    console.log('[greenapi-webhook] request:normalize_skipped', JSON.stringify({
+      reason: payload?.typeWebhook ?? 'unparsable',
+      chatId: payload?.senderData?.chatId ?? null,
+      typeMessage: payload?.messageData?.typeMessage ?? null,
+    }));
+    return ok({ ok: true, skipped: payload?.typeWebhook ?? 'unparsable' });
+  }
+  console.log('[greenapi-webhook] request:normalized', JSON.stringify({
+    messageSid: msg.id,
+    chatId: msg.chatId,
+    isGroup: msg.isGroup,
+    sender: msg.sender,
+    hasMedia: Boolean(msg.mediaUrl),
+    bodyPreview: msg.body.slice(0, 120),
+  }));
 
   // Idempotency: GREEN-API retries a notification until it gets a 200.
   const { data: dup } = await database
     .from('messages').select('id').eq('twilio_message_sid', msg.id).maybeSingle();
-  if (dup) return ok({ ok: true, skipped: 'duplicate' });
+  if (dup) {
+    console.log('[greenapi-webhook] request:duplicate', JSON.stringify({ messageSid: msg.id }));
+    return ok({ ok: true, skipped: 'duplicate' });
+  }
 
+  console.log('[greenapi-webhook] request:route', JSON.stringify({
+    messageSid: msg.id,
+    route: msg.isGroup ? 'group' : 'direct',
+  }));
   return msg.isGroup ? await handleGroup(database, msg) : await handleDirect(database, msg, req);
 });
