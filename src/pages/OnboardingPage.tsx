@@ -557,6 +557,22 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
     if (!userId) return;
     setSaving(true);
     try {
+      // Check before uploading the avatar or attempting the profile update so
+      // the user gets an immediate, useful message for an already-registered
+      // number. The unique index below remains the authoritative race-safe
+      // guard for two onboarding sessions saving at the same time.
+      const { data: existingPhone, error: phoneCheckError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone', normalizedPhone)
+        .neq('id', userId)
+        .maybeSingle();
+      if (phoneCheckError) throw phoneCheckError;
+      if (existingPhone) {
+        setError('המספר הזה כבר מחובר למשתמש אחר 😊 נסו מספר אחר כדי שנדע לזהות אתכם בוואטסאפ.');
+        return;
+      }
+
       let avatar_path: string | undefined;
       if (avatarFile) {
         const ext = avatarFile.name.match(/\.[a-z0-9]+$/i)?.[0]?.toLowerCase() ?? '.png';
@@ -584,7 +600,12 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
 
       advance();
     } catch (e) {
-      setError('שמירת הפרטים נכשלה. נסו שוב.');
+      const errorCode = (e as { code?: string } | null)?.code;
+      setError(
+        errorCode === '23505'
+          ? 'המספר הזה כבר מחובר למשתמש אחר 😊 נסו מספר אחר כדי שנדע לזהות אתכם בוואטסאפ.'
+          : 'שמירת הפרטים נכשלה. נסו שוב.',
+      );
       console.error(e);
     } finally {
       setSaving(false);
@@ -1025,7 +1046,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   </div>
                 </div>
 
-                {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+                {error && <p role="alert" className="mb-3 text-sm text-red-600">{error}</p>}
 
                 <button
                   onClick={saveDetailsAndNext}
