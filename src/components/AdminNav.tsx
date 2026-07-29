@@ -21,6 +21,7 @@ import {
   Users,
   UserCog,
   Share2,
+  Link2Off,
 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useEffect, useState } from 'react';
@@ -79,7 +80,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
-type NavIconName = 'spark' | 'users' | 'calendar' | 'annualPlanner' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings' | 'mail' | 'meta';
+type NavIconName = 'spark' | 'users' | 'calendar' | 'annualPlanner' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings' | 'mail' | 'meta' | 'metaOff';
 
 function visibleSections(isAdmin: boolean, canCreateOutputs: boolean) {
   return NAV_SECTIONS.map((sec) => ({
@@ -149,18 +150,19 @@ export default function AdminNav({
 
   return (
     // RTL playbook §17: primary navigation on the right
-    <aside className="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 pb-[calc(var(--safe-bottom)+1rem)] pt-[calc(var(--safe-top)+1rem)] lg:w-60">
+    <aside className="desktop-icon-nav flex h-full min-h-0 w-full shrink-0 flex-col border-l border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 pb-[calc(var(--safe-bottom)+1rem)] pt-[calc(var(--safe-top)+1rem)] lg:w-[76px] lg:rounded-[28px] lg:border lg:border-white/70 lg:bg-white/80 lg:p-3 lg:pt-5 lg:shadow-[0_20px_60px_rgba(30,60,114,0.18),inset_0_1px_0_rgba(255,255,255,0.9)] lg:backdrop-blur-xl">
       <div className="mb-6 shrink-0">
-        <Link to="/" onClick={onNavigate} className="flex justify-center rounded-xl py-1">
-          <img src="/primeos-logo.png" alt="PrimeOS" className="h-10 w-auto object-contain" />
+        <Link to="/" onClick={onNavigate} className="flex justify-center rounded-xl py-1 lg:h-12 lg:w-12 lg:items-center lg:bg-gradient-to-br lg:from-[#1e88e5] lg:via-[#00acc1] lg:to-[#43c463] lg:text-2xl lg:font-extrabold lg:text-white lg:shadow-[0_8px_24px_rgba(30,136,229,0.35)]">
+          <img src="/primeos-logo.png" alt="PrimeOS" className="h-10 w-auto object-contain lg:hidden" />
+          <span className="hidden lg:inline">P</span>
         </Link>
-        <div className="ltr mt-2 truncate text-center text-xs text-[var(--text-muted)]">{email}</div>
+        <div className="ltr mt-2 truncate text-center text-xs text-[var(--text-muted)] lg:hidden">{email}</div>
       </div>
-      <nav className={`flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pe-1 ${isAdmin ? 'gap-5' : 'gap-1.5'}`}>
+      <nav className={`flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pe-1 lg:pe-0 ${isAdmin ? 'gap-5' : 'gap-1.5'}`}>
         {sections.map((sec) => (
           <div key={sec.title}>
             {isAdmin && (
-              <div className="px-3 py-1.5 text-xs font-bold text-[var(--text-muted)]">
+              <div className="px-3 py-1.5 text-xs font-bold text-[var(--text-muted)] lg:hidden">
                 {sec.title}
               </div>
             )}
@@ -173,12 +175,13 @@ export default function AdminNav({
                     to={l.href}
                     onClick={onNavigate}
                     aria-current={active ? 'page' : undefined}
-                    className={`flex min-h-11 items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                    className={`group relative flex min-h-11 items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition lg:h-12 lg:min-h-12 lg:w-12 lg:justify-center lg:px-0 ${
                       active ? 'bg-[var(--warm-accent-soft)] text-[var(--warm-accent-dark)] shadow-[inset_-3px_0_0_var(--warm-accent)]' : 'text-[var(--text-strong)] hover:bg-[var(--bg-subtle)] hover:text-[var(--warm-accent)]'
                     }`}
                   >
                     <NavIcon name={l.icon} active={active} className="h-4 w-4 shrink-0" />
-                    {l.label}
+                    <span className="lg:hidden">{l.label}</span>
+                    <span className="pointer-events-none absolute right-[calc(100%+0.75rem)] z-20 hidden whitespace-nowrap rounded-lg bg-[#0b1b2f] px-2.5 py-1.5 text-xs font-semibold text-white shadow-lg lg:block lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100 lg:group-focus-visible:opacity-100">{l.label}</span>
                   </Link>
                 );
               })}
@@ -189,20 +192,19 @@ export default function AdminNav({
       <Link
         to="/admin/meta-connection"
         onClick={onNavigate}
-        className="mt-3 flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-start text-sm font-semibold text-[var(--text-muted)] transition hover:bg-[var(--bg-subtle)] hover:text-[#10b981]"
+        className="group relative mt-3 flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-start text-sm font-semibold text-[var(--text-muted)] transition hover:bg-[var(--bg-subtle)] hover:text-[#10b981] lg:mt-2 lg:h-12 lg:min-h-12 lg:w-12 lg:justify-center lg:px-0"
       >
-        <NavIcon name="meta" className="h-4 w-4 shrink-0" />
-        <span className="flex-1">רשתות חברתיות</span>
-        <span className={`text-lg leading-none ${metaConnected ? 'text-[#10b981]' : 'text-[#526372]'}`}>
-          {metaConnected ? '✓' : '○'}
-        </span>
+        <NavIcon name={metaConnected ? 'meta' : 'metaOff'} className={`h-5 w-5 shrink-0 ${metaConnected ? 'text-[#10b981]' : 'text-[var(--text-muted)]'}`} />
+        <span className="pointer-events-none absolute right-[calc(100%+0.75rem)] z-20 hidden whitespace-nowrap rounded-lg bg-[#0b1b2f] px-2.5 py-1.5 text-xs font-semibold text-white shadow-lg lg:block lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100 lg:group-focus-visible:opacity-100">רשתות חברתיות</span>
+        <span className="flex-1 lg:hidden">רשתות חברתיות</span>
       </Link>
       <button
         onClick={logout}
-        className="mt-3 flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-start text-sm font-semibold text-[var(--text-muted)] transition hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)]"
+        className="group relative mt-3 flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-start text-sm font-semibold text-[var(--text-muted)] transition hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)] lg:mt-2 lg:h-12 lg:min-h-12 lg:w-12 lg:justify-center lg:px-0"
       >
         <NavIcon name="logout" className="h-4 w-4 shrink-0" />
-        יציאה
+        <span className="pointer-events-none absolute right-[calc(100%+0.75rem)] z-20 hidden whitespace-nowrap rounded-lg bg-[#0b1b2f] px-2.5 py-1.5 text-xs font-semibold text-white shadow-lg lg:block lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100 lg:group-focus-visible:opacity-100">יציאה</span>
+        <span className="lg:hidden">יציאה</span>
       </button>
     </aside>
   );
@@ -293,6 +295,7 @@ function NavIcon({ name, className = 'h-4 w-4' }: { name: NavIconName; active?: 
     users: Users,
     userSettings: UserCog,
     meta: Share2,
+    metaOff: Link2Off,
   } satisfies Record<NavIconName, typeof Sparkles>;
 
   const Icon = icons[name];

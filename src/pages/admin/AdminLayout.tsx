@@ -103,7 +103,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // skeleton) instead of a blank screen — the layout registers before the data.
   if (loading) {
     return (
-      <div className="theme-warm flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[var(--bg-page)] text-[var(--text-strong)]">
+      <div className="theme-warm flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-transparent text-[var(--text-strong)]">
         <div className="hidden lg:flex lg:h-[100dvh] lg:w-60 lg:shrink-0 lg:flex-col lg:gap-2 lg:border-l lg:border-[var(--border-warm)] lg:bg-[var(--bg-surface)] lg:p-4">
           <Skeleton className="mb-6 h-8 w-28 rounded-lg" />
           {Array.from({ length: 7 }).map((_, i) => (
@@ -173,11 +173,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="theme-warm flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[var(--bg-page)] text-[var(--text-strong)]">
+    <div className="theme-warm flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-transparent text-[var(--text-strong)]">
       <a href="#main-content" className="skip-link">דילוג לתוכן הראשי</a>
       {/* desktop sidebar */}
-      <div className="hidden lg:flex lg:h-[100dvh] lg:w-60 lg:shrink-0 lg:border-l lg:border-[var(--border-warm)] lg:bg-[var(--bg-surface)]">
-        <div className="lg:h-[100dvh] lg:w-full">
+      <div className="hidden lg:flex lg:fixed lg:inset-y-5 lg:right-5 lg:z-10 lg:h-auto lg:w-[76px] lg:shrink-0">
+        <div className="lg:h-full lg:w-full">
           <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={profile.can_create_outputs} />
         </div>
       </div>
@@ -217,8 +217,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           tabIndex={-1}
           className={
             isProductionLanding
-              ? 'min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-0'
-              : 'min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-3 py-4 pb-[calc(var(--safe-bottom)+5.75rem)] sm:px-4 lg:p-6'
+              ? 'admin-main-safe min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-0'
+              : 'admin-main-safe min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-3 py-4 pb-[calc(var(--safe-bottom)+5.75rem)] sm:px-4 lg:p-6'
           }
         >
           {children}

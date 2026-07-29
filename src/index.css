@@ -70,8 +70,185 @@ body {
 }
 
 #root {
+  position: relative;
   min-height: 100dvh;
 }
+
+.app-content {
+  position: relative;
+  z-index: 1;
+  min-height: 100dvh;
+}
+
+/* The desktop navigation floats over the canvas like the mockup. Reserve its
+   footprint in the actual scroll container so page content can never slide
+   underneath it, including wide charts and full-width production layouts. */
+@media (min-width: 1024px) {
+  .admin-main-safe {
+    width: calc(100% - 116px) !important;
+    max-width: none !important;
+    margin-right: 116px;
+    min-width: 0;
+  }
+}
+
+/* PrimeOS animated canvas background, adapted from the approved mockup. */
+.animated-background {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: #f6f9f8;
+}
+
+.animated-background__grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(11, 27, 47, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(11, 27, 47, 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  animation: primeos-grid-drift 80s linear infinite;
+}
+
+.animated-background__orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.55;
+  will-change: transform;
+}
+
+.animated-background__orb--blue {
+  width: 620px;
+  height: 620px;
+  top: -180px;
+  right: -140px;
+  background: radial-gradient(circle, #1e88e5 0%, transparent 70%);
+  animation: primeos-float-one 22s ease-in-out infinite;
+}
+
+.animated-background__orb--green {
+  width: 520px;
+  height: 520px;
+  bottom: -140px;
+  left: -100px;
+  background: radial-gradient(circle, #43c463 0%, transparent 70%);
+  animation: primeos-float-two 26s ease-in-out infinite;
+}
+
+.animated-background__orb--purple {
+  width: 420px;
+  height: 420px;
+  top: 40%;
+  left: 30%;
+  opacity: 0.35;
+  background: radial-gradient(circle, #7b4fdb 0%, transparent 70%);
+  animation: primeos-float-three 30s ease-in-out infinite;
+}
+
+.animated-background__orb--teal {
+  width: 360px;
+  height: 360px;
+  top: 60%;
+  right: 20%;
+  opacity: 0.4;
+  background: radial-gradient(circle, #00acc1 0%, transparent 70%);
+  animation: primeos-float-one 28s ease-in-out infinite reverse;
+}
+
+.animated-background__particle {
+  position: absolute;
+  bottom: -20px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(30, 136, 229, 0.72);
+  box-shadow: 0 0 12px rgba(30, 136, 229, 0.45);
+  animation: primeos-rise 24s linear infinite;
+}
+
+.animated-background__particle:nth-child(3n) { background: rgba(67, 196, 99, 0.78); box-shadow: 0 0 12px rgba(67, 196, 99, 0.5); }
+.animated-background__particle:nth-child(4n) { background: rgba(0, 172, 193, 0.75); box-shadow: 0 0 12px rgba(0, 172, 193, 0.45); }
+.animated-background__particle:nth-child(5n) { background: rgba(123, 79, 219, 0.68); box-shadow: 0 0 12px rgba(123, 79, 219, 0.4); }
+
+.animated-background__particle:nth-child(1) { --particle-index: 0; }
+.animated-background__particle:nth-child(2) { --particle-index: 1; }
+.animated-background__particle:nth-child(3) { --particle-index: 2; }
+.animated-background__particle:nth-child(4) { --particle-index: 3; }
+.animated-background__particle:nth-child(5) { --particle-index: 4; }
+.animated-background__particle:nth-child(6) { --particle-index: 5; }
+.animated-background__particle:nth-child(7) { --particle-index: 6; }
+.animated-background__particle:nth-child(8) { --particle-index: 7; }
+.animated-background__particle:nth-child(9) { --particle-index: 8; }
+.animated-background__particle:nth-child(10) { --particle-index: 9; }
+.animated-background__particle:nth-child(11) { --particle-index: 10; }
+.animated-background__particle:nth-child(12) { --particle-index: 11; }
+.animated-background__particle:nth-child(13) { --particle-index: 12; }
+.animated-background__particle:nth-child(14) { --particle-index: 13; }
+.animated-background__particle:nth-child(15) { --particle-index: 14; }
+.animated-background__particle:nth-child(16) { --particle-index: 15; }
+.animated-background__particle:nth-child(17) { --particle-index: 16; }
+.animated-background__particle:nth-child(18) { --particle-index: 17; }
+.animated-background__particle:nth-child(19) { --particle-index: 18; }
+.animated-background__particle:nth-child(20) { --particle-index: 19; }
+.animated-background__particle:nth-child(21) { --particle-index: 20; }
+.animated-background__particle:nth-child(22) { --particle-index: 21; }
+.animated-background__particle:nth-child(23) { --particle-index: 22; }
+.animated-background__particle:nth-child(24) { --particle-index: 23; }
+.animated-background__particle:nth-child(25) { --particle-index: 24; }
+.animated-background__particle:nth-child(26) { --particle-index: 25; }
+.animated-background__particle:nth-child(27) { --particle-index: 26; }
+.animated-background__particle:nth-child(28) { --particle-index: 27; }
+.animated-background__particle:nth-child(29) { --particle-index: 28; }
+.animated-background__particle:nth-child(30) { --particle-index: 29; }
+.animated-background__particle:nth-child(31) { --particle-index: 30; }
+.animated-background__particle:nth-child(32) { --particle-index: 31; }
+
+.animated-background__streak {
+  position: absolute;
+  right: -300px;
+  height: 1px;
+  opacity: 0;
+  background: rgba(30, 136, 229, 0.4);
+  animation: primeos-streak 3s linear infinite;
+}
+.animated-background__streak:nth-child(1) { --streak-index: 0; }
+.animated-background__streak:nth-child(2) { --streak-index: 1; background: rgba(67, 196, 99, 0.4); }
+.animated-background__streak:nth-child(3) { --streak-index: 2; background: rgba(0, 172, 193, 0.4); }
+.animated-background__streak:nth-child(4) { --streak-index: 3; background: rgba(123, 79, 219, 0.35); }
+.animated-background__streak:nth-child(5) { --streak-index: 4; }
+.animated-background__streak:nth-child(6) { --streak-index: 5; background: rgba(67, 196, 99, 0.4); }
+.animated-background__streak:nth-child(7) { --streak-index: 6; background: rgba(0, 172, 193, 0.4); }
+.animated-background__streak:nth-child(8) { --streak-index: 7; background: rgba(123, 79, 219, 0.35); }
+
+.animated-background__pulse-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(30, 136, 229, 0.35);
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  animation: primeos-pulse-ring 6s ease-out infinite;
+}
+.animated-background__pulse-ring--two {
+  animation-delay: 7s;
+  border-color: rgba(0, 172, 193, 0.25);
+}
+
+@keyframes primeos-float-one { 0%, 100% { transform: translate(0, 0) scale(1); } 33% { transform: translate(-40px, 60px) scale(1.1); } 66% { transform: translate(50px, -30px) scale(0.95); } }
+@keyframes primeos-float-two { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(80px, -50px) scale(1.15); } }
+@keyframes primeos-float-three { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(-60px, 40px) scale(1.1); } }
+@keyframes primeos-grid-drift { from { background-position: 0 0; } to { background-position: 48px 48px; } }
+@keyframes primeos-rise { 0% { transform: translate3d(0, 0, 0) scale(0.5); opacity: 0; } 8% { opacity: 1; } 50% { transform: translate3d(24px, -50vh, 0) scale(1); } 92% { opacity: 1; } 100% { transform: translate3d(-24px, -105vh, 0) scale(0.7); opacity: 0; } }
+@keyframes primeos-streak { 0% { opacity: 0; transform: translateX(0); } 15%, 85% { opacity: 1; } 100% { opacity: 0; transform: translateX(calc(100vw + 400px)); } }
+@keyframes primeos-pulse-ring { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.2); } 20% { opacity: 0.5; } 100% { opacity: 0; transform: translate(-50%, -50%) scale(30); } }
 
 html {
   direction: rtl;

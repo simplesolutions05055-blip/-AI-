@@ -30,13 +30,16 @@ import ErrorPage from '@/pages/ErrorPage';
 import ReloadPrompt from '@/components/pwa/ReloadPrompt';
 import TitleManager from '@/components/TitleManager';
 import DialogHost from '@/components/DialogHost';
+import AnimatedBackground from '@/components/AnimatedBackground';
 
 export default function App() {
   return (
     <TooltipProvider delayDuration={200}>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <TitleManager />
-        <Routes>
+      <AnimatedBackground />
+      <div className="app-content">
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <TitleManager />
+          <Routes>
           <Route path="/" element={<Navigate to="/admin" replace />} />
           <Route path="/app" element={<Navigate to="/admin" replace />} />
         <Route path="/login" element={<LoginPage />} />
@@ -70,10 +73,11 @@ export default function App() {
           <Route path="meta-connection" element={<MetaConnectionPage />} />
         </Route>
         <Route path="*" element={<ErrorPage />} />
-      </Routes>
-      <ReloadPrompt />
-      <DialogHost />
-      </BrowserRouter>
+          </Routes>
+          <ReloadPrompt />
+          <DialogHost />
+        </BrowserRouter>
+      </div>
     </TooltipProvider>
   );
 }

@@ -10,6 +10,7 @@ import {
   Presentation as PresentationIcon,
   ReceiptText as ReceiptTextIcon,
   Upload as UploadIcon,
+  WandSparkles as WandIcon,
 } from 'lucide-react';
 import { OUTPUT_LABEL } from '@/lib/labels';
 import { extractTextFromUploadedFile } from '@/lib/extractText';
@@ -101,13 +102,6 @@ function setSessionOpenAiKey(key: string) {
   } catch {
     /* sessionStorage unavailable — key just won't persist for the session */
   }
-}
-
-function profileInitials(fullName?: string | null, email?: string | null) {
-  const source = fullName?.trim() || email?.split('@')[0] || '';
-  const words = source.split(/\s+/).filter(Boolean);
-  const initials = words.length > 1 ? `${words[0][0]}${words[1][0]}` : source.slice(0, 2);
-  return initials.toUpperCase() || 'U';
 }
 
 const OPENAI_QUOTA_MESSAGE =
@@ -596,7 +590,6 @@ function ProductionPicker({
   const recentCarouselRef = useRef<HTMLDivElement | null>(null);
   const [recentCarouselIndex, setRecentCarouselIndex] = useState(0);
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   // For presentations we open the image picker before leaving this page, so the
   // chosen images ride into the flow (and onward into the deck).
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -645,27 +638,6 @@ function ProductionPicker({
   useEffect(() => {
     if (selected && !allowedTypes.includes(selected)) setSelected(null);
   }, [allowedTypes, selected]);
-
-  useEffect(() => {
-    const avatarPath = profile?.avatar_path;
-    if (!avatarPath) {
-      setAvatarUrl(null);
-      return;
-    }
-
-    let active = true;
-    createSupabaseBrowserClient()
-      .storage
-      .from('avatars')
-      .createSignedUrl(avatarPath, 60 * 60)
-      .then(({ data }) => {
-        if (active) setAvatarUrl(data?.signedUrl ?? null);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [profile?.avatar_path]);
 
   // The "pick a type" hint is surfaced only when the user tries to create a
   // product without choosing a type (see handleCreate). Clear it the moment a
@@ -1009,26 +981,10 @@ function ProductionPicker({
     setRecentCarouselIndex(bestIdx);
   };
 
-  return (
-    <div dir="rtl" className="theme-warm min-h-full overflow-x-hidden bg-[var(--bg-page)]">
-      <header className="hidden h-[60px] items-center justify-between border-b border-[var(--border-warm)] bg-[var(--bg-surface)] px-7 lg:flex">
-        <div className="text-[15px] font-semibold text-[var(--text-strong)]">הפקה</div>
-        <div className="flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
-          <span className="ltr">{profile?.email ?? ''}</span>
-          {avatarUrl ? (
-            <img
-              src={avatarUrl}
-              alt="תמונת פרופיל"
-              className="h-8 w-8 rounded-full border border-[var(--border-warm)] object-cover"
-            />
-          ) : (
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand/10 text-[12px] font-bold text-brand">
-              {profileInitials(profile?.full_name, profile?.email)}
-            </span>
-          )}
-        </div>
-      </header>
+  const showDescriptionCounter = description.length >= DESCRIPTION_MAX_LENGTH * 0.9;
 
+  return (
+    <div dir="rtl" className="theme-warm min-h-full overflow-x-hidden bg-transparent">
       <div className="px-5 py-6 sm:px-8 lg:px-10">
         {returnTo && (
           <button
@@ -1161,23 +1117,7 @@ function ProductionPicker({
               </div>
             ) : null}
 
-            <div className="relative min-h-[130px] rounded-[10px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 pb-4 pt-4">
-              <textarea
-                ref={descriptionRef}
-                dir="rtl"
-                rows={5}
-                maxLength={DESCRIPTION_MAX_LENGTH}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    handleCreate();
-                  }
-                }}
-                placeholder={'תארו מה אתם צריכים... לדוגמה: "גרפיקה לאירוע יזום, כיכר העירייה, כותרת: הצטרפו לחגיגה!"'}
-                className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)]"
-              />
+            <div className="relative rounded-[14px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 shadow-sm lg:min-h-[76px] lg:px-5">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1185,7 +1125,28 @@ function ProductionPicker({
                 className="hidden"
                 onChange={(e) => void handleTextFileUpload(e.target.files?.[0] ?? null)}
               />
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-3">
+                <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#7b4fdb] to-[#1e88e5] text-white shadow-[0_8px_20px_rgba(123,79,219,0.25)] lg:flex" aria-hidden="true">
+                  <WandIcon className="h-6 w-6" />
+                </div>
+                <textarea
+                  ref={descriptionRef}
+                  dir="rtl"
+                  rows={5}
+                  maxLength={DESCRIPTION_MAX_LENGTH}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      handleCreate();
+                    }
+                  }}
+                  placeholder={'תארו מה תרצו — לדוגמה: פוסטר לערב ראש השנה, מזמינים את התושבים לכיכר…'}
+                  className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)] lg:h-12 lg:min-h-0 lg:max-h-12 lg:flex-1 lg:overflow-hidden lg:py-2"
+                />
+              <div className="flex shrink-0 flex-col items-start gap-1">
+                <div className="flex flex-wrap items-center gap-2">
                 <Tooltip content={uploadingText ? 'מעלה…' : uploadText}>
                   <button
                     type="button"
@@ -1195,7 +1156,7 @@ function ProductionPicker({
                     className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-3 py-2 text-[14px] font-bold text-[var(--text-muted)] transition hover:border-brand/30 hover:bg-brand/5 hover:text-brand disabled:cursor-not-allowed disabled:opacity-60 lg:px-4"
                   >
                     <UploadIcon className="h-4 w-4" />
-                    <span className="hidden lg:inline">{uploadingText ? 'מעלה…' : uploadText}</span>
+                    <span>{uploadingText ? 'מעלה…' : uploadText}</span>
                   </button>
                 </Tooltip>
                 <Tooltip content={selected === 'quote' ? 'הכנת הצעת מחיר' : createText}>
@@ -1211,12 +1172,19 @@ function ProductionPicker({
                   }`}
                 >
                   <SparkIcon className="h-4 w-4" />
-                  <span className="hidden lg:inline">{selected === 'quote' ? 'הכנת הצעת מחיר' : createText}</span>
+                  <span>{selected === 'quote' ? 'הכנת הצעת מחיר' : createText}</span>
                 </button>
                 </Tooltip>
+                </div>
+                {showDescriptionCounter && (
+                  <div
+                    className={`px-1 text-left text-[11px] font-semibold leading-none ${description.length >= DESCRIPTION_MAX_LENGTH ? 'text-[var(--danger-fg)]' : 'text-[var(--warn-fg)]'}`}
+                    aria-live="polite"
+                  >
+                    {description.length.toLocaleString('he-IL')} / {DESCRIPTION_MAX_LENGTH.toLocaleString('he-IL')}
+                  </div>
+                )}
               </div>
-              <div className="absolute bottom-4 left-4 text-left text-[11px] font-normal text-[var(--text-faint)]">
-                {DESCRIPTION_MAX_LENGTH.toLocaleString('he-IL')} / {description.length.toLocaleString('he-IL')}
               </div>
             </div>
 
@@ -1234,8 +1202,113 @@ function ProductionPicker({
           </div>
         </section>
 
+        <div className="mt-5 grid min-w-0 gap-5 lg:grid-cols-2">
+          <section className="min-w-0 rounded-[20px] border border-white/70 bg-white/80 p-5 shadow-[var(--warm-shadow-card)] backdrop-blur-xl sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <h2 className="text-[18px] font-bold text-[var(--text-strong)]">אירועים קרובים</h2>
+                <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-bold text-brand">
+                  {upcomingEvents.length}
+                </span>
+              </div>
+              <Link to="/admin/holidays" className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--text-muted)] transition hover:text-brand">
+                כל האירועים <span aria-hidden="true">←</span>
+              </Link>
+            </div>
+
+            {upcomingEvents.length === 0 ? (
+              <div className="mt-5 rounded-xl border border-dashed border-[var(--border-warm)] py-10 text-center text-sm text-[var(--text-muted)]">אין אירועים קרובים</div>
+            ) : (
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {upcomingEvents.slice(0, 3).map((event, index) => {
+                  const eventDate = new Date(`${event.date}T12:00:00`);
+                  const day = String(eventDate.getDate()).padStart(2, '0');
+                  const month = new Intl.DateTimeFormat('he-IL', { month: 'long' }).format(eventDate);
+                  const interactive = allowedTypes.length > 0;
+                  return (
+                    <button
+                      key={event.id}
+                      type="button"
+                      disabled={!interactive}
+                      onClick={() => interactive && handleUseUpcomingEvent(event)}
+                      className="group flex min-h-[190px] flex-col items-center rounded-[16px] border border-[var(--border-soft)] bg-white px-3 py-4 text-center transition hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[var(--warm-shadow-card)] disabled:cursor-default"
+                    >
+                      <span className="text-[34px] font-extrabold leading-none text-brand">{day}</span>
+                      <span className="mt-1 text-[12px] font-semibold text-[var(--text-muted)]">{month}</span>
+                      <span className={`mt-3 rounded-full px-2.5 py-1 text-[10px] font-bold ${index === 0 ? 'bg-[var(--danger-bg)] text-[var(--danger-fg)]' : 'bg-[var(--tint-olive)] text-[var(--text-strong)]'}`}>
+                        {upcomingEventTag(event)}
+                      </span>
+                      <span className="mt-3 line-clamp-2 min-h-10 text-[13px] font-bold leading-5 text-[var(--text-strong)]">{upcomingEventName(event)}</span>
+                      {interactive && (
+                        <span className="mt-auto inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand">
+                          <LightbulbIcon className="h-3.5 w-3.5" /> קבלו רעיון
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="mt-4 flex items-center justify-between rounded-[14px] bg-gradient-to-l from-brand/10 to-[var(--tint-sand)] px-4 py-3">
+              <div>
+                <div className="text-[15px] font-bold text-[var(--text-strong)]">{upcomingEvents.length} אירועים</div>
+                <div className="text-[12px] text-[var(--text-muted)]">הזדמנויות תוכן בלוח הקרוב</div>
+              </div>
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/80 text-brand shadow-sm">
+                <CalendarDaysIcon className="h-5 w-5" />
+              </span>
+            </div>
+          </section>
+
+          <section className="min-w-0 rounded-[20px] border border-white/70 bg-white/80 p-5 shadow-[var(--warm-shadow-card)] backdrop-blur-xl sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-[18px] font-bold text-[var(--text-strong)]">תוצרים אחרונים</h2>
+              <Link to="/admin/files" className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--text-muted)] transition hover:text-brand">
+                הכל <span aria-hidden="true">←</span>
+              </Link>
+            </div>
+
+            {recentCarouselItems.length === 0 ? (
+              <div className="mt-5 rounded-xl border border-dashed border-[var(--border-warm)] py-10 text-center text-sm text-[var(--text-muted)]">אין תוצרים עדיין</div>
+            ) : (
+              <div className="mt-5 flex flex-col gap-3">
+                {recentCarouselItems.slice(0, 4).map((file, index) => {
+                  const meta = carouselMeta(file);
+                  const imagePreview = file.output_type === 'image' ? recentPreviews[file.id] : undefined;
+                  const deckPreview = file.output_type === 'presentation' ? recentDeckPreviews[file.id] : undefined;
+                  const preview = imagePreview ?? deckPreview;
+                  const title = file.text_content?.trim().slice(0, 64) || `${meta.label} חדש`;
+                  return (
+                    <Link
+                      key={file.id}
+                      to={meta.to}
+                      className="group flex min-h-[72px] items-center gap-3 rounded-[14px] border border-[var(--border-soft)] bg-white px-3 py-2.5 transition hover:border-brand/30 hover:shadow-[var(--warm-shadow-card)]"
+                    >
+                      <span className={`flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-[12px] ${index % 3 === 1 ? 'bg-[var(--tint-sand)]' : index % 3 === 2 ? 'bg-[var(--tint-ochre)]' : 'bg-[var(--tint-clay)]'}`}>
+                        {preview ? (
+                          <img src={preview} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <PickerIcon type={meta.pickerType} className="h-5 w-5 text-[var(--text-strong)]" />
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1 text-right">
+                        <span className="block truncate text-[13px] font-bold text-[var(--text-strong)]">{title}</span>
+                        <span className="mt-1 flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+                          <span>{meta.label}</span><span className="h-1 w-1 rounded-full bg-[var(--border-warm)]" /><span className="ltr">{formatHebrewDate(file.created_at)}</span>
+                        </span>
+                      </span>
+                      <span className="text-lg text-[var(--text-faint)] transition group-hover:-translate-x-0.5 group-hover:text-brand" aria-hidden="true">←</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+
         {upcomingEvents.length > 0 && (
-          <section className="mt-5 rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-5 shadow-[var(--warm-shadow-card)] sm:px-8">
+          <section className="hidden">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[var(--border-soft)] bg-[var(--tint-sand)] text-[var(--text-strong)]">
@@ -1296,7 +1369,7 @@ function ProductionPicker({
           </section>
         )}
 
-        <section className="mt-5 overflow-hidden rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-6 shadow-[var(--warm-shadow-card)] sm:px-8">
+        <section className="hidden">
           <div className="flex items-center justify-between">
             <h2 className="text-[18px] font-bold text-[var(--text-strong)]">תוצרים אחרונים</h2>
             <Link

@@ -15,6 +15,7 @@ import {
   Image as ImageIcon,
   Layers3,
   Presentation,
+  Plus,
   RefreshCw,
   Send,
   X,
@@ -391,6 +392,14 @@ export default function DashboardPage() {
           onClose={() => setActiveKpi(null)}
         />
       )}
+
+      <Link
+        to="/admin/production"
+        aria-label="צור חדש"
+        className="group fixed bottom-[calc(var(--safe-bottom)+5.75rem)] left-7 z-20 flex h-[60px] w-[60px] items-center justify-center rounded-[20px] bg-gradient-to-br from-[#1e88e5] via-[#00acc1] to-[#43c463] text-white shadow-[0_12px_32px_rgba(30,136,229,0.4),inset_0_1px_0_rgba(255,255,255,0.3)] transition-transform duration-200 hover:scale-105 hover:rotate-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand/30 lg:bottom-7"
+      >
+        <Plus className="h-7 w-7" strokeWidth={2.25} aria-hidden="true" />
+      </Link>
 
     </div>
   );
