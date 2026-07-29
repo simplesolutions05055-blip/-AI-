@@ -219,7 +219,7 @@ Deno.serve(async (req) => {
             meta_user_picture: meData.picture?.data?.url || null,
             access_token: accessToken,
             token_expires_at: tokenExpiresAt,
-            scopes: ['pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_content_publish', 'business_management'],
+            scopes: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'instagram_basic', 'instagram_content_publish', 'business_management'],
             status: 'active',
             last_verified_at: new Date().toISOString(),
           })
@@ -248,7 +248,7 @@ Deno.serve(async (req) => {
             meta_user_picture: meData.picture?.data?.url || null,
             access_token: accessToken,
           token_expires_at: tokenExpiresAt,
-          scopes: ['pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_content_publish', 'business_management'],
+          scopes: ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'instagram_basic', 'instagram_content_publish', 'business_management'],
           status: 'active',
           last_verified_at: new Date().toISOString(),
         })
@@ -350,4 +350,3 @@ function json(data: unknown, status = 200): Response {
     },
   });
 }
-
