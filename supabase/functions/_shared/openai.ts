@@ -826,6 +826,51 @@ export async function generatePresentationOutline(
   return { text: content, usage };
 }
 
+// Short display name for a finished תוצר, so every output — images included —
+// has something to show in lists and to match on in quick-find. Kept to one
+// cheap, low-temperature call; the caller falls back to a derived name if this
+// comes back empty.
+export async function generateOutputTitle(
+  brief: unknown,
+  outputType: string,
+  bodySnippet?: string | null
+): Promise<{ title: string; usage: ChatUsage }> {
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content: `אתה מנסח כותרת קצרה בעברית לתוצר שכבר הופק, לצורך הצגה ברשימת תוצרים וחיפוש.
+
+כללים:
+- 3 עד 6 מילים בלבד.
+- תאר במה התוצר עוסק, בלשון עניינית ומזהה.
+- בלי מירכאות, בלי נקודה בסוף, בלי אימוג'ים, בלי המילה "תוצר".
+- אל תמציא עובדות שלא הופיעו בבריף או בתוכן.
+- החזר אך ורק את הכותרת עצמה, בלי שום טקסט נוסף.
+
+דוגמאות: "ערב ראש השנה בכיכר העיר", "הודעה לתושבים על אזעקות", "מצגת סיכום שנת 2026".`,
+      },
+      {
+        role: 'user',
+        content: `סוג התוצר: ${outputType}\n\nהבריף:\n${JSON.stringify(brief, null, 2)}${
+          bodySnippet ? `\n\nתוכן התוצר שהופק:\n${bodySnippet.slice(0, 1200)}` : ''
+        }`,
+      },
+    ],
+    { temperature: 0.3 },
+  );
+
+  // Strip anything the model may have wrapped the title in, and hard-cap the
+  // length so a runaway answer can't become the row's display name.
+  const title = content
+    .replace(/["'`]/g, '')
+    .split('\n')[0]
+    .trim()
+    .slice(0, 120);
+
+  return { title, usage };
+}
+
 export async function generateImage(
   prompt: string,
   opts: { model?: string; size?: string; quality?: string; systemMessage?: string } = {}

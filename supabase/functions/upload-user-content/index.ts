@@ -82,6 +82,8 @@ Deno.serve(async (req) => {
           output_type: 'image',
           storage_path: storagePath,
           mime_type: mimeType,
+          // An uploaded file is already named by the user — keep that as-is.
+          title: item.file_name ?? 'תוכן שהועלה',
           text_content: item.file_name ?? 'תוכן שהועלה',
           prompt_snapshot: 'user_upload',
           version,

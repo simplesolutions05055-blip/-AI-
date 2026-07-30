@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate, Navigate } from 'react-router-dom';
+import { useLocation, useNavigate, Navigate, Link } from 'react-router-dom';
+import { Plus } from 'lucide-react';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
 import SocialConnectPrompt from '@/components/social/SocialConnectPrompt';
@@ -136,6 +137,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const isAdmin = profile.role === 'admin';
   const email = profile.email;
   const isProductionLanding = pathname === '/admin/production';
+  const showCreateFab = profile.can_create_outputs && !pathname.startsWith('/admin/production');
 
   // Route gating for regular users: only the production screen, and only when
   // output creation is enabled for them.
@@ -174,7 +176,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="theme-warm flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-transparent text-[var(--text-strong)]">
-      <a href="#main-content" className="skip-link">דילוג לתוכן הראשי</a>
       {/* desktop sidebar */}
       <div className="hidden lg:flex lg:fixed lg:inset-y-5 lg:right-5 lg:z-10 lg:h-auto lg:w-[76px] lg:shrink-0">
         <div className="lg:h-full lg:w-full">
@@ -232,6 +233,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       />
       <InstallPrompt />
       <SocialConnectPrompt userId={profile.id} />
+      {showCreateFab && (
+        <Link
+          to="/admin/production"
+          aria-label="צור חדש"
+          className="group fixed bottom-[calc(var(--safe-bottom)+5.75rem)] left-7 z-20 flex h-[60px] w-[60px] items-center justify-center rounded-[20px] bg-gradient-to-br from-[#1e88e5] via-[#00acc1] to-[#43c463] text-white shadow-[0_12px_32px_rgba(30,136,229,0.4),inset_0_1px_0_rgba(255,255,255,0.3)] transition-transform duration-200 hover:scale-105 hover:rotate-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand/30 lg:bottom-7"
+        >
+          <Plus className="h-7 w-7" strokeWidth={2.25} aria-hidden="true" />
+        </Link>
+      )}
     </div>
   );
 }

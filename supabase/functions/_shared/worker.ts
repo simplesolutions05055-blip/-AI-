@@ -12,7 +12,7 @@ import {
   estimateImageCost,
   round4,
 } from './util.ts';
-import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption } from './openai.ts';
+import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption, generateOutputTitle } from './openai.ts';
 // WhatsApp goes out through GREEN-API; twilio.ts is now only the shared
 // WhatsApp shapes (the interactive types the simulator still renders).
 import { type WhatsAppInteractive } from './twilio.ts';
@@ -889,10 +889,42 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     };
     await logEvent(database, { requestId, action: 'qa_skipped_fast_flow' });
 
+    // Give the תוצר a short name of its own. Images carry no text_content, so
+    // without this they have nothing to be listed or searched by. A failure here
+    // must never sink an output that already generated fine: fall back to the
+    // brief's goal, and if that is empty too leave it null — the UI then shows
+    // the type label, exactly as it did before titles existed.
+    let title: string | null = null;
+    try {
+      const titleResult = await generateOutputTitle(brief, outputType, textContent ?? qaDescription);
+      await recordUsage(
+        database,
+        requestId,
+        'openai',
+        'chat',
+        titleResult.usage.prompt_tokens,
+        titleResult.usage.completion_tokens,
+        estimateTextCost(titleResult.usage.prompt_tokens, titleResult.usage.completion_tokens),
+      );
+      title = titleResult.title || null;
+    } catch (error) {
+      await logEvent(database, {
+        requestId,
+        severity: 'warning',
+        action: 'output_title_failed',
+        message: String(error),
+      });
+    }
+    if (!title) {
+      const goal = typeof brief.goal === 'string' ? brief.goal.trim() : '';
+      title = goal ? goal.slice(0, 120) : null;
+    }
+
     await database.from('outputs').insert({
       request_id: requestId,
       version,
       output_type: outputType,
+      title,
       text_content: textContent,
       storage_path: storagePath,
       mime_type: mime,

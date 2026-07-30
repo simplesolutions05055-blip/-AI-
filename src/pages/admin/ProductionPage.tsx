@@ -9,8 +9,10 @@ import {
   Lightbulb as LightbulbIcon,
   Presentation as PresentationIcon,
   ReceiptText as ReceiptTextIcon,
+  Search as SearchIcon,
   Upload as UploadIcon,
   WandSparkles as WandIcon,
+  X as XIcon,
 } from 'lucide-react';
 import { OUTPUT_LABEL } from '@/lib/labels';
 import { extractTextFromUploadedFile } from '@/lib/extractText';
@@ -61,6 +63,7 @@ interface RecentOutputPreviewRow {
   id: string;
   request_id: string;
   output_type: OutputType;
+  title: string | null;
   text_content: string | null;
   storage_path: string | null;
   created_at: string;
@@ -68,6 +71,18 @@ interface RecentOutputPreviewRow {
 }
 
 type UpcomingEvent = Pick<IsraelHoliday, 'id' | 'date' | 'title' | 'hebrew_title' | 'subcategory' | 'is_major'>;
+
+type WeekScheduledPost = {
+  id: string;
+  title: string | null;
+  caption: string;
+  platform: string;
+  scheduled_at: string;
+};
+
+type SearchHit =
+  | { kind: 'event'; id: string; name: string; typeLabel: string; event: UpcomingEvent }
+  | { kind: 'output'; id: string; name: string; typeLabel: string; to: string };
 
 const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: string; accent: string; iconBg: string; iconText: string }> = [
   { type: 'image', title: 'תמונה', description: 'פוסט, מודעה, הזמנה או גרפיקה לרשתות.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-clay)]', iconText: 'text-[var(--text-strong)]' },
@@ -117,6 +132,15 @@ function localIsoDate(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+// Saturday that closes the current calendar week (the Israeli week runs
+// Sunday→Saturday, and JS getDay() already numbers it that way: 0=Sunday).
+// Returns today itself when today is Saturday.
+function endOfCalendarWeek(date = new Date()) {
+  const end = new Date(date);
+  end.setDate(end.getDate() + (6 - end.getDay()));
+  return end;
+}
+
 function upcomingEventName(event: UpcomingEvent) {
   return event.hebrew_title?.trim() || event.title.trim();
 }
@@ -125,6 +149,20 @@ function upcomingEventTag(event: UpcomingEvent) {
   if (event.is_major || event.subcategory === 'major') return 'חג';
   if (event.subcategory === 'modern') return 'יום מיוחד';
   return 'אירוע קרוב';
+}
+
+function timeGreeting(date = new Date()) {
+  const hour = date.getHours();
+  if (hour < 12) return 'בוקר טוב';
+  if (hour < 17) return 'צהריים טובים';
+  if (hour < 21) return 'ערב טוב';
+  return 'לילה טוב';
+}
+
+// Strips LIKE wildcards and the delimiters PostgREST uses inside `.or(...)`, so a
+// typed comma or parenthesis can't corrupt the filter it lands in.
+function sanitizeSearchTerm(term: string) {
+  return term.replace(/[%_,()\\]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 // Detect the function's openai_quota signal (402 with {error:'openai_quota'}) or
@@ -588,8 +626,25 @@ function ProductionPicker({
   const [recentPdfPreviews, setRecentPdfPreviews] = useState<Record<string, string>>({});
   // Instagram-style recent-outputs carousel: track the active slide for the dots.
   const recentCarouselRef = useRef<HTMLDivElement | null>(null);
+  // The hero's "N אירועים ממתינים" badge opens this picker, which lists every
+  // upcoming event; choosing one drops its brief straight into the textarea.
+  const [eventsModalOpen, setEventsModalOpen] = useState(false);
   const [recentCarouselIndex, setRecentCarouselIndex] = useState(0);
   const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([]);
+  // Events left in the current calendar week (today→Saturday). Deliberately a
+  // separate list from `upcomingEvents`, which is capped at 5 and feeds the
+  // carousel and the "אירועים קרובים" section — widening that would silently
+  // change both. This one drives the hero badge and its picker only.
+  const [thisWeekEvents, setThisWeekEvents] = useState<UpcomingEvent[]>([]);
+  // Posts already scheduled to publish before the week is out. Shown next to the
+  // events so the badge answers "what is still on my plate this week" in full.
+  const [thisWeekScheduled, setThisWeekScheduled] = useState<WeekScheduledPost[]>([]);
+  // Quick-find across every produced תוצר and upcoming אירוע — queried from the
+  // database (debounced), not just the slice this page keeps in memory. Results
+  // show while the box has text, so no outside-click handling is needed.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   // For presentations we open the image picker before leaving this page, so the
   // chosen images ride into the flow (and onward into the deck).
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -695,7 +750,7 @@ function ProductionPicker({
 
     client
       .from('outputs')
-      .select('id, request_id, output_type, text_content, storage_path, created_at')
+      .select('id, request_id, output_type, title, text_content, storage_path, created_at')
       .order('created_at', { ascending: false })
       .limit(40)
       .then(async ({ data }) => {
@@ -813,6 +868,137 @@ function ProductionPicker({
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    createSupabaseBrowserClient()
+      .from('israel_holidays')
+      .select('id, date, title, hebrew_title, subcategory, is_major')
+      .gte('date', localIsoDate())
+      .lte('date', localIsoDate(endOfCalendarWeek()))
+      .eq('is_israel_calendar', true)
+      .order('date', { ascending: true })
+      .limit(50)
+      .then(({ data, error }) => {
+        if (!active) return;
+        setThisWeekEvents(error ? [] : ((data ?? []) as UpcomingEvent[]));
+      });
+
+    // `scheduled_at` is a timestamptz, so bound it by the actual end of Saturday
+    // rather than the date string used for the holidays table.
+    const weekEnd = endOfCalendarWeek();
+    weekEnd.setHours(23, 59, 59, 999);
+    createSupabaseBrowserClient()
+      .from('scheduled_social_posts')
+      .select('id, title, caption, platform, scheduled_at')
+      .eq('status', 'scheduled')
+      .gte('scheduled_at', new Date().toISOString())
+      .lte('scheduled_at', weekEnd.toISOString())
+      .order('scheduled_at', { ascending: true })
+      .limit(50)
+      .then(({ data, error }) => {
+        if (!active) return;
+        setThisWeekScheduled(error ? [] : ((data ?? []) as WeekScheduledPost[]));
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!eventsModalOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setEventsModalOpen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [eventsModalOpen]);
+
+  // Debounced quick-find. Searches the full history in the database rather than
+  // the recent slice held in state, so an older תוצר is still findable by name.
+  useEffect(() => {
+    const term = sanitizeSearchTerm(searchQuery);
+    if (term.length < 2) {
+      setSearchHits([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    setSearchLoading(true);
+    let active = true;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const client = createSupabaseBrowserClient();
+        const like = `%${term}%`;
+        const [outputsRes, eventsRes] = await Promise.all([
+          client
+            .from('outputs')
+            .select('id, request_id, output_type, title, text_content, created_at')
+            .or(`title.ilike.${like},text_content.ilike.${like}`)
+            .order('created_at', { ascending: false })
+            .limit(20),
+          client
+            .from('israel_holidays')
+            .select('id, date, title, hebrew_title, subcategory, is_major')
+            .eq('is_israel_calendar', true)
+            .gte('date', localIsoDate())
+            .or(`title.ilike.${like},hebrew_title.ilike.${like}`)
+            .order('date', { ascending: true })
+            .limit(5),
+        ]);
+        if (!active) return;
+
+        const rows = (outputsRes.data ?? []) as RecentOutputPreviewRow[];
+        // Quotes live in `outputs` as PDFs; their request's brief is what marks
+        // them, so resolve that for the matched rows to label/link them right.
+        const requestIds = Array.from(new Set(rows.map((row) => row.request_id).filter(Boolean)));
+        const sourceByRequest: Record<string, string | null> = {};
+        if (requestIds.length > 0) {
+          const { data: requests } = await client
+            .from('requests')
+            .select('id, structured_brief')
+            .in('id', requestIds);
+          if (!active) return;
+          for (const request of (requests ?? []) as Array<{ id: string; structured_brief: { source?: string | null } | null }>) {
+            sourceByRequest[request.id] = request.structured_brief?.source ?? null;
+          }
+        }
+
+        const outputHits: SearchHit[] = [];
+        for (const row of rows) {
+          const isQuote = sourceByRequest[row.request_id] === 'quote';
+          const permKey = (isQuote ? 'quote' : row.output_type) as OutputType | 'quote';
+          if (!allowedTypes.includes(permKey)) continue;
+          const meta = carouselMeta({ ...row, isQuote });
+          outputHits.push({
+            kind: 'output',
+            id: row.id,
+            name: (row.title?.trim() || row.text_content?.trim() || `${meta.label} חדש`).slice(0, 80),
+            typeLabel: meta.label,
+            to: meta.to,
+          });
+          if (outputHits.length >= 8) break;
+        }
+
+        const eventHits: SearchHit[] = ((eventsRes.data ?? []) as UpcomingEvent[]).map((event) => ({
+          kind: 'event',
+          id: event.id,
+          name: upcomingEventName(event),
+          typeLabel: upcomingEventTag(event),
+          event,
+        }));
+
+        setSearchHits([...eventHits, ...outputHits]);
+        setSearchLoading(false);
+      })();
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [searchQuery, allowedTypes]);
 
   function goToFlow(extra?: { pickedImages?: DeckImage[] | null; pickedKeys?: string[] }) {
     if (!selected) return;
@@ -983,6 +1169,20 @@ function ProductionPicker({
 
   const showDescriptionCounter = description.length >= DESCRIPTION_MAX_LENGTH * 0.9;
 
+  // "What is still open this week" — events with no content yet plus posts
+  // already queued to go out. Either half may be empty, so the label is built
+  // from whichever parts actually have something in them.
+  const weekBadgeLabel = (() => {
+    const parts: string[] = [];
+    if (thisWeekEvents.length > 0) {
+      parts.push(thisWeekEvents.length === 1 ? 'אירוע אחד' : `${thisWeekEvents.length} אירועים`);
+    }
+    if (thisWeekScheduled.length > 0) {
+      parts.push(thisWeekScheduled.length === 1 ? 'תזמון אחד' : `${thisWeekScheduled.length} תזמונים`);
+    }
+    return parts.length === 0 ? null : `${parts.join(' · ')} השבוע`;
+  })();
+
   return (
     <div dir="rtl" className="theme-warm min-h-full overflow-x-hidden bg-transparent">
       <div className="px-5 py-6 sm:px-8 lg:px-10">
@@ -996,12 +1196,103 @@ function ProductionPicker({
             חזרה לתוצר
           </button>
         )}
-        <section className="relative rounded-[14px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-7 shadow-[var(--warm-shadow-card)] sm:px-8 lg:px-8 lg:py-8">
+        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div className="min-w-0">
+            <div className="text-[13px] font-medium text-[var(--text-faint)]">{timeGreeting()}</div>
+            <div className="truncate text-[22px] font-bold leading-tight tracking-tight text-brand">
+              {selectedBrand?.name ?? profile?.full_name ?? 'ברוכים הבאים'}
+            </div>
+          </div>
+
+          <div className="relative w-full shrink-0 sm:w-[320px]">
+            <div className="flex items-center gap-2.5 rounded-full border border-white/70 bg-white/80 px-4 py-2.5 shadow-[var(--warm-shadow-card)] backdrop-blur-xl transition focus-within:border-brand/40 focus-within:shadow-[0_0_0_4px_rgba(11,79,159,0.08)]">
+              <SearchIcon className="h-[18px] w-[18px] shrink-0 text-[var(--text-faint)]" aria-hidden="true" />
+              <input
+                type="search"
+                dir="rtl"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setSearchQuery('');
+                }}
+                aria-label="חיפוש תוצר או אירוע"
+                placeholder="חפשו תוצר או אירוע…"
+                className="min-w-0 flex-1 border-0 bg-transparent p-0 text-right text-[14px] font-normal text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)] [&::-webkit-search-cancel-button]:hidden"
+              />
+              {searchQuery.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label="ניקוי החיפוש"
+                  className="shrink-0 rounded-full p-1 text-[var(--text-faint)] transition hover:bg-[var(--bg-subtle)] hover:text-[var(--text-strong)]"
+                >
+                  <XIcon className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {sanitizeSearchTerm(searchQuery).length >= 2 && (
+              <div className="absolute inset-x-0 top-full z-30 mt-2 overflow-hidden rounded-[16px] border border-white/70 bg-white/95 shadow-[var(--warm-shadow-soft)] backdrop-blur-xl">
+                {searchLoading ? (
+                  <div className="px-4 py-3 text-right text-[13px] text-[var(--text-muted)]">מחפש…</div>
+                ) : searchHits.length === 0 ? (
+                  <div className="px-4 py-3 text-right text-[13px] text-[var(--text-muted)]">
+                    לא נמצאו תוצאות עבור “{searchQuery.trim()}”
+                  </div>
+                ) : (
+                  <ul className="max-h-[320px] overflow-y-auto py-1">
+                    {searchHits.map((hit) => (
+                      <li key={`${hit.kind}-${hit.id}`}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSearchQuery('');
+                            if (hit.kind === 'event') handleUseUpcomingEvent(hit.event);
+                            else navigate(hit.to);
+                          }}
+                          className="flex w-full items-center gap-2.5 px-4 py-2.5 text-right transition hover:bg-[var(--bg-subtle)]"
+                        >
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] border border-[var(--border-soft)] bg-[var(--tint-clay)] text-[var(--text-strong)]">
+                            {hit.kind === 'event'
+                              ? <CalendarDaysIcon className="h-4 w-4" />
+                              : <FileIcon className="h-4 w-4" />}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-bold text-[var(--text-strong)]">{hit.name}</span>
+                            <span className="block text-[11px] text-[var(--text-muted)]">
+                              {hit.kind === 'event' ? `אירוע · ${hit.typeLabel}` : hit.typeLabel}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <section className="relative rounded-[20px] border border-white/70 bg-white/80 px-5 py-7 shadow-[var(--warm-shadow-card)] backdrop-blur-xl sm:px-8 lg:px-8 lg:py-8">
           <div className="flex flex-col gap-5">
-            <div className={`space-y-2.5 text-right ${selectedBrand ? 'min-h-[7.5rem] sm:min-h-[8.25rem]' : ''}`}>
+            <div className={`space-y-2.5 text-right ${selectedBrand ? 'min-h-[9rem] sm:min-h-[9.75rem]' : ''}`}>
               <div className="flex items-start justify-between gap-3 pe-28 sm:pe-32 lg:pe-44">
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-2xl font-semibold leading-tight tracking-normal text-[var(--text-strong)]">מה תרצו ליצור היום?</h1>
+                  {weekBadgeLabel && (
+                    <button
+                      type="button"
+                      onClick={() => setEventsModalOpen(true)}
+                      className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-[var(--warm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--warm-accent-dark)] transition hover:bg-brand/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+                    >
+                      <span className="relative flex h-[7px] w-[7px] shrink-0">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex h-[7px] w-[7px] rounded-full bg-emerald-500" />
+                      </span>
+                      {weekBadgeLabel}
+                      <span aria-hidden="true">←</span>
+                    </button>
+                  )}
+                  <h1 className="text-2xl font-extrabold leading-tight tracking-tight text-[var(--text-strong)] sm:text-[28px]">מה תרצו ליצור היום?</h1>
                 </div>
                 {selectedBrand && (
                   <div className="absolute left-5 top-7 flex shrink-0 items-center justify-center sm:left-8 lg:left-8 lg:top-8">
@@ -1035,12 +1326,12 @@ function ProductionPicker({
                         if (isUpload) setUploadContentOpen(true);
                         else if (item.to) setSelected(item.to);
                       }}
-                      className={`group relative flex h-14 min-w-0 items-center justify-center rounded-[10px] border p-1.5 text-center transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:h-[86px] sm:flex-col sm:gap-1.5 sm:px-2 sm:py-2 ${
+                      className={`group relative flex h-14 min-w-0 items-center justify-center rounded-[10px] border p-1.5 text-center transition duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:h-[86px] sm:flex-col sm:gap-1.5 sm:px-2 sm:py-2 ${
                         item.disabled
                           ? 'cursor-not-allowed border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-muted)] opacity-50'
                           : active
                             ? 'border-[var(--border-warm)] border-r-4 border-r-[var(--warm-accent)] bg-[var(--warm-accent-soft)] text-[var(--warm-accent-dark)]'
-                            : `border-[var(--border-warm)] bg-[var(--bg-surface)] text-[var(--text-strong)] hover:border-[var(--warm-accent)] hover:bg-[var(--surface-2)] ${glowTypeChips ? 'pick-me-glow' : ''}`
+                            : `border-[var(--border-warm)] bg-[var(--bg-surface)] text-[var(--text-strong)] hover:-translate-y-0.5 hover:border-[var(--warm-accent)] hover:bg-[var(--surface-2)] hover:shadow-[0_10px_24px_rgba(11,79,159,0.12)] ${glowTypeChips ? 'pick-me-glow' : ''}`
                       }`}
                     >
                       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[9px] border border-[var(--border-soft)] sm:h-11 sm:w-11 ${item.tone} ${active ? 'text-[var(--warm-accent-dark)]' : 'text-[var(--text-strong)] group-hover:text-[var(--warm-accent-dark)]'}`}>
@@ -1117,7 +1408,7 @@ function ProductionPicker({
               </div>
             ) : null}
 
-            <div className="relative rounded-[14px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 shadow-sm lg:min-h-[76px] lg:px-5">
+            <div className="relative rounded-[16px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 shadow-sm transition focus-within:border-brand/40 focus-within:shadow-[0_0_0_4px_rgba(11,79,159,0.08)] lg:min-h-[76px] lg:px-5">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1126,8 +1417,8 @@ function ProductionPicker({
                 onChange={(e) => void handleTextFileUpload(e.target.files?.[0] ?? null)}
               />
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-3">
-                <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#7b4fdb] to-[#1e88e5] text-white shadow-[0_8px_20px_rgba(123,79,219,0.25)] lg:flex" aria-hidden="true">
-                  <WandIcon className="h-6 w-6" />
+                <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[var(--border-warm)] bg-brand/8 text-brand lg:flex" aria-hidden="true">
+                  <WandIcon className="h-5 w-5" strokeWidth={1.75} />
                 </div>
                 <textarea
                   ref={descriptionRef}
@@ -1143,7 +1434,7 @@ function ProductionPicker({
                     }
                   }}
                   placeholder={'תארו מה תרצו — לדוגמה: פוסטר לערב ראש השנה, מזמינים את התושבים לכיכר…'}
-                  className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)] lg:h-12 lg:min-h-0 lg:max-h-12 lg:flex-1 lg:overflow-hidden lg:py-2"
+                  className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)] lg:h-12 lg:min-h-0 lg:max-h-12 lg:flex-1 lg:overflow-hidden lg:py-0 lg:leading-[48px]"
                 />
               <div className="flex shrink-0 flex-col items-start gap-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1167,7 +1458,7 @@ function ProductionPicker({
                   aria-label={selected === 'quote' ? 'הכנת הצעת מחיר' : createText}
                   className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[10px] px-3 py-2 text-[14px] font-bold transition lg:px-5 ${
                     description.trim().length > 0
-                      ? 'bg-brand text-white shadow-sm hover:bg-brand-dark'
+                      ? 'bg-brand text-white shadow-[0_8px_20px_rgba(11,79,159,0.3)] hover:-translate-y-0.5 hover:bg-brand-dark hover:shadow-[0_10px_24px_rgba(11,79,159,0.4)]'
                       : 'cursor-not-allowed border border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-faint)]'
                   }`}
                 >
@@ -1278,7 +1569,7 @@ function ProductionPicker({
                   const imagePreview = file.output_type === 'image' ? recentPreviews[file.id] : undefined;
                   const deckPreview = file.output_type === 'presentation' ? recentDeckPreviews[file.id] : undefined;
                   const preview = imagePreview ?? deckPreview;
-                  const title = file.text_content?.trim().slice(0, 64) || `${meta.label} חדש`;
+                  const title = file.title?.trim() || file.text_content?.trim().slice(0, 64) || `${meta.label} חדש`;
                   return (
                     <Link
                       key={file.id}
@@ -1499,6 +1790,138 @@ function ProductionPicker({
         onClose={() => setUploadContentOpen(false)}
         onUploaded={() => navigate('/admin/files?source=user_upload')}
       />
+
+      {eventsModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-3 py-4 backdrop-blur-sm"
+          dir="rtl"
+          onPointerDown={() => setEventsModalOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="events-picker-title"
+            className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl sm:max-h-[85vh]"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--border-warm)] px-4 py-4 sm:px-5">
+              <div className="min-w-0">
+                <h2 id="events-picker-title" className="text-lg font-bold text-[var(--text-strong)]">מה נותר השבוע</h2>
+                <p className="mt-1 text-sm text-[var(--text-muted)]">
+                  עד יום שבת, {formatHebrewDate(localIsoDate(endOfCalendarWeek()))}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEventsModalOpen(false)}
+                aria-label="סגירה"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] transition hover:bg-[var(--bg-subtle)] hover:text-[var(--text-strong)]"
+              >
+                <XIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+              {thisWeekEvents.length > 0 && (
+                <>
+                  <h3 className="mb-2 px-1 text-[12px] font-bold text-[var(--text-muted)]">
+                    אירועים שממתינים לתוכן ({thisWeekEvents.length})
+                  </h3>
+                  {allowedTypes.length === 0 ? (
+                    <p className="rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)] p-4 text-sm text-[var(--warn-fg)]">
+                      אין לך כרגע הרשאה להפיק תוצרים, אז לא ניתן לבנות בריף מאירוע.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {thisWeekEvents.map((event, index) => {
+                        const eventDate = new Date(`${event.date}T12:00:00`);
+                        const day = String(eventDate.getDate()).padStart(2, '0');
+                        const month = new Intl.DateTimeFormat('he-IL', { month: 'long' }).format(eventDate);
+                        return (
+                          <li key={event.id}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEventsModalOpen(false);
+                                handleUseUpcomingEvent(event);
+                              }}
+                              className="flex w-full items-center gap-3 rounded-[14px] border border-[var(--border-soft)] bg-white px-3 py-3 text-right transition hover:border-brand/30 hover:bg-[var(--bg-subtle)] hover:shadow-[var(--warm-shadow-card)]"
+                            >
+                              <span className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-[12px] bg-[var(--warm-accent-soft)]">
+                                <span className="text-[20px] font-extrabold leading-none text-brand">{day}</span>
+                                <span className="mt-0.5 text-[10px] font-semibold text-[var(--text-muted)]">{month}</span>
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[14px] font-bold text-[var(--text-strong)]">{upcomingEventName(event)}</span>
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${index === 0 ? 'bg-[var(--danger-bg)] text-[var(--danger-fg)]' : 'bg-[var(--tint-olive)] text-[var(--text-strong)]'}`}>
+                                    {upcomingEventTag(event)}
+                                  </span>
+                                </span>
+                                <span className="mt-1 block text-[11px] text-[var(--text-muted)]">{formatHebrewDate(event.date)}</span>
+                              </span>
+                              <span className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-semibold text-brand">
+                                <LightbulbIcon className="h-3.5 w-3.5" /> קבלו רעיון
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </>
+              )}
+
+              {thisWeekScheduled.length > 0 && (
+                <>
+                  <h3 className={`mb-2 px-1 text-[12px] font-bold text-[var(--text-muted)] ${thisWeekEvents.length > 0 ? 'mt-5' : ''}`}>
+                    פוסטים מתוזמנים לפרסום ({thisWeekScheduled.length})
+                  </h3>
+                  <ul className="space-y-2">
+                    {thisWeekScheduled.map((post) => {
+                      const when = new Date(post.scheduled_at);
+                      const day = String(when.getDate()).padStart(2, '0');
+                      const month = new Intl.DateTimeFormat('he-IL', { month: 'long' }).format(when);
+                      const time = new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit' }).format(when);
+                      return (
+                        <li key={post.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEventsModalOpen(false);
+                              navigate('/admin/holidays');
+                            }}
+                            className="flex w-full items-center gap-3 rounded-[14px] border border-[var(--border-soft)] bg-white px-3 py-3 text-right transition hover:border-brand/30 hover:bg-[var(--bg-subtle)] hover:shadow-[var(--warm-shadow-card)]"
+                          >
+                            <span className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-[12px] bg-[var(--tint-sand)]">
+                              <span className="text-[20px] font-extrabold leading-none text-brand">{day}</span>
+                              <span className="mt-0.5 text-[10px] font-semibold text-[var(--text-muted)]">{month}</span>
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex flex-wrap items-center gap-2">
+                                <span className="text-[14px] font-bold text-[var(--text-strong)]">
+                                  {post.title?.trim() || post.caption.trim().slice(0, 60) || 'פוסט מתוזמן'}
+                                </span>
+                                <span className="rounded-full bg-[var(--tint-clay)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-strong)]">
+                                  {post.platform === 'facebook' ? 'פייסבוק' : post.platform === 'instagram' ? 'אינסטגרם' : post.platform}
+                                </span>
+                              </span>
+                              <span className="ltr mt-1 block text-right text-[11px] text-[var(--text-muted)]">{time}</span>
+                            </span>
+                            <span className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-semibold text-brand">
+                              <CalendarDaysIcon className="h-3.5 w-3.5" /> ללוח
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

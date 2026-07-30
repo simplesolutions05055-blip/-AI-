@@ -287,26 +287,6 @@ select,
   outline-offset: 3px;
 }
 
-.skip-link {
-  position: fixed;
-  inset-block-start: max(0.75rem, var(--safe-top));
-  inset-inline-start: max(0.75rem, var(--safe-left));
-  z-index: 1000;
-  min-height: 44px;
-  transform: translateY(calc(-100% - 2rem));
-  border-radius: 0.75rem;
-  background: #071a33;
-  color: #ffffff;
-  padding: 0.7rem 1rem;
-  font-weight: 700;
-  box-shadow: 0 10px 30px rgba(7, 26, 51, 0.22);
-  transition: transform 160ms ease-out;
-}
-
-.skip-link:focus-visible {
-  transform: translateY(0);
-}
-
 input,
 textarea,
 select {

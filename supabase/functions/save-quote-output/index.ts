@@ -68,6 +68,8 @@ Deno.serve(async (req) => {
       output_type: 'pdf',
       storage_path: storagePath,
       mime_type: 'application/pdf',
+      // A quote already carries a human-written name, so no AI call is needed.
+      title: body.quote_title ? `הצעת מחיר: ${body.quote_title}` : 'הצעת מחיר',
       text_content: body.quote_title ? `הצעת מחיר: ${body.quote_title}` : 'הצעת מחיר',
       prompt_snapshot: body.prompt ?? null,
       version: 1,

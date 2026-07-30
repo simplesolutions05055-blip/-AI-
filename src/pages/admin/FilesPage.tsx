@@ -56,6 +56,7 @@ interface FileRow {
   request_id: string;
   output_type: OutputType;
   storage_path: string | null;
+  title: string | null;
   text_content: string | null;
   mime_type: string | null;
   created_at: string;
@@ -185,6 +186,34 @@ export default function FilesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [targetFileRow, setTargetFileRow] = useState<FileRow | null>(null);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  // Inline rename: which תוצר is being renamed, and its in-progress text.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+
+  // The name a תוצר shows in the grid. Older rows predate `title`, so they fall
+  // back to the generated body and finally to the plain type label.
+  function displayTitle(file: FileRow) {
+    return file.title?.trim() || file.text_content?.trim().slice(0, 60) || labelFor(file.output_type);
+  }
+
+  async function saveTitle(file: FileRow) {
+    const next = renameDraft.trim();
+    setRenamingId(null);
+    if (next === (file.title ?? '')) return;
+
+    const previous = file.title;
+    // Optimistic: the grid updates immediately and rolls back only if the write
+    // is rejected (RLS lets admins and the request's creator rename, no one else).
+    setFiles((current) => current.map((row) => (row.id === file.id ? { ...row, title: next || null } : row)));
+    const { error } = await createSupabaseBrowserClient()
+      .from('outputs')
+      .update({ title: next || null } as never)
+      .eq('id', file.id);
+    if (error) {
+      setFiles((current) => current.map((row) => (row.id === file.id ? { ...row, title: previous } : row)));
+      await alertDialog(`שינוי הכותרת נכשל: ${error.message}`);
+    }
+  }
 
   useEffect(() => {
     if (targetFileRow && fileInputRef.current) {
@@ -241,7 +270,7 @@ export default function FilesPage() {
           .from('outputs')
           // Show every produced תוצר — file-backed (image/PDF) and text-only
           // (text/presentation delivered as WhatsApp text) alike.
-          .select('id, request_id, output_type, storage_path, text_content, mime_type, created_at')
+          .select('id, request_id, output_type, storage_path, title, text_content, mime_type, created_at')
           .order('created_at', { ascending: false })
           // Admins must see every תוצר; cap at Supabase's default max-rows ceiling.
           .limit(1000),
@@ -525,6 +554,12 @@ export default function FilesPage() {
     return isAdmin || (file.request_source === 'user_upload' && file.creator_id === profile?.id);
   }
 
+  // Mirrors the outputs_admin_update / outputs_creator_update RLS policies, so
+  // the pencil only shows where the write would actually be accepted.
+  function canRenameFile(file: FileRow) {
+    return isAdmin || file.creator_id === profile?.id;
+  }
+
   function canScheduleFile(file: FileRow) {
     return file.output_type === 'image' || file.output_type === 'text';
   }
@@ -571,6 +606,7 @@ export default function FilesPage() {
       request_id: file.request_id,
       output_type: 'image',
       storage_path: file.storage_path,
+      title: file.file_name,
       text_content: file.file_name,
       mime_type: file.mime_type,
       created_at: createdAt,
@@ -793,7 +829,46 @@ export default function FilesPage() {
                         </div>
 
                         <div className="p-2.5">
-                          <div className="text-xs font-medium mb-1">{labelFor(file.output_type)}</div>
+                          {renamingId === file.id ? (
+                            <input
+                              autoFocus
+                              dir="rtl"
+                              value={renameDraft}
+                              maxLength={120}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => setRenameDraft(e.target.value)}
+                              onBlur={() => void saveTitle(file)}
+                              onKeyDown={(e) => {
+                                e.stopPropagation();
+                                if (e.key === 'Enter') void saveTitle(file);
+                                if (e.key === 'Escape') setRenamingId(null);
+                              }}
+                              aria-label="שם התוצר"
+                              className="mb-1 w-full rounded border border-brand bg-white px-1.5 py-1 text-xs font-semibold outline-none"
+                            />
+                          ) : (
+                            <div className="mb-1 flex items-start gap-1">
+                              <span className="line-clamp-2 flex-1 text-xs font-semibold leading-4" title={displayTitle(file)}>
+                                {displayTitle(file)}
+                              </span>
+                              {canRenameFile(file) && (
+                                <Tooltip content="שינוי שם">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setRenameDraft(file.title ?? '');
+                                      setRenamingId(file.id);
+                                    }}
+                                    aria-label="שינוי שם התוצר"
+                                    className="shrink-0 rounded p-0.5 text-[var(--muted)] opacity-0 transition hover:bg-gray-100 hover:text-brand focus-visible:opacity-100 group-hover:opacity-100"
+                                  >
+                                    <EditIcon />
+                                  </button>
+                                </Tooltip>
+                              )}
+                            </div>
+                          )}
+                          <div className="text-[10px] text-[var(--muted)] mb-1">{labelFor(file.output_type)}</div>
                           {isAdmin && (
                             <Tooltip content={<span className="ltr">{file.creator}</span>}>
                               <div className="text-[10px] text-[var(--muted)] text-start truncate cursor-help">
