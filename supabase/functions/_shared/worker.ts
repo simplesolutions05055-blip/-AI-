@@ -578,7 +578,7 @@ async function runRequestPipeline(
       request.status = 'collecting_details';
     } else {
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-      await sendOut(database, conversation.id, requestId, waFrom, 'הבריף מוכן. אם הכול נראה טוב, אפשר לכתוב „מאשר”. לשינוי, אפשר לכתוב לי מה לעדכן.', conversation.simulated);
+      await sendOut(database, conversation.id, requestId, waFrom, 'הבריף מוכן. אם הכול נראה טוב, אפשר לכתוב ״מאשר״. לשינוי, אפשר לכתוב לי מה לעדכן.', conversation.simulated);
       return;
     }
   }

@@ -189,7 +189,7 @@ export function buildMainMenu(displayName: string, gender: AddressGender = null)
     'אפשר להשיב במספר (1-6) או במילה.',
     // Stated up front, once: nobody discovers a command they were never told
     // about, and "how do I undo that" is the most common dead end here.
-    'בכל שלב: „אחורה” לחזרה שלב אחד · „תפריט” להתחלה מחדש.',
+    'בכל שלב: ״אחורה״ לחזרה שלב אחד · ״תפריט״ להתחלה מחדש.',
   ].join('\n');
 }
 
@@ -342,7 +342,7 @@ const SCHEDULE_PLATFORM_MENU = [
 ].join('\n');
 
 const SCHEDULE_DATETIME_PROMPT =
-  'מתי לפרסם? אפשר לכתוב תאריך ושעה, למשל:\n25/12 18:00\nאו: מחר 10:00 / היום 18:30\n\nלחזרה להתחלה אפשר לכתוב „תפריט”.';
+  'מתי לפרסם? אפשר לכתוב תאריך ושעה, למשל:\n25/12 18:00\nאו: מחר 10:00 / היום 18:30\n\nלחזרה להתחלה אפשר לכתוב ״תפריט״.';
 
 // ── standalone "schedule a post" flow (main menu option 3) ──────────────────
 const SCHEDULE_SOURCE_MENU = [
@@ -757,7 +757,7 @@ const STEP_LABELS: Record<string, string> = {
   schedule_manage_cancel: 'באישור ביטול התזמון',
 };
 
-const NAV_HINT = 'אפשר לכתוב „אחורה” לחזרה שלב אחד, „איפה אני” לסיכום, או „תפריט” להתחלה מחדש.';
+const NAV_HINT = 'אפשר לכתוב ״אחורה״ לחזרה שלב אחד, ״איפה אני״ לסיכום, או ״תפריט״ להתחלה מחדש.';
 
 function describeCurrentStep(conversation: FlowConversation, state: string | null): string {
   const history = Array.isArray(conversation.flow_history)
@@ -1673,7 +1673,7 @@ async function startDeckSlideRewrite(
         action: 'whatsapp_deck_rewrite_failed',
         message: String(e),
       });
-      await send('אוי, לא הצלחתי לעדכן את השקף 🙈 אפשר לנסח את השינוי שוב, או לכתוב „מאשר” כדי להמשיך.');
+      await send('אוי, לא הצלחתי לעדכן את השקף 🙈 אפשר לנסח את השינוי שוב, או לכתוב ״מאשר״ כדי להמשיך.');
     }
   };
   return { kind: 'handled', background };
@@ -1743,7 +1743,7 @@ async function startDeckEmailProduction(
         message: String(e),
       });
       // State stays on deck_awaiting_emails so re-sending the addresses retries.
-      await send('אוי, לא הצלחתי להתחיל את הפקת המצגת 🙈 אפשר לשלוח שוב את כתובות המייל, או לכתוב „בטל”.');
+      await send('אוי, לא הצלחתי להתחיל את הפקת המצגת 🙈 אפשר לשלוח שוב את כתובות המייל, או לכתוב ״בטל״.');
     }
   };
   return { kind: 'handled', background };
@@ -2732,7 +2732,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (isYesText(text) && suggested) {
         return await startEmailCopy(database, conversation, identity, send, requestId, suggested);
       }
-      await send('אפשר לכתוב „כן” לאישור, כתובת מייל אחרת, או „תפריט” לביטול.');
+      await send('אפשר לכתוב ״כן״ לאישור, כתובת מייל אחרת, או ״תפריט״ לביטול.');
       return { kind: 'handled' };
     }
 
@@ -2750,7 +2750,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (typed && isValidEmail(typed)) {
         return await startEmailCopy(database, conversation, identity, send, requestId, typed);
       }
-      await send('לא הצלחתי לזהות את כתובת המייל. אפשר לכתוב אותה שוב, למשל name@example.com, או „תפריט” לביטול.');
+      await send('לא הצלחתי לזהות את כתובת המייל. אפשר לכתוב אותה שוב, למשל name@example.com, או ״תפריט״ לביטול.');
       return { kind: 'handled' };
     }
 
@@ -2870,7 +2870,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const saidNoImage = /^(בלי תמונה|ללא תמונה|אין תמונה|בלי|דלג|skip)\.?$/.test(norm(text));
       if (saidNoImage && media.length === 0) {
         if (igSelected) {
-          await send('כדי לפרסם באינסטגרם צריך לצרף תמונה או סרטון. אפשר לשלוח קובץ או לכתוב „בטל”.');
+          await send('כדי לפרסם באינסטגרם צריך לצרף תמונה או סרטון. אפשר לשלוח קובץ או לכתוב ״בטל״.');
           await setFlow(database, conversation.id, { flow_context: { ...ctx, caption, media } });
           return { kind: 'handled' };
         }
@@ -3018,7 +3018,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       if (!isYesText(text)) {
-        await send('הכול מוכן לתזמון. אפשר לכתוב „כן” לאישור או „לא” לביטול.');
+        await send('הכול מוכן לתזמון. אפשר לכתוב ״כן״ לאישור או ״לא״ לביטול.');
         return { kind: 'handled' };
       }
 
@@ -3093,7 +3093,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
             message: String(e),
           });
           // State stays on schedule_confirm so another "כן" can retry.
-          await send('אוי, לא הצלחתי לשמור את התזמון 🙈 אפשר לכתוב „כן” כדי לנסות שוב, או „לא” כדי לבטל.');
+          await send('אוי, לא הצלחתי לשמור את התזמון 🙈 אפשר לכתוב ״כן״ כדי לנסות שוב, או ״לא״ כדי לבטל.');
         }
         return { kind: 'handled' };
       }
@@ -3258,7 +3258,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const count = numMedia === 0 ? parseDeckSlideCountAnswer(text) : null;
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       if (!count) {
-        await send(`לא הצלחתי לזהות את המספר. אפשר לבחור בין 1 ל־${DECK_MAX_SLIDES}, או לכתוב „בטל”.`);
+        await send(`לא הצלחתי לזהות את המספר. אפשר לבחור בין 1 ל־${DECK_MAX_SLIDES}, או לכתוב ״בטל״.`);
         return { kind: 'handled' };
       }
       await send(`קיבלתי! כותב עכשיו את תוכן המצגת (${count} שקפים) ✍️ זה לוקח עד דקה...`);
@@ -3281,7 +3281,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       if (numMedia > 0) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send('אפשר לכתוב לי מה לשנות, או „מאשר” כדי להמשיך 🙂');
+        await send('אפשר לכתוב לי מה לשנות, או ״מאשר״ כדי להמשיך 🙂');
         return { kind: 'handled' };
       }
       const isApprove = isYesText(text) || /^(מאשר|מאשרת|מאושר|אישור|תכין|הכן|approve)\.?!?$/.test(norm(text));
@@ -3312,7 +3312,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       if (!slideNumber || slideNumber < 1 || slideNumber > deck.slides.length) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send(`איזה שקף לעדכן? אפשר לכתוב את מספר השקף ואת השינוי, למשל: „שקף 2 — ${text.trim().slice(0, 40)}”`);
+        await send(`איזה שקף לעדכן? אפשר לכתוב את מספר השקף ואת השינוי, למשל: ״שקף 2 — ${text.trim().slice(0, 40)}״`);
         return { kind: 'handled' };
       }
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
@@ -3358,7 +3358,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       if (!emails.length && isYesText(text) && deck.suggested_email) emails = [deck.suggested_email];
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       if (!emails.length) {
-        await send('לא הצלחתי לזהות כתובת מייל. אפשר לכתוב כתובת אחת או יותר, או „בטל” כדי לבטל.');
+        await send('לא הצלחתי לזהות כתובת מייל. אפשר לכתוב כתובת אחת או יותר, או ״בטל״ כדי לבטל.');
         return { kind: 'handled' };
       }
       return await startDeckEmailProduction(database, conversation, identity, send, deck, deck.selected, emails);
@@ -3439,7 +3439,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       const idx = parseSelectedEventIndex(text, events);
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
       if (idx == null || !events[idx]) {
-        await send('לא הצלחתי לזהות את הבחירה. אפשר לבחור מספר מהרשימה, „חודש” לחודש אחר או „תפריט” לחזרה.');
+        await send('לא הצלחתי לזהות את הבחירה. אפשר לבחור מספר מהרשימה, ״חודש״ לחודש אחר או ״תפריט״ לחזרה.');
         return { kind: 'handled' };
       }
       const event = events[idx];
@@ -3546,7 +3546,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         idx = found >= 0 ? found : null;
       }
       if (idx == null) {
-        await send('לא הצלחתי לזהות את הבחירה. אפשר לבחור מספר מהרשימה או לכתוב „תפריט” לחזרה.');
+        await send('לא הצלחתי לזהות את הבחירה. אפשר לבחור מספר מהרשימה או לכתוב ״תפריט״ לחזרה.');
         return { kind: 'handled' };
       }
       const post = await fetchScheduleById(database, schedules[idx].id);
@@ -3590,7 +3590,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       if (action === 'caption') {
-        const delivered = await send('אפשר לשלוח את הטקסט החדש לפוסט 📝 הוא יחליף את הטקסט הנוכחי.\n\nלחזרה אפשר לכתוב „חזרה”.');
+        const delivered = await send('אפשר לשלוח את הטקסט החדש לפוסט 📝 הוא יחליף את הטקסט הנוכחי.\n\nלחזרה אפשר לכתוב ״חזרה״.');
         if (delivered) {
           await setFlow(database, conversation.id, {
             flow_state: 'schedule_manage_caption',
@@ -3696,7 +3696,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       const caption = text.trim();
       if (caption.length < 2) {
-        await send('חסר לי הטקסט המלא של הפוסט כדי לשמור את השינוי. אפשר לשלוח אותו שוב או לכתוב „חזרה”.');
+        await send('חסר לי הטקסט המלא של הפוסט כדי לשמור את השינוי. אפשר לשלוח אותו שוב או לכתוב ״חזרה״.');
         return { kind: 'handled' };
       }
       await database
@@ -3741,7 +3741,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         }
         return await showSchedulesList(database, conversation, identity, send);
       }
-      await send('אפשר לכתוב „כן” לביטול התזמון או „לא” לחזרה.');
+      await send('אפשר לכתוב ״כן״ לביטול התזמון או ״לא״ לחזרה.');
       return { kind: 'handled' };
     }
 
