@@ -60,6 +60,8 @@ export type FlowConversation = {
   user_id?: string | null;
   flow_state?: string | null;
   flow_context?: Record<string, unknown> | null;
+  flow_history?: unknown;
+  flow_prompt?: string | null;
   selected_output_type?: string | null;
   last_delivered_request_id?: string | null;
 };
@@ -185,6 +187,9 @@ export function buildMainMenu(displayName: string, gender: AddressGender = null)
     '6️⃣ ניהול תזמונים 🗂️',
     '',
     'אפשר להשיב במספר (1-6) או במילה.',
+    // Stated up front, once: nobody discovers a command they were never told
+    // about, and "how do I undo that" is the most common dead end here.
+    'בכל שלב: „אחורה” לחזרה שלב אחד · „תפריט” להתחלה מחדש.',
   ].join('\n');
 }
 
@@ -649,15 +654,200 @@ function datePartsInIsrael(date: Date): { y: number; mo: number; d: number } {
 }
 
 // ── shared small helpers ─────────────────────────────────────────────────────
+// How many steps back "אחורה" can walk. Ten is far more than anyone uses in one
+// sitting, and keeps the row small.
+const FLOW_HISTORY_LIMIT = 10;
+
+export type FlowHistoryEntry = {
+  state: string | null;
+  context: Record<string, unknown>;
+  prompt: string | null;
+  // Restored with the step: picking "מסמך" and stepping back must un-pick it,
+  // or the next screen still claims a type the user just abandoned.
+  outputType: string | null;
+};
+
+// Every step transition funnels through here, which makes it the one place that
+// can record history without touching the ~40 call sites.
+//
+// The ordering the engine already uses is what makes this work: a step is
+// always announced with `send(prompt)` and only THEN committed with
+// `setFlow({ flow_state })`. So at this moment the newest outbound message is
+// precisely the prompt of the step being entered — no per-state re-renderer
+// needed to replay it later.
 async function setFlow(
   database: DB,
   conversationId: string,
   patch: Record<string, unknown>
 ): Promise<void> {
+  const extra: Record<string, unknown> = {};
+
+  if ('flow_state' in patch) {
+    const { data: current } = await database
+      .from('conversations')
+      .select('flow_state, flow_context, flow_history, flow_prompt, selected_output_type')
+      .eq('id', conversationId)
+      .maybeSingle();
+
+    if (current && current.flow_state !== patch.flow_state) {
+      const history = Array.isArray(current.flow_history) ? (current.flow_history as FlowHistoryEntry[]) : [];
+      // Leaving "nowhere" is not a step worth returning to.
+      const next = current.flow_state === null && history.length === 0
+        ? history
+        : [...history, {
+            state: current.flow_state ?? null,
+            context: (current.flow_context ?? {}) as Record<string, unknown>,
+            prompt: (current.flow_prompt as string | null) ?? null,
+            outputType: (current.selected_output_type as string | null) ?? null,
+          }];
+      extra.flow_history = next.slice(-FLOW_HISTORY_LIMIT);
+      extra.flow_prompt = await lastOutboundBody(database, conversationId);
+    }
+  }
+
   await database
     .from('conversations')
-    .update({ ...patch, last_message_at: new Date().toISOString(), timeout_warned_at: null })
+    .update({ ...extra, ...patch, last_message_at: new Date().toISOString(), timeout_warned_at: null })
     .eq('id', conversationId);
+}
+
+// ── navigation commands: "אחורה" / "איפה אני" ────────────────────────────────
+//
+// Deliberately NOT matching a bare "back": flow.ts already treats
+// back/חזור/חזרה/תפריט as "cancel to the main menu" inside the fix and schedule
+// steps, and hijacking those here would silently change behaviour people rely
+// on. "אחורה" is unused and unambiguous.
+export function isStepBackCommand(text: string): boolean {
+  return /^(אחורה|חזור אחורה|צעד אחורה|שלב אחורה)\s*[.!]?$/.test(text.trim());
+}
+
+export function isWhereAmICommand(text: string): boolean {
+  return /^(איפה אני|איפה אנחנו|איפה עצרנו|מה המצב|where am i)\s*[?.!]?$/i.test(text.trim());
+}
+
+const STEP_LABELS: Record<string, string> = {
+  main_menu: 'בתפריט הראשי — בחירת סוג התוצר',
+  awaiting_brief: 'בכתיבת הבקשה — מה להכין',
+  awaiting_email_address: 'בהזנת כתובת המייל לשליחה',
+  awaiting_email_confirm: 'באישור כתובת המייל',
+  awaiting_fix_feedback: 'בתיאור מה לתקן בתוצר',
+  awaiting_image_fix: 'בתיאור מה לשנות בתמונה',
+  awaiting_caption_fix: 'בתיאור מה לשנות בכיתוב',
+  post_delivery: 'אחרי קבלת התוצר — אפשר לתקן, לתזמן או להתחיל חדש',
+  deck_awaiting_prompt: 'בכתיבת נושא המצגת',
+  deck_awaiting_slide_count: 'בבחירת מספר השקופיות',
+  deck_awaiting_emails: 'בהזנת כתובות המייל למצגת',
+  deck_slide_selection: 'בבחירת שקופיות',
+  deck_review: 'בסקירת המצגת',
+  events_menu: 'בתפריט האירועים',
+  events_month: 'בבחירת חודש',
+  events_list: 'ברשימת האירועים',
+  events_details: 'בפרטי האירוע',
+  events_output_type: 'בבחירת סוג התוצר לאירוע',
+  schedule_source: 'בבחירת מקור התוכן לתזמון',
+  schedule_platform: 'בבחירת הרשת לפרסום',
+  schedule_datetime: 'בבחירת מועד הפרסום',
+  schedule_confirm: 'באישור התזמון',
+  schedule_new_content: 'בכתיבת תוכן הפוסט',
+  schedule_new_platform: 'בבחירת הרשת לפוסט החדש',
+  schedules_list: 'ברשימת התזמונים',
+  schedule_manage: 'בניהול תזמון קיים',
+  schedule_manage_caption: 'בעריכת הכיתוב של התזמון',
+  schedule_manage_datetime: 'בשינוי מועד התזמון',
+  schedule_manage_cancel: 'באישור ביטול התזמון',
+};
+
+const NAV_HINT = 'אפשר לכתוב „אחורה” לחזרה שלב אחד, „איפה אני” לסיכום, או „תפריט” להתחלה מחדש.';
+
+function describeCurrentStep(conversation: FlowConversation, state: string | null): string {
+  const history = Array.isArray(conversation.flow_history)
+    ? (conversation.flow_history as FlowHistoryEntry[])
+    : [];
+  const where = state
+    ? (STEP_LABELS[state] ?? 'באמצע הבקשה')
+    : 'עוד לא התחלנו בקשה חדשה';
+  const type = conversation.selected_output_type
+    ? `\nסוג התוצר שנבחר: ${outputTypeLabel(conversation.selected_output_type)}`
+    : '';
+  const back = history.length
+    ? `\nאפשר לחזור ${history.length === 1 ? 'שלב אחד' : `עד ${history.length} שלבים`} אחורה.`
+    : '\nזו ההתחלה — אין שלב לחזור אליו.';
+  return `📍 אנחנו ${where}.${type}${back}\n\n${NAV_HINT}`;
+}
+
+function outputTypeLabel(type: string): string {
+  // Matches the output_type enum: text | image | pdf | presentation.
+  const labels: Record<string, string> = {
+    image: 'תמונה / פוסט',
+    pdf: 'מסמך',
+    presentation: 'מצגת',
+    text: 'טקסט',
+  };
+  return labels[type] ?? type;
+}
+
+// Pops one step off the history and replays the message that introduced it, so
+// the user lands back on the exact question they answered by mistake.
+async function stepBack(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  send: SendFn,
+): Promise<FlowResult> {
+  const history = Array.isArray(conversation.flow_history)
+    ? (conversation.flow_history as FlowHistoryEntry[])
+    : [];
+
+  if (!history.length) {
+    await send(`אנחנו כבר בהתחלה, אין לאן לחזור.\n\n${NAV_HINT}`);
+    return { kind: 'handled' };
+  }
+
+  const previous = history[history.length - 1];
+  const rest = history.slice(0, -1);
+
+  // Restore the step verbatim, and rewind flow_prompt with it so a second
+  // "אחורה" replays the right question too.
+  await database
+    .from('conversations')
+    .update({
+      flow_state: previous.state,
+      flow_context: previous.context ?? {},
+      flow_history: rest,
+      flow_prompt: previous.prompt ?? null,
+      selected_output_type: previous.outputType ?? null,
+      last_message_at: new Date().toISOString(),
+      timeout_warned_at: null,
+    })
+    .eq('id', conversation.id);
+
+  await logEvent(database, {
+    requestId: conversation.current_request_id,
+    action: 'flow_step_back',
+    metadata: { to: previous.state, remaining: rest.length },
+  });
+
+  // Replaying the stored prompt avoids a per-state re-renderer. If it is
+  // missing (a step recorded before this feature shipped), fall back to the
+  // main menu, which is always a valid place to be.
+  if (previous.prompt) {
+    await send(`⬅️ חזרנו שלב אחורה.\n\n${previous.prompt}`);
+  } else {
+    await send(buildMainMenu(identity.displayName, identity.gender), buildMainMenuInteraction());
+  }
+  return { kind: 'handled' };
+}
+
+async function lastOutboundBody(database: DB, conversationId: string): Promise<string | null> {
+  const { data } = await database
+    .from('messages')
+    .select('body')
+    .eq('conversation_id', conversationId)
+    .eq('direction', 'outbound')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.body as string | null) ?? null;
 }
 
 // Claim the inbound message row (idempotency vs Twilio retries). Returns false
@@ -2168,6 +2358,19 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
   const state = conversation.flow_state ?? null;
   const ctx = (conversation.flow_context ?? {}) as Record<string, unknown>;
   const text = (body ?? '').trim();
+
+  // Navigation commands, handled before the state machine so they work from
+  // every step. Text only — a caption on an attachment is a brief, not a
+  // command.
+  if (numMedia === 0 && isWhereAmICommand(text)) {
+    if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+    await send(describeCurrentStep(conversation, state));
+    return { kind: 'handled' };
+  }
+  if (numMedia === 0 && isStepBackCommand(text)) {
+    if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
+    return await stepBack(database, conversation, identity, send);
+  }
 
   if (!state) return { kind: 'not_handled' };
 
