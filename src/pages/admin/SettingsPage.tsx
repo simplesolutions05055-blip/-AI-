@@ -16,6 +16,22 @@ import {
 } from '@/lib/outputPermissions';
 
 type Settings = Record<string, any>;
+
+// Mirrors the greenapi-status Edge Function response. Everything is a boolean
+// or a short state string — no credential ever reaches the browser.
+interface GreenApiStatus {
+  ok: boolean;
+  reason?: string;
+  state?: string;
+  configured?: { id_instance: boolean; token: boolean; api_url: boolean; webhook_secret: boolean };
+  webhook?: {
+    url: string;
+    points_at_us: boolean;
+    incoming_enabled: boolean;
+    secret_set_on_instance: boolean;
+    secret_matches: boolean;
+  } | null;
+}
 type SettingsTab = 'whatsapp' | 'signup' | 'permissions' | 'email' | 'models' | 'approval' | 'limits' | 'models_page' | 'skills';
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
@@ -52,6 +68,37 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+// GREEN-API's stateInstance values, and what each one actually means for us.
+// Only notAuthorized is fixed by rescanning a QR — telling the admin to scan
+// for the others sends them down the wrong path.
+function stateHint(state: string): string {
+  switch (state) {
+    case 'notAuthorized':
+      return 'הטלפון התנתק. צריך לסרוק מחדש QR בקונסול של GREEN-API — עד אז אף הודעה נכנסת לא תגיע.';
+    case 'suspended':
+      return 'האינסטנס מושהה זמנית אצל GREEN-API — לרוב כשהטלפון לא היה מקוון זמן ממושך. הודעות נכנסות עלולות ללכת לאיבוד. בדקו את מצב האינסטנס בקונסול.';
+    case 'blocked':
+      return 'האינסטנס חסום אצל GREEN-API. בדקו יתרה ומצב מנוי בקונסול.';
+    case 'sleepMode':
+      return 'האינסטנס במצב שינה — הטלפון לא מקוון. חברו אותו לרשת.';
+    case 'starting':
+      return 'האינסטנס עולה כרגע. בדקו שוב בעוד רגע.';
+    default:
+      return 'מצב לא מוכר. בדקו את האינסטנס בקונסול של GREEN-API.';
+  }
+}
+
+function StatusRow({ ok, label, detail }: { ok: boolean; label: string; detail?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className={ok ? 'text-green-700' : 'text-red-600'}>
+        {ok ? '✓' : '✕'} {label}
+      </span>
+      {detail && <span dir="ltr" className="truncate text-[var(--muted)]">{detail}</span>}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { profile } = useProfile();
   const [settings, setSettings] = useState<Settings>({});
@@ -68,6 +115,22 @@ export default function SettingsPage() {
   const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
+  const [gwStatus, setGwStatus] = useState<GreenApiStatus | null>(null);
+  const [gwChecking, setGwChecking] = useState(false);
+
+  async function checkGreenApi() {
+    setGwChecking(true);
+    setGwStatus(null);
+    try {
+      const { data, error } = await createSupabaseBrowserClient().functions.invoke('greenapi-status', { body: {} });
+      if (error) throw error;
+      setGwStatus(data as GreenApiStatus);
+    } catch (e) {
+      setGwStatus({ ok: false, reason: String(e) });
+    } finally {
+      setGwChecking(false);
+    }
+  }
 
   useEffect(() => {
     setProfileGender(profile?.gender ?? '');
@@ -274,6 +337,48 @@ export default function SettingsPage() {
         <section className="bg-white rounded-xl border border-[var(--border)] p-4">
           <h2 className="font-semibold mb-1">WhatsApp</h2>
           <p className="mb-4 text-xs text-[var(--muted)]">הגדירו את חוויית השיחה ואת נוסחי ההודעות של הבוט.</p>
+
+          {/* When the bot goes silent the question is always "is it us or is it
+              GREEN-API?". This answers it without a trip to their console. */}
+          <div className="mb-5 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <span>
+                <span className="block text-sm font-semibold">חיבור GREEN-API</span>
+                <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+                  בדיקה חיה: האם הטלפון עדיין מקושר, והאם ה-webhook מוגדר נכון.
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={checkGreenApi}
+                disabled={gwChecking}
+                className="shrink-0 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+              >
+                {gwChecking ? 'בודק…' : 'בדוק עכשיו'}
+              </button>
+            </div>
+
+            {gwStatus && (
+              <div className="mt-3 space-y-1.5 border-t border-[var(--border)] pt-3 text-xs">
+                <StatusRow
+                  ok={gwStatus.state === 'authorized'}
+                  label="הטלפון מקושר"
+                  detail={gwStatus.state ?? gwStatus.reason ?? 'לא ידוע'}
+                />
+                {gwStatus.state && gwStatus.state !== 'authorized' && (
+                  <p className="leading-5 text-[var(--muted)]">{stateHint(gwStatus.state)}</p>
+                )}
+                {gwStatus.webhook && (
+                  <>
+                    <StatusRow ok={gwStatus.webhook.points_at_us} label="כתובת ה-webhook מצביעה אלינו" detail={gwStatus.webhook.url || '—'} />
+                    <StatusRow ok={gwStatus.webhook.incoming_enabled} label="קבלת הודעות נכנסות פעילה" />
+                    <StatusRow ok={gwStatus.webhook.secret_matches} label="הסוד תואם" detail={gwStatus.webhook.secret_set_on_instance ? undefined : 'לא מוגדר באינסטנס'} />
+                  </>
+                )}
+                {!gwStatus.ok && gwStatus.reason && <p className="text-[var(--muted)]">סיבה: {gwStatus.reason}</p>}
+              </div>
+            )}
+          </div>
 
           <label className="mb-5 flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
             <span>
