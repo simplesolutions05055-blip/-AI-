@@ -57,6 +57,20 @@ export function toWhatsAppFrom(chatId: string): string {
   return `whatsapp:+${chatId.replace(/@c\.us$/, '').replace(/\D/g, '')}`;
 }
 
+// GET methods (no body) — used for health checks.
+async function get(method: string): Promise<Record<string, unknown>> {
+  const res = await fetch(endpoint(method), { method: 'GET' });
+  // Deliberately omits the URL — it carries the token.
+  if (!res.ok) throw new Error(`green-api ${method} failed (${res.status})`);
+  return (await res.json().catch(() => ({}))) as Record<string, unknown>;
+}
+
+// 'authorized' | 'notAuthorized' | 'blocked' | 'suspended' | 'sleepMode' | 'starting'
+export async function getStateInstance(): Promise<string> {
+  const data = await get('getStateInstance');
+  return String(data.stateInstance ?? 'unknown');
+}
+
 export async function sendText(to: string, body: string): Promise<string> {
   const chatId = toChatId(to);
   let lastId = '';

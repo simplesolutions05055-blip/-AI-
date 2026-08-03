@@ -17,6 +17,7 @@ import { analyzeBrief, generateText, generateDocumentText, generatePresentationO
 // WhatsApp shapes (the interactive types the simulator still renders).
 import { type WhatsAppInteractive } from './twilio.ts';
 import { sendFile, sendText } from './greenapi.ts';
+import { isSendBlocked } from './instanceState.ts';
 import { isGroupTarget, parseGroupTarget, sendGroupText, sendGroupMedia } from './group.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { loadPdfBrandSettings, sendDeliverableCopy } from './deliverableEmail.ts';
@@ -356,6 +357,12 @@ export async function sendOut(
       ? await getSettingOr<{ enabled: boolean }>(database, 'whatsapp_interactive_messages', { enabled: false })
       : { enabled: false };
     const useInteractive = Boolean(interactive && (interactiveSetting.enabled || interactive.force));
+    // A real send while the gateway is unlinked or banned is not delivered —
+    // GREEN-API queues it for 24h and then drops it. Failing loudly here keeps
+    // the reply in the DB (and visible to the admin) instead of losing it.
+    if (!simulated && !isProductionFormTarget(to) && (await isSendBlocked(database))) {
+      throw new Error('green-api instance is not authorized — send skipped');
+    }
     if (simulated || isProductionFormTarget(to)) {
       sid = `sim-${crypto.randomUUID()}`;
       // Groups never get interactive buttons (platform limit) — the simulated

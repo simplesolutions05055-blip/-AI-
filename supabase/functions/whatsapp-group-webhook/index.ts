@@ -38,6 +38,7 @@ import { db } from '../_shared/db.ts';
 import { processRequest } from '../_shared/worker.ts';
 import { findOrCreateConversation, handleInbound, type MediaResult } from '../_shared/inbound.ts';
 import { getSettingOr, getTemplates, logEvent } from '../_shared/util.ts';
+import { recordInstanceState } from '../_shared/instanceState.ts';
 import { findOrCreateGroupConversation, getGroupSettings, matchGroupTrigger } from '../_shared/group.ts';
 import { downloadMedia, toWhatsAppFrom } from '../_shared/greenapi.ts';
 import { processInboundMediaItem } from '../_shared/inbound_media.ts';
@@ -48,6 +49,8 @@ type DB = ReturnType<typeof db>;
 type GreenApiNotification = {
   typeWebhook?: string;
   idMessage?: string;
+  // Present only on stateInstanceChanged notifications.
+  stateInstance?: string;
   senderData?: {
     chatId?: string;
     chatName?: string;
@@ -379,6 +382,17 @@ Deno.serve(async (req) => {
     sender: payload?.senderData?.sender ?? null,
     typeMessage: payload?.messageData?.typeMessage ?? null,
   }));
+
+  // GREEN-API pushes authorization-state changes to this same URL (enable
+  // "Receive notifications about the instance authorization state change", or
+  // stateWebhook via SetSettings). This is the earliest possible warning that
+  // the channel is down — without it the bot just goes quiet.
+  if (payload?.typeWebhook === 'stateInstanceChanged') {
+    const state = String((payload as { stateInstance?: unknown }).stateInstance ?? 'unknown');
+    console.log('[greenapi-webhook] request:state_changed', state);
+    await recordInstanceState(database, state);
+    return ok({ ok: true, state });
+  }
 
   const msg = normalize(payload);
   if (!msg) {

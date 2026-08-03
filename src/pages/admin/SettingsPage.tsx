@@ -117,6 +117,7 @@ export default function SettingsPage() {
   const [metaError, setMetaError] = useState<string | null>(null);
   const [gwStatus, setGwStatus] = useState<GreenApiStatus | null>(null);
   const [gwChecking, setGwChecking] = useState(false);
+  const [lastKnownState, setLastKnownState] = useState<{ state: string; updated_at: string } | null>(null);
 
   async function checkGreenApi() {
     setGwChecking(true);
@@ -124,7 +125,9 @@ export default function SettingsPage() {
     try {
       const { data, error } = await createSupabaseBrowserClient().functions.invoke('greenapi-status', { body: {} });
       if (error) throw error;
-      setGwStatus(data as GreenApiStatus);
+      const result = data as GreenApiStatus;
+      setGwStatus(result);
+      if (result.state) setLastKnownState({ state: result.state, updated_at: new Date().toISOString() });
     } catch (e) {
       setGwStatus({ ok: false, reason: String(e) });
     } finally {
@@ -147,6 +150,12 @@ export default function SettingsPage() {
           // editable form, otherwise a later admin save could overwrite a
           // newer cache created by an Edge Function.
           if (row.key === 'whatsapp_interactive_content_cache') return;
+          // Same reason: the webhook and the cron write this continuously, so a
+          // copy captured at page load must never ride along into save().
+          if (row.key === 'greenapi_instance_state') {
+            setLastKnownState(row.value_json as { state: string; updated_at: string });
+            return;
+          }
           next[row.key] = row.value_json;
         });
         setSettings(next);
@@ -344,9 +353,22 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between gap-4">
               <span>
                 <span className="block text-sm font-semibold">חיבור GREEN-API</span>
-                <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
-                  בדיקה חיה: האם הטלפון עדיין מקושר, והאם ה-webhook מוגדר נכון.
-                </span>
+                {/* The webhook and the 5-minute cron both write this, so the
+                    last known state is already on screen before any click. */}
+                {lastKnownState ? (
+                  <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+                    מצב אחרון:{' '}
+                    <strong className={lastKnownState.state === 'authorized' ? 'text-green-700' : 'text-red-600'}>
+                      {lastKnownState.state}
+                    </strong>
+                    {' · '}
+                    {new Date(lastKnownState.updated_at).toLocaleString('he-IL')}
+                  </span>
+                ) : (
+                  <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+                    בדיקה חיה: האם הטלפון עדיין מקושר, והאם ה-webhook מוגדר נכון.
+                  </span>
+                )}
               </span>
               <button
                 type="button"

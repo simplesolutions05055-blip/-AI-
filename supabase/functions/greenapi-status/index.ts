@@ -13,6 +13,8 @@
 // so this function never returns a raw URL or token — only booleans and the
 // short state strings.
 import { authErrorResponse, requireAdmin } from '../_shared/auth.ts';
+import { db } from '../_shared/db.ts';
+import { recordInstanceState } from '../_shared/instanceState.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -66,6 +68,11 @@ Deno.serve(async (req) => {
     }
 
     const state = String(stateResult.value.stateInstance ?? 'unknown');
+    // A manual check is also an observation — feed it through the same path as
+    // the webhook and the cron so an admin clicking the button can be what
+    // triggers the alert.
+    await recordInstanceState(db(), state);
+
     const settings = settingsResult.status === 'fulfilled' ? settingsResult.value : null;
 
     const webhookUrl = String(settings?.webhookUrl ?? '');
