@@ -9,8 +9,10 @@ import { sendText } from '../_shared/greenapi.ts';
 import { getTemplates, getSettingOr, logEvent } from '../_shared/util.ts';
 
 Deno.serve(async (req) => {
+  // Fail closed: a missing CRON_SECRET used to skip the check entirely, which
+  // left this janitor (it sends WhatsApp messages) open to anyone.
   const secret = Deno.env.get('CRON_SECRET');
-  if (secret && req.headers.get('x-cron-secret') !== secret) {
+  if (!secret || req.headers.get('x-cron-secret') !== secret) {
     return new Response('Forbidden', { status: 403 });
   }
 

@@ -48,8 +48,8 @@ verify_jwt = false
 [functions.process-request]
 verify_jwt = false
 
-[functions.send-output]
-verify_jwt = false
+# send-output is intentionally absent: it verifies the JWT at the platform gate
+# and checks for an admin profile itself (requireAdmin in _shared/auth.ts).
 
 [functions.conversation-maintenance]
 verify_jwt = false
