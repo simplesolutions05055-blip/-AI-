@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft as ArrowLeftIcon,
   CalendarDays as CalendarDaysIcon,
   Check as CheckIcon,
   File as FileIcon,
@@ -83,6 +84,17 @@ type WeekScheduledPost = {
 type SearchHit =
   | { kind: 'event'; id: string; name: string; typeLabel: string; event: UpcomingEvent }
   | { kind: 'output'; id: string; name: string; typeLabel: string; to: string };
+
+// Gradient icon chips for the "what do you want to create" tiles (see the
+// mockup in docs/primeos-mockup (2).html — one gradient per product type).
+const TILE_ICON_TONE: Record<string, string> = {
+  image: 'bg-gradient-to-br from-[#1E88E5] to-[#00ACC1] shadow-[0_6px_16px_rgba(30,136,229,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
+  presentation: 'bg-gradient-to-br from-[#7B4FDB] to-[#EC4899] shadow-[0_6px_16px_rgba(123,79,219,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
+  pdf: 'bg-gradient-to-br from-[#F59E0B] to-[#EF4444] shadow-[0_6px_16px_rgba(245,158,11,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
+  upload: 'bg-gradient-to-br from-[#43C463] to-[#16A34A] shadow-[0_6px_16px_rgba(67,196,99,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
+  text: 'bg-gradient-to-br from-[#0B4F9F] to-[#3B82F6] shadow-[0_6px_16px_rgba(11,79,159,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
+  quote: 'bg-gradient-to-br from-[#0EA5A5] to-[#14B8A6] shadow-[0_6px_16px_rgba(14,165,165,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
+};
 
 const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: string; accent: string; iconBg: string; iconText: string }> = [
   { type: 'image', title: 'תמונה', description: 'פוסט, מודעה, הזמנה או גרפיקה לרשתות.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-clay)]', iconText: 'text-[var(--text-strong)]' },
@@ -690,6 +702,25 @@ function ProductionPicker({
     });
   }, [initialFreeText]);
 
+  // On lg the brief box sits inline with the buttons, where a fixed two-line
+  // height would leave a single line stranded at the top. Grow it from one line
+  // to two instead — the row is items-center, so one line stays centered.
+  useEffect(() => {
+    const el = descriptionRef.current;
+    if (!el) return;
+    const fit = () => {
+      if (window.innerWidth < 1024) {
+        el.style.height = '';
+        return;
+      }
+      el.style.height = '28px';
+      el.style.height = `${Math.min(el.scrollHeight, 56)}px`;
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [description]);
+
   useEffect(() => {
     if (selected && !allowedTypes.includes(selected)) setSelected(null);
   }, [allowedTypes, selected]);
@@ -1030,8 +1061,13 @@ function ProductionPicker({
     setDescription(prompt.slice(0, DESCRIPTION_MAX_LENGTH));
     if (!selected) setSelected(firstAllowedProductionType());
     window.requestAnimationFrame(() => {
-      descriptionRef.current?.focus();
-      descriptionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const el = descriptionRef.current;
+      el?.focus();
+      // Focus puts the caret at the end, which scrolls the (single-line-tall)
+      // box to the last line. Show the beginning of the idea instead.
+      el?.setSelectionRange(0, 0);
+      if (el) el.scrollTop = 0;
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   }
 
@@ -1079,32 +1115,31 @@ function ProductionPicker({
     }
   }
 
-  const allPickerChips: Array<{ key: string; label: string; tone: string; to: ProductionType | 'quote'; disabled?: boolean }> = [
-    { key: 'image', label: 'תמונה / גרפיקה', tone: 'bg-[var(--tint-clay)]', to: 'image' },
-    { key: 'text', label: 'פוסט / טקסט', tone: 'bg-[var(--tint-olive)]', to: 'text' },
-    { key: 'presentation', label: 'מצגת', tone: 'bg-[var(--tint-sand)]', to: 'presentation' },
-    { key: 'pdf', label: 'מסמך', tone: 'bg-[var(--bg-subtle)]', to: 'pdf' },
+  const allPickerChips: Array<{ key: string; label: string; sub: string; tone: string; to: ProductionType | 'quote'; disabled?: boolean }> = [
+    { key: 'image', label: 'תמונה / גרפיקה', sub: 'פוסטר, באנר, סטורי', tone: TILE_ICON_TONE.image, to: 'image' },
+    { key: 'text', label: 'פוסט / טקסט', sub: 'פוסט, הודעה, מייל', tone: TILE_ICON_TONE.text, to: 'text' },
+    { key: 'presentation', label: 'מצגת', sub: 'שקפים עם מיתוג', tone: TILE_ICON_TONE.presentation, to: 'presentation' },
+    { key: 'pdf', label: 'מסמך', sub: 'הודעה, נוהל, הזמנה', tone: TILE_ICON_TONE.pdf, to: 'pdf' },
     // Quote is a real production type: same textarea + same "צור תוצר" button.
     // The price is taken from the prompt only (see QuoteFlow / generateQuote).
-    { key: 'quote', label: 'הצעת מחיר', tone: 'bg-[var(--tint-ochre)]', to: 'quote' },
+    { key: 'quote', label: 'הצעת מחיר', sub: 'מחירון ותנאים', tone: TILE_ICON_TONE.quote, to: 'quote' },
   ];
   const pickerChips = allPickerChips.filter((item) => allowedTypes.includes(item.to));
-  const selectedPickerLabel = pickerChips.find((item) => !item.disabled && item.to === selected)?.label ?? null;
   // The grid mixes produced types (open the textarea flow) with the upload
   // action (opens the upload modal). `to === null` marks the upload chip.
-  const gridChips: Array<{ key: string; label: string; tone: string; to: ProductionType | 'quote' | null; disabled?: boolean }> = [
+  const gridChips: Array<{ key: string; label: string; sub: string; tone: string; to: ProductionType | 'quote' | null; disabled?: boolean }> = [
     ...pickerChips,
     ...(canUploadContent
-      ? [{ key: 'upload', label: 'העלאת תכנים שלי', tone: 'bg-[var(--tint-olive)]', to: null }]
+      ? [{ key: 'upload', label: 'העלאת חומר', sub: 'תכנים שלי', tone: TILE_ICON_TONE.upload, to: null }]
       : []),
   ];
   const gridColsClass =
-    gridChips.length >= 6 ? 'grid-cols-6'
-      : gridChips.length === 5 ? 'grid-cols-5'
-        : gridChips.length === 4 ? 'grid-cols-4'
-          : gridChips.length === 3 ? 'grid-cols-3'
-            : gridChips.length === 2 ? 'grid-cols-2'
-              : 'grid-cols-1';
+    gridChips.length >= 6 ? 'sm:grid-cols-6'
+      : gridChips.length === 5 ? 'sm:grid-cols-5'
+        : gridChips.length === 4 ? 'sm:grid-cols-4'
+          : gridChips.length === 3 ? 'sm:grid-cols-3'
+            : gridChips.length === 2 ? 'sm:grid-cols-2'
+              : 'sm:grid-cols-1';
   const uploadText = genderCopy(profile?.gender, {
     male: 'העלה קובץ',
     female: 'העלי קובץ',
@@ -1274,8 +1309,8 @@ function ProductionPicker({
         </div>
 
         <section className="relative rounded-[20px] border border-white/70 bg-white/80 px-5 py-7 shadow-[var(--warm-shadow-card)] backdrop-blur-xl sm:px-8 lg:px-8 lg:py-8">
-          <div className="flex flex-col gap-5">
-            <div className={`space-y-2.5 text-right ${selectedBrand ? 'min-h-[9rem] sm:min-h-[9.75rem]' : ''}`}>
+          <div className="flex flex-col gap-3">
+            <div className={`space-y-2 text-right ${selectedBrand ? 'min-h-[7rem] sm:min-h-[7.5rem]' : ''}`}>
               <div className="flex items-start justify-between gap-3 pe-28 sm:pe-32 lg:pe-44">
                 <div className="min-w-0 flex-1">
                   {weekBadgeLabel && (
@@ -1311,7 +1346,7 @@ function ProductionPicker({
             </div>
 
             <div className="min-w-0 flex-1 space-y-2">
-              <div className={`grid w-full ${gridColsClass} gap-2`}>
+              <div className={`grid w-full grid-cols-2 gap-3.5 ${gridColsClass}`}>
                 {gridChips.map((item) => {
                   const isUpload = item.to === null;
                   const active = !item.disabled && !isUpload && item.to === selected;
@@ -1326,36 +1361,31 @@ function ProductionPicker({
                         if (isUpload) setUploadContentOpen(true);
                         else if (item.to) setSelected(item.to);
                       }}
-                      className={`group relative flex h-14 min-w-0 items-center justify-center rounded-[10px] border p-1.5 text-center transition duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:h-[86px] sm:flex-col sm:gap-1.5 sm:px-2 sm:py-2 ${
+                      className={`group relative flex min-w-0 flex-col overflow-hidden rounded-[16px] border p-4 text-right transition-all duration-300 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:p-5 ${
                         item.disabled
-                          ? 'cursor-not-allowed border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-muted)] opacity-50'
+                          ? 'cursor-not-allowed border-[var(--border-soft)] bg-[var(--bg-subtle)] text-[var(--text-muted)] opacity-50'
                           : active
-                            ? 'border-[var(--border-warm)] border-r-4 border-r-[var(--warm-accent)] bg-[var(--warm-accent-soft)] text-[var(--warm-accent-dark)]'
-                            : `border-[var(--border-warm)] bg-[var(--bg-surface)] text-[var(--text-strong)] hover:-translate-y-0.5 hover:border-[var(--warm-accent)] hover:bg-[var(--surface-2)] hover:shadow-[0_10px_24px_rgba(11,79,159,0.12)] ${glowTypeChips ? 'pick-me-glow' : ''}`
+                            ? 'border-transparent bg-[var(--warm-accent-soft)] text-[var(--warm-accent-dark)] shadow-[0_16px_40px_rgba(30,60,114,.14)]'
+                            : `border-[var(--border-soft)] bg-[var(--surface-2)] text-[var(--text-strong)] hover:-translate-y-1 hover:border-transparent hover:bg-[var(--bg-surface)] hover:shadow-[0_16px_40px_rgba(30,60,114,.14)] ${glowTypeChips ? 'pick-me-glow' : ''}`
                       }`}
                     >
-                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[9px] border border-[var(--border-soft)] sm:h-11 sm:w-11 ${item.tone} ${active ? 'text-[var(--warm-accent-dark)]' : 'text-[var(--text-strong)] group-hover:text-[var(--warm-accent-dark)]'}`}>
+                      <span className={`mb-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] text-white ${item.tone}`}>
                         {isUpload
-                          ? <UploadIcon className="h-6 w-6 stroke-[1.75]" />
-                          : <PickerIcon type={item.to ?? 'text'} className="h-6 w-6 stroke-[1.75]" />}
+                          ? <UploadIcon className="h-[22px] w-[22px] stroke-[1.75]" />
+                          : <PickerIcon type={item.to ?? 'text'} className="h-[22px] w-[22px] stroke-[1.75]" />}
                       </span>
-                      <span className="hidden min-w-0 max-w-full sm:block">
-                        <span className="block whitespace-normal text-[13px] font-bold leading-5">{item.label}</span>
-                      </span>
+                      <span className="block min-w-0 max-w-full whitespace-normal text-[15px] font-semibold leading-5">{item.label}</span>
+                      <span className="mt-1 block text-[12px] font-normal leading-4 text-[var(--text-muted)]">{item.sub}</span>
+                      <ArrowLeftIcon className="pointer-events-none absolute bottom-4 left-4 h-[18px] w-[18px] -translate-x-1 text-[var(--text-muted)] opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:text-brand group-hover:opacity-100" />
                       {active && (
-                        <span className="absolute left-1 top-1 flex h-4 w-4 items-center justify-center rounded-[5px] bg-[var(--warm-accent)] text-white sm:left-2 sm:top-2 sm:h-5 sm:w-5 sm:rounded-[6px]">
-                          <CheckIcon className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                        <span className="absolute left-3 top-3 flex h-5 w-5 items-center justify-center rounded-[6px] bg-[var(--warm-accent)] text-white">
+                          <CheckIcon className="h-3.5 w-3.5" />
                         </span>
                       )}
                     </button>
                   );
                 })}
               </div>
-              {selectedPickerLabel && (
-                <div className="mx-auto flex w-fit items-center rounded-xl border border-[var(--warm-accent)] bg-[var(--warm-accent-soft)] px-3.5 py-2 text-right shadow-sm sm:hidden">
-                  <span className="text-[16px] font-bold leading-none text-[var(--warm-accent-dark)]">{selectedPickerLabel}</span>
-                </div>
-              )}
             </div>
 
             {showTypeHint && (
@@ -1434,7 +1464,7 @@ function ProductionPicker({
                     }
                   }}
                   placeholder={'תארו מה תרצו — לדוגמה: פוסטר לערב ראש השנה, מזמינים את התושבים לכיכר…'}
-                  className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)] lg:h-12 lg:min-h-0 lg:max-h-12 lg:flex-1 lg:overflow-hidden lg:py-0 lg:leading-[48px]"
+                  className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)] lg:h-7 lg:min-h-0 lg:max-h-14 lg:flex-1 lg:overflow-y-auto lg:py-0 lg:leading-7"
                 />
               <div className="flex shrink-0 flex-col items-start gap-1">
                 <div className="flex flex-wrap items-center gap-2">
