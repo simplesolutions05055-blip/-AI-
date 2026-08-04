@@ -655,6 +655,9 @@ function ProductionPicker({
   // database (debounced), not just the slice this page keeps in memory. Results
   // show while the box has text, so no outside-click handling is needed.
   const [searchQuery, setSearchQuery] = useState('');
+  // On phones the search box is collapsed behind an icon so it does not sit
+  // between the greeting and the brief box. From `sm` up it is always visible.
+  const [searchOpen, setSearchOpen] = useState(false);
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   // For presentations we open the image picker before leaving this page, so the
@@ -1232,14 +1235,25 @@ function ProductionPicker({
           </button>
         )}
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <div className="min-w-0">
-            <div className="text-[13px] font-medium text-[var(--text-faint)]">{timeGreeting()}</div>
-            <div className="truncate text-[22px] font-bold leading-tight tracking-tight text-brand">
-              {selectedBrand?.name ?? profile?.full_name ?? 'ברוכים הבאים'}
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-[var(--text-faint)]">{timeGreeting()}</div>
+              <div className="truncate text-[22px] font-bold leading-tight tracking-tight text-brand">
+                {selectedBrand?.name ?? profile?.full_name ?? 'ברוכים הבאים'}
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setSearchOpen((open) => !open)}
+              aria-label="חיפוש תוצר או אירוע"
+              aria-expanded={searchOpen}
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/80 text-[var(--text-muted)] shadow-[var(--warm-shadow-card)] backdrop-blur-xl transition hover:text-brand sm:hidden"
+            >
+              {searchOpen ? <XIcon className="h-[18px] w-[18px]" /> : <SearchIcon className="h-[18px] w-[18px]" />}
+            </button>
           </div>
 
-          <div className="relative w-full shrink-0 sm:w-[320px]">
+          <div className={`relative w-full shrink-0 sm:w-[320px] ${searchOpen ? '' : 'hidden sm:block'}`}>
             <div className="flex items-center gap-2.5 rounded-full border border-white/70 bg-white/80 px-4 py-2.5 shadow-[var(--warm-shadow-card)] backdrop-blur-xl transition focus-within:border-brand/40 focus-within:shadow-[0_0_0_4px_rgba(11,79,159,0.08)]">
               <SearchIcon className="h-[18px] w-[18px] shrink-0 text-[var(--text-faint)]" aria-hidden="true" />
               <input
@@ -1310,8 +1324,8 @@ function ProductionPicker({
 
         <section className="relative rounded-[20px] border border-white/70 bg-white/80 px-5 py-7 shadow-[var(--warm-shadow-card)] backdrop-blur-xl sm:px-8 lg:px-8 lg:py-8">
           <div className="flex flex-col gap-3">
-            <div className={`space-y-2 text-right ${selectedBrand ? 'min-h-[7rem] sm:min-h-[7.5rem]' : ''}`}>
-              <div className="flex items-start justify-between gap-3 pe-28 sm:pe-32 lg:pe-44">
+            <div className={`order-1 space-y-2 text-right sm:order-none ${selectedBrand ? 'sm:min-h-[7.5rem]' : ''}`}>
+              <div className="flex items-start justify-between gap-3 sm:pe-32 lg:pe-44">
                 <div className="min-w-0 flex-1">
                   {weekBadgeLabel && (
                     <button
@@ -1330,12 +1344,12 @@ function ProductionPicker({
                   <h1 className="text-2xl font-extrabold leading-tight tracking-tight text-[var(--text-strong)] sm:text-[28px]">מה תרצו ליצור היום?</h1>
                 </div>
                 {selectedBrand && (
-                  <div className="absolute left-5 top-7 flex shrink-0 items-center justify-center sm:left-8 lg:left-8 lg:top-8">
+                  <div className="absolute left-5 top-7 hidden shrink-0 items-center justify-center sm:left-8 sm:flex lg:left-8 lg:top-8">
                     <BrandLogo name={selectedBrand.name} url={selectedBrandLogoUrl} size="hero" />
                   </div>
                 )}
               </div>
-              <div className="space-y-2">
+              <div className="hidden space-y-2 sm:block">
                 <p className="text-[14px] font-normal leading-7 text-[var(--text-muted)]">
                   <span>בחרו סוג תוצר, הקלידו בריף</span>
                   <span className="hidden sm:inline"> — </span>
@@ -1345,8 +1359,10 @@ function ProductionPicker({
               </div>
             </div>
 
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className={`grid w-full grid-cols-2 gap-3.5 ${gridColsClass}`}>
+            <div className="order-3 min-w-0 flex-1 space-y-2 sm:order-none">
+              {/* Phones get a single scrolling row of compact chips; from `sm` up
+                  this goes back to the full tile grid. */}
+              <div className={`-mx-1 flex gap-2.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:w-full sm:grid-cols-2 sm:gap-3.5 sm:overflow-visible sm:px-0 ${gridColsClass}`}>
                 {gridChips.map((item) => {
                   const isUpload = item.to === null;
                   const active = !item.disabled && !isUpload && item.to === selected;
@@ -1361,7 +1377,7 @@ function ProductionPicker({
                         if (isUpload) setUploadContentOpen(true);
                         else if (item.to) setSelected(item.to);
                       }}
-                      className={`group relative flex min-w-0 flex-col overflow-hidden rounded-[16px] border p-4 text-right transition-all duration-300 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:p-5 ${
+                      className={`group relative flex shrink-0 items-center gap-2 overflow-hidden rounded-full border px-3.5 py-2 text-right transition-all duration-300 ease-out sm:min-w-0 sm:shrink sm:flex-col sm:items-stretch sm:gap-0 sm:rounded-[16px] sm:p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:p-5 ${
                         item.disabled
                           ? 'cursor-not-allowed border-[var(--border-soft)] bg-[var(--bg-subtle)] text-[var(--text-muted)] opacity-50'
                           : active
@@ -1369,16 +1385,16 @@ function ProductionPicker({
                             : `border-[var(--border-soft)] bg-[var(--surface-2)] text-[var(--text-strong)] hover:-translate-y-1 hover:border-transparent hover:bg-[var(--bg-surface)] hover:shadow-[0_16px_40px_rgba(30,60,114,.14)] ${glowTypeChips ? 'pick-me-glow' : ''}`
                       }`}
                     >
-                      <span className={`mb-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] text-white ${item.tone}`}>
+                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-white sm:mb-3 sm:h-11 sm:w-11 sm:rounded-[12px] ${item.tone}`}>
                         {isUpload
-                          ? <UploadIcon className="h-[22px] w-[22px] stroke-[1.75]" />
-                          : <PickerIcon type={item.to ?? 'text'} className="h-[22px] w-[22px] stroke-[1.75]" />}
+                          ? <UploadIcon className="h-4 w-4 stroke-[1.75] sm:h-[22px] sm:w-[22px]" />
+                          : <PickerIcon type={item.to ?? 'text'} className="h-4 w-4 stroke-[1.75] sm:h-[22px] sm:w-[22px]" />}
                       </span>
-                      <span className="block min-w-0 max-w-full whitespace-normal text-[15px] font-semibold leading-5">{item.label}</span>
-                      <span className="mt-1 block text-[12px] font-normal leading-4 text-[var(--text-muted)]">{item.sub}</span>
-                      <ArrowLeftIcon className="pointer-events-none absolute bottom-4 left-4 h-[18px] w-[18px] -translate-x-1 text-[var(--text-muted)] opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:text-brand group-hover:opacity-100" />
+                      <span className="block min-w-0 max-w-full whitespace-nowrap text-[13px] font-semibold leading-5 sm:whitespace-normal sm:text-[15px]">{item.label}</span>
+                      <span className="mt-1 hidden text-[12px] font-normal leading-4 text-[var(--text-muted)] sm:block">{item.sub}</span>
+                      <ArrowLeftIcon className="pointer-events-none absolute bottom-4 left-4 hidden h-[18px] w-[18px] -translate-x-1 text-[var(--text-muted)] opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:text-brand group-hover:opacity-100 sm:block" />
                       {active && (
-                        <span className="absolute left-3 top-3 flex h-5 w-5 items-center justify-center rounded-[6px] bg-[var(--warm-accent)] text-white">
+                        <span className="absolute left-3 top-3 hidden h-5 w-5 items-center justify-center rounded-[6px] bg-[var(--warm-accent)] text-white sm:flex">
                           <CheckIcon className="h-3.5 w-3.5" />
                         </span>
                       )}
@@ -1389,7 +1405,7 @@ function ProductionPicker({
             </div>
 
             {showTypeHint && (
-              <div className="rounded-[10px] border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--warn-fg)]">
+              <div className="order-4 rounded-[10px] border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--warn-fg)] sm:order-none">
                 <span className="inline-flex items-center gap-2">
                   <span className="text-base">💡</span>
                   בחרו קודם סוג תוצר מהאפשרויות למעלה
@@ -1398,13 +1414,13 @@ function ProductionPicker({
             )}
 
             {allowedTypes.length === 0 && !canUploadContent && (
-              <div className="rounded-[10px] border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--warn-fg)]">
+              <div className="order-5 rounded-[10px] border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--warn-fg)] sm:order-none">
                 אין לך כרגע הרשאה להפיק תוצרים. אפשר לפנות למנהל המערכת.
               </div>
             )}
 
             {brands.length > 1 ? (
-              <div className="flex flex-col gap-3 text-right">
+              <div className="order-6 flex flex-col gap-3 text-right sm:order-none">
                 <div className="text-[13px] font-semibold text-[var(--text-strong)]">מותגים:</div>
                 <div className="flex flex-wrap justify-start gap-2">
                   {brands.map((brand) => {
@@ -1438,7 +1454,7 @@ function ProductionPicker({
               </div>
             ) : null}
 
-            <div className="relative rounded-[16px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 shadow-sm transition focus-within:border-brand/40 focus-within:shadow-[0_0_0_4px_rgba(11,79,159,0.08)] lg:min-h-[76px] lg:px-5">
+            <div className="relative order-2 rounded-[16px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 shadow-sm transition focus-within:border-brand/40 sm:order-none focus-within:shadow-[0_0_0_4px_rgba(11,79,159,0.08)] lg:min-h-[76px] lg:px-5">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1510,13 +1526,13 @@ function ProductionPicker({
             </div>
 
             {uploadError && (
-              <div className="rounded-[10px] border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--danger-fg)]">
+              <div className="order-7 rounded-[10px] border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--danger-fg)] sm:order-none">
                 {uploadError}
               </div>
             )}
 
             {pickerError && (
-              <div className="rounded-[10px] border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--danger-fg)]">
+              <div className="order-7 rounded-[10px] border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3.5 py-2.5 text-right text-[13px] font-normal text-[var(--danger-fg)] sm:order-none">
                 {pickerError}
               </div>
             )}
