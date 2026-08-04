@@ -1325,7 +1325,7 @@ function ProductionPicker({
         <section className="relative rounded-[20px] border border-white/70 bg-white/80 px-5 py-7 shadow-[var(--warm-shadow-card)] backdrop-blur-xl sm:px-8 lg:px-8 lg:py-8">
           <div className="flex flex-col gap-3">
             <div className={`order-1 space-y-2 text-right sm:order-none ${selectedBrand ? 'sm:min-h-[7.5rem]' : ''}`}>
-              <div className="flex items-start justify-between gap-3 sm:pe-32 lg:pe-44">
+              <div className="flex items-start justify-between gap-3 pe-[72px] sm:pe-32 lg:pe-44">
                 <div className="min-w-0 flex-1">
                   {weekBadgeLabel && (
                     <button
@@ -1344,7 +1344,7 @@ function ProductionPicker({
                   <h1 className="text-2xl font-extrabold leading-tight tracking-tight text-[var(--text-strong)] sm:text-[28px]">מה תרצו ליצור היום?</h1>
                 </div>
                 {selectedBrand && (
-                  <div className="absolute left-5 top-7 hidden shrink-0 items-center justify-center sm:left-8 sm:flex lg:left-8 lg:top-8">
+                  <div className="absolute left-5 top-7 flex shrink-0 items-center justify-center sm:left-8 lg:left-8 lg:top-8">
                     <BrandLogo name={selectedBrand.name} url={selectedBrandLogoUrl} size="hero" />
                   </div>
                 )}
@@ -1360,9 +1360,9 @@ function ProductionPicker({
             </div>
 
             <div className="order-3 min-w-0 flex-1 space-y-2 sm:order-none">
-              {/* Phones get a single scrolling row of compact chips; from `sm` up
-                  this goes back to the full tile grid. */}
-              <div className={`-mx-1 flex gap-2.5 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:w-full sm:grid-cols-2 sm:gap-3.5 sm:overflow-visible sm:px-0 ${gridColsClass}`}>
+              {/* Phones get compact chips two to a row; from `sm` up this goes
+                  back to the full tile grid. */}
+              <div className={`grid w-full grid-cols-2 gap-2.5 sm:gap-3.5 ${gridColsClass}`}>
                 {gridChips.map((item) => {
                   const isUpload = item.to === null;
                   const active = !item.disabled && !isUpload && item.to === selected;
@@ -1377,7 +1377,7 @@ function ProductionPicker({
                         if (isUpload) setUploadContentOpen(true);
                         else if (item.to) setSelected(item.to);
                       }}
-                      className={`group relative flex shrink-0 items-center gap-2 overflow-hidden rounded-full border px-3.5 py-2 text-right transition-all duration-300 ease-out sm:min-w-0 sm:shrink sm:flex-col sm:items-stretch sm:gap-0 sm:rounded-[16px] sm:p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:p-5 ${
+                      className={`group relative flex min-w-0 items-center gap-2 overflow-hidden rounded-full border px-3 py-2 text-right transition-all duration-300 ease-out sm:flex-col sm:items-stretch sm:gap-0 sm:rounded-[16px] sm:p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:p-5 ${
                         item.disabled
                           ? 'cursor-not-allowed border-[var(--border-soft)] bg-[var(--bg-subtle)] text-[var(--text-muted)] opacity-50'
                           : active
@@ -1390,7 +1390,7 @@ function ProductionPicker({
                           ? <UploadIcon className="h-4 w-4 stroke-[1.75] sm:h-[22px] sm:w-[22px]" />
                           : <PickerIcon type={item.to ?? 'text'} className="h-4 w-4 stroke-[1.75] sm:h-[22px] sm:w-[22px]" />}
                       </span>
-                      <span className="block min-w-0 max-w-full whitespace-nowrap text-[13px] font-semibold leading-5 sm:whitespace-normal sm:text-[15px]">{item.label}</span>
+                      <span className="block min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-semibold leading-5 sm:overflow-visible sm:whitespace-normal sm:text-[15px]">{item.label}</span>
                       <span className="mt-1 hidden text-[12px] font-normal leading-4 text-[var(--text-muted)] sm:block">{item.sub}</span>
                       <ArrowLeftIcon className="pointer-events-none absolute bottom-4 left-4 hidden h-[18px] w-[18px] -translate-x-1 text-[var(--text-muted)] opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:text-brand group-hover:opacity-100 sm:block" />
                       {active && (
@@ -2693,7 +2693,7 @@ function BrandModal({
 function BrandLogo({ name, url, size = 'default' }: { name: string; url: string | null; size?: 'default' | 'compact' | 'hero' }) {
   const boxClass =
     size === 'hero'
-      ? 'h-24 w-24 rounded-2xl sm:h-28 sm:w-28'
+      ? 'h-14 w-14 rounded-xl sm:h-28 sm:w-28 sm:rounded-2xl'
       : size === 'compact'
       ? 'h-16 w-16 rounded-xl sm:h-[72px] sm:w-[72px]'
       : 'h-20 w-20 rounded-2xl sm:h-24 sm:w-24';
