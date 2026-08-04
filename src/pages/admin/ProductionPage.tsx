@@ -1344,7 +1344,7 @@ function ProductionPicker({
                   <h1 className="text-2xl font-extrabold leading-tight tracking-tight text-[var(--text-strong)] sm:text-[28px]">מה תרצו ליצור היום?</h1>
                 </div>
                 {selectedBrand && (
-                  <div className="absolute left-5 top-7 flex shrink-0 items-center justify-center sm:left-8 lg:left-8 lg:top-8">
+                  <div className="absolute left-5 top-3 flex shrink-0 items-center justify-center sm:left-8 sm:top-7 lg:left-8 lg:top-8">
                     <BrandLogo name={selectedBrand.name} url={selectedBrandLogoUrl} size="hero" />
                   </div>
                 )}
