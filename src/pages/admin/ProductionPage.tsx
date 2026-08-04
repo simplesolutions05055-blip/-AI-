@@ -1454,7 +1454,7 @@ function ProductionPicker({
               </div>
             ) : null}
 
-            <div className="relative order-2 rounded-[16px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 shadow-sm transition focus-within:border-brand/40 sm:order-none focus-within:shadow-[0_0_0_4px_rgba(11,79,159,0.08)] lg:min-h-[76px] lg:px-5">
+            <div className="relative order-2 mt-3 sm:mt-0 rounded-[16px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 shadow-sm transition focus-within:border-brand/40 sm:order-none focus-within:shadow-[0_0_0_4px_rgba(11,79,159,0.08)] lg:min-h-[76px] lg:px-5">
               <input
                 ref={fileInputRef}
                 type="file"
