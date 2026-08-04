@@ -1556,7 +1556,7 @@ function ProductionPicker({
             {upcomingEvents.length === 0 ? (
               <div className="mt-5 rounded-xl border border-dashed border-[var(--border-warm)] py-10 text-center text-sm text-[var(--text-muted)]">אין אירועים קרובים</div>
             ) : (
-              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {upcomingEvents.slice(0, 3).map((event, index) => {
                   const eventDate = new Date(`${event.date}T12:00:00`);
                   const day = String(eventDate.getDate()).padStart(2, '0');
@@ -1568,9 +1568,9 @@ function ProductionPicker({
                       type="button"
                       disabled={!interactive}
                       onClick={() => interactive && handleUseUpcomingEvent(event)}
-                      className="group flex min-h-[190px] flex-col items-center rounded-[16px] border border-[var(--border-soft)] bg-white px-3 py-4 text-center transition hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[var(--warm-shadow-card)] disabled:cursor-default"
+                      className="group flex min-h-[170px] flex-col items-center rounded-[16px] border border-[var(--border-soft)] bg-white px-2.5 py-4 text-center sm:min-h-[190px] sm:px-3 transition hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-[var(--warm-shadow-card)] disabled:cursor-default"
                     >
-                      <span className="text-[34px] font-extrabold leading-none text-brand">{day}</span>
+                      <span className="text-[28px] font-extrabold leading-none text-brand sm:text-[34px]">{day}</span>
                       <span className="mt-1 text-[12px] font-semibold text-[var(--text-muted)]">{month}</span>
                       <span className={`mt-3 rounded-full px-2.5 py-1 text-[10px] font-bold ${index === 0 ? 'bg-[var(--danger-bg)] text-[var(--danger-fg)]' : 'bg-[var(--tint-olive)] text-[var(--text-strong)]'}`}>
                         {upcomingEventTag(event)}
