@@ -13,9 +13,9 @@ import {
   round4,
 } from './util.ts';
 import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption, generateOutputTitle } from './openai.ts';
-// WhatsApp goes out through GREEN-API; twilio.ts is now only the shared
-// WhatsApp shapes (the interactive types the simulator still renders).
-import { type WhatsAppInteractive } from './twilio.ts';
+// WhatsApp goes out through GREEN-API. whatsappText.ts holds the shared
+// message shapes (the interactive types the simulator still renders).
+import { type WhatsAppInteractive } from './whatsappText.ts';
 import { sendFile, sendText } from './greenapi.ts';
 import { isSendBlocked } from './instanceState.ts';
 import { isGroupTarget, parseGroupTarget, sendGroupText, sendGroupMedia } from './group.ts';

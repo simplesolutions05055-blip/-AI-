@@ -7,7 +7,7 @@
 // constants, so importing back would create a cycle). Sending goes through the
 // `send` callback the caller supplies (inbound.ts passes worker.sendOut).
 import { type DB } from './db.ts';
-import { type WhatsAppInteractive } from './twilio.ts';
+import { type WhatsAppInteractive } from './whatsappText.ts';
 import { sendFile } from './greenapi.ts';
 import { isGroupTarget, parseGroupTarget, sendGroupMedia } from './group.ts';
 import { generateSocialCaption, classifyPostDeliveryIntent, generateDeckSlides, rewriteDeckSlide, extractSlideCountFromPrompt, extractDeckEditSlideTarget } from './openai.ts';

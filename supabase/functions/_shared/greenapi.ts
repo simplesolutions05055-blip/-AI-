@@ -16,7 +16,7 @@
 //     always reply;
 //   * interactive quick-reply / list-picker Content resources — replies now use
 //     the numbered-text menu the engine already produces as its fallback.
-import { splitForWhatsApp } from './twilio.ts';
+import { splitForWhatsApp } from './whatsappText.ts';
 
 function endpoint(method: string): string {
   const base = (Deno.env.get('GREENAPI_API_URL') || 'https://api.green-api.com').replace(/\/$/, '');
