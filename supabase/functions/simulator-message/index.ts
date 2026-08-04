@@ -10,6 +10,7 @@ import { findOrCreateConversation, handleInbound } from '../_shared/inbound.ts';
 import { getSettingOr, getTemplates, logEvent } from '../_shared/util.ts';
 import { processInboundMediaItem } from '../_shared/inbound_media.ts';
 import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
+import { denyUnauthenticated } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -38,6 +39,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const database = db();
+  // Reachable by anyone holding the anon key, which ships in the browser
+  // bundle — the platform's verify_jwt gate proves a token exists, not a user.
+  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  if (denied) return denied;
+
   try {
     const { sessionId, body, attachments } = await req.json();
     if (!sessionId || typeof sessionId !== 'string') return json({ error: 'sessionId required' }, 400);

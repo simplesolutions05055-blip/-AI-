@@ -9,6 +9,7 @@ import {
   estimateTranscriptionCost,
 } from '../_shared/util.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor, abuseSettings } from '../_shared/abuseGuard.ts';
+import { denyUnauthenticated } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,6 +23,11 @@ Deno.serve(async (req) => {
   }
 
   const database = db();
+
+  // Reachable by anyone holding the anon key, which ships in the browser
+  // bundle — the platform's verify_jwt gate proves a token exists, not a user.
+  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  if (denied) return denied;
 
   try {
     const { kind, base64, mime, name, requestId } = await req.json();

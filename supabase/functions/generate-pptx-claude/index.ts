@@ -13,6 +13,7 @@
 // Job state + the produced file live in the `outputs` bucket under pptx-jobs/.
 import Anthropic from 'npm:@anthropic-ai/sdk@0.65.0';
 import { db } from '../_shared/db.ts';
+import { denyUnauthenticated } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -184,6 +185,11 @@ Deno.serve(async (req) => {
   if (!apiKey) return json({ error: 'Missing ANTHROPIC_API_KEY (Supabase secret)' }, 500);
 
   const database = db();
+  // Reachable by anyone holding the anon key, which ships in the browser
+  // bundle — the platform's verify_jwt gate proves a token exists, not a user.
+  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  if (denied) return denied;
+
   try {
     const payload = await req.json();
     const action = payload?.action;

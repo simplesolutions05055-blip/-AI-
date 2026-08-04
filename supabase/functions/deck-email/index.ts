@@ -31,6 +31,7 @@ import { imageDimensions } from '../_shared/image.ts';
 import { renderPdfBase64 } from '../_shared/pdf.ts';
 import { sendDeliverableEmail, buildEmailHtml } from '../_shared/resend.ts';
 import { deliverableReadyHeading, deliverableSubject, deliverableTitle } from '../_shared/deliverableTitle.ts';
+import { denyUnauthenticated } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -102,6 +103,11 @@ function json(body: unknown, status = 200) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   const database = db();
+
+  // Reachable by anyone holding the anon key, which ships in the browser
+  // bundle — the platform's verify_jwt gate proves a token exists, not a user.
+  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  if (denied) return denied;
 
   try {
     const payload = await req.json();

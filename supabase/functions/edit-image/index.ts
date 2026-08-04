@@ -6,6 +6,7 @@ import { db } from '../_shared/db.ts';
 import { editImage } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateImageCost } from '../_shared/util.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from '../_shared/abuseGuard.ts';
+import { denyUnauthenticated } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -35,6 +36,11 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
   const database = db();
+  // Reachable by anyone holding the anon key, which ships in the browser
+  // bundle — the platform's verify_jwt gate proves a token exists, not a user.
+  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  if (denied) return denied;
+
   try {
     const body = (await req.json()) as Body;
     const sourceRequestId = body.request_id;

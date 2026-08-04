@@ -2,6 +2,7 @@ import { db } from '../_shared/db.ts';
 import { generateImage } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateImageCost } from '../_shared/util.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from '../_shared/abuseGuard.ts';
+import { denyUnauthenticated } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,6 +17,11 @@ Deno.serve(async (req) => {
 
   const database = db();
 
+  // Reachable by anyone holding the anon key, which ships in the browser
+  // bundle — the platform's verify_jwt gate proves a token exists, not a user.
+  const { denied, caller } = await denyUnauthenticated(req, database, corsHeaders);
+  if (denied) return denied;
+
   try {
     const { prompt, size, quality, requestId } = await req.json();
     if (!prompt || typeof prompt !== 'string') {
@@ -29,7 +35,10 @@ Deno.serve(async (req) => {
       await enforceRequestCost(database, requestId);
       await enforceAiLimit(database, actor, { kind: 'generation', promptChars: prompt.length, estimatedCost: estimateImageCost(1) });
     } else {
-      await enforceAiLimit(database, { ip: req.headers.get('x-forwarded-for') ?? req.headers.get('cf-connecting-ip') }, {
+      // Now that a real user is guaranteed, meter per account rather than per
+      // IP — an IP bucket is both shared between colleagues and trivially
+      // reset by anyone who wanted to abuse it.
+      await enforceAiLimit(database, { userId: caller.userId }, {
         kind: 'generation',
         promptChars: prompt.length,
         estimatedCost: estimateImageCost(1),

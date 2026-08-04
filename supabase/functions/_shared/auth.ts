@@ -64,6 +64,31 @@ export async function requireAdmin(req: Request, database: DB = db()): Promise<C
   return caller;
 }
 
+// Guard for handlers that only need "a real user is behind this call".
+// Returns a ready 401 when there is not, or null (plus the caller) when there
+// is — so it can sit before the handler's own try/catch without every existing
+// catch block having to learn about AuthError.
+export async function denyUnauthenticated(
+  req: Request,
+  database: DB,
+  headers: Record<string, string>,
+): Promise<{ denied: Response; caller: null } | { denied: null; caller: Caller }> {
+  try {
+    return { denied: null, caller: await requireUser(req, database) };
+  } catch (e) {
+    if (e instanceof AuthError) {
+      return {
+        denied: new Response(JSON.stringify({ error: e.code }), {
+          status: e.status,
+          headers: { ...headers, 'Content-Type': 'application/json' },
+        }),
+        caller: null,
+      };
+    }
+    throw e;
+  }
+}
+
 // Convenience for the common `catch` shape: turns an AuthError into its
 // response and re-throws anything else so real failures still surface.
 export function authErrorResponse(e: unknown, headers: Record<string, string>): Response | null {

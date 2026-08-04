@@ -1,5 +1,6 @@
 import { db } from '../_shared/db.ts';
 import { estimateTextCost, logEvent } from '../_shared/util.ts';
+import { denyUnauthenticated } from '../_shared/auth.ts';
 
 type BrandColorRole = 'primary' | 'secondary' | 'accent' | 'background' | 'text';
 
@@ -28,6 +29,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const database = db();
+  // Reachable by anyone holding the anon key, which ships in the browser
+  // bundle — the platform's verify_jwt gate proves a token exists, not a user.
+  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  if (denied) return denied;
+
   try {
     const body = (await req.json()) as Body;
     const logoBase64 = normalizeText(body.logo_base64);

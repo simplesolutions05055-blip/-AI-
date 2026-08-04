@@ -2,6 +2,7 @@ import { db } from '../_shared/db.ts';
 import { generatePresentationOutline, generateDeckSlides, rewriteDeckSlide, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption, extractAnnualPlannerEvents } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost, imageUnitCost } from '../_shared/util.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
+import { denyUnauthenticated } from '../_shared/auth.ts';
 import {
   AbuseGuardError,
   enforceAiLimit,
@@ -29,6 +30,11 @@ Deno.serve(async (req) => {
   }
 
   const database = db();
+
+  // Reachable by anyone holding the anon key, which ships in the browser
+  // bundle — the platform's verify_jwt gate proves a token exists, not a user.
+  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  if (denied) return denied;
 
   try {
     const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, slide, slideNumber, instruction, planner_year } = await req.json();
