@@ -78,7 +78,29 @@ Deno.serve(async (req) => {
     stuck++;
   }
 
-  return new Response(JSON.stringify({ ok: true, softClosed, stuck }), {
+  // ── 3. Prune the rate-limit ledger ─────────────────────────────────────────
+  // rate_limit_events gets two rows per inbound message plus one per AI call and
+  // was never cleaned. The longest window anything asks about is 24 hours, so
+  // rows older than 48h cannot affect a decision — they only make every counting
+  // query scan more. Pruned once an hour rather than every run to keep the
+  // five-minute cron cheap.
+  let pruned = 0;
+  if (new Date().getMinutes() < 5) {
+    const cutoff = new Date(now - 48 * 3600_000).toISOString();
+    const { data: deleted, error: pruneErr } = await database
+      .from('rate_limit_events')
+      .delete()
+      .lt('created_at', cutoff)
+      .select('id');
+    if (pruneErr) {
+      await logEvent(database, { severity: 'warning', action: 'rate_limit_prune_failed', message: String(pruneErr.message) });
+    } else {
+      pruned = (deleted ?? []).length;
+      if (pruned) await logEvent(database, { action: 'rate_limit_events_pruned', metadata: { pruned, cutoff } });
+    }
+  }
+
+  return new Response(JSON.stringify({ ok: true, softClosed, stuck, pruned }), {
     headers: { 'Content-Type': 'application/json' },
   });
 });

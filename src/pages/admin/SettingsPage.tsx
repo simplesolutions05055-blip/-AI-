@@ -828,6 +828,12 @@ export default function SettingsPage() {
               תקרת עלות משוערת לבקשה בודדת בדולרים. כשהעלות המשוערת מגיעה לתקרה, המערכת עוצרת את ההפקה ומעבירה את הבקשה לטיפול מנהל — הגנה מפני לולאות או שימוש חריג שמבזבזים כסף. 0 = ללא תקרה.
             </span>
           </Field>
+          <Field label="תקרת הוצאה יומית לכל המערכת ($)">
+            <input type="number" inputMode="decimal" step="1" min={0} className={input} value={limits.daily_budget_usd ?? 0} onChange={(e) => update('rate_limits', { ...limits, daily_budget_usd: Number(e.target.value) })} />
+            <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+              סך העלות המשוערת של כל ההפקות בכל המערכת בחלון של 24 שעות. בהגעה לתקרה הפקות חדשות נעצרות (הבוט ממשיך לענות ומודיע שהמכסה נוצלה), וב-80% נשלחת התראה במייל למנהלים. 0 = ללא תקרה. שאר המגבלות בעמוד הן לכל משתמש בנפרד — זו היחידה שחוסמת את המערכת כולה.
+            </span>
+          </Field>
           <Field label="הודעות ל-24 שעות">
             <input type="number" inputMode="numeric" className={input} value={limits.messages_per_24h ?? 50} onChange={(e) => update('rate_limits', { ...limits, messages_per_24h: Number(e.target.value) })} />
             <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">

@@ -1,5 +1,6 @@
 import type { DB } from './db.ts';
 import { getSettingOr, logEvent, round4 } from './util.ts';
+import { evaluateGlobalDailyBudget } from './budgetGuard.ts';
 
 type Actor = {
   userId?: string | null;
@@ -146,6 +147,15 @@ export async function enforceAiLimit(
   const bKey = brandKey(actor.brandId);
   if (bKey) await enforceLimit(database, actor, bKey, 'ai_brand_day', settings.ai_per_brand_day);
   await enforceDailyCost(database, actor, settings.max_daily_cost_usd_per_actor);
+  // System-wide cap, checked LAST so a user who is himself over quota gets the
+  // personal message rather than a system-wide one.
+  const budget = await evaluateGlobalDailyBudget(database, { requestId: actor.requestId });
+  if (budget.blocked) {
+    throw new AbuseGuardError(
+      'global_budget_exceeded',
+      'המערכת הגיעה לתקרת ההוצאה היומית. אפשר לנסות שוב מאוחר יותר.',
+    );
+  }
   await recordEvent(database, key, 'ai_hour');
   await recordEvent(database, key, 'ai_day');
   if (opts.kind === 'media') await recordEvent(database, key, 'media_ai_hour');
