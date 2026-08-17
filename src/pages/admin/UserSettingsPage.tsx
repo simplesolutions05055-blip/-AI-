@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react';
 import { Download, X } from 'lucide-react';
 import OnboardingPage from '@/pages/OnboardingPage';
 import ChangePasswordCard from '@/components/ChangePasswordCard';
+import { useProfile } from '@/lib/useProfile';
 
 export default function UserSettingsPage() {
   const [installOpen, setInstallOpen] = useState(false);
+  const { loading, profile } = useProfile();
+  const isAdmin = profile?.role === 'admin';
 
   return (
     <section className="mx-auto w-full max-w-3xl" dir="rtl">
@@ -12,7 +15,9 @@ export default function UserSettingsPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-normal text-[var(--text)]">הגדרות</h1>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            עדכון פרטים אישיים, פרטי מותג, מסמכים וקבצים שישמשו את המערכת.
+            {isAdmin
+              ? 'עדכון פרטים אישיים, פרטי מותג, מסמכים וקבצים שישמשו את המערכת.'
+              : 'ניהול הסיסמה שלכם במערכת.'}
           </p>
         </div>
         <button
@@ -25,9 +30,10 @@ export default function UserSettingsPage() {
         </button>
       </div>
 
-      <OnboardingPage embedded />
+      {/* Regular users get password management only; the details/brand/files form stays for admins. */}
+      {isAdmin && <OnboardingPage embedded />}
 
-      <ChangePasswordCard />
+      {!loading && <ChangePasswordCard />}
 
       {installOpen && <InstallInstructionsModal onClose={() => setInstallOpen(false)} />}
     </section>
