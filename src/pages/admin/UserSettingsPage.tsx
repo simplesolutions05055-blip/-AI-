@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Download, X } from 'lucide-react';
 import OnboardingPage from '@/pages/OnboardingPage';
+import ChangePasswordCard from '@/components/ChangePasswordCard';
 
 export default function UserSettingsPage() {
   const [installOpen, setInstallOpen] = useState(false);
@@ -25,6 +26,8 @@ export default function UserSettingsPage() {
       </div>
 
       <OnboardingPage embedded />
+
+      <ChangePasswordCard />
 
       {installOpen && <InstallInstructionsModal onClose={() => setInstallOpen(false)} />}
     </section>
