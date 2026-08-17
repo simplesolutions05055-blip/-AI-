@@ -11,7 +11,6 @@ export default function ChangePasswordCard() {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -93,50 +92,31 @@ export default function ChangePasswordCard() {
           value={profile?.email ?? ''}
         />
 
-        <label className="mb-1 block text-sm font-medium" htmlFor="current-password">סיסמה נוכחית</label>
-        <input
+        <PasswordField
           id="current-password"
-          type={show ? 'text' : 'password'}
+          label="סיסמה נוכחית"
           autoComplete="current-password"
-          required
           value={current}
-          onChange={(e) => setCurrent(e.target.value)}
-          className="mb-4 w-full rounded-lg border border-[var(--border)] px-3 py-2"
+          onChange={setCurrent}
         />
 
-        <label className="mb-1 block text-sm font-medium" htmlFor="new-password">סיסמה חדשה</label>
-        <div className="relative mb-1">
-          <input
-            id="new-password"
-            type={show ? 'text' : 'password'}
-            autoComplete="new-password"
-            required
-            minLength={MIN_LENGTH}
-            value={next}
-            onChange={(e) => setNext(e.target.value)}
-            className="w-full rounded-lg border border-[var(--border)] py-2 pe-10 ps-3"
-          />
-          <button
-            type="button"
-            onClick={() => setShow((v) => !v)}
-            aria-label={show ? 'הסתר סיסמה' : 'הצג סיסמה'}
-            className="absolute inset-y-0 end-0 flex items-center px-3 text-[var(--muted)] hover:text-[var(--text)]"
-          >
-            {show ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-          </button>
-        </div>
-        <p className="mb-4 text-xs text-[var(--muted)]">לפחות {MIN_LENGTH} תווים.</p>
-
-        <label className="mb-1 block text-sm font-medium" htmlFor="confirm-password">אימות סיסמה חדשה</label>
-        <input
-          id="confirm-password"
-          type={show ? 'text' : 'password'}
+        <PasswordField
+          id="new-password"
+          label="סיסמה חדשה"
           autoComplete="new-password"
-          required
+          minLength={MIN_LENGTH}
+          value={next}
+          onChange={setNext}
+          hint={`לפחות ${MIN_LENGTH} תווים.`}
+        />
+
+        <PasswordField
+          id="confirm-password"
+          label="אימות סיסמה חדשה"
+          autoComplete="new-password"
           minLength={MIN_LENGTH}
           value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          className="mb-4 w-full rounded-lg border border-[var(--border)] px-3 py-2"
+          onChange={setConfirm}
         />
 
         {error && <p className="mb-4 text-sm text-red-600" role="alert">{error}</p>}
@@ -151,5 +131,54 @@ export default function ChangePasswordCard() {
         </button>
       </form>
     </section>
+  );
+}
+
+/** A password input with its own show/hide toggle. */
+function PasswordField({
+  id,
+  label,
+  autoComplete,
+  value,
+  onChange,
+  minLength,
+  hint,
+}: {
+  id: string;
+  label: string;
+  autoComplete: 'current-password' | 'new-password';
+  value: string;
+  onChange: (value: string) => void;
+  minLength?: number;
+  hint?: string;
+}) {
+  const [show, setShow] = useState(false);
+
+  return (
+    <>
+      <label className="mb-1 block text-sm font-medium" htmlFor={id}>{label}</label>
+      <div className="relative">
+        <input
+          id={id}
+          type={show ? 'text' : 'password'}
+          autoComplete={autoComplete}
+          required
+          minLength={minLength}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full rounded-lg border border-[var(--border)] py-2 pe-10 ps-3"
+        />
+        <button
+          type="button"
+          onClick={() => setShow((v) => !v)}
+          aria-label={show ? `הסתר ${label}` : `הצג ${label}`}
+          aria-controls={id}
+          className="absolute inset-y-0 end-0 flex items-center px-3 text-[var(--muted)] hover:text-[var(--text)]"
+        >
+          {show ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+        </button>
+      </div>
+      {hint ? <p className="mb-4 mt-1 text-xs text-[var(--muted)]">{hint}</p> : <div className="mb-4" />}
+    </>
   );
 }
