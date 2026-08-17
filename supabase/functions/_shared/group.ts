@@ -10,7 +10,7 @@
 // otherwise the bot would butt into every human conversation.
 import { type DB } from './db.ts';
 import { getSettingOr } from './util.ts';
-import { sendFile, sendText } from './greenapi.ts';
+import { sendFile, sendText } from './whatsapp.ts';
 
 export type GroupSettings = { enabled: boolean; trigger_word: string };
 
@@ -102,7 +102,9 @@ export async function findOrCreateGroupConversation(
 
 // ── group senders (real groups only — simulated never reaches here) ──────────
 // A group id IS a GREEN-API chatId ("120363...@g.us"), so these are thin
-// aliases over the shared client. See greenapi.ts for the credential contract.
+// aliases over the transport switch. Groups exist ONLY on the GREEN-API
+// provider — under WHATSAPP_PROVIDER=twilio these throw, since the WhatsApp
+// Business API has no group support. See whatsapp.ts.
 export async function sendGroupText(groupId: string, body: string): Promise<string> {
   return await sendText(groupId, body);
 }

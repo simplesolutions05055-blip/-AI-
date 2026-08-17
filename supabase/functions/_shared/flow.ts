@@ -8,7 +8,7 @@
 // `send` callback the caller supplies (inbound.ts passes worker.sendOut).
 import { type DB } from './db.ts';
 import { type WhatsAppInteractive } from './whatsappText.ts';
-import { sendFile } from './greenapi.ts';
+import { sendFile } from './whatsapp.ts';
 import { isGroupTarget, parseGroupTarget, sendGroupMedia } from './group.ts';
 import { generateSocialCaption, classifyPostDeliveryIntent, generateDeckSlides, rewriteDeckSlide, extractSlideCountFromPrompt, extractDeckEditSlideTarget } from './openai.ts';
 import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail, MAX_MEDIA_BYTES } from './util.ts';

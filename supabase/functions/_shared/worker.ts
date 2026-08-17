@@ -13,10 +13,11 @@ import {
   round4,
 } from './util.ts';
 import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption, generateOutputTitle } from './openai.ts';
-// WhatsApp goes out through GREEN-API. whatsappText.ts holds the shared
-// message shapes (the interactive types the simulator still renders).
+// WhatsApp goes out through whatsapp.ts, the provider switch (Twilio or
+// GREEN-API). whatsappText.ts holds the shared message shapes (the interactive
+// types the simulator still renders).
 import { type WhatsAppInteractive } from './whatsappText.ts';
-import { sendFile, sendText } from './greenapi.ts';
+import { sendFile, sendText } from './whatsapp.ts';
 import { isSendBlocked } from './instanceState.ts';
 import { isGroupTarget, parseGroupTarget, sendGroupText, sendGroupMedia } from './group.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';

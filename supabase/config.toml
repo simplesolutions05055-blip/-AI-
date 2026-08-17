@@ -59,3 +59,9 @@ verify_jwt = false
 
 [functions.publish-scheduled-posts]
 verify_jwt = false
+
+# Twilio signs its webhooks with X-Twilio-Signature, not a Supabase JWT — the
+# platform gate would reject every inbound message before the function ran. The
+# function validates the signature itself (validateSignature in _shared/twilio.ts).
+[functions.twilio-webhook]
+verify_jwt = false
