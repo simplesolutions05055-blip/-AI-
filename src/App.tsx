@@ -13,6 +13,7 @@ import DashboardPage from '@/pages/admin/DashboardPage';
 import RequestsCostsPage from '@/pages/admin/RequestsCostsPage';
 import SettingsPage from '@/pages/admin/SettingsPage';
 import UserSettingsPage from '@/pages/admin/UserSettingsPage';
+import PasswordPage from '@/pages/admin/PasswordPage';
 import SimulatorPage from '@/pages/admin/SimulatorPage';
 import FilesPage from '@/pages/admin/FilesPage';
 import ModelsPage from '@/pages/admin/ModelsPage';
@@ -70,6 +71,7 @@ export default function App() {
           <Route path="errors" element={<ErrorsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="user-settings" element={<UserSettingsPage />} />
+          <Route path="password" element={<PasswordPage />} />
           <Route path="meta-connection" element={<MetaConnectionPage />} />
         </Route>
         <Route path="*" element={<ErrorPage />} />

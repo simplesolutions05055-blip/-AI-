@@ -17,7 +17,7 @@ import { PageSkeleton, Skeleton } from '@/components/ui/Skeleton';
 // Branding is admin-only; regular users manage their brand via onboarding.
 // The annual planner is shared: regular users see the plan for their assigned
 // brand, while admins can work across all brands.
-const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/holidays', '/admin/annual-planner', '/admin/user-settings', '/admin/simulator', '/admin/meta-connection'];
+const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/holidays', '/admin/annual-planner', '/admin/user-settings', '/admin/password', '/admin/simulator', '/admin/meta-connection'];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile, hasBrand, requireUploads } = useProfile();

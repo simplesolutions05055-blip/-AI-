@@ -23,6 +23,7 @@ const TITLES: { match: (p: string) => boolean; title: string }[] = [
   { match: (p) => p.startsWith('/admin/holidays'), title: 'גאנט' },
   { match: (p) => p.startsWith('/admin/errors'), title: 'שגיאות' },
   { match: (p) => p.startsWith('/admin/user-settings'), title: 'הגדרות' },
+  { match: (p) => p.startsWith('/admin/password'), title: 'סיסמה' },
   { match: (p) => p.startsWith('/admin/settings'), title: 'הגדרות' },
 ];
 

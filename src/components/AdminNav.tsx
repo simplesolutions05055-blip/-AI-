@@ -10,6 +10,7 @@ import {
   Gauge,
   Grid3X3,
   Inbox,
+  KeyRound,
   LogOut,
   Mail,
   Menu,
@@ -76,11 +77,12 @@ const NAV_SECTIONS: NavSection[] = [
     links: [
       { href: '/admin/settings', label: 'הגדרות', adminOnly: true, icon: 'gear' },
       { href: '/admin/user-settings', label: 'הגדרות', userOnly: true, icon: 'userSettings' },
+      { href: '/admin/password', label: 'סיסמה', icon: 'key' },
     ],
   },
 ];
 
-type NavIconName = 'spark' | 'users' | 'calendar' | 'annualPlanner' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings' | 'mail' | 'meta' | 'metaOff';
+type NavIconName = 'spark' | 'users' | 'calendar' | 'annualPlanner' | 'palette' | 'files' | 'chat' | 'inbox' | 'messages' | 'alert' | 'cpu' | 'puzzle' | 'gear' | 'dashboard' | 'logout' | 'menu' | 'userSettings' | 'key' | 'mail' | 'meta' | 'metaOff';
 
 function visibleSections(isAdmin: boolean, canCreateOutputs: boolean) {
   return NAV_SECTIONS.map((sec) => ({
@@ -294,6 +296,7 @@ function NavIcon({ name, className = 'h-4 w-4' }: { name: NavIconName; active?: 
     spark: Sparkles,
     users: Users,
     userSettings: UserCog,
+    key: KeyRound,
     meta: Share2,
     metaOff: Link2Off,
   } satisfies Record<NavIconName, typeof Sparkles>;
