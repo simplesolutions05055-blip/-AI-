@@ -60,7 +60,9 @@ export default function LoginPage() {
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
       <form onSubmit={onSubmit} className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-[var(--border)] p-6">
-        <img src="/primeos-logo.png" alt="PrimeOS" className="mb-6 h-12 w-auto object-contain" />
+        <Link to="/admin" aria-label="PrimeOS — לדף הבית" className="mb-6 inline-block">
+              <img src="/primeos-logo.png" alt="PrimeOS" className="h-12 w-auto object-contain" />
+            </Link>
         <h1 className="mb-1 text-xl font-semibold tracking-normal">כניסה למערכת</h1>
         <p className="mb-4 text-sm text-[var(--muted)]">התחברו כדי להמשיך לעבודה במערכת.</p>
 

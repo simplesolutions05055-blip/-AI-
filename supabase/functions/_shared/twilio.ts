@@ -63,6 +63,23 @@ export async function getAccountState(): Promise<string> {
 }
 
 async function postMessage(form: URLSearchParams): Promise<string> {
+  // Ask Twilio to report back what happened to this message.
+  //
+  // Without StatusCallback, Twilio never tells us anything after the API call
+  // returns a SID — the console showed "There were no HTTP Requests logged for
+  // this event" while every reply was silently failing with 63112 (Meta had
+  // disabled the WhatsApp Business Account). Our database said "sent" the whole
+  // time. The callback is what makes twilio-webhook's recordDeliveryStatus fire.
+  //
+  // It MUST be the exact same URL the inbound webhook uses: the signature is
+  // computed over the URL, and twilio-webhook validates against
+  // TWILIO_WEBHOOK_URL verbatim. A different URL here would fail that check and
+  // every callback would be rejected with a 403.
+  const statusCallback = Deno.env.get('TWILIO_WEBHOOK_URL');
+  if (statusCallback && !form.has('StatusCallback')) {
+    form.set('StatusCallback', statusCallback);
+  }
+
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid()}/Messages.json`, {
     method: 'POST',
     headers: { Authorization: basicAuth(), 'Content-Type': 'application/x-www-form-urlencoded' },

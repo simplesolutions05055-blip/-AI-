@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Compass, RefreshCcw } from 'lucide-react';
 
@@ -20,10 +21,19 @@ export default function ErrorPage({
   message = 'העמוד שחיפשתם לא קיים או שהוזז למקום אחר.',
   onRetry,
 }: ErrorPageProps) {
+  // Set here rather than in TitleManager: that maps PATHS to titles, and the
+  // two cases this renders — an unmatched URL, and a render crash on a valid
+  // route — are precisely the ones a path cannot identify.
+  useEffect(() => {
+    document.title = `${title} · PrimeOS`;
+  }, [title]);
+
   return (
     <main dir="rtl" className="theme-warm min-h-screen flex items-center justify-center bg-[var(--bg-page)] p-4">
       <div className="w-full max-w-md rounded-2xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-8 text-center shadow-[var(--warm-shadow-soft)]">
-        <img src="/primeos-logo.png" alt="PrimeOS" className="mx-auto mb-8 h-10 w-auto object-contain" />
+        <Link to="/admin" aria-label="PrimeOS — לדף הבית" className="mx-auto mb-8 inline-block">
+          <img src="/primeos-logo.png" alt="PrimeOS" className="h-10 w-auto object-contain" />
+        </Link>
 
         <div className="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-[var(--tint-clay)]">
           <Compass className="h-9 w-9 text-[var(--warm-accent)]" strokeWidth={1.75} />

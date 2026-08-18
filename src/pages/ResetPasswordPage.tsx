@@ -121,7 +121,9 @@ export default function ResetPasswordPage() {
     <main className="min-h-screen flex items-center justify-center p-4">
       {step === 'email' ? (
         <form onSubmit={onSubmitEmail} className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-[var(--border)] p-6">
-          <img src="/primeos-logo.png" alt="PrimeOS" className="mb-6 h-12 w-auto object-contain" />
+          <Link to="/admin" aria-label="PrimeOS — לדף הבית" className="mb-6 inline-block">
+              <img src="/primeos-logo.png" alt="PrimeOS" className="h-12 w-auto object-contain" />
+            </Link>
           <h1 className="mb-1 text-xl font-semibold tracking-normal">שחזור סיסמה</h1>
           <p className="mb-4 text-sm text-[var(--muted)]">הזינו את כתובת המייל שאיתה נרשמתם, ואם היא רשומה — נשלח אליה קוד לאיפוס הסיסמה.</p>
 

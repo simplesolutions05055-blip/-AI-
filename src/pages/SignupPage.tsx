@@ -236,7 +236,9 @@ export default function SignupPage() {
           <>
             <h1 className="mb-1 text-xl font-semibold tracking-normal">הרשמה</h1>
             <p className="mb-4 text-sm text-[var(--muted)]">צרו חשבון כדי להצטרף למערכת.</p>
-            <img src="/primeos-logo.png" alt="PrimeOS" className="mb-6 h-12 w-auto object-contain" />
+            <Link to="/admin" aria-label="PrimeOS — לדף הבית" className="mb-6 inline-block">
+              <img src="/primeos-logo.png" alt="PrimeOS" className="h-12 w-auto object-contain" />
+            </Link>
           </>
         )}
 
