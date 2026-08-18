@@ -10,7 +10,7 @@
 // idempotency / blocked numbers / rate-limit, downloads Twilio media, then hands
 // off to the shared `handleInbound` orchestration that the website simulator
 // uses too — so both channels run identical conversation logic.
-import { db } from '../_shared/db.ts';
+import { db, type DB } from '../_shared/db.ts';
 import { validateSignature, downloadMedia } from '../_shared/twilio.ts';
 import {
   logEvent, getSettingOr, getTemplates,
@@ -63,9 +63,14 @@ Deno.serve(async (req) => {
     return new Response('Forbidden', { status: 403 });
   }
 
-  // Delivery-status callbacks (sent/delivered/read receipts) hit the same URL but
-  // carry MessageStatus and no Body — they are not user messages. Ignore them.
+  // Delivery-status callbacks (queued/sent/delivered/read/failed) hit the same
+  // URL but carry MessageStatus and no Body — they are not user messages.
+  //
+  // These used to be dropped on the floor, which meant a `messages` row proved
+  // only that Twilio ACCEPTED the text, never that it reached the phone. A
+  // reply that silently failed left no trace anywhere we could see.
   if ((params.MessageStatus || params.SmsStatus) && !params.Body && (params.NumMedia ?? '0') === '0') {
+    await recordDeliveryStatus(database, params);
     return twiml();
   }
 
@@ -174,3 +179,49 @@ Deno.serve(async (req) => {
 
   return twiml();
 });
+
+// Persists what Twilio says happened to an outbound message, and raises a real
+// error log when it did NOT arrive — 'failed'/'undelivered' are the only two
+// terminal states that mean the user never saw the reply.
+//
+// Best-effort throughout: a webhook that 500s because a status row could not be
+// written would make Twilio retry, and retries of a *status callback* fix
+// nothing. Never let bookkeeping break the transport.
+async function recordDeliveryStatus(database: DB, params: Record<string, string>): Promise<void> {
+  const sid = params.MessageSid || params.SmsSid;
+  const status = params.MessageStatus || params.SmsStatus;
+  if (!sid || !status) return;
+
+  const errorCode = params.ErrorCode || null;
+
+  try {
+    await database
+      .from('messages')
+      .update({
+        delivery_status: status,
+        delivery_error_code: errorCode,
+        delivery_updated_at: new Date().toISOString(),
+      })
+      .eq('twilio_message_sid', sid);
+
+    if (status === 'failed' || status === 'undelivered') {
+      // severity 'error': the user asked something and our answer never landed.
+      // That is a broken conversation, not a transient blip.
+      await logEvent(database, {
+        severity: 'error',
+        action: 'whatsapp_not_delivered',
+        message: `WhatsApp reply ${status}${errorCode ? ` (Twilio error ${errorCode})` : ''}`,
+        metadata: {
+          message_sid: sid,
+          status,
+          error_code: errorCode,
+          // Twilio's own description of the code, when it sends one.
+          error_message: params.ErrorMessage ?? null,
+          to: params.To ?? null,
+        },
+      });
+    }
+  } catch (e) {
+    console.error('[twilio-webhook] failed to record delivery status', e);
+  }
+}
