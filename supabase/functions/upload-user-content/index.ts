@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
+import { cors } from '../_shared/cors.ts';
 
 interface UploadItem {
   file_base64?: string;
@@ -12,23 +13,17 @@ interface Body {
   brand_id?: string | null;
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req, 'POST') });
 
   try {
     const createdBy = await resolveUserId(req);
-    if (!createdBy) return json({ error: 'unauthorized' }, 401);
+    if (!createdBy) return json(req, req, { error: 'unauthorized' }, 401);
 
     const body = await req.json() as Body;
     const files = (body.files ?? []).filter((file) => file.file_base64);
-    if (files.length === 0) return json({ error: 'files_required' }, 400);
-    if (files.length > 20) return json({ error: 'too_many_files' }, 400);
+    if (files.length === 0) return json(req, req, { error: 'files_required' }, 400);
+    if (files.length > 20) return json(req, req, { error: 'too_many_files' }, 400);
 
     const database = db();
     const brandId = nullableUuid(body.brand_id);
@@ -64,7 +59,7 @@ Deno.serve(async (req) => {
     let version = 1;
     for (const item of files) {
       const mimeType = normalizeImageMime(item.mime_type);
-      if (!mimeType) return json({ error: 'images_only' }, 400);
+      if (!mimeType) return json(req, req, { error: 'images_only' }, 400);
       const fileName = safeStorageFileName(item.file_name || `upload-${version}`);
       const ext = extensionForMime(mimeType, fileName);
       const storagePath = `${requestRow.id}/user-uploads/${crypto.randomUUID()}-${fileName}.${ext}`;
@@ -95,10 +90,10 @@ Deno.serve(async (req) => {
       version += 1;
     }
 
-    return json({ ok: true, request_id: requestRow.id, files: saved });
+    return json(req, req, { ok: true, request_id: requestRow.id, files: saved });
   } catch (e) {
     console.error('upload-user-content failed', serializeError(e));
-    return json({ error: errorMessage(e) }, 500);
+    return json(req, req, { error: errorMessage(e) }, 500);
   }
 });
 
@@ -163,10 +158,10 @@ function safeStorageFileName(value: string): string {
     .replace(/\.+$/g, '') || 'upload';
 }
 
-function json(payload: unknown, status = 200): Response {
+function json(req: Request, req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 

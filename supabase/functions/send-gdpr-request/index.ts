@@ -1,22 +1,17 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { sendDeliverableEmail, buildEmailHtml } from '../_shared/resend.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
   try {
     const { fullName, email, requestType, requestDetails } = await req.json();
 
     if (!fullName || !email || !requestType || !requestDetails) {
-      return json({ error: 'missing_fields' }, 400);
+      return json(req, req, { error: 'missing_fields' }, 400);
     }
 
     const database = db();
@@ -33,7 +28,7 @@ Deno.serve(async (req) => {
 
     if ((count ?? 0) >= 3) {
       // Allow max 3 requests per hour per IP
-      return json({ error: 'rate_limit_exceeded' }, 429);
+      return json(req, req, { error: 'rate_limit_exceeded' }, 429);
     }
 
     // Log the request
@@ -78,16 +73,16 @@ Deno.serve(async (req) => {
       });
     }
 
-    return json({ ok: true, id: lastId });
+    return json(req, req, { ok: true, id: lastId });
   } catch (e) {
     console.error('Error sending GDPR request:', e);
-    return json({ error: String(e) }, 500);
+    return json(req, req, { error: String(e) }, 500);
   }
 });
 
-function json(body: unknown, status = 200) {
+function json(req: Request, req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }

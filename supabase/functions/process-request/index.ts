@@ -7,6 +7,7 @@ import { processRequest } from '../_shared/worker.ts';
 import { db } from '../_shared/db.ts';
 import { setOpenAiKeyOverride, clearOpenAiKeyOverride } from '../_shared/openai.ts';
 import { logEvent } from '../_shared/util.ts';
+import { cors } from '../_shared/cors.ts';
 import {
   AbuseGuardError,
   enforceParallelRequestLimit,
@@ -15,24 +16,18 @@ import {
   rejectClientOpenAiKeyIfDisabled,
 } from '../_shared/abuseGuard.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
   try {
     const { request_id, openai_key } = await req.json();
-    if (!request_id) return new Response(JSON.stringify({ error: 'request_id required' }), { status: 400, headers: corsHeaders });
+    if (!request_id) return new Response(JSON.stringify({ error: 'request_id required' }), { status: 400, headers: cors(req, 'POST') });
 
     const database = db();
     const caller = await resolveUserId(req);
-    if (!caller) return json({ error: 'login required' }, 401);
-    if (!(await canProcessRequest(database, request_id, caller))) return json({ error: 'forbidden' }, 403);
+    if (!caller) return json(req, req, { error: 'login required' }, 401);
+    if (!(await canProcessRequest(database, request_id, caller))) return json(req, req, { error: 'forbidden' }, 403);
 
     const actor = await loadRequestActor(database, request_id);
     await rejectClientOpenAiKeyIfDisabled(database, openai_key);
@@ -82,17 +77,17 @@ Deno.serve(async (req) => {
       if (overrideKey) clearOpenAiKeyOverride();
     }
 
-    return json({ ok: true });
+    return json(req, req, { ok: true });
   } catch (e) {
-    if (e instanceof AbuseGuardError) return json({ error: e.message, code: e.code }, e.status);
-    return json({ error: String(e) }, 500);
+    if (e instanceof AbuseGuardError) return json(req, req, { error: e.message, code: e.code }, e.status);
+    return json(req, req, { error: String(e) }, 500);
   }
 });
 
-function json(payload: unknown, status = 200): Response {
+function json(req: Request, req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 

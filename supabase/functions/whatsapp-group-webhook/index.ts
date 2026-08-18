@@ -43,6 +43,7 @@ import { findOrCreateGroupConversation, getGroupSettings, matchGroupTrigger } fr
 import { downloadMedia, toWhatsAppFrom } from '../_shared/greenapi.ts';
 import { processInboundMediaItem } from '../_shared/inbound_media.ts';
 import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
+import { checkCanary, matchesEnvSecret } from '../_shared/secrets.ts';
 
 type DB = ReturnType<typeof db>;
 
@@ -358,10 +359,18 @@ Deno.serve(async (req) => {
   }));
 
   // ── auth: shared secret from the gateway ──────────────────────────────────
-  const secret = Deno.env.get('GROUP_WEBHOOK_SECRET') ?? '';
+  // Compared in constant time: a plain !== bails at the first differing byte,
+  // so an attacker can lengthen a correct prefix by timing the 403s. A canary
+  // token gets the byte-identical 403 — a distinct response would burn the trap.
   const bearer = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
   const querySecret = requestUrl.searchParams.get('secret') ?? '';
-  if (!secret || (bearer !== secret && querySecret !== secret)) {
+  const supplied = bearer || querySecret;
+  const canary = await checkCanary(database, req, supplied, 'whatsapp-group-webhook');
+  const authorized = !canary && (
+    (await matchesEnvSecret('GROUP_WEBHOOK_SECRET', bearer))
+    || (await matchesEnvSecret('GROUP_WEBHOOK_SECRET', querySecret))
+  );
+  if (!authorized) {
     console.log('[greenapi-webhook] request:bad_secret');
     await logEvent(database, { severity: 'warning', action: 'group_webhook_bad_secret' });
     return new Response('Forbidden', { status: 403 });

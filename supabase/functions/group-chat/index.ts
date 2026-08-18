@@ -23,6 +23,7 @@ import { db } from '../_shared/db.ts';
 import { processRequest } from '../_shared/worker.ts';
 import { handleInbound } from '../_shared/inbound.ts';
 import { getSettingOr, getTemplates, logEvent } from '../_shared/util.ts';
+import { cors } from '../_shared/cors.ts';
 import {
   brandGroupId,
   findOrCreateGroupConversation,
@@ -30,17 +31,11 @@ import {
   matchGroupTrigger,
 } from '../_shared/group.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 // Always 200 so supabase-js functions.invoke surfaces the body to the client.
-function json(body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 
@@ -52,27 +47,27 @@ type Body = {
 };
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req, 'POST') });
   const database = db();
   try {
     // ── who is calling? ──────────────────────────────────────────────────────
     const authHeader = req.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^Bearer\s+/i, '');
-    if (!token) return json({ error: 'unauthorized' });
+    if (!token) return json(req, { error: 'unauthorized' });
     const { data: caller } = await createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
       { global: { headers: { Authorization: authHeader } } },
     ).auth.getUser(token);
     const callerId = caller.user?.id;
-    if (!callerId) return json({ error: 'unauthorized' });
+    if (!callerId) return json(req, { error: 'unauthorized' });
 
     const { data: me } = await database
       .from('profiles')
       .select('id, role, full_name')
       .eq('id', callerId)
       .maybeSingle();
-    if (!me) return json({ error: 'unauthorized' });
+    if (!me) return json(req, { error: 'unauthorized' });
     const isAdmin = me.role === 'admin';
 
     // ── which brand groups may this user enter? ──────────────────────────────
@@ -95,7 +90,7 @@ Deno.serve(async (req) => {
 
     if (action === 'context') {
       const settings = await getGroupSettings(database);
-      return json({
+      return json(req, {
         ok: true,
         me: { id: me.id, name: (me.full_name as string | null) ?? '' },
         brands,
@@ -104,7 +99,7 @@ Deno.serve(async (req) => {
     }
 
     const brand = brands.find((b) => b.id === brandId) ?? brands[0];
-    if (!brand) return json({ error: 'no_brand' });
+    if (!brand) return json(req, { error: 'no_brand' });
     const groupId = brandGroupId(brand.id);
 
     // ── history: merged timeline of every member's conversation in the group ──
@@ -117,7 +112,7 @@ Deno.serve(async (req) => {
         .eq('group_id', groupId)
         .neq('status', 'closed');
       const convUser = new Map((convs ?? []).map((c: any) => [c.id as string, c.user_id as string | null]));
-      if (!convUser.size) return json({ ok: true, messages: [] });
+      if (!convUser.size) return json(req, { ok: true, messages: [] });
 
       let query = database
         .from('messages')
@@ -162,7 +157,7 @@ Deno.serve(async (req) => {
           createdAt: m.created_at,
         });
       }
-      return json({ ok: true, messages });
+      return json(req, { ok: true, messages });
     }
 
     // ── send: one shared bot session for the whole group ─────────────────────
@@ -172,10 +167,10 @@ Deno.serve(async (req) => {
     // non-trigger chatter is stored for everyone but the bot stays silent.
     if (action === 'send') {
       const text = typeof body === 'string' ? body.trim() : '';
-      if (!text) return json({ error: 'body required' });
+      if (!text) return json(req, { error: 'body required' });
 
       const conversation = await findOrCreateGroupConversation(database, groupId, 'shared', true, callerId);
-      if (!conversation) return json({ error: 'conversation failed' });
+      if (!conversation) return json(req, { error: 'conversation failed' });
 
       const settings = await getGroupSettings(database);
       const trigger = matchGroupTrigger(text, settings.trigger_word);
@@ -195,7 +190,7 @@ Deno.serve(async (req) => {
           sender_id: callerId,
         });
         await database.from('conversations').update({ last_message_at: new Date().toISOString() }).eq('id', conversation.id);
-        return json({ ok: true, triggered: false });
+        return json(req, { ok: true, triggered: false });
       }
 
       const engineBody = trigger.matched ? trigger.rest : text;
@@ -229,7 +224,7 @@ Deno.serve(async (req) => {
       if (background) {
         // @ts-ignore EdgeRuntime is provided by the Supabase runtime
         EdgeRuntime.waitUntil(background());
-        return json({ ok: true, triggered: true });
+        return json(req, { ok: true, triggered: true });
       }
       if (requestIdToProcess) {
         const requestId = requestIdToProcess;
@@ -250,12 +245,12 @@ Deno.serve(async (req) => {
           await processRequest(requestId, { trigger: 'message' });
         })());
       }
-      return json({ ok: true, triggered: true });
+      return json(req, { ok: true, triggered: true });
     }
 
-    return json({ error: 'unknown_action' });
+    return json(req, { error: 'unknown_action' });
   } catch (error) {
     await logEvent(database, { severity: 'error', action: 'group_chat_failed', message: String(error) });
-    return json({ error: String(error) });
+    return json(req, { error: String(error) });
   }
 });

@@ -7,12 +7,7 @@ import { editImage } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateImageCost } from '../_shared/util.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from '../_shared/abuseGuard.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
 
 const RTL_IMAGE_DIRECTIVE =
   'דרישת RTL מחייבת: כל הטקסט העברי בתמונה מיושר לימין ונקרא מימין לשמאל. ' +
@@ -33,12 +28,12 @@ interface Body {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
   const database = db();
   // Reachable by anyone holding the anon key, which ships in the browser
   // bundle — the platform's verify_jwt gate proves a token exists, not a user.
-  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  const { denied } = await denyUnauthenticated(req, database, cors(req, 'POST'));
   if (denied) return denied;
 
   try {
@@ -46,8 +41,8 @@ Deno.serve(async (req) => {
     const sourceRequestId = body.request_id;
     const feedback = (body.feedback ?? '').trim();
     const referencePath = (body.reference_path ?? '').trim();
-    if (!sourceRequestId) return json({ error: 'request_id required' }, 400);
-    if (!feedback && !referencePath) return json({ error: 'feedback required' }, 400);
+    if (!sourceRequestId) return json(req, req, { error: 'request_id required' }, 400);
+    if (!feedback && !referencePath) return json(req, req, { error: 'feedback required' }, 400);
 
     // Latest image output of the source request.
     const { data: output } = await database
@@ -59,7 +54,7 @@ Deno.serve(async (req) => {
       .order('version', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (!output?.storage_path) return json({ error: 'source image not found' }, 404);
+    if (!output?.storage_path) return json(req, req, { error: 'source image not found' }, 404);
 
     // Original brief — fed back in as context so the edit stays on-brand.
     const { data: sourceReq } = await database
@@ -78,7 +73,7 @@ Deno.serve(async (req) => {
 
     // Pull the source bytes from storage and base64-encode for OpenAI.
     const { data: file, error: dlError } = await database.storage.from('outputs').download(output.storage_path);
-    if (dlError || !file) return json({ error: 'failed to read source image' }, 500);
+    if (dlError || !file) return json(req, req, { error: 'failed to read source image' }, 500);
     const sourceBase64 = encodeBase64(new Uint8Array(await file.arrayBuffer()));
     const sourceMime = output.mime_type || 'image/png';
 
@@ -87,7 +82,7 @@ Deno.serve(async (req) => {
     let reference: { base64: string; mime: string } | null = null;
     if (referencePath) {
       const { data: refFile, error: refError } = await database.storage.from('outputs').download(referencePath);
-      if (refError || !refFile) return json({ error: 'failed to read reference image' }, 500);
+      if (refError || !refFile) return json(req, req, { error: 'failed to read reference image' }, 500);
       reference = {
         base64: encodeBase64(new Uint8Array(await refFile.arrayBuffer())),
         mime: body.reference_mime || refFile.type || 'image/png',
@@ -190,7 +185,7 @@ Deno.serve(async (req) => {
       metadata: { parent_request_id: sourceRequestId, model: edited.model, with_reference: Boolean(referencePath) },
     });
 
-    return json({
+    return json(req, req, {
       request_id: newReq.id,
       output_id: newOutput?.id ?? null,
       text_content: (output as { text_content?: string | null }).text_content ?? null,
@@ -200,17 +195,17 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     if (e instanceof AbuseGuardError) {
-      return json({ error: e.message, code: e.code }, e.status);
+      return json(req, req, { error: e.message, code: e.code }, e.status);
     }
     await logEvent(database, { severity: 'error', action: 'image_edit_failed', message: String(e) });
-    return json({ error: String(e) }, 500);
+    return json(req, req, { error: String(e) }, 500);
   }
 });
 
-function json(payload: unknown, status = 200): Response {
+function json(req: Request, req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 

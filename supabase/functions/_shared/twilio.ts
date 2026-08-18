@@ -8,6 +8,7 @@
 //   TWILIO_WHATSAPP_FROM — the registered sender, "whatsapp:+15559299898"
 //   TWILIO_WEBHOOK_URL   — the exact public URL Twilio is configured to POST to,
 //                          used verbatim in the signature check
+import { safeFetch } from './safeFetch.ts';
 import { splitForWhatsApp } from './whatsappText.ts';
 
 const sid = () => Deno.env.get('TWILIO_ACCOUNT_SID')!;
@@ -163,7 +164,10 @@ export async function sendWhatsAppTemplate(
 export async function downloadMedia(
   mediaUrl: string
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
-  const res = await fetch(mediaUrl, { headers: { Authorization: basicAuth() } });
+  // mediaUrl arrives on the webhook body. This request carries our Twilio Basic
+  // auth, so an unvalidated host would be handed live credentials — the SSRF
+  // guard is what keeps that from being a one-request account takeover.
+  const res = await safeFetch(mediaUrl, { headers: { Authorization: basicAuth() } });
   if (!res.ok) throw new Error(`Twilio media ${res.status}`);
   return {
     bytes: new Uint8Array(await res.arrayBuffer()),

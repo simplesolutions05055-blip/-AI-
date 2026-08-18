@@ -32,12 +32,8 @@ import { renderPdfBase64 } from '../_shared/pdf.ts';
 import { sendDeliverableEmail, buildEmailHtml } from '../_shared/resend.ts';
 import { deliverableReadyHeading, deliverableSubject, deliverableTitle } from '../_shared/deliverableTitle.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
+import { escapeHtml } from '../_shared/escape.ts';
 
 const BUCKET = 'outputs';
 const jobPath = (jobId: string) => `deck-email-jobs/${jobId}.json`;
@@ -93,20 +89,20 @@ function publicJobState(state: JobState) {
   return rest;
 }
 
-function json(body: unknown, status = 200) {
+function json(req: Request, req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req, 'POST') });
   const database = db();
 
   // Reachable by anyone holding the anon key, which ships in the browser
   // bundle — the platform's verify_jwt gate proves a token exists, not a user.
-  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  const { denied } = await denyUnauthenticated(req, database, cors(req, 'POST'));
   if (denied) return denied;
 
   try {
@@ -115,9 +111,9 @@ Deno.serve(async (req) => {
 
     if (action === 'status') {
       const jobId = String(payload?.jobId || '');
-      if (!jobId) return json({ error: 'jobId required' }, 400);
+      if (!jobId) return json(req, req, { error: 'jobId required' }, 400);
       const state = await readJob(database, jobId);
-      if (!state) return json({ status: 'unknown' });
+      if (!state) return json(req, req, { status: 'unknown' });
       const stale = typeof state.updatedAt !== 'number' || Date.now() - state.updatedAt > STALL_MS;
       if (state.status === 'running' && stale) {
         const error = 'ההפקה נעצרה בשרת לפני שהסתיימה. התמונות שכבר נוצרו נשמרו — נסו להפיק שוב, ניסיון חוזר משתמש בהן וממשיך מאותה נקודה.';
@@ -128,9 +124,9 @@ Deno.serve(async (req) => {
           action: 'deck_email_stalled',
           message: `job ${jobId} stalled at stage ${state.stage ?? 'unknown'} (${state.message ?? ''})`,
         });
-        return json(publicJobState({ ...state, status: 'error', error }));
+        return json(req, req, publicJobState({ ...state, status: 'error', error }));
       }
-      return json(publicJobState(state));
+      return json(req, req, publicJobState(state));
     }
 
     // Internal hand-off: each heavy step (build the PPTX, build the PDF, send
@@ -142,10 +138,10 @@ Deno.serve(async (req) => {
       const jobId = String(payload?.jobId || '');
       const token = String(payload?.buildToken || '');
       const step: BuildStep = (['pptx', 'pdf', 'send'] as const).includes(payload?.step) ? payload.step : 'pptx';
-      if (!jobId || !token) return json({ error: 'jobId and buildToken required' }, 400);
+      if (!jobId || !token) return json(req, req, { error: 'jobId and buildToken required' }, 400);
       const state = await readJob(database, jobId);
-      if (!state?.params || state.buildToken !== token) return json({ error: 'unknown_job' }, 404);
-      if (state.status !== 'running') return json({ ok: true, status: state.status });
+      if (!state?.params || state.buildToken !== token) return json(req, req, { error: 'unknown_job' }, 404);
+      if (state.status !== 'running') return json(req, req, { ok: true, status: state.status });
       const requestId = state.params.requestId;
       EdgeRuntime.waitUntil(
         runBuildStep(database, jobId, step).catch(async (e) => {
@@ -153,7 +149,7 @@ Deno.serve(async (req) => {
           await logEvent(database, { requestId, severity: 'error', action: 'deck_email_failed', message: `${step}: ${String(e)}` });
         }),
       );
-      return json({ ok: true });
+      return json(req, req, { ok: true });
     }
 
     // action 'start'
@@ -161,7 +157,7 @@ Deno.serve(async (req) => {
       ? [...new Set(payload.emails.map((e: unknown) => String(e || '').trim().toLowerCase()).filter(Boolean))]
       : [];
     const validEmails = emails.filter((e) => EMAIL_RE.test(e));
-    if (!validEmails.length) return json({ error: 'no_valid_emails' }, 400);
+    if (!validEmails.length) return json(req, req, { error: 'no_valid_emails' }, 400);
 
     const requestId = typeof payload?.requestId === 'string' ? payload.requestId : null;
     const brandId = typeof payload?.brandId === 'string' ? payload.brandId : null;
@@ -178,9 +174,9 @@ Deno.serve(async (req) => {
       payload?.fullSlide === true || modeValue === 'fullslide' || modeValue.includes('notebook')
         ? 'fullslide'
         : 'template';
-    if (slides.length < 1) return json({ error: 'slides_required' }, 400);
+    if (slides.length < 1) return json(req, req, { error: 'slides_required' }, 400);
     if (deckMode === 'fullslide') {
-      if (!approvedSlideIndexes.length) return json({ error: 'no_approved_slides' }, 400);
+      if (!approvedSlideIndexes.length) return json(req, req, { error: 'no_approved_slides' }, 400);
     }
 
     const jobId = crypto.randomUUID();
@@ -228,9 +224,9 @@ Deno.serve(async (req) => {
       }),
     );
 
-    return json({ ok: true, jobId, emails: validEmails });
+    return json(req, req, { ok: true, jobId, emails: validEmails });
   } catch (e) {
-    return json({ error: String(e) }, 500);
+    return json(req, req, { error: String(e) }, 500);
   }
 });
 
@@ -922,7 +918,7 @@ function buildDeckHtml(
   brand: DeckBrandServer | null,
   rawSlides: SlideWithImage[],
 ): string {
-  const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = escapeHtml;   // shared, escapes quotes too — see _shared/escape.ts
   const { primary, secondary, accent, background } = resolvePalette(brand);
   const cover = rawSlides[0];
   const content = rawSlides.slice(1);

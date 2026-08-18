@@ -1,4 +1,5 @@
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import React from 'react';
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import LoginPage from '@/pages/LoginPage';
 import SignupPage from '@/pages/SignupPage';
@@ -32,14 +33,32 @@ import ReloadPrompt from '@/components/pwa/ReloadPrompt';
 import TitleManager from '@/components/TitleManager';
 import DialogHost from '@/components/DialogHost';
 import AnimatedBackground from '@/components/AnimatedBackground';
+import ErrorBoundary from '@/components/ErrorBoundary';
+
+/**
+ * Page-level boundary. The `key` is load-bearing: without it React keeps the
+ * failed boundary mounted after a route change, so the user stays stuck on the
+ * fallback even once they navigate somewhere that works. Re-keying on the path
+ * gives each route a fresh boundary instance.
+ */
+function RouteBoundary({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  return (
+    <ErrorBoundary boundaryName="page" key={location.pathname}>
+      {children}
+    </ErrorBoundary>
+  );
+}
 
 export default function App() {
   return (
+    <ErrorBoundary boundaryName="app">
     <TooltipProvider delayDuration={200}>
       <AnimatedBackground />
       <div className="app-content">
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <TitleManager />
+          <RouteBoundary>
           <Routes>
           <Route path="/" element={<Navigate to="/admin" replace />} />
           <Route path="/app" element={<Navigate to="/admin" replace />} />
@@ -76,10 +95,12 @@ export default function App() {
         </Route>
         <Route path="*" element={<ErrorPage />} />
           </Routes>
+          </RouteBoundary>
           <ReloadPrompt />
           <DialogHost />
         </BrowserRouter>
       </div>
     </TooltipProvider>
+    </ErrorBoundary>
   );
 }

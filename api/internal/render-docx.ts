@@ -6,6 +6,8 @@
 // verbatim port of src/lib/richText.tsx — KEEP THE TWO IN SYNC. The only
 // differences are environment-level: Packer.toBuffer instead of toBlob, and
 // server-side logo handling (no browser canvas) with graceful fallback.
+import { matchesEnvSecret } from '../_shared/secrets';
+import { safeFetch } from '../_shared/safeFetch';
 import {
   AlignmentType,
   Document,
@@ -41,9 +43,8 @@ export default {
   async fetch(request: Request): Promise<Response> {
     if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
-    const expectedSecret = process.env.INTERNAL_API_SECRET;
-    const providedSecret = request.headers.get('x-internal-secret');
-    if (!expectedSecret || providedSecret !== expectedSecret) {
+    // Constant-time: a plain !== leaks the secret through rejection latency.
+    if (!matchesEnvSecret('INTERNAL_API_SECRET', request.headers.get('x-internal-secret'))) {
       return json({ error: 'unauthorized' }, 401);
     }
 
@@ -232,7 +233,8 @@ async function blockToDocxParagraphs(block: RichTextBlock): Promise<Paragraph[]>
   }
   if (block.type === 'image') {
     try {
-      const res = await fetch(block.src);
+      // block.src is caller-supplied — never a bare fetch().
+      const res = await safeFetch(block.src);
       if (!res.ok) throw new Error(`image fetch ${res.status}`);
       const data = new Uint8Array(await res.arrayBuffer());
       const ct = res.headers.get('content-type');
@@ -310,7 +312,8 @@ function readImageDimensions(b: Uint8Array): { width: number; height: number } |
 async function buildLogoHeader(logoUrl: string | null): Promise<Header | undefined> {
   if (!logoUrl) return undefined;
   try {
-    const res = await fetch(logoUrl);
+    // logoUrl is caller-supplied — never a bare fetch().
+    const res = await safeFetch(logoUrl);
     if (!res.ok) return undefined;
     const data = new Uint8Array(await res.arrayBuffer());
     const dims = readImageDimensions(data);

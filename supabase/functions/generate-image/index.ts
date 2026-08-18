@@ -3,23 +3,18 @@ import { generateImage } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateImageCost } from '../_shared/util.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from '../_shared/abuseGuard.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
 
   const database = db();
 
   // Reachable by anyone holding the anon key, which ships in the browser
   // bundle — the platform's verify_jwt gate proves a token exists, not a user.
-  const { denied, caller } = await denyUnauthenticated(req, database, corsHeaders);
+  const { denied, caller } = await denyUnauthenticated(req, database, cors(req, 'POST'));
   if (denied) return denied;
 
   try {
@@ -27,7 +22,7 @@ Deno.serve(async (req) => {
     if (!prompt || typeof prompt !== 'string') {
       return new Response(JSON.stringify({ error: 'prompt required' }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
     if (requestId) {
@@ -79,13 +74,13 @@ Deno.serve(async (req) => {
         mime: image.mime,
         base64: image.base64,
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } }
     );
   } catch (error) {
     if (error instanceof AbuseGuardError) {
       return new Response(JSON.stringify({ error: error.message, code: error.code }), {
         status: error.status,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
     await logEvent(database, {
@@ -96,7 +91,7 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({ error: String(error) }), {
       status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
     });
   }
 });

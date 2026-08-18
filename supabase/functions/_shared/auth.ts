@@ -11,6 +11,9 @@
 // must belong to a real user has to call requireUser/requireAdmin.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db, type DB } from './db.ts';
+import { isAdminIpAllowed, extractClientIp } from './secrets.ts';
+import { enforceSessionBinding, SessionBindingError } from './sessionBinding.ts';
+import { logEvent } from './util.ts';
 
 export type Caller = {
   userId: string;
@@ -54,13 +57,40 @@ export async function requireUser(req: Request, database: DB = db()): Promise<Ca
     .maybeSingle();
 
   const role = (profile?.role as string | undefined) ?? null;
+
+  // Device binding runs at THE one place every authenticated call passes
+  // through, so a new function cannot ship without it. It throws only in
+  // 'enforce' mode; everything else is logged and allowed.
+  try {
+    await enforceSessionBinding(req, database, userId);
+  } catch (e) {
+    if (e instanceof SessionBindingError) throw new AuthError('unauthorized');
+    throw e;
+  }
+
   return { userId, role, isAdmin: role === 'admin' };
 }
 
-// requireUser + an admin role check.
+// requireUser + an admin role check + the optional admin IP allowlist.
+//
+// The allowlist is enforced HERE, once, rather than in each admin endpoint —
+// a per-endpoint check is a checklist item that the next new endpoint forgets.
 export async function requireAdmin(req: Request, database: DB = db()): Promise<Caller> {
   const caller = await requireUser(req, database);
   if (!caller.isAdmin) throw new AuthError('forbidden');
+
+  // Supplementary control: narrows what a stolen admin session can do. It is
+  // fail-open when ADMIN_IP_ALLOWLIST is unset — see secrets.ts for why.
+  if (!isAdminIpAllowed(req)) {
+    await logEvent(database, {
+      severity: 'warning',
+      action: 'admin_ip_blocked',
+      message: 'Admin call from an address outside ADMIN_IP_ALLOWLIST',
+      metadata: { user_id: caller.userId, ip: extractClientIp(req) },
+    }).catch(() => {});
+    throw new AuthError('forbidden');
+  }
+
   return caller;
 }
 

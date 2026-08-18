@@ -4,6 +4,7 @@ import { senderLabel } from '@/lib/labels';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatIls, getUsdToIlsRates, rateForDate } from '@/lib/fx';
 import { Spinner } from '@/components/ui/Spinner';
+import { logError } from '@/lib/errorReporting';
 
 interface RequestRow {
   id: string;
@@ -66,8 +67,12 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
       } catch (err) {
         if (cancelled) return;
         setRows([]);
-        setLoading(false);
         setError(err instanceof Error ? err.message : String(err));
+        void logError('admin_costs_load_failed', err);
+      } finally {
+        // In a finally rather than repeated per-branch: a future `return` added
+        // to either path would otherwise silently strand the spinner.
+        if (!cancelled) setLoading(false);
       }
     };
 

@@ -33,6 +33,12 @@ enabled = false
 [functions.signup]
 verify_jwt = false
 
+# Browser error reports. Unauthenticated on purpose: the crashes most worth
+# seeing (login page, initial mount) happen before any session exists. The
+# function itself caps size and rate.
+[functions.client-error]
+verify_jwt = false
+
 [functions.resolve-invite]
 verify_jwt = false
 

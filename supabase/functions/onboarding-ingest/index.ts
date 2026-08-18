@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { logEvent } from '../_shared/util.ts';
+import { cors } from '../_shared/cors.ts';
 
 interface Body {
   kind?: 'document' | 'asset';
@@ -12,39 +13,33 @@ interface Body {
   text?: string;
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 // Onboarding upload sink for regular (invited) users. The user is identified
 // from their JWT; we verify brand membership (user_brands) and then write to the
 // brand's content/assets with the service role, so business_text_sources /
 // brand_assets / the branding bucket stay admin-only under RLS.
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req, 'POST') });
 
   const database = db();
   try {
     const userId = await resolveUserId(req);
-    if (!userId) return json({ error: 'unauthorized' }, 401);
+    if (!userId) return json(req, req, { error: 'unauthorized' }, 401);
 
     const { kind, base64, mime, name, text } = (await req.json()) as Body;
     if (kind !== 'document' && kind !== 'asset') {
-      return json({ error: 'kind required' }, 400);
+      return json(req, req, { error: 'kind required' }, 400);
     }
     const providedText = typeof text === 'string' ? text.trim() : '';
     // Documents arrive as pre-extracted text; assets upload raw bytes.
     if (kind === 'asset' && (!base64 || typeof base64 !== 'string')) {
-      return json({ error: 'base64 required' }, 400);
+      return json(req, req, { error: 'base64 required' }, 400);
     }
     if (kind === 'document' && !providedText) {
-      return json({ error: 'empty_document' }, 422);
+      return json(req, req, { error: 'empty_document' }, 422);
     }
     // base64 inflates bytes by ~4/3; reject anything above the 25MB ceiling.
     if (base64 && base64.length * 0.75 > 25 * 1024 * 1024) {
-      return json({ error: 'file exceeds 25MB limit' }, 413);
+      return json(req, req, { error: 'file exceeds 25MB limit' }, 413);
     }
 
     // The user's single assigned brand (most recent wins if several).
@@ -56,7 +51,7 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
     const brandId = membership?.brand_id;
-    if (!brandId) return json({ error: 'no_brand' }, 400);
+    if (!brandId) return json(req, req, { error: 'no_brand' }, 400);
 
     if (kind === 'document') {
       const text = providedText;
@@ -77,7 +72,7 @@ Deno.serve(async (req) => {
         action: 'onboarding_document_ingested',
         metadata: { user_id: userId, brand_id: brandId, name: name ?? null, chars: text.length },
       });
-      return json({
+      return json(req, req, {
         ok: true,
         chars: text.length,
         source: source
@@ -110,14 +105,14 @@ Deno.serve(async (req) => {
       action: 'onboarding_asset_ingested',
       metadata: { user_id: userId, brand_id: brandId, name: name ?? null, path: storagePath },
     });
-    return json({ ok: true, storage_path: storagePath });
+    return json(req, req, { ok: true, storage_path: storagePath });
   } catch (e) {
     await logEvent(database, {
       severity: 'error',
       action: 'onboarding_ingest_failed',
       message: errorMessage(e),
     });
-    return json({ error: errorMessage(e) }, 500);
+    return json(req, req, { error: errorMessage(e) }, 500);
   }
 });
 
@@ -166,10 +161,10 @@ function decodeBase64(base64: string): Uint8Array {
   return Uint8Array.from(atob(clean), (c) => c.charCodeAt(0));
 }
 
-function json(payload: unknown, status = 200): Response {
+function json(req: Request, req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 

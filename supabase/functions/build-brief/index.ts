@@ -11,6 +11,7 @@ import { buildSkillInstructions } from '../_shared/skills.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 import { analyzeBrief } from '../_shared/openai.ts';
 import { AbuseGuardError, enforceAiLimit, rejectClientOpenAiKeyIfDisabled } from '../_shared/abuseGuard.ts';
+import { cors } from '../_shared/cors.ts';
 
 interface Body {
   free_text?: string;
@@ -21,27 +22,21 @@ interface Body {
   openai_key?: string;
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
 
   try {
     const authHeader = req.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^Bearer\s+/i, '');
-    if (!token) return json({ error: 'unauthorized' }, 401);
+    if (!token) return json(req, req, { error: 'unauthorized' }, 401);
 
     const { free_text, output_type, brand_id, openai_key } = (await req.json()) as Body;
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
     const text = (free_text ?? '').trim();
-    if (!text) return json({ error: 'missing_free_text' }, 400);
-    if (!output_type) return json({ error: 'missing_output_type' }, 400);
+    if (!text) return json(req, req, { error: 'missing_free_text' }, 400);
+    if (!output_type) return json(req, req, { error: 'missing_output_type' }, 400);
 
     const authed = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -50,7 +45,7 @@ Deno.serve(async (req) => {
     );
     const { data: auth } = await authed.auth.getUser(token);
     const userId = auth.user?.id;
-    if (!userId) return json({ error: 'unauthorized' }, 401);
+    if (!userId) return json(req, req, { error: 'unauthorized' }, 401);
 
     const database = db();
     await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
@@ -67,7 +62,7 @@ Deno.serve(async (req) => {
           .eq('user_id', userId)
           .eq('brand_id', brand_id)
           .maybeSingle();
-        if (!grant) return json({ error: 'forbidden' }, 403);
+        if (!grant) return json(req, req, { error: 'forbidden' }, 403);
       }
       const { data: br } = await database
         .from('brands')
@@ -116,16 +111,16 @@ Deno.serve(async (req) => {
     const { brief } = await analyzeBrief(systemPrompt, transcript, 0, overrideKey);
 
     const result = finalizeBrief(brief, output_type, text, brand);
-    return json({ brief: result });
+    return json(req, req, { brief: result });
   } catch (e) {
-    if (e instanceof AbuseGuardError) return json({ error: e.message, code: e.code }, e.status);
+    if (e instanceof AbuseGuardError) return json(req, req, { error: e.message, code: e.code }, e.status);
     const msg = String(e);
     // OpenAI ran out of quota/billing — surface a specific code so the client can
     // raise a clear "OpenAI credit ran out" alert instead of a generic failure.
     if (/insufficient_quota|exceeded your current quota|\b429\b|billing/i.test(msg)) {
-      return json({ error: 'openai_quota', message: msg }, 402);
+      return json(req, req, { error: 'openai_quota', message: msg }, 402);
     }
-    return json({ error: msg }, 500);
+    return json(req, req, { error: msg }, 500);
   }
 });
 
@@ -212,9 +207,9 @@ function defaultDimensions(type: string): string {
   return '';
 }
 
-function json(body: unknown, status = 200) {
+function json(req: Request, req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }

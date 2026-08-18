@@ -1,16 +1,11 @@
 import { db } from '../_shared/db.ts';
 import { sendAuthCodeEmail, codeSendThrottle } from '../_shared/authEmail.ts';
 import { logEvent } from '../_shared/util.ts';
+import { cors } from '../_shared/cors.ts';
 
 interface Body {
   email?: string;
 }
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
 
 // Password recovery: emails a 6-digit code (branded via Resend). The client
 // verifies it with auth.verifyOtp({type:'recovery'}) and then sets a new
@@ -18,13 +13,13 @@ const corsHeaders = {
 // whether or not the address exists — failures are only logged internally.
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
   try {
     const { email } = (await req.json()) as Body;
     const cleanEmail = (email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      return json({ error: 'invalid_email' });
+      return json(req, req, { error: 'invalid_email' });
     }
 
     const database = db();
@@ -32,7 +27,7 @@ Deno.serve(async (req) => {
     // Throttling IS surfaced (unlike existence) — it only reveals that someone
     // just asked for a code, which the requester already knows.
     const throttled = await codeSendThrottle(database, 'recovery', cleanEmail);
-    if (throttled) return json({ error: throttled });
+    if (throttled) return json(req, req, { error: throttled });
 
     const { data: linkData, error: linkError } = await database.auth.admin.generateLink({
       type: 'recovery',
@@ -46,7 +41,7 @@ Deno.serve(async (req) => {
         message: String(linkError?.message ?? 'no email_otp'),
         metadata: { email: cleanEmail },
       });
-      return json({ ok: true });
+      return json(req, req, { ok: true });
     }
 
     try {
@@ -56,19 +51,19 @@ Deno.serve(async (req) => {
         severity: 'error', action: 'recovery_code_email_failed',
         message: String(e), metadata: { email: cleanEmail },
       });
-      return json({ error: 'code_send_failed' });
+      return json(req, req, { error: 'code_send_failed' });
     }
 
-    return json({ ok: true });
+    return json(req, req, { ok: true });
   } catch (_e) {
-    return json({ error: 'reset_failed' });
+    return json(req, req, { error: 'reset_failed' });
   }
 });
 
 // Always 200 so supabase-js functions.invoke surfaces the body to the client.
-function json(body: unknown, status = 200) {
+function json(req: Request, req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }

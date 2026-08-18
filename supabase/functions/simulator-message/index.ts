@@ -11,17 +11,12 @@ import { getSettingOr, getTemplates, logEvent } from '../_shared/util.ts';
 import { processInboundMediaItem } from '../_shared/inbound_media.ts';
 import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
+import { cors } from '../_shared/cors.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
-function json(body: unknown, status = 200) {
+function json(req: Request, req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 
@@ -36,20 +31,20 @@ function decodeBase64(base64: string): Uint8Array {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req, 'POST') });
 
   const database = db();
   // Reachable by anyone holding the anon key, which ships in the browser
   // bundle — the platform's verify_jwt gate proves a token exists, not a user.
-  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  const { denied } = await denyUnauthenticated(req, database, cors(req, 'POST'));
   if (denied) return denied;
 
   try {
     const { sessionId, body, attachments } = await req.json();
-    if (!sessionId || typeof sessionId !== 'string') return json({ error: 'sessionId required' }, 400);
+    if (!sessionId || typeof sessionId !== 'string') return json(req, req, { error: 'sessionId required' }, 400);
     const text = typeof body === 'string' ? body : '';
     const uploaded = Array.isArray(attachments) ? attachments as SimulatorAttachment[] : [];
-    if (!text.trim() && uploaded.length === 0) return json({ error: 'body or attachment required' }, 400);
+    if (!text.trim() && uploaded.length === 0) return json(req, req, { error: 'body or attachment required' }, 400);
 
     const from = `simulator:${sessionId}`;
     try {
@@ -59,12 +54,12 @@ Deno.serve(async (req) => {
         ip: req.headers.get('x-forwarded-for') ?? req.headers.get('cf-connecting-ip'),
       });
     } catch (e) {
-      if (e instanceof AbuseGuardError) return json({ error: e.message, code: e.code }, e.status);
+      if (e instanceof AbuseGuardError) return json(req, req, { error: e.message, code: e.code }, e.status);
       throw e;
     }
 
     const conversation = await findOrCreateConversation(database, from, true);
-    if (!conversation) return json({ error: 'conversation failed' }, 500);
+    if (!conversation) return json(req, req, { error: 'conversation failed' }, 500);
 
     const templates = await getTemplates(database);
     const messageSid = `sim-in-${crypto.randomUUID()}`;
@@ -124,7 +119,7 @@ Deno.serve(async (req) => {
         .limit(1)
         .maybeSingle();
       if (latest && latest.twilio_message_sid !== messageSid) {
-        return json({
+        return json(req, req, {
           ok: true,
           conversationId: conversation.id,
           status: conversation.status,
@@ -168,7 +163,7 @@ Deno.serve(async (req) => {
       .eq('id', conversation.id)
       .maybeSingle();
 
-    return json({
+    return json(req, req, {
       ok: true,
       conversationId: conversation.id,
       status: conv?.status ?? 'active',
@@ -177,6 +172,6 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     await logEvent(database, { severity: 'error', action: 'simulator_message_failed', message: String(error) });
-    return json({ error: String(error) }, 500);
+    return json(req, req, { error: String(error) }, 500);
   }
 });

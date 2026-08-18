@@ -4,6 +4,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { alertDialog } from '@/lib/dialog';
+import { escapeHtml, safeUrlAttribute } from '@/lib/escape';
 
 type AttachmentKind = 'image' | 'audio' | 'document';
 
@@ -765,8 +766,7 @@ async function fetchBrandImages(
 // images) entirely client-side via html2canvas + jsPDF. Hebrew renders
 // correctly because each slide is rasterized by the browser.
 async function renderDeckToPdf(brief: any, brand: any, images: DeckImage[], richSlides: any[]): Promise<Blob> {
-  const esc = (s: string) =>
-    String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = escapeHtml;   // shared, and it escapes quotes — see lib/escape.ts
 
   const pal: Record<string, string> = {};
   for (const c of (brand?.color_palette ?? brief?.brand_palette ?? []) as Array<{ hex: string; role: string }>) {
@@ -790,7 +790,7 @@ async function renderDeckToPdf(brief: any, brand: any, images: DeckImage[], rich
   const W = 1280;
   const H = 720;
   const font = `'Heebo','Assistant','Arial Hebrew',Arial,sans-serif`;
-  const logoTag = logo ? `<img class="pd-logo" src="${logo.dataUrl}">` : '';
+  const logoTag = logo ? `<img class="pd-logo" src="${safeUrlAttribute(logo.dataUrl)}">` : '';
 
   const slideHtmls: string[] = [];
   // Title slide
@@ -818,7 +818,7 @@ async function renderDeckToPdf(brief: any, brand: any, images: DeckImage[], rich
       <h2>${esc(s?.title || `שקף ${i + 1}`)}</h2>
       <div class="pd-body ${realImg ? 'pd-withimg' : ''}">
         <div class="pd-text">${bodyHtml}</div>
-        ${realImg ? `<figure><img src="${realImg.dataUrl}"><figcaption>${esc(realImg.caption)}</figcaption></figure>` : ''}
+        ${realImg ? `<figure><img src="${safeUrlAttribute(realImg.dataUrl)}"><figcaption>${esc(realImg.caption)}</figcaption></figure>` : ''}
       </div>
     </div>`);
   });

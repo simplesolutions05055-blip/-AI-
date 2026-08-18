@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { logError } from '@/lib/errorReporting';
 
 const RESET_ERRORS: Record<string, string> = {
   invalid_email: 'כתובת המייל אינה תקינה.',
@@ -48,8 +49,14 @@ export default function ResetPasswordPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    const sent = await requestCode();
-    setLoading(false);
+    let sent = false;
+    try {
+      sent = await requestCode();
+    } catch (e) {
+      void logError('reset_request_code_failed', e);
+    } finally {
+      setLoading(false);   // without this a network throw leaves the spinner forever
+    }
     if (!sent) return;
     setCode('');
     setResendIn(RESEND_COOLDOWN_SECONDS);
@@ -61,8 +68,14 @@ export default function ResetPasswordPage() {
     if (resendIn > 0 || loading) return;
     setError(null);
     setLoading(true);
-    const sent = await requestCode();
-    setLoading(false);
+    let sent = false;
+    try {
+      sent = await requestCode();
+    } catch (e) {
+      void logError('reset_resend_code_failed', e);
+    } finally {
+      setLoading(false);
+    }
     if (sent) setResendIn(RESEND_COOLDOWN_SECONDS);
   }
 
@@ -79,24 +92,29 @@ export default function ResetPasswordPage() {
       return;
     }
     setLoading(true);
-    // Verifying the recovery code signs the user in; then the new password is set.
-    const { error: verifyError } = await supabase.auth.verifyOtp({
-      email: email.trim().toLowerCase(),
-      token: cleanCode,
-      type: 'recovery',
-    });
-    if (verifyError) {
+    try {
+      // Verifying the recovery code signs the user in; then the new password is set.
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: email.trim().toLowerCase(),
+        token: cleanCode,
+        type: 'recovery',
+      });
+      if (verifyError) {
+        setError('הקוד שגוי או שפג תוקפו. אפשר לבקש קוד חדש.');
+        return;
+      }
+      const { error: updateError } = await supabase.auth.updateUser({ password });
+      if (updateError) {
+        setError('עדכון הסיסמה נכשל. נסו סיסמה אחרת.');
+        return;
+      }
+      navigate('/admin', { replace: true });
+    } catch (e) {
+      void logError('reset_password_failed', e);
+      setError('אירעה תקלה. בדקו את החיבור לאינטרנט ונסו שוב.');
+    } finally {
       setLoading(false);
-      setError('הקוד שגוי או שפג תוקפו. אפשר לבקש קוד חדש.');
-      return;
     }
-    const { error: updateError } = await supabase.auth.updateUser({ password });
-    setLoading(false);
-    if (updateError) {
-      setError('עדכון הסיסמה נכשל. נסו סיסמה אחרת.');
-      return;
-    }
-    navigate('/admin', { replace: true });
   }
 
   return (

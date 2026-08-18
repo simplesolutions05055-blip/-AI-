@@ -15,7 +15,11 @@
     "db:push": "npx supabase db push",
     "db:reset": "npx supabase db reset",
     "functions:serve": "npx supabase functions serve",
-    "functions:deploy": "npx supabase functions deploy"
+    "functions:deploy": "npx supabase functions deploy",
+    "guards": "node scripts/hardening-guards.mjs",
+    "test:hardening": "node scripts/hardening-tests.mjs",
+    "verify": "npm run typecheck && npm run typecheck:api && npm run guards && npm run test:hardening",
+    "typecheck:api": "tsc -p tsconfig.api.json --noEmit"
   },
   "dependencies": {
     "@radix-ui/react-tooltip": "^1.2.10",

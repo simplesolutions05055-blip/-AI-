@@ -14,12 +14,7 @@
 import Anthropic from 'npm:@anthropic-ai/sdk@0.65.0';
 import { db } from '../_shared/db.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
 
 const MODEL = 'claude-sonnet-4-6';
 const BETAS = ['code-execution-2025-08-25', 'files-api-2025-04-14', 'skills-2025-10-02'];
@@ -28,10 +23,10 @@ const jobDir = (jobId: string) => `pptx-jobs/${jobId}`;
 
 type Database = ReturnType<typeof db>;
 
-function json(body: unknown, status = 200) {
+function json(req: Request, req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 
@@ -179,46 +174,46 @@ async function runJob(database: Database, apiKey: string, jobId: string, payload
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req, 'POST') });
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!apiKey) return json({ error: 'Missing ANTHROPIC_API_KEY (Supabase secret)' }, 500);
+  if (!apiKey) return json(req, req, { error: 'Missing ANTHROPIC_API_KEY (Supabase secret)' }, 500);
 
   const database = db();
   // Reachable by anyone holding the anon key, which ships in the browser
   // bundle — the platform's verify_jwt gate proves a token exists, not a user.
-  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  const { denied } = await denyUnauthenticated(req, database, cors(req, 'POST'));
   if (denied) return denied;
 
   try {
     const payload = await req.json();
     const action = payload?.action;
     const jobId = String(payload?.jobId ?? '').trim();
-    if (!jobId) return json({ error: 'jobId required' }, 400);
+    if (!jobId) return json(req, req, { error: 'jobId required' }, 400);
 
     if (action === 'start') {
-      if (!String(payload?.inputText ?? '').trim()) return json({ error: 'inputText required' }, 400);
+      if (!String(payload?.inputText ?? '').trim()) return json(req, req, { error: 'inputText required' }, 400);
       // Kick the job off in the background; respond immediately so the client
       // isn't holding a request open past the gateway timeout.
       (globalThis as any).EdgeRuntime?.waitUntil(runJob(database, apiKey, jobId, payload));
-      return json({ ok: true, jobId, status: 'processing' });
+      return json(req, req, { ok: true, jobId, status: 'processing' });
     }
 
     if (action === 'status') {
       const { data, error } = await database.storage.from(BUCKET).download(`${jobDir(jobId)}/status.json`);
-      if (error || !data) return json({ ok: true, status: 'processing' });
+      if (error || !data) return json(req, req, { ok: true, status: 'processing' });
       const state = JSON.parse(await data.text());
       if (state.status === 'done') {
         const { data: file } = await database.storage.from(BUCKET).download(`${jobDir(jobId)}/deck.pptx`);
-        if (!file) return json({ ok: true, status: 'processing' });
+        if (!file) return json(req, req, { ok: true, status: 'processing' });
         const bytes = new Uint8Array(await file.arrayBuffer());
-        return json({ ok: true, status: 'done', fileName: state.fileName ?? 'presentation.pptx', pptxBase64: encodeBase64(bytes) });
+        return json(req, req, { ok: true, status: 'done', fileName: state.fileName ?? 'presentation.pptx', pptxBase64: encodeBase64(bytes) });
       }
-      return json({ ok: true, status: state.status ?? 'processing', error: state.error ?? null });
+      return json(req, req, { ok: true, status: state.status ?? 'processing', error: state.error ?? null });
     }
 
-    return json({ error: 'Unknown action (expected "start" or "status")' }, 400);
+    return json(req, req, { error: 'Unknown action (expected "start" or "status")' }, 400);
   } catch (error) {
-    return json({ error: String((error as { message?: string })?.message ?? error) }, 500);
+    return json(req, req, { error: String((error as { message?: string })?.message ?? error) }, 500);
   }
 });

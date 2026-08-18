@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { matchBrandInText, type BrandRow } from '../_shared/brand.ts';
 import { assertCanProduce, PermissionError } from '../_shared/output_permissions.ts';
+import { cors } from '../_shared/cors.ts';
 import {
   AbuseGuardError,
   enforceParallelRequestLimit,
@@ -18,37 +19,31 @@ interface Body {
   brand_id?: string | null;
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
   try {
     const body = await req.json() as Body;
     const database = db();
     const createdBy = await resolveUserId(req);
     if (body.request_id) {
-      if (!createdBy) return json({ error: 'login required' }, 401);
+      if (!createdBy) return json(req, req, { error: 'login required' }, 401);
       const allowed = await canMutateRequest(database, body.request_id, createdBy);
-      if (!allowed) return json({ error: 'forbidden' }, 403);
+      if (!allowed) return json(req, req, { error: 'forbidden' }, 403);
       const { error } = await database
         .from('requests')
         .update({ customer_email: cleanEmail(body.customer_email) })
         .eq('id', body.request_id);
       if (error) throw error;
-      return json({ ok: true });
+      return json(req, req, { ok: true });
     }
 
     if (!body.output_type || !['text', 'image', 'pdf', 'presentation'].includes(body.output_type)) {
-      return json({ error: 'invalid output_type' }, 400);
+      return json(req, req, { error: 'invalid output_type' }, 400);
     }
     if (!body.brief || typeof body.brief !== 'object') {
-      return json({ error: 'brief required' }, 400);
+      return json(req, req, { error: 'brief required' }, 400);
     }
     // Resolve the producing system user from their JWT (best-effort): used to
     // attribute the request on the dashboard's per-user breakdown. The form is
@@ -100,15 +95,15 @@ Deno.serve(async (req) => {
       body: buildMessage(body.output_type, structuredBrief),
     });
 
-    return json({ request_id: requestRow.id });
+    return json(req, req, { request_id: requestRow.id });
   } catch (e) {
     if (e instanceof AbuseGuardError) {
-      return json({ error: e.message, code: e.code }, e.status);
+      return json(req, req, { error: e.message, code: e.code }, e.status);
     }
     if (e instanceof PermissionError) {
-      return json({ error: 'אין הרשאה להפיק את סוג התוצר הזה' }, 403);
+      return json(req, req, { error: 'אין הרשאה להפיק את סוג התוצר הזה' }, 403);
     }
-    return json({ error: String(e) }, 500);
+    return json(req, req, { error: String(e) }, 500);
   }
 });
 
@@ -142,10 +137,10 @@ async function canMutateRequest(database: ReturnType<typeof db>, requestId: stri
   return request?.created_by === userId;
 }
 
-function json(payload: unknown, status = 200): Response {
+function json(req: Request, req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 

@@ -1,6 +1,7 @@
 import { db } from '../_shared/db.ts';
 import { estimateTextCost, logEvent } from '../_shared/util.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
+import { cors } from '../_shared/cors.ts';
 
 type BrandColorRole = 'primary' | 'secondary' | 'accent' | 'background' | 'text';
 
@@ -17,27 +18,21 @@ interface PaletteEntry {
   reason?: string | null;
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 const ROLE_ORDER: BrandColorRole[] = ['primary', 'secondary', 'accent', 'background', 'text'];
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req, 'POST') });
 
   const database = db();
   // Reachable by anyone holding the anon key, which ships in the browser
   // bundle — the platform's verify_jwt gate proves a token exists, not a user.
-  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  const { denied } = await denyUnauthenticated(req, database, cors(req, 'POST'));
   if (denied) return denied;
 
   try {
     const body = (await req.json()) as Body;
     const logoBase64 = normalizeText(body.logo_base64);
-    if (!logoBase64) return json({ error: 'logo_base64_required' }, 400);
+    if (!logoBase64) return json(req, req, { error: 'logo_base64_required' }, 400);
 
     const mime = normalizeText(body.logo_mime) || 'image/png';
     const brandName = normalizeText(body.brand_name);
@@ -66,7 +61,7 @@ Deno.serve(async (req) => {
       },
     });
 
-    return json({
+    return json(req, req, {
       ok: true,
       summary: analysis.summary,
       confidence: analysis.confidence,
@@ -80,7 +75,7 @@ Deno.serve(async (req) => {
       action: 'brand_color_analysis_failed',
       message: errorMessage(e),
     });
-    return json({ error: errorMessage(e) }, 500);
+    return json(req, req, { error: errorMessage(e) }, 500);
   }
 });
 
@@ -201,10 +196,10 @@ function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
 
-function json(payload: unknown, status = 200): Response {
+function json(req: Request, req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 

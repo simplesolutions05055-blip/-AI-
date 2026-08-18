@@ -1,3 +1,4 @@
+import { escapeHtml, safeUrlAttribute } from '@/lib/escape';
 // Branded Hebrew slide-deck builder. Turns a brief + the brand's images into a
 // real, downloadable presentation — either a rasterized RTL PDF (Hebrew renders
 // perfectly because the browser draws it) or an editable PPTX (PptxGenJS with
@@ -773,8 +774,7 @@ export async function renderDeckToPdf(
   images: DeckImage[],
   rawSlides: DeckSlide[],
 ): Promise<Blob> {
-  const esc = (s: unknown) =>
-    String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = escapeHtml;   // shared, and it escapes quotes — see lib/escape.ts
 
   const { primary, secondary, accent, background } = resolvePalette(brand, brief);
   const logo = images.find((i) => i.isLogo) || null;
@@ -784,7 +784,7 @@ export async function renderDeckToPdf(
   const W = 1280;
   const H = 720;
   const font = `'Heebo','Assistant','Arial Hebrew',Arial,sans-serif`;
-  const logoTag = logo ? `<img class="pd-logo" src="${logo.dataUrl}">` : '';
+  const logoTag = logo ? `<img class="pd-logo" src="${safeUrlAttribute(logo.dataUrl)}">` : '';
 
   // Shrink the title font as it gets longer so it never overflows the slide.
   const tLen = String(titleSlide.title ?? '').length;
@@ -823,7 +823,7 @@ export async function renderDeckToPdf(
       <h2>${esc(s?.title || `שקף ${i + 2}`)}</h2>
       <div class="pd-body ${realImg ? 'pd-withimg' : ''}">
         <div class="pd-text">${bodyHtml}</div>
-        ${realImg ? `<figure><img src="${realImg.dataUrl}"><figcaption>${esc(realImg.caption)}</figcaption></figure>` : ''}
+        ${realImg ? `<figure><img src="${safeUrlAttribute(realImg.dataUrl)}"><figcaption>${esc(realImg.caption)}</figcaption></figure>` : ''}
       </div>
       <div class="pd-foot">${esc(brand?.name ?? '')}</div>
       <div class="pd-num">${i + 2}</div>
@@ -1274,8 +1274,7 @@ export async function renderGptDeckToPdf(
   images: DeckImage[],
   rawSlides: DeckSlide[],
 ): Promise<Blob> {
-  const esc = (s: unknown) =>
-    String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = escapeHtml;   // shared, and it escapes quotes — see lib/escape.ts
 
   const { primary, secondary, accent, background } = resolvePalette(brand, brief);
   const logo = images.find((i) => i.isLogo) || null;
@@ -1287,7 +1286,7 @@ export async function renderGptDeckToPdf(
   const W = 1280;
   const H = 720;
   const font = `'Heebo','Assistant','Arial Hebrew',Arial,sans-serif`;
-  const logoTag = logo ? `<img class="gd-logo" src="${logo.dataUrl}">` : '';
+  const logoTag = logo ? `<img class="gd-logo" src="${safeUrlAttribute(logo.dataUrl)}">` : '';
 
   const tLen = String(coverTitle ?? '').length;
   const titleSize = tLen > 80 ? 40 : tLen > 50 ? 50 : tLen > 30 ? 60 : 68;

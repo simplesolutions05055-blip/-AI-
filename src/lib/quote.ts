@@ -1,3 +1,4 @@
+import { escapeHtml, safeUrlAttribute } from '@/lib/escape';
 // Branded Hebrew price-quote ("הצעת מחיר") PDF builder. Mirrors the Simple
 // Solutions quote layout from the reference design. Hebrew renders perfectly
 // because the browser draws the RTL HTML and html2canvas rasterizes it; the
@@ -285,8 +286,7 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
   // Flat brands get solid blocks; gradient brands keep the two-tone sweep.
   const navyBg = t.flat ? t.navy : `linear-gradient(135deg,${t.navy},${t.navy2})`;
   const logoUrl = quote.brand?.logo_data_url || null;
-  const esc = (s: unknown) =>
-    String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = escapeHtml;   // shared, and it escapes quotes — see lib/escape.ts
   const has = (s: unknown) => typeof s === 'string' && s.trim().length > 0;
 
   const company = {
@@ -302,7 +302,7 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
   blocks.push(`<div class="q-block q-header">
     <div class="q-head-top">
       <div class="q-badge">${esc(meta.doc || 'הצעת מחיר')}</div>
-      ${logoUrl ? `<img class="q-logo-img" src="${logoUrl}" alt="${esc(company.name)}" />` : `<div class="q-logo">${esc(company.name)}</div>`}
+      ${logoUrl ? `<img class="q-logo-img" src="${safeUrlAttribute(logoUrl)}" alt="${esc(company.name)}" />` : `<div class="q-logo">${esc(company.name)}</div>`}
     </div>
     <h1>${esc(quote.title || 'הצעת מחיר')}</h1>
     ${has(quote.subtitle) ? `<p class="q-sub">${esc(quote.subtitle)}</p>` : ''}
@@ -439,7 +439,7 @@ export async function renderQuoteToPdf(quote: Quote, themeOverride?: Partial<Quo
   // ── Footer CTA bar ──
   blocks.push(`<div class="q-block q-footer">
     <div class="q-foot-name">
-      ${logoUrl ? `<img class="q-foot-logo" src="${logoUrl}" alt="${esc(company.name)}" />` : esc(company.name)}
+      ${logoUrl ? `<img class="q-foot-logo" src="${safeUrlAttribute(logoUrl)}" alt="${esc(company.name)}" />` : esc(company.name)}
       <div class="q-foot-site">${esc(company.site)}</div>
     </div>
     <div class="q-cta">${esc(company.cta)}</div>

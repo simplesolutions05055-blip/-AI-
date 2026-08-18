@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Loader2, CheckCircle2 } from 'lucide-react';
 import LegalLayout, { LegalList, LegalSection } from './LegalLayout';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { logError } from '@/lib/errorReporting';
 
 export default function DataRequestsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -31,11 +32,21 @@ export default function DataRequestsPage() {
     setError('');
 
     const supabase = createSupabaseBrowserClient();
-    const { data, error: fnError } = await supabase.functions.invoke('send-gdpr-request', {
-      body: formData,
-    });
+    let data: { error?: string } | null = null;
+    let fnError: { message?: string; details?: string } | null = null;
+    try {
+      ({ data, error: fnError } = await supabase.functions.invoke('send-gdpr-request', {
+        body: formData,
+      }));
+    } catch (e) {
+      // invoke() throws on transport failure — without this the submit button
+      // would stay disabled and spinning with no explanation.
+      void logError('gdpr_request_failed', e);
+      fnError = { message: String(e) };
+    } finally {
+      setLoading(false);
+    }
 
-    setLoading(false);
     const errMessage = fnError?.message || fnError?.details || data?.error || '';
     if (fnError || data?.error) {
       if (errMessage.includes('rate_limit_exceeded')) {

@@ -10,23 +10,18 @@ import {
 } from '../_shared/util.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor, abuseSettings } from '../_shared/abuseGuard.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
 
   const database = db();
 
   // Reachable by anyone holding the anon key, which ships in the browser
   // bundle — the platform's verify_jwt gate proves a token exists, not a user.
-  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  const { denied } = await denyUnauthenticated(req, database, cors(req, 'POST'));
   if (denied) return denied;
 
   try {
@@ -34,7 +29,7 @@ Deno.serve(async (req) => {
     if (!kind || !base64 || typeof base64 !== 'string') {
       return new Response(JSON.stringify({ error: 'kind and base64 required' }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
 
@@ -42,14 +37,14 @@ Deno.serve(async (req) => {
     if (base64.length * 0.75 > 25 * 1024 * 1024) {
       return new Response(JSON.stringify({ error: 'file exceeds 25MB limit' }), {
         status: 413,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
     const settings = await abuseSettings(database);
     if (base64.length * 0.75 > settings.max_upload_bytes) {
       return new Response(JSON.stringify({ error: 'file exceeds production upload limit' }), {
         status: 413,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
     if (kind === 'audio' || kind === 'image') {
@@ -95,7 +90,7 @@ Deno.serve(async (req) => {
     } else {
       return new Response(JSON.stringify({ error: `unsupported kind: ${kind}` }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
 
@@ -105,13 +100,13 @@ Deno.serve(async (req) => {
     });
 
     return new Response(JSON.stringify({ ok: true, kind, text }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
     });
   } catch (error) {
     if (error instanceof AbuseGuardError) {
       return new Response(JSON.stringify({ error: error.message, code: error.code }), {
         status: error.status,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
     await logEvent(database, {
@@ -122,7 +117,7 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({ error: String(error) }), {
       status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
     });
   }
 });

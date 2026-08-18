@@ -5,6 +5,12 @@ interface ErrorPageProps {
   code?: string;
   title?: string;
   message?: string;
+  /**
+   * Retry handler. An ErrorBoundary passes its own reset here so "נסה שוב"
+   * re-mounts the subtree instead of throwing away the whole page state.
+   * Without it the button falls back to a full reload.
+   */
+  onRetry?: () => void;
 }
 
 /** Branded fallback for unmatched routes and uncaught render errors. */
@@ -12,6 +18,7 @@ export default function ErrorPage({
   code = '404',
   title = 'הדף לא נמצא',
   message = 'העמוד שחיפשתם לא קיים או שהוזז למקום אחר.',
+  onRetry,
 }: ErrorPageProps) {
   return (
     <main dir="rtl" className="theme-warm min-h-screen flex items-center justify-center bg-[var(--bg-page)] p-4">
@@ -37,11 +44,11 @@ export default function ErrorPage({
           </Link>
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={onRetry ?? (() => window.location.reload())}
             className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-2.5 text-sm font-semibold text-[var(--text-strong)] transition hover:bg-[var(--bg-subtle)]"
           >
             <RefreshCcw className="h-4 w-4" strokeWidth={2} />
-            רענון
+            {onRetry ? 'נסה שוב' : 'רענון'}
           </button>
         </div>
       </div>

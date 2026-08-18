@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { assertCanProduce, PermissionError } from '../_shared/output_permissions.ts';
+import { cors } from '../_shared/cors.ts';
 
 interface Body {
   file_base64?: string;
@@ -10,18 +11,12 @@ interface Body {
   brand_id?: string | null;
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req, 'POST') });
 
   try {
     const body = await req.json() as Body;
-    if (!body.file_base64) return json({ error: 'file_base64 required' }, 400);
+    if (!body.file_base64) return json(req, req, { error: 'file_base64 required' }, 400);
 
     const database = db();
     const createdBy = await resolveUserId(req);
@@ -76,13 +71,13 @@ Deno.serve(async (req) => {
     });
     if (outError) throw outError;
 
-    return json({ ok: true, request_id: requestRow.id, storage_path: storagePath });
+    return json(req, req, { ok: true, request_id: requestRow.id, storage_path: storagePath });
   } catch (e) {
     if (e instanceof PermissionError) {
-      return json({ error: 'אין הרשאה להפיק הצעת מחיר' }, 403);
+      return json(req, req, { error: 'אין הרשאה להפיק הצעת מחיר' }, 403);
     }
     console.error('save-quote-output failed', serializeError(e));
-    return json({ error: errorMessage(e) }, 500);
+    return json(req, req, { error: errorMessage(e) }, 500);
   }
 });
 
@@ -130,10 +125,10 @@ function safeStorageFileName(value: string): string {
     .replace(/\.+$/g, '') || 'quote';
 }
 
-function json(payload: unknown, status = 200): Response {
+function json(req: Request, req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }
 

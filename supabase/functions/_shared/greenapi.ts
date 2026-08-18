@@ -16,6 +16,7 @@
 //     always reply;
 //   * interactive quick-reply / list-picker Content resources — replies now use
 //     the numbered-text menu the engine already produces as its fallback.
+import { safeFetch } from './safeFetch.ts';
 import { splitForWhatsApp } from './whatsappText.ts';
 
 function endpoint(method: string): string {
@@ -102,7 +103,9 @@ export async function sendFile(to: string, mediaUrl: string, caption?: string): 
 export async function downloadMedia(
   downloadUrl: string
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
-  const res = await fetch(downloadUrl);
+  // downloadUrl arrives on the notification body — untrusted input, so it goes
+  // through the SSRF guard rather than straight into fetch().
+  const res = await safeFetch(downloadUrl);
   if (!res.ok) throw new Error(`green-api media download ${res.status}`);
   return {
     bytes: new Uint8Array(await res.arrayBuffer()),

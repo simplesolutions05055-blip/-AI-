@@ -2,6 +2,7 @@
 // Puppeteer render to the Vercel endpoint (Node-only). No provider key needed —
 // just APP_URL + INTERNAL_API_SECRET (both stored as Supabase secrets).
 
+import { escapeHtml } from './escape.ts';
 export type PdfBrandColor = { hex: string; role: string };
 
 export interface PdfBrandSettings {
@@ -33,7 +34,7 @@ export interface PdfBrandSettings {
 }
 
 export function buildPdfHtml(p: { title: string; body: string; dateLabel: string; brand?: PdfBrandSettings | null }): string {
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = (s: string) => escapeHtml(s);   // shared, escapes quotes too — see _shared/escape.ts
   if (p.brand) return buildOfficialPdfHtml(p, esc);
 
   const bodyHtml = esc(p.body)

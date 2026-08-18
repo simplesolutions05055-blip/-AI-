@@ -5,6 +5,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatIls, getUsdToIlsRates, rateForDate } from '@/lib/fx';
 import type { OutputType, RequestStatus } from '@/types/db';
 import { Spinner } from '@/components/ui/Spinner';
+import { logError } from '@/lib/errorReporting';
 
 interface Row {
   id: string;
@@ -33,6 +34,8 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
   const [rows, setRows] = useState<Row[]>([]);
   const [rates, setRates] = useState<Map<string, number | null>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [filters, setFilters] = useState({ status: '', output_type: '', email: '', phone: '', from: '', to: '' });
   const [selectedRequest, setSelectedRequest] = useState<Row | null>(null);
   const [showFilters, setShowFilters] = useState(false);
@@ -55,23 +58,35 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
     if (filters.to) query = query.lte('created_at', `${filters.to}T23:59:59`);
 
     setLoading(true);
-    query.then(async ({ data }) => {
-      if (cancelled) return;
-      const nextRows = ((data ?? []) as unknown as Row[]).filter((row) => {
-        if (!filters.phone) return true;
-        return row.conversations?.whatsapp_from?.includes(filters.phone);
-      });
-      setRows(nextRows);
-      setLoading(false);
-      // Convert each cost using the USD→ILS rate of the day it was incurred.
-      const fetchedRates = await getUsdToIlsRates(nextRows.map((r) => r.created_at));
-      if (!cancelled) setRates(fetchedRates);
-    });
+    setLoadFailed(false);
+    void (async () => {
+      try {
+        const { data } = await query;
+        if (cancelled) return;
+        const nextRows = ((data ?? []) as unknown as Row[]).filter((row) => {
+          if (!filters.phone) return true;
+          return row.conversations?.whatsapp_from?.includes(filters.phone);
+        });
+        setRows(nextRows);
+        setLoading(false);
+        // Convert each cost using the USD→ILS rate of the day it was incurred.
+        const fetchedRates = await getUsdToIlsRates(nextRows.map((r) => r.created_at));
+        if (!cancelled) setRates(fetchedRates);
+      } catch (e) {
+        if (cancelled) return;
+        void logError('admin_requests_query_failed', e);
+        setRows([]);
+        setLoadFailed(true);
+      } finally {
+        // Always — a rejected query previously left the spinner running.
+        if (!cancelled) setLoading(false);
+      }
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [filters]);
+  }, [filters, reloadKey]);
 
   const ratesReady = rates.size > 0;
 
@@ -155,6 +170,11 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
       <div className="space-y-3 md:hidden">
         {loading ? (
           <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]"><Spinner /></div>
+        ) : loadFailed ? (
+          <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">
+            <p className="mb-3 text-sm">טעינת הבקשות נכשלה.</p>
+            <button type="button" onClick={() => setReloadKey((k) => k + 1)} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium">נסה שוב</button>
+          </div>
         ) : rows.length === 0 ? (
           <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">אין בקשות להצגה.</div>
         ) : rows.map((row) => {
@@ -203,6 +223,11 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
           <tbody>
             {loading ? (
               <tr><td colSpan={6} className="p-6 text-center text-[var(--muted)]"><div className="flex justify-center"><Spinner /></div></td></tr>
+            ) : loadFailed ? (
+              <tr><td colSpan={6} className="p-6 text-center text-[var(--muted)]">
+                טעינת הבקשות נכשלה.{' '}
+                <button type="button" onClick={() => setReloadKey((k) => k + 1)} className="underline">נסה שוב</button>
+              </td></tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={6} className="p-6 text-center text-[var(--muted)]">אין בקשות להצגה.</td></tr>
             ) : rows.map((row) => {
@@ -303,11 +328,19 @@ function RequestModal({ request, onClose }: { request: Row; onClose: () => void 
       .select('id, customer_email, output_type, status, estimated_cost, created_at, structured_brief, admin_note, conversation_id, conversations!requests_conversation_id_fkey(whatsapp_from)')
       .eq('id', request.id)
       .maybeSingle()
-      .then(({ data, error }) => {
-        if (error) console.error('Error fetching request:', error);
-        if (data) setDetail(data as unknown as RequestDetail);
-        setLoading(false);
-      });
+      .then(
+        ({ data, error }) => {
+          if (error) void logError('admin_request_detail_failed', error);
+          if (data) setDetail(data as unknown as RequestDetail);
+          setLoading(false);
+        },
+        (e: unknown) => {
+          // PostgrestBuilder is only PromiseLike — it has no .catch/.finally,
+          // so the rejection handler goes in then()'s second argument.
+          void logError('admin_request_detail_threw', e);
+          setLoading(false);
+        },
+      );
   }, [request.id]);
 
   useEffect(() => {

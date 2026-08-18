@@ -1,3 +1,4 @@
+import { matchesEnvSecret } from '../_shared/secrets';
 import { existsSync } from 'node:fs';
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
@@ -14,9 +15,8 @@ export default {
       return json({ error: 'method_not_allowed' }, 405);
     }
 
-    const expectedSecret = process.env.INTERNAL_API_SECRET;
-    const providedSecret = request.headers.get('x-internal-secret');
-    if (!expectedSecret || providedSecret !== expectedSecret) {
+    // Constant-time: a plain !== leaks the secret through rejection latency.
+    if (!matchesEnvSecret('INTERNAL_API_SECRET', request.headers.get('x-internal-secret'))) {
       return json({ error: 'unauthorized' }, 401);
     }
 

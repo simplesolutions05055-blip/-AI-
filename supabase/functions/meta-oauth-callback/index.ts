@@ -1,10 +1,5 @@
 import { db } from '../_shared/db.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
 
 interface MetaUserResponse {
   id: string;
@@ -43,7 +38,7 @@ interface MetaLongLivedTokenResponse {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'GET, POST') });
   }
 
   try {
@@ -91,7 +86,7 @@ Deno.serve(async (req) => {
     if (req.method === 'POST') {
       const authHeader = req.headers.get('Authorization');
       if (!authHeader?.startsWith('Bearer ')) {
-        return json({ error: 'unauthorized' }, 401);
+        return json(req, req, { error: 'unauthorized' }, 401);
       }
 
       const token = authHeader.substring(7);
@@ -99,14 +94,14 @@ Deno.serve(async (req) => {
       const { data: { user }, error: userError } = await database.auth.getUser(token);
       
       if (userError || !user) {
-        return json({ error: 'unauthorized' }, 401);
+        return json(req, req, { error: 'unauthorized' }, 401);
       }
 
       const body = await req.json();
       const code = body.code;
 
       if (!code) {
-        return json({ error: 'no_code' }, 400);
+        return json(req, req, { error: 'no_code' }, 400);
       }
 
       // Get Facebook App credentials
@@ -115,7 +110,7 @@ Deno.serve(async (req) => {
       const redirectUri = Deno.env.get('META_OAUTH_REDIRECT_URI');
 
       if (!appId || !appSecret || !redirectUri) {
-        return json({ error: 'config_error' }, 500);
+        return json(req, req, { error: 'config_error' }, 500);
       }
 
       // Step 1: Exchange code for short-lived token
@@ -128,7 +123,7 @@ Deno.serve(async (req) => {
       const tokenResponse = await fetch(tokenUrl);
       if (!tokenResponse.ok) {
         const errorData = await tokenResponse.text();
-        return json({ error: 'token_exchange_failed', details: errorData }, 400);
+        return json(req, req, { error: 'token_exchange_failed', details: errorData }, 400);
       }
 
       const tokenData: MetaTokenResponse = await tokenResponse.json();
@@ -144,7 +139,7 @@ Deno.serve(async (req) => {
       const longLivedResponse = await fetch(longLivedUrl);
       if (!longLivedResponse.ok) {
         const errorData = await longLivedResponse.text();
-        return json({ error: 'long_token_failed', details: errorData }, 400);
+        return json(req, req, { error: 'long_token_failed', details: errorData }, 400);
       }
 
       const longLivedData: MetaLongLivedTokenResponse = await longLivedResponse.json();
@@ -159,7 +154,7 @@ Deno.serve(async (req) => {
       const meResponse = await fetch(meUrl);
       if (!meResponse.ok) {
         const errorData = await meResponse.text();
-        return json({ error: 'user_info_failed', details: errorData }, 400);
+        return json(req, req, { error: 'user_info_failed', details: errorData }, 400);
       }
 
       const meData: MetaUserResponse = await meResponse.json();
@@ -169,7 +164,7 @@ Deno.serve(async (req) => {
       const pagesResponse = await fetch(pagesUrl);
       if (!pagesResponse.ok) {
         const errorData = await pagesResponse.text();
-        return json({ error: 'pages_failed', details: errorData }, 400);
+        return json(req, req, { error: 'pages_failed', details: errorData }, 400);
       }
 
       const pagesData = await pagesResponse.json();
@@ -228,7 +223,7 @@ Deno.serve(async (req) => {
           .single();
         
         if (updateError) {
-          return json({ error: 'db_error', details: updateError.message }, 500);
+          return json(req, req, { error: 'db_error', details: updateError.message }, 500);
         }
         
         connectionId = updated!.id;
@@ -256,7 +251,7 @@ Deno.serve(async (req) => {
         .single();
 
         if (insertError) {
-          return json({ error: 'db_error', details: insertError.message }, 500);
+          return json(req, req, { error: 'db_error', details: insertError.message }, 500);
         }
 
         connectionId = newConnection!.id;
@@ -278,7 +273,7 @@ Deno.serve(async (req) => {
           .insert(pageInserts);
 
         if (pagesError) {
-          return json({ error: 'pages_error', details: pagesError.message }, 500);
+          return json(req, req, { error: 'pages_error', details: pagesError.message }, 500);
         }
       }
 
@@ -324,7 +319,7 @@ Deno.serve(async (req) => {
       }
 
       // Success!
-      return json({
+      return json(req, req, {
         success: true,
         meta_user: {
           id: meData.id,
@@ -335,17 +330,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    return json({ error: 'method_not_allowed' }, 405);
+    return json(req, req, { error: 'method_not_allowed' }, 405);
   } catch (error) {
-    return json({ error: 'server_error', details: error.message }, 500);
+    return json(req, req, { error: 'server_error', details: error.message }, 500);
   }
 });
 
-function json(data: unknown, status = 200): Response {
+function json(req: Request, req: Request, data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
-      ...corsHeaders,
+      ...cors(req, 'GET, POST'),
       'Content-Type': 'application/json',
     },
   });

@@ -10,23 +10,18 @@
 import { sendOutput } from '../_shared/worker.ts';
 import { db } from '../_shared/db.ts';
 import { authErrorResponse, requireUser } from '../_shared/auth.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
   try {
     const database = db();
     const caller = await requireUser(req, database);
 
     const { request_id } = await req.json();
-    if (!request_id) return new Response(JSON.stringify({ error: 'request_id required' }), { status: 400, headers: corsHeaders });
+    if (!request_id) return new Response(JSON.stringify({ error: 'request_id required' }), { status: 400, headers: cors(req, 'POST') });
 
     if (!caller.isAdmin) {
       const { data: request } = await database
@@ -35,15 +30,15 @@ Deno.serve(async (req) => {
         .eq('id', request_id)
         .maybeSingle();
       if (request?.created_by !== caller.userId) {
-        return new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
       }
     }
 
     await sendOutput(request_id);
-    return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ ok: true }), { headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
   } catch (e) {
-    const denied = authErrorResponse(e, corsHeaders);
+    const denied = authErrorResponse(e, cors(req, 'POST'));
     if (denied) return denied;
-    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
   }
 });

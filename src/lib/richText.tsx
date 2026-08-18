@@ -10,6 +10,7 @@ import {
   TextRun,
   convertInchesToTwip,
 } from 'docx';
+import { escapeHtml, safeUrlAttribute } from '@/lib/escape';
 
 export type RichTextBlock =
   | { type: 'heading'; level: number; text: InlineNode[] }
@@ -471,7 +472,7 @@ function blockToPdfHtml(block: RichTextBlock, maxImageHeight = 820): string {
   }
   if (block.type === 'image') {
     const imageHeight = Math.max(180, Math.min(maxImageHeight, 760));
-    return `<figure style="margin:22px 0;text-align:center;break-inside:avoid;page-break-inside:avoid;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt ?? '')}" style="display:block;margin:0 auto;max-width:100%;max-height:${imageHeight}px;width:auto;height:auto;border-radius:10px;object-fit:contain;" /></figure>`;
+    return `<figure style="margin:22px 0;text-align:center;break-inside:avoid;page-break-inside:avoid;"><img src="${safeUrlAttribute(block.src)}" alt="${escapeHtml(block.alt ?? '')}" style="display:block;margin:0 auto;max-width:100%;max-height:${imageHeight}px;width:auto;height:auto;border-radius:10px;object-fit:contain;" /></figure>`;
   }
   if (block.type === 'list') {
     const tag = block.ordered ? 'ol' : 'ul';
@@ -489,14 +490,6 @@ function inlineToHtml(nodes: InlineNode[]): string {
   }).join('');
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 async function patchXml(zip: { file(path: string): { async(type: 'string'): Promise<string> } | null; file(path: string, data: string): unknown }, path: string, patch: (xml: string) => string): Promise<void> {
   const file = zip.file(path);

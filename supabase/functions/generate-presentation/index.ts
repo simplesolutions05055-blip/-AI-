@@ -3,6 +3,7 @@ import { generatePresentationOutline, generateDeckSlides, rewriteDeckSlide, gene
 import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost, imageUnitCost } from '../_shared/util.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
+import { cors } from '../_shared/cors.ts';
 import {
   AbuseGuardError,
   enforceAiLimit,
@@ -10,12 +11,6 @@ import {
   loadRequestActor,
   rejectClientOpenAiKeyIfDisabled,
 } from '../_shared/abuseGuard.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
 
 const fallbackSystemMessage =
   'אתה סוכן AI ארגוני. הפק חבילת תוכן למצגת בעברית RTL: שם מצגת, מטרה, מבנה שקפים, תוכן מלא לכל שקף, הנחיות עיצוב.';
@@ -26,14 +21,14 @@ const MAX_DECK_IMAGES = 15;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
 
   const database = db();
 
   // Reachable by anyone holding the anon key, which ships in the browser
   // bundle — the platform's verify_jwt gate proves a token exists, not a user.
-  const { denied } = await denyUnauthenticated(req, database, corsHeaders);
+  const { denied } = await denyUnauthenticated(req, database, cors(req, 'POST'));
   if (denied) return denied;
 
   try {
@@ -65,7 +60,7 @@ Deno.serve(async (req) => {
       if (!list.length) {
         return new Response(JSON.stringify({ error: 'prompts array required' }), {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
         });
       }
       const idxList = Array.isArray(slideIndexes) ? slideIndexes : [];
@@ -134,24 +129,24 @@ Deno.serve(async (req) => {
         metadata: { count: images.length, request_id: requestId ?? null },
       });
       return new Response(JSON.stringify({ ok: true, images }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
 
     if (!brief || typeof brief !== 'object') {
       return new Response(JSON.stringify({ error: 'brief object required' }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
 
     if (format === 'annual_planner_events') {
       const text = typeof (brief as { source_text?: unknown }).source_text === 'string' ? (brief as { source_text: string }).source_text.trim() : '';
-      if (!text) return new Response(JSON.stringify({ error: 'source_text required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      if (!text) return new Response(JSON.stringify({ error: 'source_text required' }), { status: 400, headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
       const aiModelsPlanner = await getSetting<{ text_model?: string }>(database, 'ai_models');
       const result = await extractAnnualPlannerEvents(text, Number(planner_year) || new Date().getFullYear(), overrideKey);
       await recordUsageAndCost(database, requestId ?? null, { provider: 'openai', model: aiModelsPlanner?.text_model || 'gpt-4o', input: result.usage?.prompt_tokens ?? 0, output: result.usage?.completion_tokens ?? 0, cost: estimateTextCost(result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0) });
-      return new Response(JSON.stringify({ ok: true, events: result.events }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ ok: true, events: result.events }), { headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
     }
 
     // 'deck' mode: return rich structured 10-slide content for the PDF renderer.
@@ -198,7 +193,7 @@ Deno.serve(async (req) => {
         metadata: { slide_count: slides.length, request_id: requestId ?? null },
       });
       return new Response(JSON.stringify({ ok: true, slides }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
 
@@ -210,7 +205,7 @@ Deno.serve(async (req) => {
       if (!instr) {
         return new Response(JSON.stringify({ error: 'instruction required' }), {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
         });
       }
       const aiModelsRewrite = await getSetting<{ text_model?: string }>(database, 'ai_models');
@@ -227,7 +222,7 @@ Deno.serve(async (req) => {
         metadata: { request_id: requestId ?? null, slide_number: Number(slideNumber) || 1 },
       });
       return new Response(JSON.stringify({ ok: true, slide: rewritten }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
 
@@ -291,7 +286,7 @@ Deno.serve(async (req) => {
         metadata: { request_id: requestId ?? null },
       });
       return new Response(JSON.stringify({ ok: true, quote }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
 
@@ -319,7 +314,7 @@ Deno.serve(async (req) => {
         if (!manual) {
           return new Response(JSON.stringify({ error: 'current_caption required' }), {
             status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
           });
         }
         await persistCaption(manual);
@@ -328,7 +323,7 @@ Deno.serve(async (req) => {
           metadata: { request_id: requestId ?? null, output_id: captionOutputId },
         });
         return new Response(JSON.stringify({ ok: true, caption: manual }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
         });
       }
 
@@ -369,7 +364,7 @@ Deno.serve(async (req) => {
         metadata: { request_id: requestId ?? null, platform: platform ?? null, output_id: captionOutputId },
       });
       return new Response(JSON.stringify({ ok: true, caption }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
 
@@ -474,13 +469,13 @@ Deno.serve(async (req) => {
     });
 
     return new Response(JSON.stringify({ ok: true, text: textWithAssets }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
     });
   } catch (error) {
     if (error instanceof AbuseGuardError) {
       return new Response(JSON.stringify({ error: error.message, code: error.code }), {
         status: error.status,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
     await logEvent(database, {
@@ -496,12 +491,12 @@ Deno.serve(async (req) => {
     if (/insufficient_quota|exceeded your current quota|\b429\b|billing/i.test(msg)) {
       return new Response(JSON.stringify({ error: 'openai_quota', message: msg }), {
         status: 402,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });
     }
     return new Response(JSON.stringify({ error: msg }), {
       status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
     });
   }
 });

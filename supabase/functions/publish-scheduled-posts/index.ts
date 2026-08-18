@@ -1,12 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-
-const CRON_SECRET = Deno.env.get('CRON_SECRET') || '';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
+import { checkCanary, matchesEnvSecret } from '../_shared/secrets.ts';
+import { db } from '../_shared/db.ts';
 
 interface StoredMediaRecord {
   kind: 'image' | 'video';
@@ -36,14 +31,19 @@ interface PublishResult {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST', ['x-cron-secret']) });
   }
 
   try {
-    // Verify cron secret for security
+    // Verify cron secret. Compared in constant time so the rejection latency
+    // cannot be used to recover the secret one character at a time; a canary
+    // hit answers IDENTICALLY so the trap is never revealed to the caller.
     const cronSecret = req.headers.get('x-cron-secret');
-    if (cronSecret !== CRON_SECRET) {
-      return json({ error: 'unauthorized' }, 401);
+    if (await checkCanary(db(), req, cronSecret, 'publish-scheduled-posts')) {
+      return json(req, req, { error: 'unauthorized' }, 401);
+    }
+    if (!(await matchesEnvSecret('CRON_SECRET', cronSecret))) {
+      return json(req, req, { error: 'unauthorized' }, 401);
     }
 
     const supabase = createClient(
@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
     }
 
     if (!duePosts || duePosts.length === 0) {
-      return json({ processed: 0, published: 0, failed: 0 });
+      return json(req, req, { processed: 0, published: 0, failed: 0 });
     }
 
     const results: PublishResult[] = [];
@@ -152,14 +152,14 @@ Deno.serve(async (req) => {
     const published = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
 
-    return json({
+    return json(req, req, {
       processed: results.length,
       published,
       failed,
       results,
     });
   } catch (error) {
-    return json({ error: String(error) }, 500);
+    return json(req, req, { error: String(error) }, 500);
   }
 });
 
@@ -197,9 +197,9 @@ async function resolveImageUrls(
   return urls.slice(0, 10);
 }
 
-function json(body: unknown, status = 200) {
+function json(req: Request, req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST', ['x-cron-secret']), 'Content-Type': 'application/json' },
   });
 }

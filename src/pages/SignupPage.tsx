@@ -5,6 +5,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { applyBrandPalette, resetBrandTheme, type PaletteEntry } from '@/lib/useBrandTheme';
 import { Spinner } from '@/components/ui/Spinner';
 import LegalLinks from '@/components/legal/LegalLinks';
+import { logError } from '@/lib/errorReporting';
 
 interface InviteBrand {
   name: string;
@@ -103,8 +104,14 @@ export default function SignupPage() {
     }
 
     setLoading(true);
-    const sent = await requestCode();
-    setLoading(false);
+    let sent = false;
+    try {
+      sent = await requestCode();
+    } catch (e) {
+      void logError('signup_request_code_failed', e);
+    } finally {
+      setLoading(false);   // without this a network throw leaves the spinner forever
+    }
     if (!sent) return;
     setCode('');
     setResendIn(RESEND_COOLDOWN_SECONDS);
@@ -116,8 +123,14 @@ export default function SignupPage() {
     if (resendIn > 0 || loading) return;
     setError(null);
     setLoading(true);
-    const sent = await requestCode();
-    setLoading(false);
+    let sent = false;
+    try {
+      sent = await requestCode();
+    } catch (e) {
+      void logError('signup_resend_code_failed', e);
+    } finally {
+      setLoading(false);
+    }
     if (sent) setResendIn(RESEND_COOLDOWN_SECONDS);
   }
 
@@ -130,24 +143,29 @@ export default function SignupPage() {
       return;
     }
     setLoading(true);
-    const cleanEmail = email.trim().toLowerCase();
-    const { error: verifyError } = await supabase.auth.verifyOtp({
-      email: cleanEmail,
-      token: cleanCode,
-      type: 'email',
-    });
-    if (verifyError) {
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token: cleanCode,
+        type: 'email',
+      });
+      if (verifyError) {
+        setError('הקוד שגוי או שפג תוקפו. אפשר לבקש קוד חדש.');
+        return;
+      }
+      // Ownership proven — align the stored password with what was typed now
+      // (matters when an old unverified signup existed with a different one).
+      if (passwordNeedsUpdate) {
+        await supabase.auth.updateUser({ password });
+      }
+      navigate('/onboarding', { replace: true });
+    } catch (e) {
+      void logError('signup_verify_failed', e);
+      setError('אירעה תקלה. בדקו את החיבור לאינטרנט ונסו שוב.');
+    } finally {
       setLoading(false);
-      setError('הקוד שגוי או שפג תוקפו. אפשר לבקש קוד חדש.');
-      return;
     }
-    // Ownership proven — align the stored password with what was typed now
-    // (matters when an old unverified signup existed with a different one).
-    if (passwordNeedsUpdate) {
-      await supabase.auth.updateUser({ password });
-    }
-    setLoading(false);
-    navigate('/onboarding', { replace: true });
   }
 
   if (resolvingInvite) {

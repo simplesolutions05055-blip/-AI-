@@ -9,13 +9,9 @@
  */
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { cors } from '../_shared/cors.ts';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 interface FacebookPage {
   id: string;
@@ -51,7 +47,7 @@ interface PostResult {
 Deno.serve(async (req) => {
   // CORS preflight
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
 
   try {
@@ -201,7 +197,7 @@ Deno.serve(async (req) => {
       JSON.stringify(result),
       {
         status: result.success ? 200 : 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       }
     );
 
@@ -213,7 +209,7 @@ Deno.serve(async (req) => {
       }),
       {
         status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       }
     );
   }

@@ -1,6 +1,7 @@
 import { db, type DB } from '../_shared/db.ts';
 import { sendAuthCodeEmail, codeSendThrottle } from '../_shared/authEmail.ts';
 import { logEvent } from '../_shared/util.ts';
+import { cors } from '../_shared/cors.ts';
 
 interface Body {
   email?: string;
@@ -8,29 +9,23 @@ interface Body {
   invite_token?: string;
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 // Self-service registration WITH email verification. The user is created
 // unconfirmed, and a 6-digit code is emailed (branded via Resend). The client
 // verifies the code with auth.verifyOtp — which confirms the email AND signs
 // the user in. The handle_new_user trigger provisions a 'user' profile.
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
   try {
     const { email, password, invite_token } = (await req.json()) as Body;
 
     const cleanEmail = (email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      return json({ error: 'invalid_email' });
+      return json(req, req, { error: 'invalid_email' });
     }
     if (!password || password.length < 8) {
-      return json({ error: 'weak_password' });
+      return json(req, req, { error: 'weak_password' });
     }
 
     const database = db();
@@ -45,20 +40,20 @@ Deno.serve(async (req) => {
 
     if (error) {
       const already = /registered|already|exists/i.test(error.message);
-      if (!already) return json({ error: 'signup_failed' });
+      if (!already) return json(req, req, { error: 'signup_failed' });
       // The address is taken. If the previous signup never finished verifying,
       // let the user pick up where they left off (fresh code) instead of a
       // dead-end "email taken" — their new password is applied after verify.
       const existing = await findUserByEmail(database, cleanEmail);
-      if (!existing) return json({ error: 'email_taken' });
-      if (existing.email_confirmed_at) return json({ error: 'email_taken' });
+      if (!existing) return json(req, req, { error: 'email_taken' });
+      if (existing.email_confirmed_at) return json(req, req, { error: 'email_taken' });
       userId = existing.id;
       resent = true;
     } else {
       userId = created.user?.id ?? null;
     }
 
-    if (!userId) return json({ error: 'signup_failed' });
+    if (!userId) return json(req, req, { error: 'signup_failed' });
 
     // When the registration came through a brand-invite link, assign that brand
     // and enable output creation so the user can work immediately after
@@ -90,7 +85,7 @@ Deno.serve(async (req) => {
     // one-time tokens (generateLink), so expiry/single-use/attempt limits are
     // enforced server-side by Supabase — we only deliver the branded email.
     const throttled = await codeSendThrottle(database, 'signup', cleanEmail);
-    if (throttled) return json({ error: throttled });
+    if (throttled) return json(req, req, { error: throttled });
 
     const { data: linkData, error: linkError } = await database.auth.admin.generateLink({
       type: 'magiclink',
@@ -102,7 +97,7 @@ Deno.serve(async (req) => {
         severity: 'error', action: 'signup_code_generate_failed',
         message: String(linkError?.message ?? 'no email_otp'), metadata: { email: cleanEmail },
       });
-      return json({ error: 'code_send_failed' });
+      return json(req, req, { error: 'code_send_failed' });
     }
     try {
       await sendAuthCodeEmail(database, { to: cleanEmail, code, purpose: 'signup' });
@@ -111,12 +106,12 @@ Deno.serve(async (req) => {
         severity: 'error', action: 'signup_code_email_failed',
         message: String(e), metadata: { email: cleanEmail },
       });
-      return json({ error: 'code_send_failed' });
+      return json(req, req, { error: 'code_send_failed' });
     }
 
-    return json({ ok: true, verify: true, resent, brand_assigned });
+    return json(req, req, { ok: true, verify: true, resent, brand_assigned });
   } catch (_e) {
-    return json({ error: 'signup_failed' });
+    return json(req, req, { error: 'signup_failed' });
   }
 });
 
@@ -139,9 +134,9 @@ async function findUserByEmail(
 }
 
 // Always 200 so supabase-js functions.invoke surfaces the body to the client.
-function json(body: unknown, status = 200) {
+function json(req: Request, req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }

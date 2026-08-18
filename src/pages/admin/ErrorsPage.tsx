@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { formatHebrewDateTime } from '@/lib/format';
-import { Spinner } from '@/components/ui/Spinner';
+import { LoadState } from '@/components/ui/LoadState';
+import { logError } from '@/lib/errorReporting';
 
 interface Log {
   id: string;
@@ -30,7 +31,10 @@ const SEVERITY_LABEL: Record<string, string> = {
 export default function ErrorsPage() {
   const [logs, setLogs] = useState<Log[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [filter, setFilter] = useState<'error' | 'warning' | 'all'>('error');
+  // Bumping this re-runs the effect — that is what the retry button drives.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const db = createSupabaseBrowserClient();
@@ -49,21 +53,33 @@ export default function ErrorsPage() {
     }
 
     setLoading(true);
-    query.then(({ data, error }) => {
-      if (cancelled) return;
-      if (error) {
-        console.error('Failed to fetch logs:', error);
-        setLogs([]);
-      } else {
-        setLogs((data ?? []) as Log[]);
+    setLoadFailed(false);
+    void (async () => {
+      try {
+        const { data, error } = await query;
+        if (cancelled) return;
+        if (error) {
+          void logError('admin_errors_query_failed', error);
+          setLogs([]);
+          setLoadFailed(true);
+        } else {
+          setLogs((data ?? []) as Log[]);
+        }
+      } catch (e) {
+        // A thrown request (offline, CORS) never reaches the {error} branch.
+        if (cancelled) return;
+        void logError('admin_errors_query_threw', e);
+        setLoadFailed(true);
+      } finally {
+        // Always — otherwise a failure leaves the spinner up until tomorrow.
+        if (!cancelled) setLoading(false);
       }
-      setLoading(false);
-    });
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [filter]);
+  }, [filter, reloadKey]);
 
   return (
     <div>
@@ -105,15 +121,13 @@ export default function ErrorsPage() {
         </button>
       </div>
 
-      {loading ? (
-        <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">
-          <Spinner />
-        </div>
-      ) : logs.length === 0 ? (
-        <div className="rounded-xl border border-[var(--border)] bg-white p-6 text-center text-[var(--muted)]">
-          אין שגיאות להצגה.
-        </div>
-      ) : (
+      <LoadState
+        loading={loading}
+        failed={loadFailed}
+        empty={logs.length === 0}
+        emptyText="אין שגיאות להצגה."
+        onRetry={() => setReloadKey((k) => k + 1)}
+      >
         <div className="space-y-3">
           {logs.map((log) => (
             <div
@@ -152,7 +166,7 @@ export default function ErrorsPage() {
             </div>
           ))}
         </div>
-      )}
+      </LoadState>
     </div>
   );
 }

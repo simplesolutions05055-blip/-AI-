@@ -15,12 +15,7 @@
 import { authErrorResponse, requireAdmin } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { recordInstanceState } from '../_shared/instanceState.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { cors } from '../_shared/cors.ts';
 
 const WEBHOOK_PATH = '/functions/v1/whatsapp-group-webhook';
 
@@ -41,7 +36,7 @@ async function call(method: string): Promise<Record<string, unknown>> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
   try {
     await requireAdmin(req);
@@ -53,7 +48,7 @@ Deno.serve(async (req) => {
       webhook_secret: !!Deno.env.get('GROUP_WEBHOOK_SECRET'),
     };
     if (!configured.id_instance || !configured.token) {
-      return json({ ok: false, reason: 'missing_credentials', configured });
+      return json(req, req, { ok: false, reason: 'missing_credentials', configured });
     }
 
     const [stateResult, settingsResult] = await Promise.allSettled([
@@ -64,7 +59,7 @@ Deno.serve(async (req) => {
     if (stateResult.status === 'rejected') {
       // The gateway itself is unreachable or rejecting our credentials — that
       // is the answer, and no amount of webhook config matters until it's fixed.
-      return json({ ok: false, reason: String(stateResult.reason?.message ?? 'state_unavailable'), configured });
+      return json(req, req, { ok: false, reason: String(stateResult.reason?.message ?? 'state_unavailable'), configured });
     }
 
     const state = String(stateResult.value.stateInstance ?? 'unknown');
@@ -79,7 +74,7 @@ Deno.serve(async (req) => {
     const expectedSecret = Deno.env.get('GROUP_WEBHOOK_SECRET') ?? '';
     const instanceSecret = String(settings?.webhookUrlToken ?? '');
 
-    return json({
+    return json(req, req, {
       ok: state === 'authorized',
       configured,
       state,
@@ -94,15 +89,15 @@ Deno.serve(async (req) => {
       },
     });
   } catch (e) {
-    const denied = authErrorResponse(e, corsHeaders);
+    const denied = authErrorResponse(e, cors(req, 'POST'));
     if (denied) return denied;
-    return json({ ok: false, reason: 'check_failed' }, 500);
+    return json(req, req, { ok: false, reason: 'check_failed' }, 500);
   }
 });
 
-function json(payload: unknown, status = 200): Response {
+function json(req: Request, req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }

@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import LegalLinks from '@/components/legal/LegalLinks';
+import { logError } from '@/lib/errorReporting';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -33,8 +34,18 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
+    // supabase-js returns {error} for auth failures but THROWS when the request
+    // itself dies (offline, DNS, CORS). Without the finally the spinner would
+    // then run until the user gives up and closes the tab.
+    let error: unknown = null;
+    try {
+      ({ error } = await supabase.auth.signInWithPassword({ email, password }));
+    } catch (e) {
+      void logError('login_request_failed', e);
+      error = e;
+    } finally {
+      setLoading(false);
+    }
     if (error) {
       setError('הכניסה נכשלה. בדקו את כתובת המייל והסיסמה.');
       return;

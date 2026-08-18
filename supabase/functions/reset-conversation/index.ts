@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { logEvent } from '../_shared/util.ts';
+import { cors } from '../_shared/cors.ts';
 
 interface Body {
   // Optional. When set, reset only this sender (e.g. "whatsapp:+972500000000").
@@ -14,24 +15,18 @@ interface Body {
   brandId?: string;
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
 // Admin-only. Resets a live WhatsApp conversation to a clean slate — the same
 // state the in-flow "start over" command produces: no open request, cleared
 // flow state, so the sender's next message opens a fresh main menu. Mirrors
 // resetConversation() in _shared/inbound.ts.
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: cors(req, 'POST') });
   }
   try {
     const authHeader = req.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^Bearer\s+/i, '');
-    if (!token) return json({ error: 'unauthorized' });
+    if (!token) return json(req, req, { error: 'unauthorized' });
 
     const database = db();
 
@@ -43,7 +38,7 @@ Deno.serve(async (req) => {
     ).auth.getUser(token);
 
     const callerId = caller.user?.id;
-    if (!callerId) return json({ error: 'unauthorized' });
+    if (!callerId) return json(req, req, { error: 'unauthorized' });
 
     const { data: callerProfile } = await database
       .from('profiles')
@@ -51,7 +46,7 @@ Deno.serve(async (req) => {
       .eq('id', callerId)
       .maybeSingle();
 
-    if (callerProfile?.role !== 'admin') return json({ error: 'forbidden' });
+    if (callerProfile?.role !== 'admin') return json(req, req, { error: 'forbidden' });
 
     const { phone, group, brandId } = ((await req.json().catch(() => ({}))) ?? {}) as Body;
 
@@ -64,7 +59,7 @@ Deno.serve(async (req) => {
         .in('status', ['active', 'waiting_for_user', 'soft_closed']);
       if (brandId) groupQuery = groupQuery.eq('group_id', `brand-${brandId}@sim.group`);
       const { data: groupRows, error: groupErr } = await groupQuery;
-      if (groupErr) return json({ error: 'select_failed' });
+      if (groupErr) return json(req, req, { error: 'select_failed' });
       for (const row of groupRows ?? []) {
         if (row.current_request_id) {
           await database.from('requests')
@@ -82,7 +77,7 @@ Deno.serve(async (req) => {
         action: 'group_chat_reset',
         metadata: { reason: 'admin_button', brand_id: brandId ?? 'all', count: (groupRows ?? []).length },
       });
-      return json({ ok: true, reset: (groupRows ?? []).length });
+      return json(req, req, { ok: true, reset: (groupRows ?? []).length });
     }
 
     // Target: live real WhatsApp conversations (never the simulator/e2e rows).
@@ -95,7 +90,7 @@ Deno.serve(async (req) => {
     if (phone) query = query.eq('whatsapp_from', phone);
 
     const { data: targets, error: selErr } = await query;
-    if (selErr) return json({ error: 'select_failed' });
+    if (selErr) return json(req, req, { error: 'select_failed' });
 
     const rows = targets ?? [];
     for (const row of rows) {
@@ -123,16 +118,16 @@ Deno.serve(async (req) => {
       metadata: { reason: 'admin_button', count: rows.length, phones: rows.map((r) => r.whatsapp_from) },
     });
 
-    return json({ ok: true, reset: rows.length, phones: rows.map((r) => r.whatsapp_from) });
+    return json(req, req, { ok: true, reset: rows.length, phones: rows.map((r) => r.whatsapp_from) });
   } catch (_e) {
-    return json({ error: 'reset_failed' });
+    return json(req, req, { error: 'reset_failed' });
   }
 });
 
 // Always 200 so supabase-js functions.invoke surfaces the body to the client.
-function json(body: unknown, status = 200) {
+function json(req: Request, req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
   });
 }

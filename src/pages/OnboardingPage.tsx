@@ -1,4 +1,6 @@
 import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { useFormDraft } from '@/lib/useFormDraft';
+import { logError } from '@/lib/errorReporting';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { extractTextFromUploadedFile } from '@/lib/extractText';
@@ -178,6 +180,12 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
   const [brandName, setBrandName] = useState<string | null>(null);
   const [brandDone, setBrandDone] = useState(false);
   const [brand, setBrand] = useState<BrandDetails>(emptyBrand);
+  // Onboarding is the longest form in the product. Every keystroke is mirrored
+  // to IndexedDB so a failed save, a refresh or a browser crash does not send
+  // the user back to an empty form — the single fastest way to lose them.
+  const brandDraft = useFormDraft<BrandDetails>(`onboarding-brand:${userId ?? 'anon'}`, brand, {
+    enabled: !loading && Boolean(userId),
+  });
   const [brandMode, setBrandMode] = useState<'idle' | 'existing' | 'new'>('idle');
   const [brandLogoFile, setBrandLogoFile] = useState<File | null>(null);
   const [brandLogoPreview, setBrandLogoPreview] = useState<string | null>(null);
@@ -768,11 +776,15 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       setBrandName(loaded.name);
       setBrandDone(true);
       setCanCreateOutputs(true);
+      // Saved for real — the local copy has done its job and must not resurface.
+      void brandDraft.discard();
       progress.current = { ...progress.current, brand_done: true };
       setStepIndex(steps.indexOf('docs'));
     } catch (e) {
-      console.error(e);
-      setError('שמירת המותג נכשלה. נסו שוב.');
+      // The draft deliberately stays in IndexedDB here — this is the exact
+      // failure it exists for.
+      void logError('onboarding_brand_save_failed', e);
+      setError('שמירת המותג נכשלה. הנתונים נשמרו מקומית — אפשר לנסות שוב.');
     } finally {
       setSaving(false);
     }
@@ -1160,6 +1172,34 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                 <p className="mb-5 mt-1 text-sm text-[var(--muted)]">
                   השלימו את פרטי המותג, הנחיות הכתיבה והנתונים שיופיעו במסמכים.
                 </p>
+
+                {/* The draft is offered, never applied silently — quietly
+                    overwriting what the server returned is how real edits vanish. */}
+                {brandDraft.recovered && (
+                  <div className="mb-5 rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] p-3 text-sm">
+                    <p className="mb-2">מצאנו טיוטה שלא נשמרה מהפעם הקודמת. לשחזר אותה?</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="rounded-lg bg-[var(--warm-accent)] px-3 py-1.5 text-xs font-semibold text-white"
+                        onClick={() => {
+                          const draft = brandDraft.recovered;
+                          if (draft) setBrand((cur) => ({ ...draft, id: cur.id, logo_url: cur.logo_url }));
+                          void brandDraft.dismiss();
+                        }}
+                      >
+                        שחזור הטיוטה
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-medium"
+                        onClick={() => void brandDraft.dismiss()}
+                      >
+                        התחלה מחדש
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <Field label="סוג לקוח">
                   <select
