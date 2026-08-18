@@ -19,7 +19,9 @@
     "guards": "node scripts/hardening-guards.mjs",
     "test:hardening": "node scripts/hardening-tests.mjs",
     "verify": "npm run typecheck && npm run typecheck:api && npm run guards && npm run test:hardening",
-    "typecheck:api": "tsc -p tsconfig.api.json --noEmit"
+    "typecheck:api": "tsc -p tsconfig.api.json --noEmit",
+    "lint:functions": "deno lint --rules-tags= --rules-include=no-dupe-args,no-dupe-keys,no-dupe-class-members supabase/functions",
+    "check:functions": "deno check supabase/functions/_shared/cors.ts supabase/functions/_shared/secrets.ts supabase/functions/_shared/safeFetch.ts supabase/functions/_shared/escape.ts supabase/functions/_shared/sessionBinding.ts supabase/functions/client-error/index.ts"
   },
   "dependencies": {
     "@radix-ui/react-tooltip": "^1.2.10",

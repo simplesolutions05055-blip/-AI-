@@ -18,12 +18,12 @@ Deno.serve(async (req) => {
 
   try {
     const createdBy = await resolveUserId(req);
-    if (!createdBy) return json(req, req, { error: 'unauthorized' }, 401);
+    if (!createdBy) return json(req, { error: 'unauthorized' }, 401);
 
     const body = await req.json() as Body;
     const files = (body.files ?? []).filter((file) => file.file_base64);
-    if (files.length === 0) return json(req, req, { error: 'files_required' }, 400);
-    if (files.length > 20) return json(req, req, { error: 'too_many_files' }, 400);
+    if (files.length === 0) return json(req, { error: 'files_required' }, 400);
+    if (files.length > 20) return json(req, { error: 'too_many_files' }, 400);
 
     const database = db();
     const brandId = nullableUuid(body.brand_id);
@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
     let version = 1;
     for (const item of files) {
       const mimeType = normalizeImageMime(item.mime_type);
-      if (!mimeType) return json(req, req, { error: 'images_only' }, 400);
+      if (!mimeType) return json(req, { error: 'images_only' }, 400);
       const fileName = safeStorageFileName(item.file_name || `upload-${version}`);
       const ext = extensionForMime(mimeType, fileName);
       const storagePath = `${requestRow.id}/user-uploads/${crypto.randomUUID()}-${fileName}.${ext}`;
@@ -90,10 +90,10 @@ Deno.serve(async (req) => {
       version += 1;
     }
 
-    return json(req, req, { ok: true, request_id: requestRow.id, files: saved });
+    return json(req, { ok: true, request_id: requestRow.id, files: saved });
   } catch (e) {
     console.error('upload-user-content failed', serializeError(e));
-    return json(req, req, { error: errorMessage(e) }, 500);
+    return json(req, { error: errorMessage(e) }, 500);
   }
 });
 
@@ -158,7 +158,7 @@ function safeStorageFileName(value: string): string {
     .replace(/\.+$/g, '') || 'upload';
 }
 
-function json(req: Request, req: Request, payload: unknown, status = 200): Response {
+function json(req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

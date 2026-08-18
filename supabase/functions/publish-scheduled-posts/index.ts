@@ -40,10 +40,10 @@ Deno.serve(async (req) => {
     // hit answers IDENTICALLY so the trap is never revealed to the caller.
     const cronSecret = req.headers.get('x-cron-secret');
     if (await checkCanary(db(), req, cronSecret, 'publish-scheduled-posts')) {
-      return json(req, req, { error: 'unauthorized' }, 401);
+      return json(req, { error: 'unauthorized' }, 401);
     }
     if (!(await matchesEnvSecret('CRON_SECRET', cronSecret))) {
-      return json(req, req, { error: 'unauthorized' }, 401);
+      return json(req, { error: 'unauthorized' }, 401);
     }
 
     const supabase = createClient(
@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
     }
 
     if (!duePosts || duePosts.length === 0) {
-      return json(req, req, { processed: 0, published: 0, failed: 0 });
+      return json(req, { processed: 0, published: 0, failed: 0 });
     }
 
     const results: PublishResult[] = [];
@@ -152,14 +152,14 @@ Deno.serve(async (req) => {
     const published = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
 
-    return json(req, req, {
+    return json(req, {
       processed: results.length,
       published,
       failed,
       results,
     });
   } catch (error) {
-    return json(req, req, { error: String(error) }, 500);
+    return json(req, { error: String(error) }, 500);
   }
 });
 
@@ -197,7 +197,7 @@ async function resolveImageUrls(
   return urls.slice(0, 10);
 }
 
-function json(req: Request, req: Request, body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors(req, 'POST', ['x-cron-secret']), 'Content-Type': 'application/json' },

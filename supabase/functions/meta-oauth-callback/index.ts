@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
     if (req.method === 'POST') {
       const authHeader = req.headers.get('Authorization');
       if (!authHeader?.startsWith('Bearer ')) {
-        return json(req, req, { error: 'unauthorized' }, 401);
+        return json(req, { error: 'unauthorized' }, 401);
       }
 
       const token = authHeader.substring(7);
@@ -94,14 +94,14 @@ Deno.serve(async (req) => {
       const { data: { user }, error: userError } = await database.auth.getUser(token);
       
       if (userError || !user) {
-        return json(req, req, { error: 'unauthorized' }, 401);
+        return json(req, { error: 'unauthorized' }, 401);
       }
 
       const body = await req.json();
       const code = body.code;
 
       if (!code) {
-        return json(req, req, { error: 'no_code' }, 400);
+        return json(req, { error: 'no_code' }, 400);
       }
 
       // Get Facebook App credentials
@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
       const redirectUri = Deno.env.get('META_OAUTH_REDIRECT_URI');
 
       if (!appId || !appSecret || !redirectUri) {
-        return json(req, req, { error: 'config_error' }, 500);
+        return json(req, { error: 'config_error' }, 500);
       }
 
       // Step 1: Exchange code for short-lived token
@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
       const tokenResponse = await fetch(tokenUrl);
       if (!tokenResponse.ok) {
         const errorData = await tokenResponse.text();
-        return json(req, req, { error: 'token_exchange_failed', details: errorData }, 400);
+        return json(req, { error: 'token_exchange_failed', details: errorData }, 400);
       }
 
       const tokenData: MetaTokenResponse = await tokenResponse.json();
@@ -139,7 +139,7 @@ Deno.serve(async (req) => {
       const longLivedResponse = await fetch(longLivedUrl);
       if (!longLivedResponse.ok) {
         const errorData = await longLivedResponse.text();
-        return json(req, req, { error: 'long_token_failed', details: errorData }, 400);
+        return json(req, { error: 'long_token_failed', details: errorData }, 400);
       }
 
       const longLivedData: MetaLongLivedTokenResponse = await longLivedResponse.json();
@@ -154,7 +154,7 @@ Deno.serve(async (req) => {
       const meResponse = await fetch(meUrl);
       if (!meResponse.ok) {
         const errorData = await meResponse.text();
-        return json(req, req, { error: 'user_info_failed', details: errorData }, 400);
+        return json(req, { error: 'user_info_failed', details: errorData }, 400);
       }
 
       const meData: MetaUserResponse = await meResponse.json();
@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
       const pagesResponse = await fetch(pagesUrl);
       if (!pagesResponse.ok) {
         const errorData = await pagesResponse.text();
-        return json(req, req, { error: 'pages_failed', details: errorData }, 400);
+        return json(req, { error: 'pages_failed', details: errorData }, 400);
       }
 
       const pagesData = await pagesResponse.json();
@@ -223,7 +223,7 @@ Deno.serve(async (req) => {
           .single();
         
         if (updateError) {
-          return json(req, req, { error: 'db_error', details: updateError.message }, 500);
+          return json(req, { error: 'db_error', details: updateError.message }, 500);
         }
         
         connectionId = updated!.id;
@@ -251,7 +251,7 @@ Deno.serve(async (req) => {
         .single();
 
         if (insertError) {
-          return json(req, req, { error: 'db_error', details: insertError.message }, 500);
+          return json(req, { error: 'db_error', details: insertError.message }, 500);
         }
 
         connectionId = newConnection!.id;
@@ -273,7 +273,7 @@ Deno.serve(async (req) => {
           .insert(pageInserts);
 
         if (pagesError) {
-          return json(req, req, { error: 'pages_error', details: pagesError.message }, 500);
+          return json(req, { error: 'pages_error', details: pagesError.message }, 500);
         }
       }
 
@@ -319,7 +319,7 @@ Deno.serve(async (req) => {
       }
 
       // Success!
-      return json(req, req, {
+      return json(req, {
         success: true,
         meta_user: {
           id: meData.id,
@@ -330,13 +330,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    return json(req, req, { error: 'method_not_allowed' }, 405);
+    return json(req, { error: 'method_not_allowed' }, 405);
   } catch (error) {
-    return json(req, req, { error: 'server_error', details: error.message }, 500);
+    return json(req, { error: 'server_error', details: error.message }, 500);
   }
 });
 
-function json(req: Request, req: Request, data: unknown, status = 200): Response {
+function json(req: Request, data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {

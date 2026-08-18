@@ -11,7 +11,7 @@ Deno.serve(async (req) => {
     const { fullName, email, requestType, requestDetails } = await req.json();
 
     if (!fullName || !email || !requestType || !requestDetails) {
-      return json(req, req, { error: 'missing_fields' }, 400);
+      return json(req, { error: 'missing_fields' }, 400);
     }
 
     const database = db();
@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
 
     if ((count ?? 0) >= 3) {
       // Allow max 3 requests per hour per IP
-      return json(req, req, { error: 'rate_limit_exceeded' }, 429);
+      return json(req, { error: 'rate_limit_exceeded' }, 429);
     }
 
     // Log the request
@@ -73,14 +73,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    return json(req, req, { ok: true, id: lastId });
+    return json(req, { ok: true, id: lastId });
   } catch (e) {
     console.error('Error sending GDPR request:', e);
-    return json(req, req, { error: String(e) }, 500);
+    return json(req, { error: String(e) }, 500);
   }
 });
 
-function json(req: Request, req: Request, body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

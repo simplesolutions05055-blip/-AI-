@@ -41,8 +41,8 @@ Deno.serve(async (req) => {
     const sourceRequestId = body.request_id;
     const feedback = (body.feedback ?? '').trim();
     const referencePath = (body.reference_path ?? '').trim();
-    if (!sourceRequestId) return json(req, req, { error: 'request_id required' }, 400);
-    if (!feedback && !referencePath) return json(req, req, { error: 'feedback required' }, 400);
+    if (!sourceRequestId) return json(req, { error: 'request_id required' }, 400);
+    if (!feedback && !referencePath) return json(req, { error: 'feedback required' }, 400);
 
     // Latest image output of the source request.
     const { data: output } = await database
@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
       .order('version', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (!output?.storage_path) return json(req, req, { error: 'source image not found' }, 404);
+    if (!output?.storage_path) return json(req, { error: 'source image not found' }, 404);
 
     // Original brief — fed back in as context so the edit stays on-brand.
     const { data: sourceReq } = await database
@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
 
     // Pull the source bytes from storage and base64-encode for OpenAI.
     const { data: file, error: dlError } = await database.storage.from('outputs').download(output.storage_path);
-    if (dlError || !file) return json(req, req, { error: 'failed to read source image' }, 500);
+    if (dlError || !file) return json(req, { error: 'failed to read source image' }, 500);
     const sourceBase64 = encodeBase64(new Uint8Array(await file.arrayBuffer()));
     const sourceMime = output.mime_type || 'image/png';
 
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
     let reference: { base64: string; mime: string } | null = null;
     if (referencePath) {
       const { data: refFile, error: refError } = await database.storage.from('outputs').download(referencePath);
-      if (refError || !refFile) return json(req, req, { error: 'failed to read reference image' }, 500);
+      if (refError || !refFile) return json(req, { error: 'failed to read reference image' }, 500);
       reference = {
         base64: encodeBase64(new Uint8Array(await refFile.arrayBuffer())),
         mime: body.reference_mime || refFile.type || 'image/png',
@@ -185,7 +185,7 @@ Deno.serve(async (req) => {
       metadata: { parent_request_id: sourceRequestId, model: edited.model, with_reference: Boolean(referencePath) },
     });
 
-    return json(req, req, {
+    return json(req, {
       request_id: newReq.id,
       output_id: newOutput?.id ?? null,
       text_content: (output as { text_content?: string | null }).text_content ?? null,
@@ -195,14 +195,14 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     if (e instanceof AbuseGuardError) {
-      return json(req, req, { error: e.message, code: e.code }, e.status);
+      return json(req, { error: e.message, code: e.code }, e.status);
     }
     await logEvent(database, { severity: 'error', action: 'image_edit_failed', message: String(e) });
-    return json(req, req, { error: String(e) }, 500);
+    return json(req, { error: String(e) }, 500);
   }
 });
 
-function json(req: Request, req: Request, payload: unknown, status = 200): Response {
+function json(req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

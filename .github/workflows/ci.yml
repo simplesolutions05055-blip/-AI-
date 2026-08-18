@@ -49,9 +49,23 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      # The Edge Functions are Deno, so `tsc` never looks at them. Without this
-      # job a broken import in supabase/functions ships and only fails on deploy.
-      - run: deno check supabase/functions/**/*.ts
+      # The Edge Functions are Deno, so `tsc` never looks at them — and Supabase
+      # deploys them WITHOUT typechecking, so a bad function deploys "successfully"
+      # and then returns BOOT_ERROR to every caller. That already happened once:
+      # a codemod run twice produced `function json(req: Request, req: Request, …)`,
+      # a duplicate parameter, and 23 of 35 functions failed to start in production.
+      #
+      # Two levels, deliberately:
+      #  1. lint — the boot-fatal classes, enforced across EVERY function. These
+      #     are what turn into a runtime SyntaxError.
+      - run: deno lint --rules-tags= --rules-include=no-dupe-args,no-dupe-keys,no-dupe-class-members supabase/functions
+
+      #  2. full typecheck — only on the modules kept green. The rest carry
+      #     pre-existing type debt (Supabase client generics, nullable brand
+      #     fields); adding them here would make the job permanently red, and a
+      #     permanently red job is the same as no job at all. Move a function up
+      #     into this list as its errors get fixed.
+      - run: deno check supabase/functions/_shared/cors.ts supabase/functions/_shared/secrets.ts supabase/functions/_shared/safeFetch.ts supabase/functions/_shared/escape.ts supabase/functions/_shared/sessionBinding.ts supabase/functions/client-error/index.ts
 
   secrets:
     name: secret scan

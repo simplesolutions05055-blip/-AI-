@@ -23,7 +23,7 @@ const jobDir = (jobId: string) => `pptx-jobs/${jobId}`;
 
 type Database = ReturnType<typeof db>;
 
-function json(req: Request, req: Request, body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
@@ -177,7 +177,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req, 'POST') });
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!apiKey) return json(req, req, { error: 'Missing ANTHROPIC_API_KEY (Supabase secret)' }, 500);
+  if (!apiKey) return json(req, { error: 'Missing ANTHROPIC_API_KEY (Supabase secret)' }, 500);
 
   const database = db();
   // Reachable by anyone holding the anon key, which ships in the browser
@@ -189,31 +189,31 @@ Deno.serve(async (req) => {
     const payload = await req.json();
     const action = payload?.action;
     const jobId = String(payload?.jobId ?? '').trim();
-    if (!jobId) return json(req, req, { error: 'jobId required' }, 400);
+    if (!jobId) return json(req, { error: 'jobId required' }, 400);
 
     if (action === 'start') {
-      if (!String(payload?.inputText ?? '').trim()) return json(req, req, { error: 'inputText required' }, 400);
+      if (!String(payload?.inputText ?? '').trim()) return json(req, { error: 'inputText required' }, 400);
       // Kick the job off in the background; respond immediately so the client
       // isn't holding a request open past the gateway timeout.
       (globalThis as any).EdgeRuntime?.waitUntil(runJob(database, apiKey, jobId, payload));
-      return json(req, req, { ok: true, jobId, status: 'processing' });
+      return json(req, { ok: true, jobId, status: 'processing' });
     }
 
     if (action === 'status') {
       const { data, error } = await database.storage.from(BUCKET).download(`${jobDir(jobId)}/status.json`);
-      if (error || !data) return json(req, req, { ok: true, status: 'processing' });
+      if (error || !data) return json(req, { ok: true, status: 'processing' });
       const state = JSON.parse(await data.text());
       if (state.status === 'done') {
         const { data: file } = await database.storage.from(BUCKET).download(`${jobDir(jobId)}/deck.pptx`);
-        if (!file) return json(req, req, { ok: true, status: 'processing' });
+        if (!file) return json(req, { ok: true, status: 'processing' });
         const bytes = new Uint8Array(await file.arrayBuffer());
-        return json(req, req, { ok: true, status: 'done', fileName: state.fileName ?? 'presentation.pptx', pptxBase64: encodeBase64(bytes) });
+        return json(req, { ok: true, status: 'done', fileName: state.fileName ?? 'presentation.pptx', pptxBase64: encodeBase64(bytes) });
       }
-      return json(req, req, { ok: true, status: state.status ?? 'processing', error: state.error ?? null });
+      return json(req, { ok: true, status: state.status ?? 'processing', error: state.error ?? null });
     }
 
-    return json(req, req, { error: 'Unknown action (expected "start" or "status")' }, 400);
+    return json(req, { error: 'Unknown action (expected "start" or "status")' }, 400);
   } catch (error) {
-    return json(req, req, { error: String((error as { message?: string })?.message ?? error) }, 500);
+    return json(req, { error: String((error as { message?: string })?.message ?? error) }, 500);
   }
 });

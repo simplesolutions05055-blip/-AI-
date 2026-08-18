@@ -28,22 +28,22 @@ Deno.serve(async (req) => {
     const database = db();
     const createdBy = await resolveUserId(req);
     if (body.request_id) {
-      if (!createdBy) return json(req, req, { error: 'login required' }, 401);
+      if (!createdBy) return json(req, { error: 'login required' }, 401);
       const allowed = await canMutateRequest(database, body.request_id, createdBy);
-      if (!allowed) return json(req, req, { error: 'forbidden' }, 403);
+      if (!allowed) return json(req, { error: 'forbidden' }, 403);
       const { error } = await database
         .from('requests')
         .update({ customer_email: cleanEmail(body.customer_email) })
         .eq('id', body.request_id);
       if (error) throw error;
-      return json(req, req, { ok: true });
+      return json(req, { ok: true });
     }
 
     if (!body.output_type || !['text', 'image', 'pdf', 'presentation'].includes(body.output_type)) {
-      return json(req, req, { error: 'invalid output_type' }, 400);
+      return json(req, { error: 'invalid output_type' }, 400);
     }
     if (!body.brief || typeof body.brief !== 'object') {
-      return json(req, req, { error: 'brief required' }, 400);
+      return json(req, { error: 'brief required' }, 400);
     }
     // Resolve the producing system user from their JWT (best-effort): used to
     // attribute the request on the dashboard's per-user breakdown. The form is
@@ -95,15 +95,15 @@ Deno.serve(async (req) => {
       body: buildMessage(body.output_type, structuredBrief),
     });
 
-    return json(req, req, { request_id: requestRow.id });
+    return json(req, { request_id: requestRow.id });
   } catch (e) {
     if (e instanceof AbuseGuardError) {
-      return json(req, req, { error: e.message, code: e.code }, e.status);
+      return json(req, { error: e.message, code: e.code }, e.status);
     }
     if (e instanceof PermissionError) {
-      return json(req, req, { error: 'אין הרשאה להפיק את סוג התוצר הזה' }, 403);
+      return json(req, { error: 'אין הרשאה להפיק את סוג התוצר הזה' }, 403);
     }
-    return json(req, req, { error: String(e) }, 500);
+    return json(req, { error: String(e) }, 500);
   }
 });
 
@@ -137,7 +137,7 @@ async function canMutateRequest(database: ReturnType<typeof db>, requestId: stri
   return request?.created_by === userId;
 }
 
-function json(req: Request, req: Request, payload: unknown, status = 200): Response {
+function json(req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

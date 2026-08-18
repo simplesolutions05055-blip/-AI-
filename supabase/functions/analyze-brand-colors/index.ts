@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
   try {
     const body = (await req.json()) as Body;
     const logoBase64 = normalizeText(body.logo_base64);
-    if (!logoBase64) return json(req, req, { error: 'logo_base64_required' }, 400);
+    if (!logoBase64) return json(req, { error: 'logo_base64_required' }, 400);
 
     const mime = normalizeText(body.logo_mime) || 'image/png';
     const brandName = normalizeText(body.brand_name);
@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
       },
     });
 
-    return json(req, req, {
+    return json(req, {
       ok: true,
       summary: analysis.summary,
       confidence: analysis.confidence,
@@ -75,7 +75,7 @@ Deno.serve(async (req) => {
       action: 'brand_color_analysis_failed',
       message: errorMessage(e),
     });
-    return json(req, req, { error: errorMessage(e) }, 500);
+    return json(req, { error: errorMessage(e) }, 500);
   }
 });
 
@@ -196,7 +196,7 @@ function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
 
-function json(req: Request, req: Request, payload: unknown, status = 200): Response {
+function json(req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

@@ -22,10 +22,10 @@ Deno.serve(async (req) => {
 
     const cleanEmail = (email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      return json(req, req, { error: 'invalid_email' });
+      return json(req, { error: 'invalid_email' });
     }
     if (!password || password.length < 8) {
-      return json(req, req, { error: 'weak_password' });
+      return json(req, { error: 'weak_password' });
     }
 
     const database = db();
@@ -40,20 +40,20 @@ Deno.serve(async (req) => {
 
     if (error) {
       const already = /registered|already|exists/i.test(error.message);
-      if (!already) return json(req, req, { error: 'signup_failed' });
+      if (!already) return json(req, { error: 'signup_failed' });
       // The address is taken. If the previous signup never finished verifying,
       // let the user pick up where they left off (fresh code) instead of a
       // dead-end "email taken" — their new password is applied after verify.
       const existing = await findUserByEmail(database, cleanEmail);
-      if (!existing) return json(req, req, { error: 'email_taken' });
-      if (existing.email_confirmed_at) return json(req, req, { error: 'email_taken' });
+      if (!existing) return json(req, { error: 'email_taken' });
+      if (existing.email_confirmed_at) return json(req, { error: 'email_taken' });
       userId = existing.id;
       resent = true;
     } else {
       userId = created.user?.id ?? null;
     }
 
-    if (!userId) return json(req, req, { error: 'signup_failed' });
+    if (!userId) return json(req, { error: 'signup_failed' });
 
     // When the registration came through a brand-invite link, assign that brand
     // and enable output creation so the user can work immediately after
@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
     // one-time tokens (generateLink), so expiry/single-use/attempt limits are
     // enforced server-side by Supabase — we only deliver the branded email.
     const throttled = await codeSendThrottle(database, 'signup', cleanEmail);
-    if (throttled) return json(req, req, { error: throttled });
+    if (throttled) return json(req, { error: throttled });
 
     const { data: linkData, error: linkError } = await database.auth.admin.generateLink({
       type: 'magiclink',
@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
         severity: 'error', action: 'signup_code_generate_failed',
         message: String(linkError?.message ?? 'no email_otp'), metadata: { email: cleanEmail },
       });
-      return json(req, req, { error: 'code_send_failed' });
+      return json(req, { error: 'code_send_failed' });
     }
     try {
       await sendAuthCodeEmail(database, { to: cleanEmail, code, purpose: 'signup' });
@@ -106,12 +106,12 @@ Deno.serve(async (req) => {
         severity: 'error', action: 'signup_code_email_failed',
         message: String(e), metadata: { email: cleanEmail },
       });
-      return json(req, req, { error: 'code_send_failed' });
+      return json(req, { error: 'code_send_failed' });
     }
 
-    return json(req, req, { ok: true, verify: true, resent, brand_assigned });
+    return json(req, { ok: true, verify: true, resent, brand_assigned });
   } catch (_e) {
-    return json(req, req, { error: 'signup_failed' });
+    return json(req, { error: 'signup_failed' });
   }
 });
 
@@ -134,7 +134,7 @@ async function findUserByEmail(
 }
 
 // Always 200 so supabase-js functions.invoke surfaces the body to the client.
-function json(req: Request, req: Request, body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

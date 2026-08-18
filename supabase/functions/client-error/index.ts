@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
     };
 
     const action = normalizeAction(body.action);
-    const message = typeof body.message === 'string' ? body.message.slice(0, MAX_MESSAGE_CHARS) : null;
+    const message = typeof body.message === 'string' ? body.message.slice(0, MAX_MESSAGE_CHARS) : undefined;
     const critical = body.critical === true;
 
     await logEvent(db(), {

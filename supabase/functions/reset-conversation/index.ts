@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
   try {
     const authHeader = req.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^Bearer\s+/i, '');
-    if (!token) return json(req, req, { error: 'unauthorized' });
+    if (!token) return json(req, { error: 'unauthorized' });
 
     const database = db();
 
@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
     ).auth.getUser(token);
 
     const callerId = caller.user?.id;
-    if (!callerId) return json(req, req, { error: 'unauthorized' });
+    if (!callerId) return json(req, { error: 'unauthorized' });
 
     const { data: callerProfile } = await database
       .from('profiles')
@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
       .eq('id', callerId)
       .maybeSingle();
 
-    if (callerProfile?.role !== 'admin') return json(req, req, { error: 'forbidden' });
+    if (callerProfile?.role !== 'admin') return json(req, { error: 'forbidden' });
 
     const { phone, group, brandId } = ((await req.json().catch(() => ({}))) ?? {}) as Body;
 
@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
         .in('status', ['active', 'waiting_for_user', 'soft_closed']);
       if (brandId) groupQuery = groupQuery.eq('group_id', `brand-${brandId}@sim.group`);
       const { data: groupRows, error: groupErr } = await groupQuery;
-      if (groupErr) return json(req, req, { error: 'select_failed' });
+      if (groupErr) return json(req, { error: 'select_failed' });
       for (const row of groupRows ?? []) {
         if (row.current_request_id) {
           await database.from('requests')
@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
         action: 'group_chat_reset',
         metadata: { reason: 'admin_button', brand_id: brandId ?? 'all', count: (groupRows ?? []).length },
       });
-      return json(req, req, { ok: true, reset: (groupRows ?? []).length });
+      return json(req, { ok: true, reset: (groupRows ?? []).length });
     }
 
     // Target: live real WhatsApp conversations (never the simulator/e2e rows).
@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
     if (phone) query = query.eq('whatsapp_from', phone);
 
     const { data: targets, error: selErr } = await query;
-    if (selErr) return json(req, req, { error: 'select_failed' });
+    if (selErr) return json(req, { error: 'select_failed' });
 
     const rows = targets ?? [];
     for (const row of rows) {
@@ -118,14 +118,14 @@ Deno.serve(async (req) => {
       metadata: { reason: 'admin_button', count: rows.length, phones: rows.map((r) => r.whatsapp_from) },
     });
 
-    return json(req, req, { ok: true, reset: rows.length, phones: rows.map((r) => r.whatsapp_from) });
+    return json(req, { ok: true, reset: rows.length, phones: rows.map((r) => r.whatsapp_from) });
   } catch (_e) {
-    return json(req, req, { error: 'reset_failed' });
+    return json(req, { error: 'reset_failed' });
   }
 });
 
 // Always 200 so supabase-js functions.invoke surfaces the body to the client.
-function json(req: Request, req: Request, body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

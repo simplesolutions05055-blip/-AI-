@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
   }
   try {
     const { token } = (await req.json()) as Body;
-    if (!token) return json(req, req, { error: 'invalid' });
+    if (!token) return json(req, { error: 'invalid' });
 
     const database = db();
     const { data: invite } = await database
@@ -23,14 +23,14 @@ Deno.serve(async (req) => {
       .select('id, brand_id, revoked')
       .eq('token', token)
       .maybeSingle();
-    if (!invite || invite.revoked) return json(req, req, { error: 'invalid' });
+    if (!invite || invite.revoked) return json(req, { error: 'invalid' });
 
     const { data: brand } = await database
       .from('brands')
       .select('id, name, logo_path, color_palette')
       .eq('id', invite.brand_id)
       .maybeSingle();
-    if (!brand) return json(req, req, { error: 'invalid' });
+    if (!brand) return json(req, { error: 'invalid' });
 
     let logo_url: string | null = null;
     if (brand.logo_path) {
@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
       logo_url = signed?.signedUrl ?? null;
     }
 
-    return json(req, req, {
+    return json(req, {
       brand: {
         name: brand.name,
         logo_url,
@@ -48,12 +48,12 @@ Deno.serve(async (req) => {
       },
     });
   } catch (_e) {
-    return json(req, req, { error: 'invalid' });
+    return json(req, { error: 'invalid' });
   }
 });
 
 // Always 200 so supabase-js functions.invoke surfaces the body to the client.
-function json(req: Request, req: Request, body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

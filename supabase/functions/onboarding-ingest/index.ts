@@ -23,23 +23,23 @@ Deno.serve(async (req) => {
   const database = db();
   try {
     const userId = await resolveUserId(req);
-    if (!userId) return json(req, req, { error: 'unauthorized' }, 401);
+    if (!userId) return json(req, { error: 'unauthorized' }, 401);
 
     const { kind, base64, mime, name, text } = (await req.json()) as Body;
     if (kind !== 'document' && kind !== 'asset') {
-      return json(req, req, { error: 'kind required' }, 400);
+      return json(req, { error: 'kind required' }, 400);
     }
     const providedText = typeof text === 'string' ? text.trim() : '';
     // Documents arrive as pre-extracted text; assets upload raw bytes.
     if (kind === 'asset' && (!base64 || typeof base64 !== 'string')) {
-      return json(req, req, { error: 'base64 required' }, 400);
+      return json(req, { error: 'base64 required' }, 400);
     }
     if (kind === 'document' && !providedText) {
-      return json(req, req, { error: 'empty_document' }, 422);
+      return json(req, { error: 'empty_document' }, 422);
     }
     // base64 inflates bytes by ~4/3; reject anything above the 25MB ceiling.
     if (base64 && base64.length * 0.75 > 25 * 1024 * 1024) {
-      return json(req, req, { error: 'file exceeds 25MB limit' }, 413);
+      return json(req, { error: 'file exceeds 25MB limit' }, 413);
     }
 
     // The user's single assigned brand (most recent wins if several).
@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
     const brandId = membership?.brand_id;
-    if (!brandId) return json(req, req, { error: 'no_brand' }, 400);
+    if (!brandId) return json(req, { error: 'no_brand' }, 400);
 
     if (kind === 'document') {
       const text = providedText;
@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
         action: 'onboarding_document_ingested',
         metadata: { user_id: userId, brand_id: brandId, name: name ?? null, chars: text.length },
       });
-      return json(req, req, {
+      return json(req, {
         ok: true,
         chars: text.length,
         source: source
@@ -105,14 +105,14 @@ Deno.serve(async (req) => {
       action: 'onboarding_asset_ingested',
       metadata: { user_id: userId, brand_id: brandId, name: name ?? null, path: storagePath },
     });
-    return json(req, req, { ok: true, storage_path: storagePath });
+    return json(req, { ok: true, storage_path: storagePath });
   } catch (e) {
     await logEvent(database, {
       severity: 'error',
       action: 'onboarding_ingest_failed',
       message: errorMessage(e),
     });
-    return json(req, req, { error: errorMessage(e) }, 500);
+    return json(req, { error: errorMessage(e) }, 500);
   }
 });
 
@@ -161,7 +161,7 @@ function decodeBase64(base64: string): Uint8Array {
   return Uint8Array.from(atob(clean), (c) => c.charCodeAt(0));
 }
 
-function json(req: Request, req: Request, payload: unknown, status = 200): Response {
+function json(req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

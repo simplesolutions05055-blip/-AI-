@@ -99,7 +99,21 @@ for (const [file, variable] of SSRF_SINKS) {
   }
 }
 
-// ── 7. no decoy tokens committed ────────────────────────────────────────────
+// ── 7. no duplicated function parameters ────────────────────────────────────
+// This took production down. A codemod that adds a parameter was run twice and
+// produced `function json(req: Request, req: Request, …)`. Supabase deploys
+// Edge Functions without typechecking them, so all 35 deployed "successfully"
+// and 23 then answered BOOT_ERROR — a duplicate parameter name is a SyntaxError
+// in strict mode. `deno lint` catches it too; this guard needs no Deno present.
+for (const f of files) {
+  const src = read(f);
+  const dupParam = src.match(/\(\s*(\w+)\s*:\s*\w+\s*,\s*\1\s*[:,)]/);
+  if (dupParam) {
+    errors.push(`${f}: parameter "${dupParam[1]}" declared twice. A duplicate parameter is a SyntaxError — the function will deploy fine and then fail to boot.`);
+  }
+}
+
+// ── 8. no decoy tokens committed ────────────────────────────────────────────
 // A canary in the repo is worthless: a secret scanner flags it and the attacker
 // never sees it. It belongs in an env var or a password manager.
 for (const f of files) {

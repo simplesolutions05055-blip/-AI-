@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json() as Body;
-    if (!body.file_base64) return json(req, req, { error: 'file_base64 required' }, 400);
+    if (!body.file_base64) return json(req, { error: 'file_base64 required' }, 400);
 
     const database = db();
     const createdBy = await resolveUserId(req);
@@ -71,13 +71,13 @@ Deno.serve(async (req) => {
     });
     if (outError) throw outError;
 
-    return json(req, req, { ok: true, request_id: requestRow.id, storage_path: storagePath });
+    return json(req, { ok: true, request_id: requestRow.id, storage_path: storagePath });
   } catch (e) {
     if (e instanceof PermissionError) {
-      return json(req, req, { error: 'אין הרשאה להפיק הצעת מחיר' }, 403);
+      return json(req, { error: 'אין הרשאה להפיק הצעת מחיר' }, 403);
     }
     console.error('save-quote-output failed', serializeError(e));
-    return json(req, req, { error: errorMessage(e) }, 500);
+    return json(req, { error: errorMessage(e) }, 500);
   }
 });
 
@@ -125,7 +125,7 @@ function safeStorageFileName(value: string): string {
     .replace(/\.+$/g, '') || 'quote';
 }
 
-function json(req: Request, req: Request, payload: unknown, status = 200): Response {
+function json(req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

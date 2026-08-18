@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
   try {
     const authHeader = req.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^Bearer\s+/i, '');
-    if (!token) return json(req, req, { error: 'unauthorized' });
+    if (!token) return json(req, { error: 'unauthorized' });
 
     const database = db();
 
@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
     ).auth.getUser(token);
 
     const callerId = caller.user?.id;
-    if (!callerId) return json(req, req, { error: 'unauthorized' });
+    if (!callerId) return json(req, { error: 'unauthorized' });
 
     const { data: callerProfile } = await database
       .from('profiles')
@@ -36,23 +36,23 @@ Deno.serve(async (req) => {
       .eq('id', callerId)
       .maybeSingle();
 
-    if (callerProfile?.role !== 'admin') return json(req, req, { error: 'forbidden' });
+    if (callerProfile?.role !== 'admin') return json(req, { error: 'forbidden' });
 
     const { user_id } = (await req.json()) as Body;
-    if (!user_id) return json(req, req, { error: 'missing_user_id' });
-    if (user_id === callerId) return json(req, req, { error: 'cannot_delete_self' });
+    if (!user_id) return json(req, { error: 'missing_user_id' });
+    if (user_id === callerId) return json(req, { error: 'cannot_delete_self' });
 
     const { error } = await database.auth.admin.deleteUser(user_id);
-    if (error) return json(req, req, { error: 'delete_failed' });
+    if (error) return json(req, { error: 'delete_failed' });
 
-    return json(req, req, { ok: true });
+    return json(req, { ok: true });
   } catch (_e) {
-    return json(req, req, { error: 'delete_failed' });
+    return json(req, { error: 'delete_failed' });
   }
 });
 
 // Always 200 so supabase-js functions.invoke surfaces the body to the client.
-function json(req: Request, req: Request, body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

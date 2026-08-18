@@ -130,14 +130,14 @@ Deno.serve(async (req) => {
   const database = db();
   try {
     const userId = await resolveUserId(req);
-    if (!userId) return json(req, req, { error: 'unauthorized' }, 401);
+    if (!userId) return json(req, { error: 'unauthorized' }, 401);
 
     const body = (await req.json()) as Body;
     const action = body.action === 'resolve' ? 'resolve' : body.action === 'confirm' ? 'confirm' : 'save';
 
     if (action === 'confirm') {
       const brandId = normalizeText(body.brand_id);
-      if (!brandId) return json(req, req, { error: 'brand_id_required' }, 400);
+      if (!brandId) return json(req, { error: 'brand_id_required' }, 400);
       const { data: selected, error: selectedError } = await database
         .from('brands')
         .select(BRAND_COLUMNS)
@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
         .eq('is_active', true)
         .maybeSingle();
       if (selectedError) throw selectedError;
-      if (!selected) return json(req, req, { error: 'brand_not_found' }, 404);
+      if (!selected) return json(req, { error: 'brand_not_found' }, 404);
       const brand = selected as BrandRow;
       await attachUserToBrand(database, userId, brand.id);
       await markBrandDone(database, userId);
@@ -153,11 +153,11 @@ Deno.serve(async (req) => {
         action: 'onboarding_existing_brand_confirmed',
         metadata: { user_id: userId, brand_id: brand.id, brand_name: brand.name },
       });
-      return json(req, req, { ok: true, mode: 'existing', brand: await withLogoUrl(database, brand) });
+      return json(req, { ok: true, mode: 'existing', brand: await withLogoUrl(database, brand) });
     }
 
     const cleanName = normalizeText(body.name);
-    if (!cleanName) return json(req, req, { error: 'brand_name_required' }, 400);
+    if (!cleanName) return json(req, { error: 'brand_name_required' }, 400);
 
     if (action === 'save' && body.brand_id && body.save_mode === 'existing') {
       const brandId = normalizeText(body.brand_id);
@@ -179,7 +179,7 @@ Deno.serve(async (req) => {
         action: 'onboarding_existing_brand_updated',
         metadata: { user_id: userId, brand_id: brand.id, brand_name: brand.name },
       });
-      return json(req, req, { ok: true, mode: 'updated', brand: await withLogoUrl(database, brand) });
+      return json(req, { ok: true, mode: 'updated', brand: await withLogoUrl(database, brand) });
     }
 
     const matches = await findBrandMatches(database, cleanName);
@@ -192,14 +192,14 @@ Deno.serve(async (req) => {
         action: 'onboarding_existing_brand_joined',
         metadata: { user_id: userId, brand_id: existing.id, brand_name: existing.name },
       });
-      return json(req, req, { ok: true, mode: 'existing', brand: await withLogoUrl(database, existing) });
+      return json(req, { ok: true, mode: 'existing', brand: await withLogoUrl(database, existing) });
     }
 
     if (action === 'resolve') {
       if (matches.length > 1) {
-        return json(req, req, { ok: true, mode: 'candidates', candidates: await Promise.all(matches.map((brand) => withLogoUrl(database, brand))) });
+        return json(req, { ok: true, mode: 'candidates', candidates: await Promise.all(matches.map((brand) => withLogoUrl(database, brand))) });
       }
-      return json(req, req, { ok: true, mode: 'new', brand: null });
+      return json(req, { ok: true, mode: 'new', brand: null });
     }
 
     const payload = buildBrandPayload(body, cleanName, userId);
@@ -216,7 +216,7 @@ Deno.serve(async (req) => {
       if (raced) {
         await attachUserToBrand(database, userId, raced.id);
         await markBrandDone(database, userId);
-        return json(req, req, { ok: true, mode: 'existing', brand: await withLogoUrl(database, raced) });
+        return json(req, { ok: true, mode: 'existing', brand: await withLogoUrl(database, raced) });
       }
       throw insertError;
     }
@@ -241,14 +241,14 @@ Deno.serve(async (req) => {
       action: 'onboarding_brand_created',
       metadata: { user_id: userId, brand_id: brand.id, brand_name: brand.name },
     });
-    return json(req, req, { ok: true, mode: 'created', brand: await withLogoUrl(database, brand) });
+    return json(req, { ok: true, mode: 'created', brand: await withLogoUrl(database, brand) });
   } catch (e) {
     await logEvent(database, {
       severity: 'error',
       action: 'onboarding_brand_failed',
       message: errorMessage(e),
     });
-    return json(req, req, { error: errorMessage(e) }, 500);
+    return json(req, { error: errorMessage(e) }, 500);
   }
 });
 
@@ -522,7 +522,7 @@ function decodeBase64(base64: string): Uint8Array {
   return Uint8Array.from(atob(clean), (c) => c.charCodeAt(0));
 }
 
-function json(req: Request, req: Request, payload: unknown, status = 200): Response {
+function json(req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

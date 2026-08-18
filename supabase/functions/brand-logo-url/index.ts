@@ -14,10 +14,10 @@ Deno.serve(async (req) => {
   try {
     const authHeader = req.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^Bearer\s+/i, '');
-    if (!token) return json(req, req, { error: 'unauthorized' }, 401);
+    if (!token) return json(req, { error: 'unauthorized' }, 401);
 
     const { brand_id } = (await req.json()) as Body;
-    if (!brand_id) return json(req, req, { error: 'missing_brand_id' }, 400);
+    if (!brand_id) return json(req, { error: 'missing_brand_id' }, 400);
 
     const authed = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     );
     const { data: auth } = await authed.auth.getUser(token);
     const userId = auth.user?.id;
-    if (!userId) return json(req, req, { error: 'unauthorized' }, 401);
+    if (!userId) return json(req, { error: 'unauthorized' }, 401);
 
     const database = db();
     const [{ data: profile }, { data: grant }, { data: brand }] = await Promise.all([
@@ -35,19 +35,19 @@ Deno.serve(async (req) => {
       database.from('brands').select('logo_path').eq('id', brand_id).maybeSingle(),
     ]);
 
-    if (profile?.role !== 'admin' && !grant) return json(req, req, { error: 'forbidden' }, 403);
-    if (!brand?.logo_path) return json(req, req, { signedUrl: null });
+    if (profile?.role !== 'admin' && !grant) return json(req, { error: 'forbidden' }, 403);
+    if (!brand?.logo_path) return json(req, { signedUrl: null });
 
     const { data, error } = await database.storage.from('branding').createSignedUrl(brand.logo_path, 600);
     if (error) throw error;
 
-    return json(req, req, { signedUrl: data?.signedUrl ?? null });
+    return json(req, { signedUrl: data?.signedUrl ?? null });
   } catch (e) {
-    return json(req, req, { error: String(e) }, 500);
+    return json(req, { error: String(e) }, 500);
   }
 });
 
-function json(req: Request, req: Request, body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },

@@ -10,7 +10,7 @@ Deno.serve(async (req) => {
     // Get user from authorization header
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
-      return json(req, req, { error: 'unauthorized' }, 401);
+      return json(req, { error: 'unauthorized' }, 401);
     }
 
     const token = authHeader.substring(7);
@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
     const { data: { user }, error: userError } = await database.auth.getUser(token);
 
     if (userError || !user) {
-      return json(req, req, { error: 'unauthorized' }, 401);
+      return json(req, { error: 'unauthorized' }, 401);
     }
 
     // Optional brand scope: ?brand_id=... resolves the brand's connection
@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
         database.from('user_brands').select('brand_id').eq('user_id', user.id).eq('brand_id', brandId).maybeSingle(),
       ]);
       if (profile?.role !== 'admin' && !membership) {
-        return json(req, req, { error: 'forbidden' }, 403);
+        return json(req, { error: 'forbidden' }, 403);
       }
     }
 
@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
         .select(connectionSelect)
         .eq('brand_id', brandId)
         .maybeSingle();
-      if (error) return json(req, req, { error: 'database_error' }, 500);
+      if (error) return json(req, { error: 'database_error' }, 500);
       connection = data as Record<string, unknown> | null;
     }
     if (!connection) {
@@ -68,12 +68,12 @@ Deno.serve(async (req) => {
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false })
         .limit(1);
-      if (error) return json(req, req, { error: 'database_error' }, 500);
+      if (error) return json(req, { error: 'database_error' }, 500);
       connection = (data?.[0] ?? null) as Record<string, unknown> | null;
     }
 
     if (!connection) {
-      return json(req, req, { connected: false, connection: null, pages: [], instagram_accounts: [], targets: null });
+      return json(req, { connected: false, connection: null, pages: [], instagram_accounts: [], targets: null });
     }
 
     // Get Facebook Pages
@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
       .order('page_name');
 
     if (pagesError) {
-      return json(req, req, { error: 'database_error' }, 500);
+      return json(req, { error: 'database_error' }, 500);
     }
 
     // Get Instagram Accounts with linked page info
@@ -103,7 +103,7 @@ Deno.serve(async (req) => {
       .order('username');
 
     if (igError) {
-      return json(req, req, { error: 'database_error' }, 500);
+      return json(req, { error: 'database_error' }, 500);
     }
 
     // Publish-target view for scheduling UIs: every option per platform plus
@@ -125,7 +125,7 @@ Deno.serve(async (req) => {
     const effectiveDefault = <T extends { is_default: boolean }>(options: T[]): T | null =>
       options.find((o) => o.is_default) ?? (options.length === 1 ? options[0] : null);
 
-    return json(req, req, {
+    return json(req, {
       connected: true,
       connection: {
         id: connection.id,
@@ -148,11 +148,11 @@ Deno.serve(async (req) => {
       },
     });
   } catch (_error) {
-    return json(req, req, { error: 'server_error' }, 500);
+    return json(req, { error: 'server_error' }, 500);
   }
 });
 
-function json(req: Request, req: Request, data: unknown, status = 200): Response {
+function json(req: Request, data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {

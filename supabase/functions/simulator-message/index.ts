@@ -13,7 +13,7 @@ import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
 import { cors } from '../_shared/cors.ts';
 
-function json(req: Request, req: Request, body: unknown, status = 200) {
+function json(req: Request, body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
@@ -41,10 +41,10 @@ Deno.serve(async (req) => {
 
   try {
     const { sessionId, body, attachments } = await req.json();
-    if (!sessionId || typeof sessionId !== 'string') return json(req, req, { error: 'sessionId required' }, 400);
+    if (!sessionId || typeof sessionId !== 'string') return json(req, { error: 'sessionId required' }, 400);
     const text = typeof body === 'string' ? body : '';
     const uploaded = Array.isArray(attachments) ? attachments as SimulatorAttachment[] : [];
-    if (!text.trim() && uploaded.length === 0) return json(req, req, { error: 'body or attachment required' }, 400);
+    if (!text.trim() && uploaded.length === 0) return json(req, { error: 'body or attachment required' }, 400);
 
     const from = `simulator:${sessionId}`;
     try {
@@ -54,12 +54,12 @@ Deno.serve(async (req) => {
         ip: req.headers.get('x-forwarded-for') ?? req.headers.get('cf-connecting-ip'),
       });
     } catch (e) {
-      if (e instanceof AbuseGuardError) return json(req, req, { error: e.message, code: e.code }, e.status);
+      if (e instanceof AbuseGuardError) return json(req, { error: e.message, code: e.code }, e.status);
       throw e;
     }
 
     const conversation = await findOrCreateConversation(database, from, true);
-    if (!conversation) return json(req, req, { error: 'conversation failed' }, 500);
+    if (!conversation) return json(req, { error: 'conversation failed' }, 500);
 
     const templates = await getTemplates(database);
     const messageSid = `sim-in-${crypto.randomUUID()}`;
@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
         .limit(1)
         .maybeSingle();
       if (latest && latest.twilio_message_sid !== messageSid) {
-        return json(req, req, {
+        return json(req, {
           ok: true,
           conversationId: conversation.id,
           status: conversation.status,
@@ -163,7 +163,7 @@ Deno.serve(async (req) => {
       .eq('id', conversation.id)
       .maybeSingle();
 
-    return json(req, req, {
+    return json(req, {
       ok: true,
       conversationId: conversation.id,
       status: conv?.status ?? 'active',
@@ -172,6 +172,6 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     await logEvent(database, { severity: 'error', action: 'simulator_message_failed', message: String(error) });
-    return json(req, req, { error: String(error) }, 500);
+    return json(req, { error: String(error) }, 500);
   }
 });

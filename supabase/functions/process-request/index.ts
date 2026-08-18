@@ -26,8 +26,8 @@ Deno.serve(async (req) => {
 
     const database = db();
     const caller = await resolveUserId(req);
-    if (!caller) return json(req, req, { error: 'login required' }, 401);
-    if (!(await canProcessRequest(database, request_id, caller))) return json(req, req, { error: 'forbidden' }, 403);
+    if (!caller) return json(req, { error: 'login required' }, 401);
+    if (!(await canProcessRequest(database, request_id, caller))) return json(req, { error: 'forbidden' }, 403);
 
     const actor = await loadRequestActor(database, request_id);
     await rejectClientOpenAiKeyIfDisabled(database, openai_key);
@@ -77,14 +77,14 @@ Deno.serve(async (req) => {
       if (overrideKey) clearOpenAiKeyOverride();
     }
 
-    return json(req, req, { ok: true });
+    return json(req, { ok: true });
   } catch (e) {
-    if (e instanceof AbuseGuardError) return json(req, req, { error: e.message, code: e.code }, e.status);
-    return json(req, req, { error: String(e) }, 500);
+    if (e instanceof AbuseGuardError) return json(req, { error: e.message, code: e.code }, e.status);
+    return json(req, { error: String(e) }, 500);
   }
 });
 
-function json(req: Request, req: Request, payload: unknown, status = 200): Response {
+function json(req: Request, payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
