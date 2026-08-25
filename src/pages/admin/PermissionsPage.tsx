@@ -5,6 +5,13 @@ import { randomUUID } from '@/lib/uuid';
 import { useProfile } from '@/lib/useProfile';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import { confirmDialog } from '@/lib/dialog';
+import {
+  PRODUCTION_PERMISSION_TYPES,
+  normalizeOutputPermissions,
+  type OutputPermissions,
+  type OutputPermissionsRole,
+  type ProductionPermissionType,
+} from '@/lib/outputPermissions';
 
 interface ProfileRow {
   id: string;
@@ -64,7 +71,8 @@ export default function PermissionsPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [tab, setTab] = useState<'admins' | 'users' | 'invites'>('admins');
+  const [tab, setTab] = useState<'admins' | 'users' | 'invites' | 'permissions'>('admins');
+  const [outputPermissions, setOutputPermissions] = useState<OutputPermissions>(() => normalizeOutputPermissions(null));
   const [invites, setInvites] = useState<InviteRow[]>([]);
   const [generating, setGenerating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -102,11 +110,12 @@ export default function PermissionsPage() {
 
   useEffect(() => {
     (async () => {
-      const [{ data: profs }, { data: brs }, { data: ub }, { data: inv }] = await Promise.all([
+      const [{ data: profs }, { data: brs }, { data: ub }, { data: inv }, { data: permissionRow }] = await Promise.all([
         db.from('profiles').select('id, email, role, can_create_outputs, created_at').order('created_at'),
         db.from('brands').select('id, name, is_active, logo_path').order('name'),
         db.from('user_brands').select('user_id, brand_id'),
         db.from('brand_invites').select('id, token, brand_id, uses, revoked, created_at, last_used_at').order('created_at', { ascending: false }),
+        db.from('settings').select('value_json').eq('key', 'output_permissions').maybeSingle(),
       ]);
       const map: Record<string, Set<string>> = {};
       ((ub as { user_id: string; brand_id: string }[]) ?? []).forEach((row) => {
@@ -125,6 +134,7 @@ export default function PermissionsPage() {
       setBrandLogoUrls(Object.fromEntries(logoEntries.filter(([, url]) => !!url)));
       setGrants(map);
       setInvites((inv as unknown as InviteRow[]) ?? []);
+      setOutputPermissions(normalizeOutputPermissions((permissionRow as { value_json?: unknown } | null)?.value_json));
       setLoading(false);
     })();
   }, [db]);
@@ -186,6 +196,27 @@ export default function PermissionsPage() {
       return flash('שמירה נכשלה');
     }
     flash('נשמר');
+  }
+
+  async function toggleOutputPermission(type: ProductionPermissionType, role: OutputPermissionsRole) {
+    const previous = outputPermissions;
+    const next: OutputPermissions = {
+      ...previous,
+      [type]: { ...previous[type], [role]: !previous[type][role] },
+    };
+    const saveKey = `${type}:${role}`;
+    setOutputPermissions(next);
+    setSavingId(saveKey);
+    const { error } = await db.from('settings').upsert(
+      { key: 'output_permissions', value_json: next } as never,
+      { onConflict: 'key' },
+    );
+    setSavingId(null);
+    if (error) {
+      setOutputPermissions(previous);
+      return flash('שמירת ההרשאה נכשלה');
+    }
+    flash('ההרשאה נשמרה');
   }
 
   async function deleteUser(p: ProfileRow) {
@@ -303,9 +334,6 @@ export default function PermissionsPage() {
     <div dir="rtl">
       <div className="mb-4">
         <h1 className="text-xl font-semibold tracking-normal">משתמשים והרשאות</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          נהלו משתמשים, מותגים והרשאות גישה.
-        </p>
       </div>
 
       {toast && (
@@ -346,9 +374,25 @@ export default function PermissionsPage() {
         >
           הזמנות ({invites.filter((i) => !i.revoked).length})
         </button>
+        <button
+          onClick={() => setTab('permissions')}
+          className={`shrink-0 whitespace-nowrap px-3 py-3 text-sm font-semibold border-b-2 transition sm:px-4 ${
+            tab === 'permissions'
+              ? 'border-brand text-brand'
+              : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          הרשאות
+        </button>
       </div>
 
-      {tab === 'invites' ? (
+      {tab === 'permissions' ? (
+        <OutputPermissionsTab
+          permissions={outputPermissions}
+          savingId={savingId}
+          onToggle={toggleOutputPermission}
+        />
+      ) : tab === 'invites' ? (
         <InvitesTab
           brands={brands}
           brandLogoUrls={brandLogoUrls}
@@ -510,6 +554,55 @@ export default function PermissionsPage() {
   );
 }
 
+function OutputPermissionsTab({
+  permissions,
+  savingId,
+  onToggle,
+}: {
+  permissions: OutputPermissions;
+  savingId: string | null;
+  onToggle: (type: ProductionPermissionType, role: OutputPermissionsRole) => void;
+}) {
+  return (
+    <section className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+      <h2 className="font-semibold">הרשאות לפי סוג תוצר</h2>
+      <p className="mb-4 mt-1 text-sm text-[var(--muted)]">השינויים נשמרים מיד.</p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[420px] border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-right text-xs text-[var(--muted)]">
+              <th className="py-3 pe-2 font-semibold">פעולה</th>
+              <th className="w-28 py-3 text-center font-semibold">משתמש רגיל</th>
+              <th className="w-28 py-3 text-center font-semibold">אדמין</th>
+            </tr>
+          </thead>
+          <tbody>
+            {PRODUCTION_PERMISSION_TYPES.map((item) => (
+              <tr key={item.type} className="border-b border-[var(--border)] last:border-0">
+                <td className="py-3 pe-2 font-medium">{item.label}</td>
+                {(['user', 'admin'] as const).map((role) => {
+                  return (
+                    <td key={role} className="py-3 text-center">
+                      <input
+                        type="checkbox"
+                        checked={permissions[item.type][role]}
+                        disabled={savingId !== null}
+                        aria-label={`${item.label} — ${role === 'admin' ? 'אדמין' : 'משתמש רגיל'}`}
+                        onChange={() => onToggle(item.type, role)}
+                        className="h-5 w-5 accent-brand disabled:opacity-50"
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function UserDetailsModal({
   user, brands, userBrandIds, activity, loading, onClose,
 }: {
@@ -613,9 +706,7 @@ function InvitesTab({
       {/* generator */}
       <div className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
         <h2 className="font-semibold">יצירת קישור הזמנה</h2>
-        <p className="text-sm text-[var(--muted)] mt-1">
-          בחרו מותג וצרו קישור הרשמה ייעודי. מי שנרשם דרכו משויך אוטומטית למותג ויכול להתחיל לעבוד מיד.
-        </p>
+        <p className="mt-1 text-sm text-[var(--muted)]">הנרשמים ישויכו אוטומטית למותג.</p>
         {brands.length === 0 ? (
           <p className="mt-4 text-sm text-[var(--muted)]">אין מותגים פעילים. הוסיפו מותג במסך המיתוג תחילה.</p>
         ) : allBrandsUsed ? (

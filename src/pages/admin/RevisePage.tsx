@@ -133,10 +133,41 @@ export default function RevisePage() {
   const [carouselEditing, setCarouselEditing] = useState(false);
   const [carouselEditError, setCarouselEditError] = useState<string | null>(null);
   const [carouselModalOpen, setCarouselModalOpen] = useState(false);
+  const [imageEditTab, setImageEditTab] = useState<'text' | 'image'>('text');
+  const [carouselUploading, setCarouselUploading] = useState(false);
+  const carouselUploadRef = useRef<HTMLInputElement>(null);
   // Last value persisted to the DB. Blur only saves when the text actually changed.
   const persistedPostRef = useRef('');
   // Guards the one-time auto-generation against StrictMode double-mount.
   const postInitRef = useRef(false);
+
+  async function uploadCarouselImage(file: File) {
+    if (!file.type.startsWith('image/') || carouselUploading) return;
+    setCarouselUploading(true);
+    setError(null);
+    try {
+      const ownerId = result?.request_id || source?.request_id || requestId;
+      if (!ownerId) throw new Error('לא נמצאה בקשת מקור');
+      const safeName = file.name.replace(/[^\w.\-]+/g, '_').slice(-100);
+      const storagePath = `${ownerId}/carousel-uploads/${randomUUID()}-${safeName}`;
+      const client = createSupabaseBrowserClient();
+      const { error: uploadError } = await client.storage.from('outputs').upload(storagePath, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+      if (uploadError) throw uploadError;
+      const previewUrl = await signedOutputUrl(client, storagePath, 3600);
+      if (!previewUrl) throw new Error('הקובץ הועלה, אבל לא התקבל קישור תצוגה');
+      const requestIdForImage = `upload:${storagePath}`;
+      setCarouselImages((current) => [...current, { requestId: requestIdForImage, storagePath, previewUrl }]);
+      setSelectedCarouselRequestId(requestIdForImage);
+    } catch (uploadError) {
+      setError(String((uploadError as { message?: string })?.message ?? uploadError));
+    } finally {
+      setCarouselUploading(false);
+      if (carouselUploadRef.current) carouselUploadRef.current.value = '';
+    }
+  }
 
   async function sendEmail(id: string | null) {
     if (!id || !isValidEmail(customerEmail)) return;
@@ -694,6 +725,7 @@ export default function RevisePage() {
   // ── post text actions (image outputs) ──────────────────────────────────────
   const activeImageRequestId = result?.request_id || source?.request_id || requestId || null;
   const selectedCarouselImage = carouselImages.find((image) => image.requestId === selectedCarouselRequestId) ?? null;
+  const selectedCarouselIsUpload = selectedCarouselImage?.requestId.startsWith('upload:') ?? false;
 
   async function editSelectedCarouselImage() {
     const feedback = carouselEditInstruction.trim();
@@ -842,7 +874,6 @@ export default function RevisePage() {
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-normal">{pageTitle}</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">עדכנו את התוצר, שתפו או שמרו גרסה חדשה.</p>
         </div>
         <Link
           to="/admin/files"
@@ -1143,6 +1174,12 @@ export default function RevisePage() {
                   ? 'התמונה הערוכה'
                   : 'התמונה הנוכחית'}
             </h2>
+            <div className="mb-3 flex flex-wrap gap-2" aria-label="שקופיות הקרוסלה">
+              <button type="button" onClick={() => setSelectedCarouselRequestId(null)} className={`grid h-9 min-w-9 place-items-center rounded-full border px-3 text-sm font-bold ${!selectedCarouselRequestId ? 'border-brand bg-brand text-white' : 'border-[var(--border)] bg-white'}`}>1</button>
+              {carouselImages.map((image, index) => (
+                <button key={image.requestId} type="button" onClick={() => setSelectedCarouselRequestId(image.requestId)} className={`grid h-9 min-w-9 place-items-center rounded-full border px-3 text-sm font-bold ${selectedCarouselRequestId === image.requestId ? 'border-brand bg-brand text-white' : 'border-[var(--border)] bg-white'}`}>{index + 2}</button>
+              ))}
+            </div>
             {(selectedCarouselImage?.previewUrl || result?.previewUrl || source?.previewUrl) && (
               <>
                 <div className="relative overflow-hidden rounded-lg">
@@ -1170,7 +1207,7 @@ export default function RevisePage() {
                   )}
                 </div>
                 {selectedCarouselImage && (
-                  <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50/40 p-4">
+                  <div className="hidden">
                     <label className="mb-2 block text-sm font-semibold" htmlFor="carousel-main-edit-instruction">
                       מה לשנות בתמונת הקרוסלה הזו?
                     </label>
@@ -1206,7 +1243,7 @@ export default function RevisePage() {
 
             {/* Ready-to-publish post text: shown with every image, editable inline
                 and revisable with AI, mirroring the image corrections flow. */}
-            <div className="mt-5 border-t border-[var(--border)] pt-4">
+            <div className="hidden">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h3 className="font-bold">טקסט הפוסט</h3>
                 {postText.trim() && !postTextLoading && (
@@ -1287,7 +1324,7 @@ export default function RevisePage() {
             </div>
           </div>
 
-          <ActionSidebar
+          {false && <ActionSidebar
             editLabel={referenceImage ? 'מה לשנות בתוצר בעזרת התמונה שהעליתם?' : 'מה לא אהבתם / מה לשנות?'}
             placeholder={referenceImage ? 'למשל: לשלב את האדם שבתמונה בצד ימין של הגרפיקה, בלי לשנות את הכותרת' : 'למשל: להחליף את הרקע לכחול, להגדיל את הכותרת, להסיר את האייקון התחתון'}
             feedback={feedback}
@@ -1352,7 +1389,7 @@ export default function RevisePage() {
                   producedImages={(() => {
                     const url = result?.previewUrl || source?.previewUrl;
                     const storagePath = result?.storagePath || source?.storage_path;
-                    const main = url && storagePath ? [{ key: 'main', url, storagePath }] : [];
+                    const main = url && storagePath ? [{ key: 'main', url: String(url), storagePath: String(storagePath) }] : [];
                     return [
                       ...main,
                       ...carouselImages.map((img) => ({ key: img.requestId, url: img.previewUrl, storagePath: img.storagePath })),
@@ -1373,7 +1410,70 @@ export default function RevisePage() {
                 />
               ) : null
             }
-          />
+          />}
+          <aside className="h-fit rounded-lg border border-[var(--border)] bg-white p-5 lg:sticky lg:top-4">
+            <h2 className="text-lg font-bold">עריכת פוסט</h2>
+            <div className="mt-4 grid grid-cols-2 rounded-lg bg-gray-100 p-1" role="tablist">
+              <button type="button" onClick={() => setImageEditTab('text')} className={`min-h-10 rounded-md text-sm font-bold ${imageEditTab === 'text' ? 'bg-white text-brand shadow-sm' : 'text-[var(--muted)]'}`}>שנה טקסט</button>
+              <button type="button" onClick={() => setImageEditTab('image')} className={`min-h-10 rounded-md text-sm font-bold ${imageEditTab === 'image' ? 'bg-white text-brand shadow-sm' : 'text-[var(--muted)]'}`}>שנה תמונה</button>
+            </div>
+
+            {imageEditTab === 'text' ? (
+              <div className="mt-4">
+                <p className="mb-2 text-sm font-semibold">ניתן לשנות ידנית</p>
+                {postTextLoading ? <Spinner /> : (
+                  <textarea value={postText} onChange={(event) => setPostText(event.target.value)} onBlur={persistPostTextIfDirty} rows={8} className="w-full rounded-lg border border-[var(--border)] p-3 text-sm leading-6" />
+                )}
+                <label className="mt-4 block text-sm font-semibold">תאר לבינה מלאכותית</label>
+                <input value={postFeedback} onChange={(event) => setPostFeedback(event.target.value)} placeholder="למשל: לקצר ולהוסיף קריאה לפעולה" className="mt-2 h-11 w-full rounded-lg border border-[var(--border)] px-3 text-sm" />
+                <button type="button" onClick={revisePostText} disabled={!postFeedback.trim() || postEditing} className="mt-2 min-h-11 w-full rounded-lg bg-brand px-4 text-sm font-bold text-white disabled:opacity-50">{postEditing ? 'משנה…' : 'שנה עם AI'}</button>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <ReferenceImageUpload reference={referenceImage} onChange={attachReferenceImage} disabled={working || carouselEditing} />
+                {selectedCarouselIsUpload ? (
+                  <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">התמונה שהעלית מצורפת כשקופית בקרוסלה.</p>
+                ) : (
+                  <>
+                    <label className="block text-sm font-semibold">תאר לבינה מלאכותית</label>
+                    <textarea
+                      value={selectedCarouselImage ? carouselEditInstruction : feedback}
+                      onChange={(event) => selectedCarouselImage ? setCarouselEditInstruction(event.target.value) : setFeedback(event.target.value)}
+                      rows={3}
+                      placeholder="למשל: להחליף רקע ולהגדיל את הכותרת"
+                      className="w-full rounded-lg border border-[var(--border)] p-3 text-sm"
+                    />
+                    <button type="button" onClick={selectedCarouselImage ? editSelectedCarouselImage : () => runEdit(result?.request_id || source?.request_id || '')} disabled={selectedCarouselImage ? carouselEditing || !carouselEditInstruction.trim() : working || !feedback.trim()} className="min-h-11 w-full rounded-lg bg-brand px-4 text-sm font-bold text-white disabled:opacity-50">{working || carouselEditing ? 'יוצר…' : 'צור'}</button>
+                  </>
+                )}
+                <div className="grid grid-cols-2 gap-2 border-t border-[var(--border)] pt-3">
+                  <button type="button" onClick={() => setCarouselModalOpen(true)} className="min-h-11 rounded-lg border border-brand px-3 text-sm font-bold text-brand">הוסף שקופית</button>
+                  <button type="button" onClick={() => carouselUploadRef.current?.click()} disabled={carouselUploading} className="min-h-11 rounded-lg border border-[var(--border)] px-3 text-sm font-bold">{carouselUploading ? 'מעלה…' : 'העלה תמונה קיימת'}</button>
+                  <input ref={carouselUploadRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => event.target.files?.[0] && void uploadCarouselImage(event.target.files[0])} />
+                </div>
+                <CarouselImagesStrip
+                  images={carouselImages}
+                  onAdd={() => setCarouselModalOpen(true)}
+                  onRemove={(id) => { setCarouselImages((current) => current.filter((image) => image.requestId !== id)); setSelectedCarouselRequestId((current) => current === id ? null : current); }}
+                  onSelect={setSelectedCarouselRequestId}
+                  onReplace={(id, image) => setCarouselImages((current) => current.map((entry) => entry.requestId === id ? image : entry))}
+                />
+              </div>
+            )}
+
+            <div className="mt-5 border-t border-[var(--border)] pt-4">
+              <SocialScheduleSection
+                requestId={result?.request_id || source?.request_id || null}
+                brandId={requestBrandId}
+                captionSource={postText.trim() ? { kind: 'text', text: postText.trim() } : { kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }}
+                producedImages={[
+                  ...((result?.previewUrl || source?.previewUrl) && (result?.storagePath || source?.storage_path) ? [{ key: 'main', url: (result?.previewUrl || source?.previewUrl) as string, storagePath: (result?.storagePath || source?.storage_path) as string }] : []),
+                  ...carouselImages.map((image) => ({ key: image.requestId, url: image.previewUrl, storagePath: image.storagePath })),
+                ]}
+              />
+              <EmailSend email={customerEmail} setEmail={setCustomerEmail} onSend={() => sendEmail(result?.request_id || source?.request_id || null)} sending={sendingEmail} sent={emailSent} />
+            </div>
+          </aside>
         </div>
       )}
 
@@ -1978,12 +2078,12 @@ function CarouselImagesStrip({
       <button
         type="button"
         onClick={onAdd}
-        className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-violet-300 bg-violet-50/40 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50"
+        className="hidden"
       >
         <ImageAddIcon />
         <span>תמונה נוספת לקרוסלה (AI)</span>
       </button>
-      <p className="mt-1.5 text-xs text-[var(--muted)]">
+      <p className="hidden">
         רוצים פוסט קרוסלה? צרו עוד תמונות באותו קו עיצובי — כולן יצורפו לתזמון יחד עם התמונה הראשית.
       </p>
       {images.length > 0 && (
@@ -2018,7 +2118,7 @@ function CarouselImagesStrip({
         </div>
       )}
       {selectedImage && (
-        <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50/40 p-3">
+        <div className="hidden">
           <label className="mb-2 block text-sm font-semibold" htmlFor="carousel-sidebar-edit-instruction">
             עריכת תמונת הקרוסלה עם AI
           </label>

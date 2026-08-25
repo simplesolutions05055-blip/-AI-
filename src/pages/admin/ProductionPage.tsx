@@ -1,7 +1,6 @@
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft as ArrowLeftIcon,
   CalendarDays as CalendarDaysIcon,
   Check as CheckIcon,
   File as FileIcon,
@@ -85,23 +84,16 @@ type SearchHit =
   | { kind: 'event'; id: string; name: string; typeLabel: string; event: UpcomingEvent }
   | { kind: 'output'; id: string; name: string; typeLabel: string; to: string };
 
-// Gradient icon chips for the "what do you want to create" tiles (see the
-// mockup in docs/primeos-mockup (2).html — one gradient per product type).
+// Compact product-type controls: quiet tinted icon surfaces, matching the
+// approved horizontal 48px reference rather than decorative emoji or gradients.
 const TILE_ICON_TONE: Record<string, string> = {
-  image: 'bg-gradient-to-br from-[#1E88E5] to-[#00ACC1] shadow-[0_6px_16px_rgba(30,136,229,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
-  presentation: 'bg-gradient-to-br from-[#7B4FDB] to-[#EC4899] shadow-[0_6px_16px_rgba(123,79,219,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
-  pdf: 'bg-gradient-to-br from-[#F59E0B] to-[#EF4444] shadow-[0_6px_16px_rgba(245,158,11,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
-  upload: 'bg-gradient-to-br from-[#43C463] to-[#16A34A] shadow-[0_6px_16px_rgba(67,196,99,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
-  text: 'bg-gradient-to-br from-[#0B4F9F] to-[#3B82F6] shadow-[0_6px_16px_rgba(11,79,159,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
-  quote: 'bg-gradient-to-br from-[#0EA5A5] to-[#14B8A6] shadow-[0_6px_16px_rgba(14,165,165,.3),inset_0_1px_0_rgba(255,255,255,.3)]',
+  image: 'bg-[#0f766e] text-white',
+  presentation: 'bg-[#eef2ff] text-[#4f46e5]',
+  pdf: 'bg-[#fff7ed] text-[#ea580c]',
+  upload: 'bg-[#ecfdf5] text-[#059669]',
+  text: 'bg-[#eff6ff] text-[#2563eb]',
+  quote: 'bg-[#f0fdfa] text-[#0f766e]',
 };
-
-const PRODUCT_TYPES: Array<{ type: ProductionType; title: string; description: string; accent: string; iconBg: string; iconText: string }> = [
-  { type: 'image', title: 'תמונה', description: 'פוסט, מודעה, הזמנה או גרפיקה לרשתות.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-clay)]', iconText: 'text-[var(--text-strong)]' },
-  { type: 'presentation', title: 'מצגת', description: 'מבנה ותוכן שקפים למצגת עסקית או שיווקית.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-sand)]', iconText: 'text-[var(--text-strong)]' },
-  { type: 'text', title: 'טקסט', description: 'פוסט, הודעה, מייל, נאום או תוכן שיווקי.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-olive)]', iconText: 'text-[var(--text-strong)]' },
-  { type: 'pdf', title: 'מסמך', description: 'מסמך מסודר להורדה או שליחה.', accent: 'hover:border-brand/35', iconBg: 'bg-[var(--tint-ochre)]', iconText: 'text-[var(--text-strong)]' },
-];
 
 // Mature, restrained surface + controls. We deliberately drop the big soft "AI
 // SaaS" drop-shadow, the bouncy hover-lift, and the hardcoded blue glow (which
@@ -138,6 +130,8 @@ const IMAGE_QUOTA_MESSAGE =
   'יצירת התמונה נעצרה כי מפתח ה-API שבשימוש הגיע לתקרת ה-billing/מכסה שלו (billing hard limit / quota). אם הוגדר מפתח חד-פעמי — הוא זה שאזל; אחרת מדובר במפתח הפרויקט. יש להוסיף קרדיט / להעלות את תקרת ה-billing, או להזין מפתח חד-פעמי אחר עם קרדיט, ואז להפיק שוב.';
 
 const DESCRIPTION_MAX_LENGTH = 12000;
+// Documents only — this input extracts *text* into the brief. Images go through
+// the 'העלאת תמונות' tile (UserContentUploadModal), which stores them as outputs.
 const TEXT_UPLOAD_ACCEPT = '.txt,.md,.doc,.docx,.pdf,text/plain,text/markdown,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf';
 
 function localIsoDate(date = new Date()) {
@@ -1118,22 +1112,24 @@ function ProductionPicker({
     }
   }
 
-  const allPickerChips: Array<{ key: string; label: string; sub: string; tone: string; to: ProductionType | 'quote'; disabled?: boolean }> = [
-    { key: 'image', label: 'תמונה / גרפיקה', sub: 'פוסטר, באנר, סטורי', tone: TILE_ICON_TONE.image, to: 'image' },
-    { key: 'text', label: 'פוסט / טקסט', sub: 'פוסט, הודעה, מייל', tone: TILE_ICON_TONE.text, to: 'text' },
-    { key: 'presentation', label: 'מצגת', sub: 'שקפים עם מיתוג', tone: TILE_ICON_TONE.presentation, to: 'presentation' },
-    { key: 'pdf', label: 'מסמך', sub: 'הודעה, נוהל, הזמנה', tone: TILE_ICON_TONE.pdf, to: 'pdf' },
+  const allPickerChips: Array<{ key: string; label: string; tone: string; to: ProductionType | 'quote'; disabled?: boolean }> = [
+    { key: 'image', label: 'תמונה / גרפיקה', tone: TILE_ICON_TONE.image, to: 'image' },
+    { key: 'text', label: 'פוסט / טקסט', tone: TILE_ICON_TONE.text, to: 'text' },
+    { key: 'presentation', label: 'מצגת', tone: TILE_ICON_TONE.presentation, to: 'presentation' },
+    { key: 'pdf', label: 'מסמך', tone: TILE_ICON_TONE.pdf, to: 'pdf' },
     // Quote is a real production type: same textarea + same "צור תוצר" button.
     // The price is taken from the prompt only (see QuoteFlow / generateQuote).
-    { key: 'quote', label: 'הצעת מחיר', sub: 'מחירון ותנאים', tone: TILE_ICON_TONE.quote, to: 'quote' },
+    { key: 'quote', label: 'הצעת מחיר', tone: TILE_ICON_TONE.quote, to: 'quote' },
   ];
+  // Visibility comes only from the permissions configured by an admin. No
+  // product type is hidden here by a hardcoded frontend list.
   const pickerChips = allPickerChips.filter((item) => allowedTypes.includes(item.to));
   // The grid mixes produced types (open the textarea flow) with the upload
   // action (opens the upload modal). `to === null` marks the upload chip.
-  const gridChips: Array<{ key: string; label: string; sub: string; tone: string; to: ProductionType | 'quote' | null; disabled?: boolean }> = [
+  const gridChips: Array<{ key: string; label: string; tone: string; to: ProductionType | 'quote' | null; disabled?: boolean }> = [
     ...pickerChips,
     ...(canUploadContent
-      ? [{ key: 'upload', label: 'העלאת חומר', sub: 'תכנים שלי', tone: TILE_ICON_TONE.upload, to: null }]
+      ? [{ key: 'upload', label: 'העלאת תמונות', tone: TILE_ICON_TONE.upload, to: null }]
       : []),
   ];
   const gridColsClass =
@@ -1144,9 +1140,9 @@ function ProductionPicker({
             : gridChips.length === 2 ? 'sm:grid-cols-2'
               : 'sm:grid-cols-1';
   const uploadText = genderCopy(profile?.gender, {
-    male: 'העלה קובץ',
-    female: 'העלי קובץ',
-    neutral: 'העלאת קובץ',
+    male: 'העלה מסמך',
+    female: 'העלי מסמך',
+    neutral: 'העלאת מסמך',
   });
   const createText = genderCopy(profile?.gender, {
     male: 'צור תוצר',
@@ -1349,14 +1345,6 @@ function ProductionPicker({
                   </div>
                 )}
               </div>
-              <div className="hidden space-y-2 sm:block">
-                <p className="text-[14px] font-normal leading-7 text-[var(--text-muted)]">
-                  <span>בחרו סוג תוצר, הקלידו בריף</span>
-                  <span className="hidden sm:inline"> — </span>
-                  <br className="sm:hidden" />
-                  <span>והמערכת תתחיל לעבוד</span>
-                </p>
-              </div>
             </div>
 
             <div className="order-3 min-w-0 flex-1 space-y-2 sm:order-none">
@@ -1377,27 +1365,20 @@ function ProductionPicker({
                         if (isUpload) setUploadContentOpen(true);
                         else if (item.to) setSelected(item.to);
                       }}
-                      className={`group relative flex min-w-0 items-center gap-2 overflow-hidden rounded-full border px-3 py-2 text-right transition-all duration-300 ease-out sm:flex-col sm:items-stretch sm:gap-0 sm:rounded-[16px] sm:p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--warm-accent-soft)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:p-5 ${
+                      className={`group relative flex h-12 min-w-0 items-center gap-2.5 overflow-hidden rounded-xl border px-3.5 text-right transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0f766e]/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] sm:px-[18px] ${
                         item.disabled
                           ? 'cursor-not-allowed border-[var(--border-soft)] bg-[var(--bg-subtle)] text-[var(--text-muted)] opacity-50'
                           : active
-                            ? 'border-transparent bg-[var(--warm-accent-soft)] text-[var(--warm-accent-dark)] shadow-[0_16px_40px_rgba(30,60,114,.14)]'
-                            : `border-[var(--border-soft)] bg-[var(--surface-2)] text-[var(--text-strong)] hover:-translate-y-1 hover:border-transparent hover:bg-[var(--bg-surface)] hover:shadow-[0_16px_40px_rgba(30,60,114,.14)] ${glowTypeChips ? 'pick-me-glow' : ''}`
+                            ? 'border-[1.5px] border-[#0f766e] bg-[#f0fdfa] text-[#0f172a] hover:bg-[#ccfbf1]'
+                            : `border-[rgba(15,23,42,.12)] bg-white text-[#334155] hover:border-[#0f766e] hover:bg-[#f8fafc] ${glowTypeChips ? 'pick-me-glow' : ''}`
                       }`}
                     >
-                      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-white sm:mb-3 sm:h-11 sm:w-11 sm:rounded-[12px] ${item.tone}`}>
+                      <span className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg ${item.tone}`}>
                         {isUpload
-                          ? <UploadIcon className="h-4 w-4 stroke-[1.75] sm:h-[22px] sm:w-[22px]" />
-                          : <PickerIcon type={item.to ?? 'text'} className="h-4 w-4 stroke-[1.75] sm:h-[22px] sm:w-[22px]" />}
+                          ? <UploadIcon className="h-4 w-4 stroke-[1.8]" />
+                          : <PickerIcon type={item.to ?? 'text'} className="h-4 w-4 stroke-[1.8]" />}
                       </span>
-                      <span className="block min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-semibold leading-5 sm:overflow-visible sm:whitespace-normal sm:text-[15px]">{item.label}</span>
-                      <span className="mt-1 hidden text-[12px] font-normal leading-4 text-[var(--text-muted)] sm:block">{item.sub}</span>
-                      <ArrowLeftIcon className="pointer-events-none absolute bottom-4 left-4 hidden h-[18px] w-[18px] -translate-x-1 text-[var(--text-muted)] opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:text-brand group-hover:opacity-100 sm:block" />
-                      {active && (
-                        <span className="absolute left-3 top-3 hidden h-5 w-5 items-center justify-center rounded-[6px] bg-[var(--warm-accent)] text-white sm:flex">
-                          <CheckIcon className="h-3.5 w-3.5" />
-                        </span>
-                      )}
+                      <span className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[15px] font-semibold leading-5">{item.label}</span>
                     </button>
                   );
                 })}
@@ -1454,7 +1435,7 @@ function ProductionPicker({
               </div>
             ) : null}
 
-            <div className="relative order-2 mt-3 sm:mt-0 rounded-[16px] border-[1.5px] border-[var(--border-warm)] bg-[var(--surface-2)] px-4 py-3 shadow-sm transition focus-within:border-brand/40 sm:order-none focus-within:shadow-[0_0_0_4px_rgba(11,79,159,0.08)] lg:min-h-[76px] lg:px-5">
+            <div className="relative order-2 mt-3 sm:mt-0 rounded-[16px] border-[1.5px] border-emerald-500/40 bg-emerald-50/70 px-4 py-4 shadow-sm transition focus-within:border-emerald-500/70 sm:order-none focus-within:shadow-[0_0_0_4px_rgba(16,185,129,0.12)] lg:min-h-[104px] lg:px-5">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1469,7 +1450,7 @@ function ProductionPicker({
                 <textarea
                   ref={descriptionRef}
                   dir="rtl"
-                  rows={5}
+                  rows={6}
                   maxLength={DESCRIPTION_MAX_LENGTH}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
@@ -1480,7 +1461,7 @@ function ProductionPicker({
                     }
                   }}
                   placeholder={'תארו מה תרצו — לדוגמה: פוסטר לערב ראש השנה, מזמינים את התושבים לכיכר…'}
-                  className="min-h-[96px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)] lg:h-7 lg:min-h-0 lg:max-h-14 lg:flex-1 lg:overflow-y-auto lg:py-0 lg:leading-7"
+                  className="min-h-[120px] w-full resize-none border-0 bg-transparent p-0 text-right text-[15px] font-normal leading-7 text-[var(--text-strong)] outline-none placeholder:text-[var(--text-faint)] lg:h-14 lg:min-h-[56px] lg:max-h-28 lg:flex-1 lg:overflow-y-auto lg:py-0 lg:leading-7"
                 />
               <div className="flex shrink-0 flex-col items-start gap-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1653,7 +1634,6 @@ function ProductionPicker({
                 </span>
                 <div>
                   <h2 className="text-[18px] font-bold text-[var(--text-strong)]">אירועים קרובים</h2>
-                  <p className="mt-0.5 text-[13px] leading-5 text-[var(--text-muted)]">הזדמנויות תוכן שאפשר להפוך לבריף מוכן.</p>
                 </div>
               </div>
               <Link
@@ -2439,7 +2419,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
                 value={revision}
                 onChange={(e) => setRevision(e.target.value)}
                 disabled={revisionCount >= 3}
-                rows={5}
+                rows={6}
                 className="w-full rounded-xl border border-[var(--border-warm)] bg-[var(--surface-2)] px-3 py-3 text-[var(--text-strong)] shadow-sm placeholder:text-[var(--text-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
                 placeholder="כתבו מה לשנות בבריף"
               />
@@ -3242,7 +3222,7 @@ function ClarificationModal({
         <textarea
           autoFocus
           dir="rtl"
-          rows={5}
+          rows={6}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {

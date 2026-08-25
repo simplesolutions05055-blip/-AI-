@@ -126,12 +126,9 @@ export default function CostsPage({ embedded = false }: { embedded?: boolean } =
   return (
     <div>
       <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
-        {embedded ? (
-          <p className="text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
-        ) : (
+        {!embedded && (
           <div>
             <h1 className="text-xl font-semibold tracking-normal">עלויות</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">סיכום עלות מודלים לפי שיחה.</p>
           </div>
         )}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">

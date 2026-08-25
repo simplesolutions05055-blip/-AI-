@@ -11,8 +11,6 @@ import { parseRichText, exportRichTextPdf, exportRichTextDocx, RichTextPreview }
 import { canProduceType, normalizeOutputPermissions, type OutputPermissions } from '@/lib/outputPermissions';
 import { Spinner } from '@/components/ui/Spinner';
 import { alertDialog, confirmDialog } from '@/lib/dialog';
-import SocialScheduleSection from '@/components/SocialScheduleSection';
-import { UserContentUploadModal, type UploadedUserContentFile } from '@/components/UserContentUploadModal';
 
 const ico = 'h-4 w-4 shrink-0';
 const EyeIcon = () => (
@@ -24,11 +22,6 @@ const EyeIcon = () => (
 const DownloadIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" className={ico} aria-hidden="true">
     <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-const UploadIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" className={ico} aria-hidden="true">
-    <path d="M12 21V9m0 0 4 4m-4-4-4 4M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 const EditIcon = () => (
@@ -157,6 +150,7 @@ function parsePresentationSlides(text: string | null): Array<{ title: string; bo
 }
 
 export default function FilesPage() {
+  const archiveIsReadOnly = true;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const rawFilterType = searchParams.get('type');
@@ -185,7 +179,6 @@ export default function FilesPage() {
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [targetFileRow, setTargetFileRow] = useState<FileRow | null>(null);
-  const [uploadModalOpen, setUploadModalOpen] = useState(false);
   // Inline rename: which תוצר is being renamed, and its in-progress text.
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -560,10 +553,6 @@ export default function FilesPage() {
     return isAdmin || file.creator_id === profile?.id;
   }
 
-  function canScheduleFile(file: FileRow) {
-    return file.output_type === 'image' || file.output_type === 'text';
-  }
-
   const visibleFiles = files.filter((file) => {
     // 1. Strictly filter out files the user doesn't have permission to see/create
     const role = profile?.role ?? 'user';
@@ -597,39 +586,6 @@ export default function FilesPage() {
     return filterType ? file.output_type === filterType : true;
   });
   const manageableVisibleFiles = visibleFiles.filter(canManageFile);
-
-  async function handleUserUploaded(uploaded: UploadedUserContentFile[]) {
-    const client = createSupabaseBrowserClient();
-    const createdAt = new Date().toISOString();
-    const rows: FileRow[] = uploaded.map((file) => ({
-      id: file.id,
-      request_id: file.request_id,
-      output_type: 'image',
-      storage_path: file.storage_path,
-      title: file.file_name,
-      text_content: file.file_name,
-      mime_type: file.mime_type,
-      created_at: createdAt,
-      creator: 'אני',
-      request_source: 'user_upload',
-      brand_logo_url: null,
-      creator_id: profile?.id ?? null,
-      brand_id: null,
-      structured_brief: { source: 'user_upload', title: file.file_name },
-    }));
-    const signedPairs = await Promise.all(
-      rows.map(async (row) => {
-        const { data: signed } = await client.storage.from('outputs').createSignedUrl(row.storage_path as string, 600);
-        return [row.id, signed?.signedUrl] as const;
-      }),
-    );
-    setFiles((current) => [...rows, ...current]);
-    setPreviews((current) => ({
-      ...Object.fromEntries(signedPairs.filter(([, url]) => url)),
-      ...current,
-    }) as Record<string, string>);
-    navigate('/admin/files?source=user_upload');
-  }
 
   async function deleteSelected() {
     if (selected.size === 0) return;
@@ -670,12 +626,9 @@ export default function FilesPage() {
         onChange={handleUploadFinal}
       />
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal">תוצרים</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">צפו, ערכו ושתפו תוצרים שנוצרו במערכת.</p>
-        </div>
+        <h1 className="text-xl font-semibold tracking-normal">תוצרים</h1>
         <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto sm:flex-nowrap">
-          {selected.size > 0 && (
+          {!archiveIsReadOnly && selected.size > 0 && (
             <>
               <span className="text-sm text-[var(--muted)]">{selected.size} נבחרו</span>
               <button
@@ -696,14 +649,6 @@ export default function FilesPage() {
               </button>
             </>
           )}
-          <button
-            type="button"
-            onClick={() => setUploadModalOpen(true)}
-            className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-90 sm:flex-none"
-          >
-            <UploadIcon />
-            העלאת קבצים
-          </button>
         </div>
       </div>
 
@@ -746,11 +691,8 @@ export default function FilesPage() {
         </div>
       </div>
 
-      {selected.size === 0 && !loading && manageableVisibleFiles.length > 0 && (
+      {!archiveIsReadOnly && selected.size === 0 && !loading && manageableVisibleFiles.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <p className="text-xs text-[var(--muted)]">
-            לחיצה לבחירה. Shift+לחיצה לבחירת טווח. בחירה מרובה או יחידה ומחיקה.
-          </p>
           <button
             onClick={selectAllVisible}
             className="text-xs text-[var(--muted)] hover:underline"
@@ -785,12 +727,12 @@ export default function FilesPage() {
                     return (
                       <div
                         key={file.id}
-                        onClick={(e) => toggle(fileIndex, e.shiftKey)}
-                        className={`group relative bg-white rounded-xl border overflow-hidden cursor-pointer transition select-none ${
+                        onClick={archiveIsReadOnly ? undefined : (e) => toggle(fileIndex, e.shiftKey)}
+                        className={`group relative bg-white rounded-xl border overflow-hidden transition select-none ${
                           isSelected ? 'border-brand ring-2 ring-brand' : 'border-[var(--border)] hover:border-brand'
                         }`}
                       >
-                        {canManage && <div className="absolute top-2 start-2 z-10">
+                        {!archiveIsReadOnly && canManage && <div className="absolute top-2 start-2 z-10">
                           <span
                             className={`flex items-center justify-center w-5 h-5 rounded border text-xs ${
                               isSelected ? 'bg-brand border-brand text-white' : 'bg-white/80 border-[var(--border)]'
@@ -829,7 +771,7 @@ export default function FilesPage() {
                         </div>
 
                         <div className="p-2.5">
-                          {renamingId === file.id ? (
+                          {!archiveIsReadOnly && renamingId === file.id ? (
                             <input
                               autoFocus
                               dir="rtl"
@@ -851,7 +793,7 @@ export default function FilesPage() {
                               <span className="line-clamp-2 flex-1 text-xs font-semibold leading-4" title={displayTitle(file)}>
                                 {displayTitle(file)}
                               </span>
-                              {canRenameFile(file) && (
+                              {!archiveIsReadOnly && canRenameFile(file) && (
                                 <Tooltip content="שינוי שם">
                                   <button
                                     onClick={(e) => {
@@ -881,7 +823,7 @@ export default function FilesPage() {
                           </div>
                           {file.storage_path ? (
                             <div className="mt-2 space-y-1.5">
-                              <div className="grid grid-cols-3 gap-1.5">
+                              <div className="grid grid-cols-2 gap-1.5">
                                 <Tooltip content="צפייה">
                                   <button
                                     onClick={(e) => {
@@ -906,39 +848,11 @@ export default function FilesPage() {
                                     <DownloadIcon />
                                   </button>
                                 </Tooltip>
-                                {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
-                                  <Tooltip content="שיפור / עריכה">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        navigate(`/admin/files/${file.request_id}/revise`);
-                                      }}
-                                      aria-label="שיפור / עריכה"
-                                      className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-brand text-brand hover:bg-brand/5"
-                                    >
-                                      <EditIcon />
-                                    </button>
-                                  </Tooltip>
-                                )}
                               </div>
-                              {canScheduleFile(file) && file.output_type === 'image' && previews[file.id] && (
-                                <div onClick={(e) => e.stopPropagation()}>
-                                  <SocialScheduleSection
-                                    title=""
-                                    requestId={file.request_id}
-                                    outputId={file.id}
-                                    brandId={file.brand_id}
-                                    captionSource={{ kind: 'image', brief: file.structured_brief ?? {}, requestId: file.request_id }}
-                                    producedImages={[{ key: 'main', url: previews[file.id], storagePath: file.storage_path }]}
-                                    triggerLabel="תזמון"
-                                    triggerClassName="min-h-11 w-full justify-center px-2 py-2 text-xs"
-                                  />
-                                </div>
-                              )}
                             </div>
                           ) : (
                             <div className="mt-2 space-y-1.5">
-                              <div className="grid grid-cols-2 gap-1.5">
+                              <div className="grid grid-cols-1 gap-1.5">
                                 <Tooltip content="פתיחת הטקסט">
                                   <button
                                     onClick={(e) => {
@@ -956,20 +870,6 @@ export default function FilesPage() {
                                     <EyeIcon />
                                   </button>
                                 </Tooltip>
-                                {(file.output_type === 'image' || file.output_type === 'presentation' || file.output_type === 'pdf') && (
-                                  <Tooltip content="שיפור / עריכה">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        navigate(`/admin/files/${file.request_id}/revise`);
-                                      }}
-                                      aria-label="שיפור / עריכה"
-                                      className="inline-flex min-h-11 w-full items-center justify-center rounded-lg border border-brand text-brand hover:bg-brand/5"
-                                    >
-                                      <EditIcon />
-                                    </button>
-                                  </Tooltip>
-                                )}
                               </div>
                               {file.text_content && (
                                 <div className="grid grid-cols-2 gap-1.5">
@@ -999,19 +899,6 @@ export default function FilesPage() {
                                   </Tooltip>
                                 </div>
                               )}
-                              {canScheduleFile(file) && file.text_content && (
-                                <div onClick={(e) => e.stopPropagation()}>
-                                  <SocialScheduleSection
-                                    title=""
-                                    requestId={file.request_id}
-                                    outputId={file.id}
-                                    brandId={file.brand_id}
-                                    captionSource={{ kind: 'text', text: file.text_content }}
-                                    triggerLabel="תזמון"
-                                    triggerClassName="min-h-11 w-full justify-center px-2 py-2 text-xs"
-                                  />
-                                </div>
-                              )}
                             </div>
                           )}
                         </div>
@@ -1025,7 +912,7 @@ export default function FilesPage() {
         </div>
       )}
 
-      {selected.size > 0 && (
+      {!archiveIsReadOnly && selected.size > 0 && (
         <div className="fixed inset-x-3 bottom-[calc(var(--safe-bottom)+0.75rem)] z-30 rounded-xl border border-[var(--border)] bg-white p-3 shadow-lg md:hidden" dir="rtl">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm font-semibold">{selected.size} נבחרו</span>
@@ -1040,12 +927,6 @@ export default function FilesPage() {
           </div>
         </div>
       )}
-
-      <UserContentUploadModal
-        open={uploadModalOpen}
-        onClose={() => setUploadModalOpen(false)}
-        onUploaded={handleUserUploaded}
-      />
 
       {textPreview && (
         <div 

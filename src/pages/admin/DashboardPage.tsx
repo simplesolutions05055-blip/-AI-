@@ -259,7 +259,6 @@ export default function DashboardPage() {
       <div className="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold leading-tight tracking-normal text-[var(--text-strong)] sm:text-3xl">לוח בקרה</h1>
-          <p className="mt-1.5 text-sm text-[var(--text-muted)]">מבט מהיר על הפעילות, התוצרים והעלויות במערכת.</p>
         </div>
         <label className="flex w-full flex-col gap-1.5 text-xs font-bold text-[var(--text-muted)] sm:w-auto">
           טווח נתונים
@@ -305,7 +304,6 @@ export default function DashboardPage() {
         <div className="mb-5 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-[var(--text-strong)]">תוצרים אחרונים</h2>
-            <p className="mt-0.5 text-sm text-[var(--text-muted)]">גישה מהירה לתוצרים האחרונים לפי סוג.</p>
           </div>
           <Link to="/admin/files" className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-[var(--border-warm)] px-3 py-2 text-sm font-semibold text-[var(--text-strong)] transition hover:border-brand/30 hover:bg-[var(--bg-subtle)] sm:px-4">
             כל התוצרים

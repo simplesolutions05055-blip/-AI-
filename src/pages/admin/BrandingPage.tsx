@@ -97,6 +97,15 @@ export default function BrandingPage() {
   const [textSources, setTextSources] = useState<BusinessTextSource[]>([]);
   const [newSourceTitle, setNewSourceTitle] = useState('');
   const [newSourceContent, setNewSourceContent] = useState('');
+
+  useEffect(() => {
+    if (!selected?.id || !window.location.hash) return;
+    const targetId = window.location.hash.slice(1);
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selected?.id]);
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [brandLogoUrls, setBrandLogoUrls] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -725,14 +734,6 @@ export default function BrandingPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold leading-tight tracking-normal">ניהול מותג</h1>
-          <p className="mt-1 max-w-xl text-sm leading-6 text-[var(--muted)]">
-            {isAdmin
-              ? 'עדכנו פרטי מותג, לוגו, צבעים ומקורות תוכן.'
-              : 'עדכנו פרטי מסמכים וטפסים רשמיים של המותגים שהוקצו לכם.'}
-            {!loading && brands.length > 0 && (
-              <span className="font-medium text-[var(--text)]"> · {brands.length} מקומות</span>
-            )}
-          </p>
         </div>
         {isAdmin && (
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
@@ -870,8 +871,8 @@ export default function BrandingPage() {
 
         {/* editor */}
         {selected && (
-          <section id="brand-editor" className="scroll-mt-4 mt-4 min-w-0 space-y-4 rounded-xl border border-[var(--border)] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] xl:mt-0">
-            <div className="sticky top-0 z-20 -mx-4 -mt-4 flex flex-col gap-2 border-b border-[var(--border)] bg-white p-4 before:absolute before:inset-x-0 before:-top-3 before:h-3 before:bg-white before:content-[''] sm:static sm:mx-0 sm:mt-0 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:bg-transparent sm:p-0 sm:before:hidden">
+          <section id="brand-editor" className="scroll-mt-4 mt-4 flex min-w-0 flex-col gap-4 rounded-xl border border-[var(--border)] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] xl:mt-0">
+            <div className="sticky top-0 z-20 -order-2 -mx-4 -mt-4 flex flex-col gap-2 border-b border-[var(--border)] bg-white p-4 before:absolute before:inset-x-0 before:-top-3 before:h-3 before:bg-white before:content-[''] sm:static sm:mx-0 sm:mt-0 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:bg-transparent sm:p-0 sm:before:hidden">
               <h2 className="relative z-10 font-semibold">{selected.id ? 'עריכת מקום' : 'מקום חדש'}</h2>
               <div className="relative z-10 flex flex-wrap gap-2">
                 {selected.id && (
@@ -900,7 +901,7 @@ export default function BrandingPage() {
               </div>
             </div>
 
-            <label className="block">
+            <label id="brand-details" className="block scroll-mt-24">
               <span className="block text-sm font-medium mb-1">שם המקום</span>
               <input
                 className={input}
@@ -1016,12 +1017,9 @@ export default function BrandingPage() {
             </>
             )}
 
-            <div className="rounded-lg border border-[var(--border)] p-3">
+            <div id="brand-formal-documents" className="-order-1 scroll-mt-24 rounded-lg border border-[var(--border)] p-3">
               <div className="mb-3">
                 <span className="block text-sm font-semibold">מסמכים וטפסים רשמיים</span>
-                <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-                  שדות אופציונליים לתבניות PDF רשמיות: טפסים, אישורים, הצהרות והוראות תשלום. השארת שדה ריק לא תחייב אותו בתוצר.
-                </p>
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -1131,14 +1129,9 @@ export default function BrandingPage() {
             </div>
 
             {/* content brain */}
-            <div className="rounded-lg border border-[var(--border)] p-3">
+            <div id="brand-documents" className="-order-1 scroll-mt-24 rounded-lg border border-[var(--border)] p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <div>
-                  <span className="block text-sm font-medium">אזור תוכן</span>
-                  <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-                    חומרים שכל מי ששייך למותג יכול להוסיף ולערוך. המערכת משתמשת בהם לעובדות, מסרים, שירותים וניסוחים בכל התוצרים.
-                  </p>
-                </div>
+                <span className="block text-sm font-medium">אזור תוכן</span>
                 <div className="shrink-0">
                   <input
                     ref={textSourceRef}
@@ -1209,7 +1202,7 @@ export default function BrandingPage() {
             </div>
 
             {/* assets */}
-            <div>
+            <div className="-order-1 rounded-lg border border-[var(--border)] p-3">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-sm font-medium">אזור עיצוב — תמונות לשימוש בתוצרים</span>
                 <input ref={assetRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadAsset(e.target.files[0])} />
@@ -1220,11 +1213,6 @@ export default function BrandingPage() {
                   + העלאת תמונה
                 </button>
               </div>
-              <p className="mb-2 text-xs text-[var(--muted)] leading-5">
-                התמונות שיועלו כאן (יחד עם הלוגו) ישמשו לעיצוב, השראה ויזואלית ושילוב בתוצרים — לא כמקור לעובדות או מסרים עסקיים.
-                בעת הפקת מצגת, יצורפו קישורים מאובטחים וזמניים לתמונות אלה, כך שניתן להוריד ולהכניס אותן ישירות.
-                מומלץ להוסיף תיאור קצר לכל תמונה (למשל "תמונת רחוב מרכזי", "אירוע עירוני") כדי שהמערכת תדע היכן לשבץ אותה.
-              </p>
               {assets.length === 0 ? (
                 <p className="text-xs text-[var(--muted)]">לא הועלו תמונות עדיין.</p>
               ) : (
@@ -1263,11 +1251,11 @@ export default function BrandingPage() {
               </svg>
             </div>
             <h2 className="text-lg font-semibold">בחרו מקום כדי לערוך</h2>
-            <p className="mt-1.5 max-w-sm text-sm leading-6 text-[var(--muted)]">
-              {isAdmin
-                ? 'לחצו על מקום מהרשימה כדי לערוך את הלוגו, פלטת הצבעים, הנחיות הסגנון, פרטי הטפסים ומקורות התוכן — או צרו מקום חדש.'
-                : 'לא נמצאו מותגים שהוקצו לך. מנהל המערכת יכול לשייך אותך למותג כדי שתוכל לערוך את פרטי הטפסים שלו.'}
-            </p>
+            {!isAdmin && (
+              <p className="mt-1.5 max-w-sm text-sm leading-6 text-[var(--muted)]">
+                לא נמצאו מותגים שהוקצו לך. מנהל המערכת יכול לשייך אותך למותג כדי שתוכל לערוך את פרטי הטפסים שלו.
+              </p>
+            )}
             {isAdmin && (
             <button
               onClick={() => openBrand(null)}
@@ -1292,10 +1280,6 @@ export default function BrandingPage() {
               <button type="button" onClick={() => setCsvModalOpen(false)} aria-label="סגירה" className="rounded-full p-1.5 hover:bg-gray-100 text-xl leading-none">×</button>
             </div>
             <div className="p-4 space-y-4">
-              <p className="text-sm text-[var(--muted)] leading-relaxed">
-                ייצוא וייבוא ב-CSV מאפשרים לעדכן כמה מקומות בו-זמנית או ליצור גיבוי של הנתונים שלכם מחוץ למערכת.
-              </p>
-
               <div className="space-y-3">
                 <div className="rounded-lg border border-[var(--border)] p-3">
                   <div className="flex items-center justify-between mb-1">
@@ -1308,7 +1292,6 @@ export default function BrandingPage() {
                       {selectedIds.size > 0 ? `ייצוא נבחרים (${selectedIds.size})` : 'ייצוא הכל'}
                     </button>
                   </div>
-                  <p className="text-xs text-[var(--muted)]">הורדת המקומות הקיימים לקובץ. ניתן לערוך את הקובץ באקסל ולהעלות חזרה לעדכון מרוכז.</p>
                 </div>
 
                 <div className="rounded-lg border border-[var(--border)] p-3">
@@ -1322,7 +1305,6 @@ export default function BrandingPage() {
                       {importing ? 'מייבא...' : 'ייבוא CSV'}
                     </button>
                   </div>
-                  <p className="text-xs text-[var(--muted)]">העלאת קובץ חדש או מעודכן. מקום עם שם שקיים במערכת יעודכן, ושם חדש יתווסף.</p>
                 </div>
 
                 <div className="rounded-lg border border-[var(--border)] p-3">
@@ -1335,7 +1317,6 @@ export default function BrandingPage() {
                       הורדת תבנית
                     </button>
                   </div>
-                  <p className="text-xs text-[var(--muted)]">הורדת קובץ ריק עם העמודות הנדרשות כדי להתחיל להזין מקומות חדשים בקלות.</p>
                 </div>
               </div>
 
@@ -1363,12 +1344,7 @@ export default function BrandingPage() {
           />
           <div className="relative flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white text-right shadow-xl">
             <div className="flex items-start justify-between gap-3 px-5 pb-4 pt-5">
-              <div>
-                <h2 className="text-lg font-bold text-[var(--text)]">העלאת לוגו</h2>
-                <p className="mt-1 text-sm text-[var(--muted)]">
-                  גררו תמונה לכאן או בחרו קובץ מהמכשיר. אחרי הבחירה ה-AI יזהה את צבעי המותג אוטומטית.
-                </p>
-              </div>
+              <h2 className="text-lg font-bold text-[var(--text)]">העלאת לוגו</h2>
               <button
                 type="button"
                 onClick={() => setLogoModalOpen(false)}
@@ -1440,9 +1416,6 @@ export default function BrandingPage() {
                       </div>
                     </div>
                   </div>
-                )}
-                {!extracting && !colorSummary && !pendingColors && (
-                  <p className="mt-2 text-xs text-[var(--muted)]">הזיהוי יתחיל אוטומטית אחרי בחירת תמונה.</p>
                 )}
                 {colorSummary && <p className="mt-2 text-xs text-emerald-700">{colorSummary}</p>}
                 {colorSummary && !pendingColors && selected?.color_palette?.length ? (

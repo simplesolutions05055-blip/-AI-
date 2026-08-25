@@ -9,8 +9,18 @@ import { Spinner } from '@/components/ui/Spinner';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
 import { useBrandTheme } from '@/lib/useBrandTheme';
+import { FileText, Palette, ArrowLeft, ArrowRight } from 'lucide-react';
 
-type StepKey = 'details' | 'company' | 'brand' | 'docs' | 'files';
+type StepKey = 'details' | 'company' | 'hub' | 'brand' | 'content';
+type BrandSectionKey = 'identity' | 'visual' | 'writing' | 'official' | 'documents';
+
+const BRAND_SECTIONS: { key: BrandSectionKey; label: string }[] = [
+  { key: 'identity', label: 'פרטי המותג' },
+  { key: 'visual', label: 'לוגו וצבעים' },
+  { key: 'writing', label: 'הנחיות כתיבה' },
+  { key: 'official', label: 'פרטים רשמיים' },
+  { key: 'documents', label: 'עיצוב מסמכים' },
+];
 
 interface UploadedItem {
   name: string;
@@ -179,6 +189,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
   const [requireUploads, setRequireUploads] = useState(false);
   const [brandName, setBrandName] = useState<string | null>(null);
   const [brandDone, setBrandDone] = useState(false);
+  const [brandSection, setBrandSection] = useState<BrandSectionKey>('identity');
   const [brand, setBrand] = useState<BrandDetails>(emptyBrand);
   // Onboarding is the longest form in the product. Every keystroke is mirrored
   // to IndexedDB so a failed save, a refresh or a browser crash does not send
@@ -202,6 +213,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
   const [pendingBrandColors, setPendingBrandColors] = useState<BrandDetails['color_palette'] | null>(null);
   const [contentSources, setContentSources] = useState<ContentSource[]>([]);
   const [contentLoaded, setContentLoaded] = useState(false);
+  const [activeContentIndex, setActiveContentIndex] = useState(-1);
   const [navOpen, setNavOpen] = useState(false);
   const [navMounted, setNavMounted] = useState(false);
   const [navVisible, setNavVisible] = useState(false);
@@ -226,7 +238,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const steps: StepKey[] = useMemo(() => ['details', 'company', 'brand', 'docs', 'files'], []);
+  const steps: StepKey[] = useMemo(() => ['details', 'company', 'hub', 'brand', 'content'], []);
   const step = steps[stepIndex];
 
   useBrandTheme(!!userId);
@@ -278,6 +290,11 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       setGender(p?.gender ?? '');
       progress.current = p?.onboarding ?? {};
       setBrandDone(p?.onboarding?.brand_done === true);
+      if (p?.onboarding?.details_done && p?.onboarding?.brand_done) {
+        setStepIndex(steps.indexOf('hub'));
+      } else if (p?.onboarding?.details_done) {
+        setStepIndex(steps.indexOf('company'));
+      }
 
       if (p?.avatar_path) {
         const { data: avatarUrl } = await supabase.storage.from('avatars').createSignedUrl(p.avatar_path, 60 * 60);
@@ -686,8 +703,9 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       setError('יש למלא שם חברה.');
       return;
     }
-    if (!brandLogoFile && !brandLogoPreview && !brand.logo_url) {
-      setMissingLogoConfirmOpen(true);
+    if (!brandLogoFile && !brandLogoPreview && !brand.logo_url && !brand.logo_path) {
+      setError('כדי להמשיך צריך להעלות לוגו למותג.');
+      setBrandLogoModalOpen(true);
       return;
     }
     await continueCompanyStep();
@@ -736,6 +754,11 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       setError('יש למלא שם מותג.');
       return;
     }
+    if (!brandLogoFile && !brandLogoPreview && !brand.logo_url && !brand.logo_path) {
+      setBrandSection('visual');
+      setError('כדי לשמור את המותג צריך להעלות לוגו.');
+      return;
+    }
     setSaving(true);
     try {
       const logoPayload = brandLogoFile ? {
@@ -779,7 +802,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       // Saved for real — the local copy has done its job and must not resurface.
       void brandDraft.discard();
       progress.current = { ...progress.current, brand_done: true };
-      setStepIndex(steps.indexOf('docs'));
+      setStepIndex(steps.indexOf('hub'));
     } catch (e) {
       // The draft deliberately stays in IndexedDB here — this is the exact
       // failure it exists for.
@@ -894,16 +917,61 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
     }
   }
 
-  function leaveOptionalUploadStep() {
-    if (step === 'docs' && !docsUploaded) {
-      setMissingDocsConfirmOpen(true);
+  async function saveContentAndReturn() {
+    setError(null);
+    const invalidSourceIndex = contentSources.findIndex(
+      (source) => !source.title.trim() || !source.content.trim(),
+    );
+    if (contentSources.length === 0) {
+      setError('כדי לשמור צריך להוסיף לפחות מקור תוכן אחד.');
       return;
     }
-    advance();
+    if (invalidSourceIndex >= 0) {
+      setActiveContentIndex(invalidSourceIndex);
+      setError('אי אפשר לשמור מקור תוכן ריק. צריך למלא שם מקור ותוכן, או למחוק אותו.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await syncContentSources();
+      if (userId) {
+        await supabase.from('profiles').update({ onboarding: progress.current } as never).eq('id', userId);
+      }
+      setStepIndex(steps.indexOf('hub'));
+    } catch (e) {
+      console.error(e);
+      setError('שמירת התוכן נכשלה. נסו שוב.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function addContentSource(title = '') {
+    const activeSource = activeContentIndex >= 0 ? contentSources[activeContentIndex] : null;
+    if (activeSource && !activeSource.title.trim() && title) {
+      setContentSources((cur) =>
+        cur.map((source, index) => (index === activeContentIndex ? { ...source, title } : source)),
+      );
+      setError(null);
+      return;
+    }
+    if (activeSource && !activeSource.content.trim()) {
+      setError('לפני שמוסיפים מקור חדש צריך למלא שם ותוכן במקור הנוכחי, או למחוק אותו.');
+      return;
+    }
+    setError(null);
+    setActiveContentIndex(contentSources.length);
+    setContentSources((cur) => [...cur, { title, content: '' }]);
   }
 
   async function finish() {
     if (!userId) return;
+    if (!brandLogoFile && !brandLogoPreview && !brand.logo_url && !brand.logo_path) {
+      setStepIndex(steps.indexOf('brand'));
+      setBrandSection('visual');
+      setError('כדי להיכנס למערכת צריך להעלות לוגו למותג.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -919,18 +987,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
     }
   }
 
-  const docsUploaded =
-    docs.some((d) => d.status === 'done') || contentSources.some((s) => s.content.trim().length > 0);
-  const assetsUploaded = assets.some((a) => a.status === 'done');
-  // When uploads are mandatory, the user must add at least one item to continue.
-  const canLeaveStep =
-    step === 'details' || step === 'company' || step === 'brand'
-      ? true
-      : step === 'docs'
-        ? !requireUploads || docsUploaded
-        : !requireUploads || assetsUploaded;
   const detailsSubmitLabel = embedded ? 'שמירה' : steps.length > 1 ? 'המשך' : 'סיום וכניסה';
-  const uploadSubmitLabel = embedded ? 'שמירה' : stepIndex < steps.length - 1 ? 'המשך' : 'סיום וכניסה';
 
   if (loading) {
     return <main className="grid min-h-[100dvh] place-items-center text-[var(--muted)]"><Spinner /></main>;
@@ -944,12 +1001,12 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       className={
         embedded
           ? 'w-full bg-transparent text-[#071a33]'
-          : 'flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[#f6f9f8] text-[#071a33]'
+          : 'theme-warm flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-transparent text-[var(--text-strong)]'
       }
     >
       {!embedded && (
-      <div className="hidden lg:flex lg:h-[100dvh] lg:w-60 lg:shrink-0 lg:border-l lg:border-[#d7e3e0] lg:bg-white">
-        <div className="lg:h-[100dvh] lg:w-full">
+      <div className="hidden lg:fixed lg:inset-y-5 lg:right-5 lg:z-10 lg:flex lg:h-auto lg:w-[76px] lg:shrink-0">
+        <div className="lg:h-full lg:w-full">
           <AdminNav email={email} isAdmin={isAdmin} canCreateOutputs={canCreateOutputs} />
         </div>
       </div>
@@ -984,13 +1041,13 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
         className={
           embedded
             ? 'w-full'
-            : 'min-h-0 w-full flex-1 overflow-y-auto px-4 py-8 pb-[calc(var(--safe-bottom)+5.75rem)] lg:pb-8'
+            : 'admin-main-safe min-h-0 w-full flex-1 overflow-y-auto px-4 py-8 pb-[calc(var(--safe-bottom)+5.75rem)] lg:px-8 lg:pb-8'
         }
       >
-        <div className={`mx-auto w-full ${step === 'company' ? 'max-w-3xl' : 'max-w-lg'}`}>
-          <Stepper steps={steps} current={stepIndex} />
+        <div className={`mx-auto w-full ${step === 'content' || step === 'brand' ? 'max-w-5xl' : step === 'company' || step === 'hub' ? 'max-w-3xl' : 'max-w-lg'}`}>
+          {(step === 'details' || step === 'company') && <Stepper steps={steps.slice(0, 2)} current={stepIndex} />}
 
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-white p-6 shadow-sm">
+          <div className={`${step === 'hub' ? '' : 'mt-6 rounded-3xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-6 shadow-[0_18px_50px_rgba(43,32,19,0.08)]'}`}>
             {step === 'details' && (
               <section>
                 <h1 className="text-xl font-semibold tracking-normal">ברוכים הבאים</h1>
@@ -1161,13 +1218,60 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   disabled={saving || brandLookupLoading || !brand.name.trim() || brandCandidatesOpen}
                   className="mt-2 w-full rounded-lg bg-brand py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
                 >
-                  {brandLookupLoading ? 'בודק מותג...' : 'המשך לפרטי המותג'}
+                  {brandLookupLoading ? 'בודק מותג...' : 'מעבר להגדרות המותג'}
+                </button>
+              </section>
+            )}
+
+            {step === 'hub' && (
+              <section className="py-2" aria-labelledby="onboarding-hub-title">
+                <div className="mb-7 text-center">
+                  <h1 id="onboarding-hub-title" className="text-2xl font-bold text-[var(--text)]">הגדרות המותג</h1>
+                  <p className="mt-2 text-sm text-[var(--muted)]">בחרו את האזור שרוצים לעדכן. אין צורך לעבור שוב על כל השלבים.</p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setStepIndex(steps.indexOf('brand'))}
+                    className="group flex min-h-44 cursor-pointer flex-col items-start rounded-3xl border border-[var(--border)] bg-white p-6 text-right shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brand/30 motion-reduce:transform-none"
+                  >
+                    <span className="mb-5 grid h-12 w-12 place-items-center rounded-2xl bg-brand/10 text-brand"><Palette size={24} aria-hidden="true" /></span>
+                    <span className="text-xl font-bold text-[var(--text)]">המותג</span>
+                    <span className="mt-1 text-sm text-[var(--muted)]">לוגו, צבעים, פרטים והנחיות כתיבה</span>
+                    <span className="mt-auto inline-flex items-center gap-1 pt-5 text-sm font-semibold text-brand">פתיחה <ArrowLeft size={16} aria-hidden="true" /></span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStepIndex(steps.indexOf('content'))}
+                    disabled={!brandDone}
+                    className="group flex min-h-44 cursor-pointer flex-col items-start rounded-3xl border border-[var(--border)] bg-white p-6 text-right shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand hover:shadow-md focus:outline-none focus:ring-2 focus:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transform-none"
+                  >
+                    <span className="mb-5 grid h-12 w-12 place-items-center rounded-2xl bg-brand/10 text-brand"><FileText size={24} aria-hidden="true" /></span>
+                    <span className="text-xl font-bold text-[var(--text)]">מסמכים ותוכן</span>
+                    <span className="mt-1 text-sm text-[var(--muted)]">מסמכים, תמונות ומקורות תוכן במקום אחד</span>
+                    <span className="mt-auto inline-flex items-center gap-1 pt-5 text-sm font-semibold text-brand">{brandDone ? 'פתיחה' : 'זמין לאחר שמירת המותג'} {brandDone && <ArrowLeft size={16} aria-hidden="true" />}</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={finish}
+                  disabled={!brandDone || saving}
+                  className="mt-6 w-full rounded-xl bg-brand py-3 font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
+                >
+                  {saving ? 'שומר...' : 'כניסה למערכת'}
                 </button>
               </section>
             )}
 
             {step === 'brand' && (
               <section>
+                <button type="button" onClick={() => setStepIndex(steps.indexOf('hub'))} className="mb-4 inline-flex items-center gap-2 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] px-4 py-2 text-sm font-semibold text-brand shadow-sm transition hover:border-brand hover:bg-brand/5 focus:outline-none focus:ring-2 focus:ring-brand/30">
+                  <ArrowRight size={18} aria-hidden="true" />
+                  חזרה להגדרות
+                </button>
                 <h1 className="text-xl font-semibold tracking-normal">פרטי המותג</h1>
                 <p className="mb-5 mt-1 text-sm text-[var(--muted)]">
                   השלימו את פרטי המותג, הנחיות הכתיבה והנתונים שיופיעו במסמכים.
@@ -1201,6 +1305,32 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   </div>
                 )}
 
+                <label className="mb-5 block lg:hidden">
+                  <span className="mb-2 block text-sm font-semibold">אזור בהגדרות</span>
+                  <select className={inputCls} value={brandSection} onChange={(event) => setBrandSection(event.target.value as BrandSectionKey)}>
+                    {BRAND_SECTIONS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                  </select>
+                </label>
+
+                <div className="grid items-start gap-6 lg:grid-cols-[210px_minmax(0,1fr)]">
+                  <nav className="sticky top-0 hidden rounded-2xl border border-[var(--border)] bg-gray-50 p-2 lg:block" aria-label="ניווט בהגדרות המותג">
+                    {BRAND_SECTIONS.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => setBrandSection(item.key)}
+                        aria-current={brandSection === item.key ? 'page' : undefined}
+                        className={`mb-1 w-full cursor-pointer rounded-xl px-4 py-3 text-right text-sm transition-all duration-200 last:mb-0 focus:outline-none focus:ring-2 focus:ring-brand/30 motion-reduce:transform-none ${brandSection === item.key ? '-translate-x-1 bg-white font-bold text-brand shadow-sm' : 'text-[var(--muted)] hover:bg-white hover:text-[var(--text)]'}`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </nav>
+
+                  <div key={brandSection} className="min-w-0 animate-in fade-in-0 slide-in-from-left-2 duration-200 motion-reduce:animate-none">
+
+                <div className={brandSection === 'identity' ? 'block' : 'hidden'}>
+                <h2 className="mb-4 text-lg font-bold">פרטי המותג</h2>
                 <Field label="סוג לקוח">
                   <select
                     className={inputCls}
@@ -1210,14 +1340,6 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                     <option value="business">עסק</option>
                     <option value="municipality">רשות / גוף ציבורי</option>
                   </select>
-                </Field>
-
-                <Field label="הסבר / הנחיות מותג">
-                  <textarea
-                    className={`${inputCls} min-h-24 resize-y`}
-                    value={brand.style_notes}
-                    onChange={(e) => setBrand((cur) => ({ ...cur, style_notes: e.target.value }))}
-                  />
                 </Field>
 
                 <Field label="כינויים / שמות נוספים">
@@ -1232,8 +1354,27 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                     }
                   />
                 </Field>
+                </div>
 
-                <div className="mb-4">
+                <div className={brandSection === 'writing' ? 'block' : 'hidden'}>
+                <h2 className="mb-4 text-lg font-bold">הנחיות כתיבה</h2>
+                <Field label="הסבר / הנחיות מותג">
+                  <textarea
+                    className={`${inputCls} min-h-24 resize-y`}
+                    value={brand.style_notes}
+                    onChange={(e) => setBrand((cur) => ({ ...cur, style_notes: e.target.value }))}
+                  />
+                </Field>
+                </div>
+
+                <div className={brandSection === 'visual' ? 'block' : 'hidden'}>
+                  <h2 className="mb-4 text-lg font-bold">לוגו וצבעים</h2>
+                  <button type="button" onClick={() => setBrandLogoModalOpen(true)} className="mb-5 flex w-full items-center gap-4 rounded-2xl border border-[var(--border)] p-4 text-right hover:border-brand hover:bg-brand/5">
+                    <span className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-gray-50">
+                      {brandLogoPreview ? <img src={brandLogoPreview} alt="לוגו המותג" className="h-full w-full object-contain p-2" /> : <Palette size={24} aria-hidden="true" />}
+                    </span>
+                    <span><strong className="block">לוגו המותג</strong><span className="text-sm text-[var(--muted)]">לחצו להעלאה או להחלפה</span></span>
+                  </button>
                   <span className="mb-2 block text-sm font-medium">צבעי מותג</span>
                   <div className="grid grid-cols-3 gap-2">
                     {brand.color_palette.map((color, index) => (
@@ -1259,8 +1400,9 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   </div>
                 </div>
 
-                <div className="mt-5 border-t border-[var(--border)] pt-4">
-                  <h2 className="mb-3 text-sm font-bold">פרטים רשמיים למסמכים</h2>
+                <div className={brandSection === 'official' || brandSection === 'documents' ? 'block' : 'hidden'}>
+                  <div className={brandSection === 'official' ? 'block' : 'hidden'}>
+                  <h2 className="mb-4 text-lg font-bold">פרטים רשמיים</h2>
                   <Field label="שם רשמי">
                     <input className={inputCls} value={brand.official_name} onChange={(e) => setBrand((cur) => ({ ...cur, official_name: e.target.value }))} />
                   </Field>
@@ -1315,7 +1457,10 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   <Field label="נוסח חתימה">
                     <input className={inputCls} value={brand.signature_label} onChange={(e) => setBrand((cur) => ({ ...cur, signature_label: e.target.value }))} />
                   </Field>
+                  </div>
 
+                  <div className={brandSection === 'documents' ? 'block' : 'hidden'}>
+                  <h2 className="mb-4 text-lg font-bold">עיצוב מסמכים</h2>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Field label="פונט כותרות">
                       <select className={inputCls} value={brand.title_font_family} onChange={(e) => setBrand((cur) => ({ ...cur, title_font_family: e.target.value }))}>
@@ -1356,6 +1501,9 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                       <input type="checkbox" checked={brand.show_contact_footer} onChange={(e) => setBrand((cur) => ({ ...cur, show_contact_footer: e.target.checked }))} />
                     </label>
                   </div>
+                  </div>
+                </div>
+                  </div>
                 </div>
 
                 {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
@@ -1365,31 +1513,79 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   disabled={saving || brandLookupLoading}
                   className="mt-2 w-full rounded-lg bg-brand py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
                 >
-                  {saving ? 'שומר...' : editingExistingBrand ? 'שמירת שינויים והמשך' : 'שמירת מותג והמשך'}
+                  {saving ? 'שומר...' : editingExistingBrand ? 'שמירת שינויים' : 'שמירת מותג'}
                 </button>
               </section>
             )}
 
-            {step === 'docs' && (
+            {step === 'content' && (
               <section>
-                <div>
-                  <h2 className="mb-1 text-sm font-bold">אזור תוכן — מוח עסקי</h2>
-                  <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
-                    כל התוכן הקיים של המותג מופיע כאן. אפשר לערוך, להוסיף או למחוק — הכול נשמר על המותג המשותף ויופיע
-                    לכל מי שמשויך אליו, ומשמש את המערכת לעובדות, מסרים וניסוחים בתוצרים.
+                <button type="button" onClick={() => setStepIndex(steps.indexOf('hub'))} className="mb-4 inline-flex items-center gap-2 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] px-4 py-2 text-sm font-semibold text-brand shadow-sm transition hover:border-brand hover:bg-brand/5 focus:outline-none focus:ring-2 focus:ring-brand/30">
+                  <ArrowRight size={18} aria-hidden="true" />
+                  חזרה להגדרות
+                </button>
+
+                <label className="mb-5 block lg:hidden">
+                  <span className="mb-2 block text-sm font-semibold">אזור במסמכים ותוכן</span>
+                  <select className={inputCls} value={activeContentIndex} onChange={(event) => setActiveContentIndex(Number(event.target.value))}>
+                    <option value={-1}>קבצים ותמונות</option>
+                    {contentSources.map((source, index) => <option key={source.id ?? index} value={index}>{source.title || `מקור תוכן ${index + 1}`}</option>)}
+                  </select>
+                </label>
+
+                <div className="grid items-start gap-6 lg:grid-cols-[230px_minmax(0,1fr)]">
+                  <nav className="sticky top-0 hidden max-h-[calc(100dvh-3rem)] overflow-y-auto rounded-2xl border border-[var(--border)] bg-gray-50 p-2 lg:block" aria-label="ניווט במסמכים ותוכן">
+                    <button type="button" onClick={() => setActiveContentIndex(-1)} className={`mb-1 w-full rounded-xl px-4 py-3 text-right text-sm transition-all duration-200 motion-reduce:transform-none ${activeContentIndex === -1 ? '-translate-x-1 bg-white font-bold text-brand shadow-sm' : 'text-[var(--muted)] hover:bg-white hover:text-[var(--text)]'}`}>קבצים ותמונות</button>
+                    {contentSources.map((source, index) => (
+                      <button key={source.id ?? index} type="button" onClick={() => setActiveContentIndex(index)} className={`mb-1 w-full truncate rounded-xl px-4 py-3 text-right text-sm transition-all duration-200 motion-reduce:transform-none ${activeContentIndex === index ? '-translate-x-1 bg-white font-bold text-brand shadow-sm' : 'text-[var(--muted)] hover:bg-white hover:text-[var(--text)]'}`}>
+                        {source.title || `מקור תוכן ${index + 1}`}
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => addContentSource()} className="mt-2 w-full rounded-xl border border-dashed border-[var(--border)] px-4 py-3 text-right text-sm font-semibold text-brand hover:bg-white">+ מקור תוכן חדש</button>
+                  </nav>
+
+                  <div key={activeContentIndex} className="min-w-0 animate-in fade-in-0 slide-in-from-left-2 duration-200 motion-reduce:animate-none">
+                <div className={activeContentIndex === -1 ? 'mb-7 grid gap-5 md:grid-cols-2' : 'hidden'}>
+                  <div className="rounded-2xl border border-[var(--border)] p-5">
+                    <UploadStep
+                      title="מסמכי המותג"
+                      subtitle={`העלו מסמכים (DOCX / PDF)${brandName ? ` של ${brandName}` : ''}.`}
+                      accept=".docx,.pdf"
+                      items={docs}
+                      onFiles={(f) => uploadFiles('document', f)}
+                      hint="קבצי Word או PDF, עד 25MB."
+                      processingLabel="מפענח את המסמך ומוסיף לאזור התוכן..."
+                    />
+                  </div>
+
+                  <div className="rounded-2xl border border-[var(--border)] p-5">
+                    <UploadStep
+                      title="תמונות המותג"
+                      subtitle={`העלו תמונות${brandName ? ` של ${brandName}` : ''} לשימוש בתוצרים.`}
+                      accept="image/png,image/jpeg,image/webp"
+                      items={assets}
+                      onFiles={(f) => uploadFiles('asset', f)}
+                      hint="PNG, JPG או WebP, עד 25MB לקובץ."
+                      processingLabel="מעלה ושומר את התמונה למותג..."
+                    />
+                  </div>
+                </div>
+
+                <div className={activeContentIndex >= 0 ? 'block' : 'hidden'}>
+                  <h2 className="mb-2 text-xl font-bold">אזור תוכן — מוח עסקי</h2>
+                  <p className="mb-4 max-w-3xl text-base leading-7 text-[var(--muted)]">
+                    מקור תוכן הוא מידע שהמערכת לומדת על המותג, כמו שירותים, קהלי יעד, מסרים וסגנון כתיבה. המידע עוזר ליצור תוצרים מדויקים ועקביים, ונגיש לכל מי שמשויך למותג. כדי להתחיל, לחצו על „הוספת מקור תוכן”, תנו למקור שם והוסיפו את המידע הרלוונטי.
                   </p>
 
-                  <div className="mb-3 flex flex-wrap gap-1.5">
+                  <div className="mb-3 flex flex-nowrap gap-2 overflow-x-auto pb-3 overscroll-x-contain scroll-smooth" dir="rtl" aria-label="הצעות למקורות תוכן">
                     {CONTENT_SECTIONS.filter(
                       (section) => !contentSources.some((source) => source.title.trim() === section.title),
                     ).map((section) => (
                       <button
                         key={section.key}
                         type="button"
-                        onClick={() =>
-                          setContentSources((cur) => [...cur, { title: section.title, content: '' }])
-                        }
-                        className="rounded-full border border-dashed border-[var(--border)] px-3 py-1 text-xs text-[var(--muted)] hover:border-brand hover:text-brand"
+                        onClick={() => addContentSource(section.title)}
+                        className="shrink-0 whitespace-nowrap rounded-full border border-dashed border-[var(--border)] px-4 py-2 text-sm text-[var(--muted)] transition hover:border-brand hover:text-brand"
                       >
                         + {section.title}
                       </button>
@@ -1403,11 +1599,11 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   ) : (
                     <div className="space-y-3">
                       {contentSources.map((source, index) => (
-                        <div key={source.id ?? `new-${index}`} className="rounded-lg border border-[var(--border)] p-3">
+                        <div key={source.id ?? `new-${index}`} className={activeContentIndex === index ? 'rounded-lg border border-[var(--border)] p-3' : 'hidden'}>
                           <div className="mb-2 flex items-center gap-2">
                             <input
-                              className={`${inputCls} text-sm font-medium`}
-                              dir="auto"
+                              className={`${inputCls} text-right text-sm font-medium`}
+                              dir="rtl"
                               placeholder="שם המקור"
                               value={source.title}
                               onChange={(e) =>
@@ -1418,14 +1614,17 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                             />
                             <button
                               type="button"
-                              onClick={() => setContentSources((cur) => cur.filter((_, i) => i !== index))}
+                              onClick={() => {
+                                setContentSources((cur) => cur.filter((_, i) => i !== index));
+                                setActiveContentIndex((current) => Math.max(-1, Math.min(current, contentSources.length - 2)));
+                              }}
                               className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50"
                             >
                               מחיקה
                             </button>
                           </div>
                           <textarea
-                            className={`${inputCls} min-h-24 resize-y`}
+                            className={`${inputCls} min-h-24 resize-y text-right`}
                             dir="rtl"
                             placeholder="הדביקו כאן טקסט עסקי, שירותים, מסרים, FAQ או ניסוחים קיימים"
                             value={source.content}
@@ -1442,61 +1641,25 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
 
                   <button
                     type="button"
-                    onClick={() => setContentSources((cur) => [...cur, { title: '', content: '' }])}
+                    onClick={() => addContentSource()}
                     className="mt-3 w-full rounded-lg border border-dashed border-[var(--border)] py-2 text-sm font-semibold text-[var(--muted)] hover:border-brand hover:text-brand"
                   >
                     + הוספת מקור תוכן
                   </button>
                 </div>
 
-                <div className="mt-6 border-t border-[var(--border)] pt-5">
-                  <UploadStep
-                    title="מסמכי המותג"
-                    subtitle={`העלו מסמכים (DOCX / PDF)${brandName ? ` של ${brandName}` : ''} — נשתמש בתוכן שלהם כמאפייני המותג.`}
-                    accept=".docx,.pdf"
-                    items={docs}
-                    onFiles={(f) => uploadFiles('document', f)}
-                    hint="קבצי Word או PDF, עד 25MB."
-                    processingLabel="מפענח את המסמך ומוסיף לאזור התוכן..."
-                  />
+                  </div>
                 </div>
+
               </section>
             )}
 
-            {step === 'files' && (
-              <UploadStep
-                title="קבצים ותמונות"
-                subtitle={`העלו תמונות וקבצים${brandName ? ` של ${brandName}` : ''} שיישמרו במערכת וישמשו בתוצרים.`}
-                accept="image/*"
-                items={assets}
-                onFiles={(f) => uploadFiles('asset', f)}
-                hint="תמונות (PNG / JPG / WEBP), עד 25MB לקובץ."
-                processingLabel="מעלה ושומר את הקובץ למותג..."
-              />
-            )}
-
-            {(step === 'docs' || step === 'files') && (
-              <div className="mt-6 flex items-center justify-between gap-3">
-                <button
-                  onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
-                  className="text-sm font-medium text-[var(--muted)] hover:underline"
-                >
-                  חזרה
+            {step === 'content' && (
+              <div>
+                {error && <p role="alert" className="mt-5 text-sm font-medium text-red-600">{error}</p>}
+                <button onClick={saveContentAndReturn} disabled={saving} className="mt-3 w-full rounded-lg bg-brand px-5 py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60">
+                  {saving ? 'שומר...' : 'שמירת מסמכים ותוכן'}
                 </button>
-                <div className="flex items-center gap-3">
-                  {!embedded && !requireUploads && (
-                    <button onClick={leaveOptionalUploadStep} className="text-sm font-medium text-[var(--muted)] hover:underline">
-                      דלג
-                    </button>
-                  )}
-                  <button
-                    onClick={leaveOptionalUploadStep}
-                    disabled={!canLeaveStep || saving}
-                    className="rounded-lg bg-brand px-5 py-2.5 font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
-                  >
-                    {saving ? 'שומר...' : uploadSubmitLabel}
-                  </button>
-                </div>
               </div>
             )}
           </div>
@@ -1773,9 +1936,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
             <div className="flex items-start justify-between gap-3 px-5 pb-4 pt-5">
               <div>
                 <h2 className="text-lg font-bold text-[var(--text)]">העלאת לוגו</h2>
-                <p className="mt-1 text-sm text-[var(--muted)]">
-                  גררו תמונה לכאן או בחרו קובץ מהמכשיר. אחרי הבחירה ה-AI יזהה את צבעי המותג אוטומטית.
-                </p>
+                <p className="mt-1 text-sm text-[var(--muted)]">לאחר ההעלאה נזהה את צבעי המותג.</p>
               </div>
               <button
                 type="button"
@@ -2002,9 +2163,9 @@ function Stepper({ steps, current }: { steps: StepKey[]; current: number }) {
   const labels: Record<StepKey, string> = {
     details: 'פרטים',
     company: 'חברה',
+    hub: 'הגדרות',
     brand: 'מותג',
-    docs: 'מסמכים',
-    files: 'קבצים',
+    content: 'מסמכים ותוכן',
   };
   const currentLabel = labels[steps[current]];
   const progress = ((current + 1) / steps.length) * 100;

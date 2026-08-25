@@ -23,8 +23,8 @@ export const PRODUCTION_PERMISSION_TYPES: Array<{
 export const DEFAULT_OUTPUT_PERMISSIONS: OutputPermissions = {
   image: { admin: true, user: true },
   text: { admin: true, user: true },
-  presentation: { admin: true, user: true },
-  pdf: { admin: true, user: true },
+  presentation: { admin: false, user: false },
+  pdf: { admin: false, user: false },
   quote: { admin: true, user: true },
   upload: { admin: true, user: true },
 };

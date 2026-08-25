@@ -19,7 +19,6 @@ const TITLES: { match: (p: string) => boolean; title: string }[] = [
   { match: (p) => p.includes('/revise'), title: 'תיקון תוצר' },
   { match: (p) => p.startsWith('/admin/production'), title: 'הפקה' },
   { match: (p) => p.startsWith('/admin/quote'), title: 'הצעת מחיר' },
-  { match: (p) => p.startsWith('/admin/simulator'), title: 'סימולטור' },
   { match: (p) => p.startsWith('/admin/files'), title: 'תוצרים' },
   { match: (p) => p.startsWith('/admin/branding'), title: 'מיתוג' },
   { match: (p) => p.startsWith('/admin/models'), title: 'מודלים' },

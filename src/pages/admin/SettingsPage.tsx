@@ -311,7 +311,6 @@ export default function SettingsPage() {
       <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-normal">הגדרות מערכת</h1>
-          <p className="mt-1 hidden text-sm text-[var(--muted)] sm:block">נהלו נוסחים, הרשאות, מיילים, מודלים ומגבלות.</p>
         </div>
         {!SELF_SAVING_TABS.includes(activeTab) && (
           <button onClick={save} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white sm:w-auto">

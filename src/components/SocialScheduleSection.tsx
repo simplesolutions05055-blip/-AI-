@@ -332,7 +332,6 @@ export default function SocialScheduleSection({
           platforms={platforms}
           onPlatformsChange={updatePlatforms}
           caption={caption}
-          onCaptionChange={setCaption}
           captionLoading={captionLoading}
           captionError={captionError}
           media={media}
@@ -365,7 +364,6 @@ function ScheduleModal({
   platforms,
   onPlatformsChange,
   caption,
-  onCaptionChange,
   captionLoading,
   captionError,
   media,
@@ -381,7 +379,6 @@ function ScheduleModal({
   platforms: SocialPlatform[];
   onPlatformsChange: (platforms: SocialPlatform[]) => void;
   caption: string;
-  onCaptionChange: (value: string) => void;
   captionLoading: boolean;
   captionError: string | null;
   media: MediaItem[];
@@ -394,12 +391,9 @@ function ScheduleModal({
   onSaved: (message: string) => void;
   onClose: () => void;
 }) {
-  const [scheduleTitle, setScheduleTitle] = useState('');
   const [scheduledAt, setScheduledAt] = useState(defaultScheduledAt);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [aiCaptionLoading, setAiCaptionLoading] = useState(false);
-  const [aiCaptionError, setAiCaptionError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
 
   // Where the post actually publishes: the brand's Meta connection and the
@@ -439,6 +433,15 @@ function ScheduleModal({
     };
   }, [brandId]);
 
+  // Auto post name: first line of the caption, falling back to the date. The
+  // user never types it, so an empty name can no longer block scheduling.
+  const autoScheduleTitle = (() => {
+    const firstLine = caption.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+    if (firstLine) return firstLine.replace(/[#*_`]/g, '').slice(0, 120);
+    const stamp = scheduledAt ? scheduledAt.replace('T', ' ') : '';
+    return `פוסט ${stamp}`.trim();
+  })();
+
   const includesInstagram = platforms.includes('instagram');
   const channelsLabel = platformsLabel(platforms);
   const hasPlatforms = platforms.length > 0;
@@ -470,8 +473,8 @@ function ScheduleModal({
   }
 
   async function saveSchedule() {
-    const cleanTitle = scheduleTitle.trim();
-    if (!cleanTitle || !scheduledAt || !caption.trim() || !hasPlatforms || saving || igTooManyItems) return;
+    const cleanTitle = autoScheduleTitle;
+    if (!scheduledAt || !caption.trim() || !hasPlatforms || saving || igTooManyItems) return;
     if (metaTargets.status !== 'ready' || !targetsReady) return;
     setSaving(true);
     setSaveError(null);
@@ -513,30 +516,6 @@ function ScheduleModal({
     }
   }
 
-  async function generateCaptionFromDraft() {
-    const draft = caption.trim();
-    if (!draft || aiCaptionLoading || captionLoading) return;
-    setAiCaptionLoading(true);
-    setAiCaptionError(null);
-    try {
-      const text = await fetchSocialCaption(
-        {
-          brand_id: brandId,
-          goal: draft,
-          source_text: draft,
-          content_request: 'להפוך את הטקסט החופשי לכיתוב מוכן לפרסום ברשת החברתית, בלי להוסיף עובדות שלא נכתבו.',
-        },
-        platforms[0] ?? 'facebook',
-        requestId
-      );
-      onCaptionChange(text);
-    } catch {
-      setAiCaptionError('לא הצלחנו לנסח את הטקסט עם AI. אפשר לערוך ידנית ולנסות שוב.');
-    } finally {
-      setAiCaptionLoading(false);
-    }
-  }
-
   return (
     <div
       dir="rtl"
@@ -555,7 +534,7 @@ function ScheduleModal({
           <div className="min-w-0">
             <h2 className="text-base font-bold leading-6 sm:text-lg">תזמון לרשתות חברתיות</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              בחרו איפה הפוסט יפורסם, הוסיפו מועד וכיתוב, ושמרו תזמון אחד.
+              בחרו איפה הפוסט יפורסם, הוסיפו מועד ושמרו תזמון אחד.
             </p>
           </div>
           <Tooltip content="סגירה">
@@ -634,16 +613,6 @@ function ScheduleModal({
             )}
           </fieldset>
 
-          <label className="mb-2 block text-sm font-semibold">שם התזמון</label>
-          <input
-            type="text"
-            value={scheduleTitle}
-            onChange={(e) => setScheduleTitle(e.target.value)}
-            maxLength={160}
-            placeholder="למשל: בדיקה"
-            className="mb-4 block w-full min-w-0 max-w-full rounded-lg border border-[var(--border)] px-2.5 py-3 text-right text-sm leading-5 sm:px-3 sm:py-2"
-          />
-
           <label className="mb-2 block text-sm font-semibold">תאריך ושעה</label>
           <input
             type="datetime-local"
@@ -654,65 +623,16 @@ function ScheduleModal({
 
           <div className="mb-2 flex items-center justify-between gap-3">
             <label className="block text-sm font-semibold">כיתוב לפרסום</label>
-            <Tooltip content="הופך את הטקסט שבתיבה לכיתוב מוכן לפוסט">
-              <button
-                type="button"
-                onClick={generateCaptionFromDraft}
-                disabled={captionLoading || aiCaptionLoading || !caption.trim()}
-                className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3"
-              >
-                {aiCaptionLoading ? <SmallSpinnerIcon /> : <SparkleIcon />}
-                <span>{aiCaptionLoading ? 'מנסח...' : 'ניסוח עם AI'}</span>
-              </button>
-            </Tooltip>
+            <span className="text-xs text-[var(--muted)]">שם הפוסט נקבע אוטומטית</span>
           </div>
-          <div className="relative mb-1">
-            <textarea
-              rows={5}
-              value={caption}
-              onChange={(e) => {
-                onCaptionChange(e.target.value);
-                if (aiCaptionError) setAiCaptionError(null);
-              }}
-              disabled={captionLoading}
-              placeholder={
-                captionLoading
-                  ? 'כותב טקסט לפרסום...'
-                  : 'אפשר לכתוב כאן כל טקסט, רעיון או טיוטה. כפתור ה-AI יהפוך אותו לכיתוב מוכן לפוסט.'
-              }
-              className={`block w-full min-w-0 max-w-full resize-none rounded-lg border border-[var(--border)] px-3 py-2 text-sm leading-6 placeholder:text-[var(--muted)] disabled:bg-gray-50 ${
-                aiCaptionLoading ? 'social-caption-writing pr-3' : ''
-              }`}
-            />
-            {aiCaptionLoading && <div className="social-caption-scan" aria-hidden="true" />}
+          <div className="relative mb-1 min-h-24 whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">
+            {captionLoading ? 'כותב טקסט לפרסום...' : caption || 'אין כיתוב לפרסום.'}
           </div>
+          <p className="mb-3 text-xs text-[var(--muted)]">תצוגה בלבד. שינוי הטקסט נעשה במסך העריכה.</p>
           {captionLoading && (
             <p className="mb-3 text-xs text-[var(--muted)]">כותב טקסט מוכן לפרסום לפי הבריף...</p>
           )}
-          {aiCaptionLoading && (
-            <div className="mb-3 flex items-center justify-end gap-2 text-xs font-medium text-[var(--muted)]">
-              <span>מנסח את הטיוטה ככיתוב מוכן לפוסט</span>
-              <span className="flex items-center gap-1" aria-hidden="true">
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand [animation-delay:-0.24s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand [animation-delay:-0.12s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand" />
-              </span>
-            </div>
-          )}
-          {captionError && (
-            <p className="mb-3 text-xs text-red-600">לא הצלחנו לכתוב טקסט אוטומטי. אפשר לכתוב ידנית.</p>
-          )}
-          {aiCaptionError && <p className="mb-3 text-xs text-red-600">{aiCaptionError}</p>}
-          {!captionLoading && !aiCaptionLoading && !captionError && !aiCaptionError && <div className="mb-3" />}
-
-          {hasAiImage && (
-            <div className="mb-3 flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800">
-              <SparkleIcon />
-              <span>התמונה שיצרנו עם ה-AI מצורפת לפוסט ותפורסם יחד עם הכיתוב.</span>
-            </div>
-          )}
-
-          <MediaEditor media={media} setMedia={setMedia} brandId={brandId} onRemove={onMediaRemoved} />
+          {!captionLoading && !captionError && <div className="mb-3" />}
 
           {includesInstagram && media.length === 0 && (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -758,7 +678,7 @@ function ScheduleModal({
           <button
             type="button"
             onClick={saveSchedule}
-            disabled={saving || !hasPlatforms || !targetsReady || !scheduleTitle.trim() || !scheduledAt || !caption.trim() || (includesInstagram && media.length === 0) || igTooManyItems}
+            disabled={saving || !hasPlatforms || !targetsReady || !scheduledAt || !caption.trim() || (includesInstagram && media.length === 0) || igTooManyItems}
             className="min-h-11 min-w-0 rounded-lg bg-brand px-2 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-base"
           >
             {saving ? 'שומר...' : 'תזמון הפרסום'}

@@ -15,7 +15,6 @@ import RequestsCostsPage from '@/pages/admin/RequestsCostsPage';
 import SettingsPage from '@/pages/admin/SettingsPage';
 import UserSettingsPage from '@/pages/admin/UserSettingsPage';
 import PasswordPage from '@/pages/admin/PasswordPage';
-import SimulatorPage from '@/pages/admin/SimulatorPage';
 import FilesPage from '@/pages/admin/FilesPage';
 import ModelsPage from '@/pages/admin/ModelsPage';
 import SkillsPage from '@/pages/admin/SkillsPage';
@@ -78,7 +77,6 @@ export default function App() {
           <Route path="production" element={<ProductionPage />} />
           <Route path="production/:type" element={<ProductionPage />} />
           <Route path="quote" element={<QuotePage />} />
-          <Route path="simulator" element={<SimulatorPage />} />
           <Route path="files" element={<FilesPage />} />
           <Route path="files/:requestId/revise" element={<RevisePage />} />
           <Route path="branding" element={<BrandingPage />} />

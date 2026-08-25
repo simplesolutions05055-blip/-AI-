@@ -129,7 +129,7 @@ export function UserContentUploadModal({
           <div>
             <h2 className="text-lg font-bold">העלאת תכנים של המותג</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              העלו תמונות משלכם כדי להשתמש בהן אחר כך בשילוב בתוך עיצובים או כתוכן עצמאי.
+              העלו תמונות משלכם (PNG, JPG, WebP) כדי להשתמש בהן אחר כך בשילוב בתוך עיצובים או כתוכן עצמאי.
             </p>
           </div>
           <button
@@ -146,7 +146,7 @@ export function UserContentUploadModal({
           <input
             ref={inputRef}
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/*"
             multiple
             className="hidden"
             onChange={(event) => {

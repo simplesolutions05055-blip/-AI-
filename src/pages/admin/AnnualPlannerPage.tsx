@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays,
@@ -30,7 +30,6 @@ import { fetchSocialCaption, type SocialPlatform } from '@/lib/social';
 import { extractTextFromUploadedFile } from '@/lib/extractText';
 import { Spinner } from '@/components/ui/Spinner';
 import { useProfile } from '@/lib/useProfile';
-import { worksWithBrandCopy } from '@/lib/genderCopy';
 import type { AnnualPlanItem, AnnualPlanItemStatus, IsraelHoliday } from '@/types/db';
 
 type BrandOption = {
@@ -61,12 +60,17 @@ const PLATFORM_LABEL: Record<SocialPlatform, string> = {
 };
 const BOTH_PLATFORMS: SocialPlatform[] = ['facebook', 'instagram'];
 // The hard cap Maor asked for: a yearly plan must not explode into 100 posts.
-const MAX_TOTAL_POSTS = 50;
+const MAX_TOTAL_POSTS = 100;
+const PLANNING_BASIS_OPTIONS: Array<{ value: PlanningBasis; label: string }> = [
+  { value: 'both', label: 'גם רעיונות שלי' },
+  { value: 'ideas', label: 'רק הרעיונות שלי' },
+  { value: 'holidays', label: 'רק חגים ומועדים' },
+];
 
 const STATUS_LABEL: Record<AnnualPlanItemStatus, string> = {
   draft: 'טיוטה',
   to_schedule: 'לתזמון',
-  to_publish: 'לפרסום מיידי',
+  to_publish: 'מיידי',
   scheduled: 'נשמר ביומן',
   published: 'פורסם',
   error: 'שגיאה',
@@ -259,7 +263,6 @@ export default function AnnualPlannerPage() {
   const [year, setYear] = useState(now.getFullYear());
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [brandId, setBrandId] = useState('');
-  const [brandLogoUrls, setBrandLogoUrls] = useState<Record<string, string>>({});
   const [holidays, setHolidays] = useState<IsraelHoliday[]>([]);
   const [scheduledCount, setScheduledCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -280,6 +283,11 @@ export default function AnnualPlannerPage() {
   const [aiItemId, setAiItemId] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [finishNote, setFinishNote] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  // Outcome of the last "יצירת תוכנית אוטומטית" click, shown under the button
+  // itself — the old note rendered further down the page, so a run that
+  // produced nothing looked like a dead button.
+  const [planNote, setPlanNote] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [hashtagAiId, setHashtagAiId] = useState<string | null>(null);
   // The status filter doubles as the summary display — clicking a count
   // filters the list, so the numbers earn their screen space.
@@ -295,8 +303,6 @@ export default function AnnualPlannerPage() {
   // A regular user works within a single brand — no reason to make them pick.
   // Admins keep the selector so they can plan for any brand.
   const isAdmin = profile?.role === 'admin';
-  const effectiveBrand = selectedBrand ?? brands[0] ?? null;
-  const effectiveLogoUrl = effectiveBrand ? brandLogoUrls[effectiveBrand.id] ?? null : null;
   const orderedItems = useMemo(
     () => [...items].sort((a, b) => a.date.localeCompare(b.date) || a.created_at.localeCompare(b.created_at)),
     [items],
@@ -408,24 +414,19 @@ export default function AnnualPlannerPage() {
     if (!brandId && brands.length > 0) setBrandId(brands[0].id);
   }, [profile, isAdmin, brandId, brands]);
 
-  // Sign each brand's logo for display (same 'branding' bucket the production
-  // flow uses). Short-lived signed URLs, refreshed whenever the brand set loads.
   useEffect(() => {
-    let active = true;
-    const client = createSupabaseBrowserClient();
-    Promise.all(
-      brands.map(async (brand) => {
-        if (!brand.logo_path) return [brand.id, ''] as const;
-        const { data } = await client.storage.from('branding').createSignedUrl(brand.logo_path, 600);
-        return [brand.id, data?.signedUrl ?? ''] as const;
-      }),
-    ).then((entries) => {
-      if (active) setBrandLogoUrls(Object.fromEntries(entries.filter(([, url]) => !!url)));
-    });
-    return () => {
-      active = false;
+    if (!reviewOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setReviewOpen(false);
     };
-  }, [brands]);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [reviewOpen]);
 
   // Flush pending debounced saves when leaving the page.
   useEffect(() => {
@@ -612,6 +613,7 @@ export default function AnnualPlannerPage() {
   async function generatePlan() {
     setGenerating(true);
     setFinishNote(null);
+    setPlanNote(null);
     try {
       const client = createSupabaseBrowserClient();
       // Idea sources, by trust: structured spreadsheet rows are authoritative;
@@ -656,6 +658,31 @@ export default function AnnualPlannerPage() {
           scheduledAt: dayAtHourIso(holiday.date, index % 2 === 0 ? 10 : 12),
         };
       });
+      // Ideas without a date used to be dropped silently, which is why
+      // "רק הרעיונות שלי" + free text produced nothing at all. Spread them over
+      // the chosen range at the chosen weekly frequency instead.
+      const undatedIdeaTitles = planningBasis === 'holidays'
+        ? []
+        : sourceText
+          .split(/\r?\n|[;•]/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 1 && !parseDateFromText(line, year));
+      const undatedCandidates: Candidate[] = undatedIdeaTitles.slice(0, MAX_TOTAL_POSTS).map((line, index) => {
+        const slot = new Date(start);
+        // postsPerWeek slots per week, evenly spaced inside the week.
+        slot.setDate(slot.getDate() + Math.floor(index / postsPerWeek) * 7 + Math.round((index % postsPerWeek) * (7 / postsPerWeek)));
+        const date = `${slot.getFullYear()}-${String(slot.getMonth() + 1).padStart(2, '0')}-${String(slot.getDate()).padStart(2, '0')}`;
+        const title = line.split('|')[0].replace(/^[\s,:|-]+|[\s,:|-]+$/g, '').slice(0, 120) || 'רעיון לפוסט';
+        return {
+          date,
+          eventName: title,
+          title,
+          caption: ideaCaption({ title, date, description: line }, brandName),
+          hashtags: defaultHashtags(title, brandName),
+          scheduledAt: dayAtHourIso(date, index % 2 === 0 ? 10 : 12),
+        };
+      }).filter((candidate) => new Date(`${candidate.date}T00:00:00`) < end);
+
       const ideaCandidates: Candidate[] = parsedIdeas.map((idea) => {
         const [hour, minute] = (idea.time ?? '').split(':').map(Number);
         return {
@@ -668,11 +695,15 @@ export default function AnnualPlannerPage() {
         };
       });
 
+      // Dated ideas win; undated lines only fill in what is left.
+      const allIdeaCandidates = ideaCandidates.length > 0 ? ideaCandidates : undatedCandidates;
       let candidates = planningBasis === 'ideas'
-        ? ideaCandidates
+        ? allIdeaCandidates
         : planningBasis === 'holidays'
           ? holidayCandidates
-          : [...ideaCandidates, ...holidayCandidates];
+          : [...allIdeaCandidates, ...holidayCandidates];
+      const seedCandidates = [...candidates];
+      const requestedPostCount = Math.min(MAX_TOTAL_POSTS, holidayRangeMonths * 4 * postsPerWeek);
 
       // Dedup by date+title, order chronologically, then enforce the weekly
       // frequency and the total cap.
@@ -694,8 +725,47 @@ export default function AnnualPlannerPage() {
         return true;
       }).slice(0, MAX_TOTAL_POSTS);
 
+      // The counter is a promise, not decoration: if the user asks for two
+      // posts a week for one month, build eight usable drafts. Source ideas and
+      // relevant holidays act as recurring themes for the extra weekly slots.
+      if (seedCandidates.length > 0 && candidates.length < requestedPostCount) {
+        const angles = ['היכרות', 'טיפ שימושי', 'הזמנה', 'תזכורת', 'ערך לקהל', 'מאחורי הקלעים', 'סיכום'];
+        const existingKeys = new Set(candidates.map((candidate) => `${candidate.date}|${candidate.title}`));
+        for (let slotIndex = 0; candidates.length < requestedPostCount && slotIndex < requestedPostCount * 3; slotIndex += 1) {
+          const slot = new Date(start);
+          slot.setDate(slot.getDate() + Math.floor(slotIndex / postsPerWeek) * 7 + Math.floor((slotIndex % postsPerWeek) * (7 / postsPerWeek)));
+          if (slot >= end) break;
+          const date = `${slot.getFullYear()}-${String(slot.getMonth() + 1).padStart(2, '0')}-${String(slot.getDate()).padStart(2, '0')}`;
+          const week = weekKey(date);
+          const weekCount = perWeek.get(week) ?? 0;
+          if (weekCount >= postsPerWeek) continue;
+          const seed = seedCandidates[slotIndex % seedCandidates.length];
+          const cycle = Math.floor(slotIndex / seedCandidates.length);
+          const angle = angles[cycle % angles.length];
+          const title = cycle === 0 ? seed.title : `${seed.title} — ${angle}`;
+          const key = `${date}|${title}`;
+          if (existingKeys.has(key)) continue;
+          existingKeys.add(key);
+          perWeek.set(week, weekCount + 1);
+          candidates.push({
+            ...seed,
+            date,
+            title,
+            eventName: seed.eventName || seed.title,
+            caption: cycle === 0 ? seed.caption : `${angle}: ${seed.caption}`,
+            scheduledAt: dayAtHourIso(date, slotIndex % 2 === 0 ? 10 : 12),
+          });
+        }
+        candidates.sort((a, b) => a.date.localeCompare(b.date));
+      }
+
       if (candidates.length === 0) {
-        setFinishNote('לא נוצרו פוסטים — בדקו שיש חגים בטווח שנבחר או רעיונות עם תאריכים בחומרי המקור.');
+        setPlanNote({
+          tone: 'error',
+          text: planningBasis === 'holidays'
+            ? 'לא נמצאו חגים או מועדים בטווח שנבחר — נסו טווח ארוך יותר.'
+            : 'לא נוצרו פוסטים — לא נמצאו רעיונות בחומרי המקור. כתבו רעיון בכל שורה בתיבת הטקסט, או העלו קובץ תכנון.',
+        });
         return;
       }
 
@@ -744,8 +814,11 @@ export default function AnnualPlannerPage() {
       setMediaCache({});
       const firstNew = ((inserted ?? []) as AnnualPlanItem[])[0];
       setSelectedId(firstNew?.id ?? rows[0]?.id ?? null);
+      setPlanNote({ tone: 'success', text: `נוצרו ${candidates.length} פוסטים בתוכנית — אפשר לעבור עליהם ולאשר.` });
     } catch (error) {
-      setLoadError(`יצירת התוכנית נכשלה: ${error instanceof Error ? error.message : String(error)}`);
+      const message = `יצירת התוכנית נכשלה: ${error instanceof Error ? error.message : String(error)}`;
+      setLoadError(message);
+      setPlanNote({ tone: 'error', text: message });
     } finally {
       setGenerating(false);
     }
@@ -992,19 +1065,36 @@ export default function AnnualPlannerPage() {
     return <div className="p-4 text-[var(--text-muted)]"><Spinner /> טוען תכנון שנתי...</div>;
   }
 
+  const estimatedPosts = holidayRangeMonths * 4 * postsPerWeek;
+  const rangeLabel = holidayRangeMonths === 1 ? 'חודש אחד' : `${holidayRangeMonths} חודשים`;
+
+  const hasIdeaSource = fileIdeas.length > 0 || sourceText.trim().length > 0;
+  const canGeneratePlan = planningBasis === 'ideas'
+    ? hasIdeaSource
+    : planningBasis === 'holidays'
+      ? holidays.length > 0
+      : holidays.length > 0 || hasIdeaSource;
+
   const selectedMedia = selectedItem ? mediaCache[selectedItem.id] ?? [] : [];
 
   return (
     <div dir="rtl" className="mx-auto flex max-w-7xl flex-col gap-5 text-right">
       <header className="flex flex-col gap-3 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)] lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-sm font-semibold text-brand">תכנון תוכן שנתי</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-normal text-[var(--text-strong)]">בניית תוכנית פוסטים סביב חגים ומועדים</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--text-muted)]">
-            מעלים חומרי מקור או נותנים ל-AI ליצור, עוברים פוסט-פוסט, מצרפים גרפיקה, קובעים סטטוס — ובסיום מתזמנים הכל בלחיצה אחת.
-          </p>
+          <h1 className="text-2xl font-bold tracking-normal text-[var(--text-strong)]">תכנון תוכן שנתי</h1>
         </div>
         <div className="flex items-center gap-2">
+          {isAdmin && (
+            <select
+              value={brandId}
+              onChange={(event) => setBrandId(event.target.value)}
+              className="h-11 max-w-52 rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm font-bold outline-none focus:border-brand"
+              aria-label="בחירת מותג"
+            >
+              <option value="">בחירת מותג</option>
+              {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+            </select>
+          )}
           <button type="button" onClick={() => setYear((value) => value - 1)} className="grid h-11 w-11 place-items-center rounded-[10px] border border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]" aria-label="שנה קודמת">
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -1024,26 +1114,22 @@ export default function AnnualPlannerPage() {
 
       <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2">
-              <FileUp className="h-5 w-5 text-brand" />
-              <h2 className="text-lg font-bold tracking-normal">העלאת חומרי מקור</h2>
-            </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <button
               type="button"
               onClick={() => void downloadTemplate()}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:bg-[var(--bg-subtle)] hover:text-brand"
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:bg-[var(--bg-subtle)] hover:text-brand"
             >
               <Download className="h-4 w-4" />
-              הורדת Template
+              הורדת טמפלט
             </button>
+            <label className="inline-flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-brand/40 bg-brand/5 px-4 text-sm font-bold text-brand transition hover:bg-brand/10">
+              {sourceFileReading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
+              <span className="truncate">{sourceFileName || 'העלה קובץ תכנון שנתי'}</span>
+              <input type="file" className="sr-only" accept=".xlsx,.txt,.md,.csv,.json,.pdf,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void handleFile(event.target.files?.[0] ?? null)} />
+            </label>
           </div>
-          <label className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-brand/40 bg-[var(--bg-subtle)] px-4 py-6 text-center transition hover:border-brand">
-            {sourceFileReading ? <Loader2 className="mb-3 h-8 w-8 animate-spin text-brand" /> : <FileUp className="mb-3 h-8 w-8 text-brand" />}
-            <span className="text-sm font-bold text-[var(--text-strong)]">{sourceFileName || 'בחרו קובץ תוכן לתכנון'}</span>
-            <span className="mt-1 text-xs text-[var(--text-muted)]">PDF / Word / XLSX / TXT / Markdown / CSV — התוכן נקרא אוטומטית ומזין את התוכנית.</span>
-            <input type="file" className="sr-only" accept=".xlsx,.txt,.md,.csv,.json,.pdf,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void handleFile(event.target.files?.[0] ?? null)} />
-          </label>
+          <p className="mt-2 text-xs text-[var(--text-muted)]">אם יש לך תוכן מוכן, העלה כאן — PDF / Word / XLSX / TXT / CSV.</p>
           {sourceFileError && <p className="mt-2 text-sm text-red-600">{sourceFileError}</p>}
           {fileIdeas.length > 0 && (
             <p className="mt-2 text-sm font-semibold text-emerald-700">
@@ -1053,86 +1139,105 @@ export default function AnnualPlannerPage() {
           <textarea
             value={sourceText}
             onChange={(event) => setSourceText(event.target.value)}
-            rows={6}
-            className="mt-4 w-full rounded-xl border border-[var(--border-warm)] bg-white p-3 text-sm leading-6 outline-none focus:border-brand"
+            rows={1}
+            className="mt-4 w-full resize-none rounded-xl border border-[var(--border-warm)] bg-white p-3 text-sm leading-6 outline-none focus:border-brand"
             placeholder="אפשר גם להדביק כאן מטרות שנתיות, נושאים, מבצעים, קהלים או טון רצוי..."
           />
-          <div className="mt-4 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-subtle)] p-3">
-            <label className="text-sm font-bold text-[var(--text-strong)]">
-              על בסיס מה ליצור את התכנון?
-              <select value={planningBasis} onChange={(event) => setPlanningBasis(event.target.value as PlanningBasis)} className="mt-2 h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
-                <option value="both">גם הרעיונות שלי וגם חגים</option>
-                <option value="ideas">רק הרעיונות שלי</option>
-                <option value="holidays">רק חגים ומועדים</option>
-              </select>
-            </label>
-            {planningBasis !== 'ideas' && (
-              <label className="mt-3 block text-sm font-bold text-[var(--text-strong)]">
-                טווח חגים להצגה
-                <select value={holidayRangeMonths} onChange={(event) => setHolidayRangeMonths(Number(event.target.value))} className="mt-2 h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
-                  <option value={1}>החודש הקרוב</option>
-                  <option value={3}>3 חודשים קדימה</option>
-                  <option value={6}>6 חודשים קדימה</option>
-                  <option value={12}>כל השנה, מהחודש הנוכחי</option>
-                </select>
-              </label>
-            )}
-            <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">החגים יתחילו מהחודש הנוכחי ולא מינואר.</p>
-          </div>
         </div>
 
         <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
           <div className="mb-4 flex items-center gap-2">
             <CalendarDays className="h-5 w-5 text-brand" />
-            <h2 className="text-lg font-bold tracking-normal">הגדרות התכנון</h2>
+            <h2 className="text-lg font-bold tracking-normal">בניית התוכנית</h2>
           </div>
-          <div className="flex items-center gap-3 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-subtle)] p-3">
-            <BrandLogo name={effectiveBrand?.name ?? 'מותג'} url={effectiveLogoUrl} />
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold text-[var(--text-muted)]">
-                {worksWithBrandCopy(profile?.gender, effectiveBrand?.name)}
-              </div>
-              {isAdmin ? (
-                <select
-                  value={brandId}
-                  onChange={(event) => setBrandId(event.target.value)}
-                  className="mt-1 h-10 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm font-bold outline-none focus:border-brand"
+          <Step number={1} title="על בסיס מה ליצור את התוכנית?">
+            <div className="flex flex-wrap gap-1.5">
+              {PLANNING_BASIS_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setPlanningBasis(option.value)}
+                  aria-pressed={planningBasis === option.value}
+                  className={`min-h-10 rounded-full border px-3 text-sm font-semibold transition ${
+                    planningBasis === option.value
+                      ? 'border-brand bg-brand/10 text-brand'
+                      : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:border-brand/40'
+                  }`}
                 >
-                  <option value="">בחירת מותג</option>
-                  {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
-                </select>
-              ) : (
-                <div className="mt-0.5 truncate text-base font-bold text-[var(--text-strong)]">
-                  {effectiveBrand?.name ?? 'לא הוגדר מותג'}
-                </div>
-              )}
+                  {option.label}
+                </button>
+              ))}
             </div>
-          </div>
-          <label className="mt-3 block text-sm font-semibold text-[var(--text-strong)]">
-            תדירות שבועית
-            <select value={postsPerWeek} onChange={(event) => setPostsPerWeek(Number(event.target.value))} className="mt-2 h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
+          </Step>
+
+          <Step number={2} title="לכמה חודשים קדימה?">
+            <select value={holidayRangeMonths} onChange={(event) => setHolidayRangeMonths(Number(event.target.value))} className="h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
+              <option value={1}>החודש הקרוב</option>
+              <option value={3}>3 חודשים קדימה</option>
+              <option value={6}>6 חודשים קדימה</option>
+              <option value={12}>כל השנה, מהחודש הנוכחי</option>
+            </select>
+            <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">החגים יתחילו מהחודש הנוכחי ולא מינואר.</p>
+          </Step>
+
+          <Step number={3} title="כמה פוסטים בשבוע?">
+            <select value={postsPerWeek} onChange={(event) => setPostsPerWeek(Number(event.target.value))} className="h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
               {[1, 2, 3, 4, 5].map((count) => (
                 <option key={count} value={count}>{count === 1 ? 'פוסט אחד בשבוע' : `${count} פוסטים בשבוע`}</option>
               ))}
             </select>
-          </label>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">התוכנית מוגבלת ל-{MAX_TOTAL_POSTS} פוסטים בסך הכל.</p>
-          <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-            <Stat label="מועדים בשנה" value={holidays.length} />
-            <Stat label="תזמונים קיימים" value={scheduledCount} />
-            <Stat label="פוסטים בתוכנית" value={items.length} />
+          </Step>
+
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-[var(--text-strong)]">סה״כ ייווצרו</div>
+              <div className="mt-0.5 text-xs leading-5 text-[var(--text-muted)]">
+                {rangeLabel} × {postsPerWeek === 1 ? 'פוסט אחד בשבוע' : `${postsPerWeek} פוסטים בשבוע`}
+              </div>
+            </div>
+            <div className="shrink-0 text-2xl font-extrabold text-brand" aria-live="polite">
+              {estimatedPosts} פוסטים
+            </div>
           </div>
           <button
             type="button"
             onClick={generatePlan}
-            disabled={generating || (holidays.length === 0 && !sourceText.trim())}
+            disabled={generating}
             className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-brand px-5 py-3 text-sm font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
           >
             {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            יצירת תוכנית אוטומטית
+            {generating ? 'יוצר תוכנית…' : 'יצירת תוכנית אוטומטית'}
           </button>
+          {!canGeneratePlan && (
+            <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
+              {planningBasis === 'holidays'
+                ? 'אין חגים או מועדים טעונים לשנה הזו.'
+                : 'כדי ליצור לפי הרעיונות שלך — כתוב רעיון בכל שורה בתיבת הטקסט, או העלה קובץ תכנון.'}
+            </p>
+          )}
+          {planNote && (
+            <div
+              role="status"
+              className={`mt-3 rounded-xl border p-3 text-sm font-semibold ${
+                planNote.tone === 'success'
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                  : 'border-red-300 bg-red-50 text-red-700'
+              }`}
+            >
+              {planNote.text}
+            </div>
+          )}
         </div>
       </section>
+
+      <button
+        type="button"
+        onClick={() => setReviewOpen(true)}
+        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand px-5 text-base font-bold text-white shadow-sm transition hover:bg-brand-dark"
+      >
+        <Check className="h-5 w-5" />
+        עיון ואישור תכנים ({items.length})
+      </button>
 
       <section className="grid min-h-[620px] gap-4 lg:grid-cols-[300px_1fr]">
         <aside className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 shadow-[var(--warm-shadow-card)]">
@@ -1168,7 +1273,7 @@ export default function AnnualPlannerPage() {
           </div>
         </aside>
 
-        <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 shadow-[var(--warm-shadow-card)]">
+        <div className={`${reviewOpen ? 'fixed inset-0 z-[80] overflow-y-auto bg-[var(--bg-subtle)] p-4 sm:p-6' : 'hidden'} rounded-xl border border-[var(--border-warm)] shadow-[var(--warm-shadow-card)]`} role="dialog" aria-modal="true" aria-label="עיון ואישור תכנים">
           <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0">
               <h2 className="text-lg font-bold tracking-normal">עיון ואישור תכנים</h2>
@@ -1181,15 +1286,18 @@ export default function AnnualPlannerPage() {
                 </div>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => void finishAll()}
-              disabled={!brandId || readyCount === 0 || finishing}
-              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-[10px] bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
-            >
-              {finishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              סיום — תזמן הכל ({readyCount})
-            </button>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setReviewOpen(false)} className="min-h-11 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold">חזרה לתכנון</button>
+              <button
+                type="button"
+                onClick={() => void finishAll()}
+                disabled={!brandId || readyCount === 0 || finishing}
+                className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-[10px] bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
+              >
+                {finishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                סיום — תזמן הכל ({readyCount})
+              </button>
+            </div>
           </div>
 
           {/* One filter bar instead of two static chip rows: each count is a
@@ -1241,6 +1349,9 @@ export default function AnnualPlannerPage() {
                       className={`w-full rounded-xl border p-3 text-right transition ${active ? 'border-brand bg-[var(--warm-accent-soft)]' : 'border-[var(--border-warm)] bg-white hover:bg-[var(--bg-subtle)]'}`}
                     >
                       <div className="flex items-start justify-between gap-3">
+                        {mediaCache[item.id]?.[0] && (
+                          <img src={mediaCache[item.id][0].url} alt="תצוגה מקדימה" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
+                        )}
                         <div className="min-w-0">
                           <div className="truncate text-sm font-bold text-[var(--text-strong)]">{item.title || item.event_name || 'ללא כותרת'}</div>
                           <div className="mt-1 text-xs text-[var(--text-muted)]">
@@ -1285,9 +1396,25 @@ export default function AnnualPlannerPage() {
                         <h3 className="text-base font-bold tracking-normal">{selectedItem.title || 'ללא כותרת'}</h3>
                       </div>
                     </div>
-                    <button type="button" onClick={() => void deleteItem(selectedItem.id)} className="grid h-10 w-10 place-items-center rounded-[10px] text-[var(--text-muted)] hover:bg-red-50 hover:text-red-700" aria-label="מחיקת פוסט">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => updateItem(selectedItem.id, { status: 'to_schedule', error_message: null })} className="min-h-10 rounded-[10px] bg-brand px-3 text-xs font-bold text-white">תזמן</button>
+                      <button type="button" onClick={() => void deleteItem(selectedItem.id)} className="grid h-10 w-10 place-items-center rounded-[10px] text-[var(--text-muted)] hover:bg-red-50 hover:text-red-700" aria-label="מחיקת פוסט">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mb-4 overflow-hidden rounded-xl border border-[var(--border-warm)] bg-[var(--bg-subtle)]">
+                    {selectedMedia[0]?.url && (
+                      <img src={selectedMedia[0].url} alt="Preview של הפוסט" className="max-h-64 w-full object-cover" />
+                    )}
+                    <div className="p-3">
+                      <div className="text-sm font-bold text-[var(--text-strong)]">{selectedItem.title || selectedItem.event_name || 'ללא כותרת'}</div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--text-muted)]">{selectedItem.caption || 'תוכן הפוסט יופיע כאן.'}</p>
+                      {(selectedItem.hashtags ?? []).length > 0 && (
+                        <p className="mt-2 text-xs font-semibold leading-5 text-brand">{(selectedItem.hashtags ?? []).map(toHashtag).filter(Boolean).join(' ')}</p>
+                      )}
+                    </div>
                   </div>
 
                   <fieldset className="mb-3">
@@ -1488,23 +1615,14 @@ function SocialChannelIcon({ platform }: { platform: SocialPlatform | 'both' }) 
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Step({ number, title, children }: { number: number; title: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-[var(--border-warm)] bg-white p-3">
-      <div className="text-xl font-bold text-[var(--text-strong)]">{value}</div>
-      <div className="mt-1 text-xs text-[var(--text-muted)]">{label}</div>
-    </div>
-  );
-}
-
-function BrandLogo({ name, url }: { name: string; url: string | null }) {
-  return (
-    <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-[var(--border-warm)] bg-white shadow-sm">
-      {url ? (
-        <img src={url} alt={`לוגו ${name}`} className="h-full w-full object-contain p-1" />
-      ) : (
-        <span className="px-1 text-center text-sm font-bold text-brand">{name.slice(0, 2)}</span>
-      )}
+    <div className="mt-3 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-subtle)] p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand text-xs font-bold text-white">{number}</span>
+        <span className="text-sm font-bold text-[var(--text-strong)]">{title}</span>
+      </div>
+      {children}
     </div>
   );
 }
