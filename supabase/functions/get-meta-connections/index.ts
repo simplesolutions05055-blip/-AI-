@@ -36,6 +36,7 @@ Deno.serve(async (req) => {
 
     const connectionSelect = `
       id,
+      provider,
       meta_user_id,
       meta_user_name,
       meta_user_picture,
@@ -129,6 +130,7 @@ Deno.serve(async (req) => {
       connected: true,
       connection: {
         id: connection.id,
+        provider: connection.provider,
         meta_user_id: connection.meta_user_id,
         meta_user_name: connection.meta_user_name,
         meta_user_picture: connection.meta_user_picture,

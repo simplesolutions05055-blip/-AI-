@@ -35,6 +35,7 @@ interface ConnectionData {
   meta_user_name: string;
   meta_user_picture: string | null;
   status: string;
+  provider?: 'meta' | 'autopost';
   last_verified_at: string;
   default_facebook_page_id: string | null;
   default_instagram_account_id: string | null;
@@ -77,6 +78,7 @@ export default function MetaConnectionPage() {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
     const errorParam = urlParams.get('error');
+    const autoPostConnected = urlParams.get('autopost') === 'connected';
 
     if (errorParam) {
       setError(`OAuth error: ${errorParam}`);
@@ -84,7 +86,11 @@ export default function MetaConnectionPage() {
       return;
     }
 
-    if (code) {
+    if (autoPostConnected) {
+      setSuccess('AutoPost חובר בהצלחה');
+      window.history.replaceState({}, '', '/admin/meta-connection');
+      loadConnectionData();
+    } else if (code) {
       console.log('✅ Authorization code received, exchanging for tokens...');
       exchangeCode(code);
       window.history.replaceState({}, '', '/admin/meta-connection');
@@ -190,25 +196,22 @@ export default function MetaConnectionPage() {
     }
   };
 
-  const startMetaOAuth = () => {
+  const startMetaOAuth = async () => {
     console.log('🔵 Starting Meta OAuth flow...');
     setConnecting(true);
     setError(null);
 
-    // The Facebook app id and redirect uri live only in Supabase Edge Function
-    // secrets. The meta-oauth-start function builds the authorize URL from those
-    // secrets and 302-redirects to Facebook, so no client-side Meta config is
-    // needed here.
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-
-    if (!supabaseUrl) {
-      setError('Missing Supabase configuration');
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data, error: invokeError } = await supabase.functions.invoke('autopost-oauth-start', {
+        body: {},
+      });
+      if (invokeError || !data?.url) throw new Error(invokeError?.message || 'AutoPost connection URL missing');
+      window.location.href = data.url;
+    } catch (connectError) {
+      setError(connectError instanceof Error ? connectError.message : 'Failed to connect AutoPost');
       setConnecting(false);
-      return;
     }
-
-    console.log('🔗 Redirecting to Facebook Login for Business (via meta-oauth-start)');
-    window.location.href = `${supabaseUrl}/functions/v1/meta-oauth-start`;
   };
 
   const exchangeCode = async (code: string) => {

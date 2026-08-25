@@ -9,6 +9,7 @@
  */
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { autoPostRequest } from '../_shared/autopost.ts';
 import { cors } from '../_shared/cors.ts';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
@@ -110,7 +111,9 @@ Deno.serve(async (req) => {
       .from('meta_connections')
       .select(`
         id,
+        provider,
         meta_user_id,
+        access_token,
         status,
         meta_facebook_pages!connection_id (
           id,
@@ -158,6 +161,20 @@ Deno.serve(async (req) => {
     }
 
     let result: PostResult;
+
+    if (connectionData.provider === 'autopost') {
+      result = await postViaAutoPost(
+        connectionData.access_token as string,
+        platform,
+        target_id,
+        message,
+        imageUrls,
+      );
+      return new Response(JSON.stringify(result), {
+        status: result.success ? 200 : 400,
+        headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
+      });
+    }
 
     if (platform === 'facebook') {
       const pages = connectionData.meta_facebook_pages as FacebookPage[];
@@ -214,6 +231,54 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+async function postViaAutoPost(
+  token: string,
+  platform: 'facebook' | 'instagram',
+  integrationId: string,
+  content: string,
+  mediaUrls: string[],
+): Promise<PostResult> {
+  try {
+    const media = [] as Array<{ id: string; path: string }>;
+    for (const url of mediaUrls) {
+      const uploaded = await autoPostRequest<{ id: string; path: string }>('/public/v1/upload-from-url', token, {
+        method: 'POST',
+        body: JSON.stringify({ url }),
+      });
+      media.push({ id: uploaded.id, path: uploaded.path });
+    }
+
+    const created = await autoPostRequest<{ id?: string } | Array<{ id?: string }>>('/public/v1/posts', token, {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'now',
+        date: new Date().toISOString(),
+        shortLink: false,
+        tags: [],
+        posts: [{
+          integration: { id: integrationId },
+          value: [{ content, image: media }],
+          settings: { __type: platform, post_type: 'post' },
+        }],
+      }),
+    });
+    const first = Array.isArray(created) ? created[0] : created;
+    return {
+      success: true,
+      platform,
+      target_name: integrationId,
+      post_id: first?.id,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      platform,
+      target_name: integrationId,
+      error: error instanceof Error ? error.message : 'AutoPost publishing failed',
+    };
+  }
+}
 
 // ============================================================================
 // Facebook
