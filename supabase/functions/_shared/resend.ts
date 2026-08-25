@@ -10,7 +10,7 @@ export interface Attachment {
 
 export const PRIMEOS_LOGO_ATTACHMENT: Attachment = {
   filename: 'primeos-logo.png',
-  path: 'https://primeos.co.il/primeos-logo.png',
+  path: `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/public-assets/primeos-logo.png`,
   contentId: 'primeos-logo',
 };
 
