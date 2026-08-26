@@ -407,30 +407,102 @@ export default function PermissionsPage() {
         />
       ) : (
 
-      <div className="space-y-3">
+      <>
+      <div className="space-y-3 lg:hidden">
         {(tab === 'admins' ? admins : users).map((p) => {
           const userBrands = grants[p.id] ?? new Set<string>();
           const isAdmin = p.role === 'admin';
           return (
             <div key={p.id} className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
-              {/* header: avatar + email + date */}
               <div className="flex items-center gap-3">
                 <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold uppercase ${isAdmin ? 'bg-brand/10 text-brand' : 'bg-gray-100 text-[var(--muted)]'}`}>
                   {p.email.slice(0, 2)}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">
-                    <bdi>{p.email}</bdi>
-                  </div>
-                  <div className="text-xs text-[var(--muted)] mt-0.5">
+                  <div className="truncate text-sm font-semibold"><bdi>{p.email}</bdi></div>
+                  <div className="mt-0.5 text-xs text-[var(--muted)]">
                     {isAdmin ? 'אדמין · ' : ''}הצטרף {new Date(p.created_at).toLocaleDateString('he-IL')}
                   </div>
                 </div>
               </div>
 
-              {/* actions row */}
               <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
-                {/* role toggle */}
+                <div className="inline-flex rounded-lg border border-[var(--border)] p-0.5 text-xs">
+                  <button onClick={() => setRole(p, 'user')} className={`rounded-md px-2.5 py-1 font-medium transition ${!isAdmin ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'}`}>רגיל</button>
+                  <button onClick={() => setRole(p, 'admin')} className={`rounded-md px-2.5 py-1 font-medium transition ${isAdmin ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'}`}>אדמין</button>
+                </div>
+                {!isAdmin && (
+                  <button
+                    onClick={() => toggleCreate(p)}
+                    disabled={savingId === p.id}
+                    className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition disabled:opacity-60 ${p.can_create_outputs ? 'border-green-300 bg-green-50 text-green-700' : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'}`}
+                  >
+                    {p.can_create_outputs ? '✓ יצירה' : 'סגור'}
+                  </button>
+                )}
+                {me?.id !== p.id && (
+                  <button onClick={() => deleteUser(p)} disabled={savingId === p.id} className="ms-auto rounded-lg border border-red-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60">מחיקה</button>
+                )}
+              </div>
+
+              {!isAdmin && brands.length > 2 && (
+                <div className="mt-3 border-t border-[var(--border)] pt-3">
+                  <div className="mb-2 text-xs font-medium">מותג:</div>
+                  <BrandSelectionModal
+                    userBrands={userBrands}
+                    brands={brands}
+                    brandLogoUrls={brandLogoUrls}
+                    onToggle={(brandId) => toggleBrand(p, brandId)}
+                    disabled={savingId === p.id}
+                  />
+                </div>
+              )}
+
+              <div className="mt-3 border-t border-[var(--border)] pt-3">
+                <button type="button" onClick={() => void openUserDetails(p)} className="w-full rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm font-semibold text-brand transition hover:bg-brand/10">
+                  פרטים ופעילות
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-xl border border-[var(--border)] bg-white shadow-sm lg:block">
+        <table className="w-full min-w-[880px] text-sm">
+          <caption className="sr-only">{tab === 'admins' ? 'טבלת אדמינים' : 'טבלת משתמשים'}</caption>
+          <thead className="bg-gray-50 text-xs font-semibold text-[var(--muted)]">
+            <tr className="border-b border-[var(--border)]">
+              <th scope="col" className="px-4 py-3 text-right">משתמש</th>
+              <th scope="col" className="px-4 py-3 text-right">תאריך הצטרפות</th>
+              <th scope="col" className="px-4 py-3 text-right">תפקיד</th>
+              <th scope="col" className="px-4 py-3 text-right">הרשאת יצירה</th>
+              <th scope="col" className="px-4 py-3 text-right">מותג</th>
+              <th scope="col" className="px-4 py-3 text-right">פעולות</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)]">
+        {(tab === 'admins' ? admins : users).map((p) => {
+          const userBrands = grants[p.id] ?? new Set<string>();
+          const isAdmin = p.role === 'admin';
+          return (
+            <tr key={p.id} className="transition hover:bg-gray-50/70">
+              <td className="px-4 py-3">
+                <div className="flex min-w-[220px] items-center gap-3">
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold uppercase ${isAdmin ? 'bg-brand/10 text-brand' : 'bg-gray-100 text-[var(--muted)]'}`}>
+                  {p.email.slice(0, 2)}
+                </div>
+                <div className="min-w-0">
+                  <div className="max-w-[260px] truncate font-semibold">
+                    <bdi>{p.email}</bdi>
+                  </div>
+                </div>
+              </div>
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">
+                {new Date(p.created_at).toLocaleDateString('he-IL')}
+              </td>
+              <td className="px-4 py-3">
                 <div className="inline-flex rounded-lg border border-[var(--border)] p-0.5 text-xs">
                   <button
                     onClick={() => setRole(p, 'user')}
@@ -445,8 +517,8 @@ export default function PermissionsPage() {
                     אדמין
                   </button>
                 </div>
-
-                {/* create outputs toggle */}
+              </td>
+              <td className="px-4 py-3">
                 {!isAdmin && (
                   <button
                     onClick={() => toggleCreate(p)}
@@ -460,26 +532,12 @@ export default function PermissionsPage() {
                     {p.can_create_outputs ? '✓ יצירה' : 'סגור'}
                   </button>
                 )}
-
-                {/* delete button */}
-                {me?.id !== p.id && (
-                  <button
-                    onClick={() => deleteUser(p)}
-                    disabled={savingId === p.id}
-                    className="ms-auto rounded-lg border border-red-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-                  >
-                    מחיקה
-                  </button>
-                )}
-              </div>
-
-              {/* brands for regular users */}
-                {!isAdmin && brands.length > 0 && (
-                <>
-                  {/* Mobile: modal for many brands */}
-                  {brands.length > 2 ? (
-                    <div className="mt-3 pt-3 border-t border-[var(--border)] lg:hidden">
-                      <div className="text-xs font-medium mb-2">מותג:</div>
+                {isAdmin && <span className="text-[var(--muted)]">—</span>}
+              </td>
+              <td className="px-4 py-3">
+                {!isAdmin && brands.length > 0 ? (
+                  <div className="min-w-[170px]">
+                    {brands.length > 2 ? (
                       <BrandSelectionModal
                         userBrands={userBrands}
                         brands={brands}
@@ -487,12 +545,7 @@ export default function PermissionsPage() {
                         onToggle={(brandId) => toggleBrand(p, brandId)}
                         disabled={savingId === p.id}
                       />
-                    </div>
-                  ) : null}
-
-                  {/* Desktop: buttons grid */}
-                  <div className="mt-3 pt-3 border-t border-[var(--border)] hidden lg:block">
-                    <div className="text-xs font-medium mb-2">מותג (אחד בלבד):</div>
+                    ) : (
                     <div className="flex flex-wrap gap-1.5">
                       {brands.map((b) => {
                         const on = userBrands.has(b.id);
@@ -521,23 +574,39 @@ export default function PermissionsPage() {
                         );
                       })}
                     </div>
+                    )}
                   </div>
-                </>
+                ) : (
+                  <span className="text-[var(--muted)]">—</span>
                 )}
-
-              <div className="mt-3 border-t border-[var(--border)] pt-3">
+              </td>
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-2 whitespace-nowrap">
                 <button
                   type="button"
                   onClick={() => void openUserDetails(p)}
-                  className="w-full rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm font-semibold text-brand transition hover:bg-brand/10"
+                  className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-semibold text-brand transition hover:bg-brand/10"
                 >
                   פרטים ופעילות
                 </button>
+                {me?.id !== p.id && (
+                  <button
+                    onClick={() => deleteUser(p)}
+                    disabled={savingId === p.id}
+                    className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                  >
+                    מחיקה
+                  </button>
+                )}
               </div>
-            </div>
+              </td>
+            </tr>
           );
         })}
+          </tbody>
+        </table>
       </div>
+      </>
       )}
 
       {selectedUser && (

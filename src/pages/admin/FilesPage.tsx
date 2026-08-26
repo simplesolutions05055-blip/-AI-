@@ -445,6 +445,23 @@ export default function FilesPage() {
     })();
   }, []);
 
+  // Clicking a card anywhere outside the action buttons opens the output's edit screen.
+  // The eye button stays a plain preview, so the archive still supports view-only use.
+  function openFile(row: FileRow) {
+    if (row.request_id) {
+      navigate(`/admin/files/${row.request_id}/revise`);
+      return;
+    }
+    if (row.storage_path) {
+      void openViewer(row);
+    } else if (row.output_type === 'presentation') {
+      void openPresentationDeckPreview(row);
+    } else {
+      setTextPreviewSlideIndex(0);
+      setTextPreview(row);
+    }
+  }
+
   async function openViewer(row: FileRow) {
     if (!row.storage_path) return;
     // Reuse the already-signed preview URL when present; otherwise sign on demand.
@@ -727,8 +744,8 @@ export default function FilesPage() {
                     return (
                       <div
                         key={file.id}
-                        onClick={archiveIsReadOnly ? undefined : (e) => toggle(fileIndex, e.shiftKey)}
-                        className={`group relative bg-white rounded-xl border overflow-hidden transition select-none ${
+                        onClick={archiveIsReadOnly ? () => openFile(file) : (e) => toggle(fileIndex, e.shiftKey)}
+                        className={`group relative cursor-pointer bg-white rounded-xl border overflow-hidden transition select-none ${
                           isSelected ? 'border-brand ring-2 ring-brand' : 'border-[var(--border)] hover:border-brand'
                         }`}
                       >
