@@ -89,3 +89,23 @@ jobs:
       - uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
+
+  rls:
+    name: cross-tenant isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # 32 RLS policies decide which tenant sees which row. This job builds two
+      # throwaway brands, reads across the boundary as the wrong tenant, and
+      # fails if anything comes back. Everything runs in a rolled-back
+      # transaction, so it leaves no fixtures behind.
+      #
+      # Without DATABASE_URL the runner SKIPS instead of failing, so forks and
+      # first-time contributors are not blocked by a missing secret. Set the
+      # secret on this repo and the suite becomes enforcing.
+      - run: node scripts/rls-tenant-isolation.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

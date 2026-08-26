@@ -18,7 +18,8 @@
     "functions:deploy": "npx supabase functions deploy",
     "guards": "node scripts/hardening-guards.mjs",
     "test:hardening": "node scripts/hardening-tests.mjs",
-    "verify": "npm run typecheck && npm run typecheck:api && npm run guards && npm run test:hardening",
+    "test:rls": "node scripts/rls-tenant-isolation.mjs",
+    "verify": "npm run typecheck && npm run typecheck:api && npm run guards && npm run test:hardening && npm run test:rls",
     "typecheck:api": "tsc -p tsconfig.api.json --noEmit",
     "lint:functions": "deno lint --rules-tags= --rules-include=no-dupe-args,no-dupe-keys,no-dupe-class-members supabase/functions",
     "check:functions": "deno check supabase/functions/_shared/cors.ts supabase/functions/_shared/secrets.ts supabase/functions/_shared/safeFetch.ts supabase/functions/_shared/escape.ts supabase/functions/_shared/sessionBinding.ts supabase/functions/client-error/index.ts"
