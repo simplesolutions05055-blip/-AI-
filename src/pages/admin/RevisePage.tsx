@@ -1470,8 +1470,10 @@ export default function RevisePage() {
                   ...((result?.previewUrl || source?.previewUrl) && (result?.storagePath || source?.storage_path) ? [{ key: 'main', url: (result?.previewUrl || source?.previewUrl) as string, storagePath: (result?.storagePath || source?.storage_path) as string }] : []),
                   ...carouselImages.map((image) => ({ key: image.requestId, url: image.previewUrl, storagePath: image.storagePath })),
                 ]}
+                trailingAction={
+                  <EmailSend email={customerEmail} setEmail={setCustomerEmail} onSend={() => sendEmail(result?.request_id || source?.request_id || null)} sending={sendingEmail} sent={emailSent} />
+                }
               />
-              <EmailSend email={customerEmail} setEmail={setCustomerEmail} onSend={() => sendEmail(result?.request_id || source?.request_id || null)} sending={sendingEmail} sent={emailSent} />
             </div>
           </aside>
         </div>
@@ -2545,7 +2547,7 @@ function EmailSend({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className={`inline-flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+        className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-2 text-sm font-semibold transition-colors ${
           open
             ? 'border-emerald-600 bg-emerald-50 text-emerald-700'
             : 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50'
@@ -2643,7 +2645,7 @@ function ActionSidebar({
           </p>
           <p className="mt-0.5 text-xs text-[var(--muted)]">מייל, פייסבוק ואינסטגרם</p>
         </div>
-        <div className="mt-1 flex flex-wrap gap-3">
+        <div className="mt-1 flex flex-wrap items-center gap-2 sm:flex-nowrap">
           {social || <EmailSend {...emailProps} />}
         </div>
       </section>

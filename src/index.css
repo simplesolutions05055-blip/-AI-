@@ -569,3 +569,20 @@ select {
     display: flex;
   }
 }
+
+/* Moving between posts in the annual planner: the card slides in from the
+   direction of travel so the jump reads as navigation, not as a reset. */
+@keyframes planner-post-in-next {
+  from { opacity: 0; transform: translateX(-24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes planner-post-in-prev {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.planner-post-next { animation: planner-post-in-next 0.22s ease-out; }
+.planner-post-prev { animation: planner-post-in-prev 0.22s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .planner-post-next,
+  .planner-post-prev { animation: none; }
+}

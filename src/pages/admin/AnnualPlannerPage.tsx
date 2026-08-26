@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   CalendarDays,
@@ -30,6 +30,7 @@ import { fetchSocialCaption, type SocialPlatform } from '@/lib/social';
 import { extractTextFromUploadedFile } from '@/lib/extractText';
 import { Spinner } from '@/components/ui/Spinner';
 import { useProfile } from '@/lib/useProfile';
+import { genderCopy } from '@/lib/genderCopy';
 import type { AnnualPlanItem, AnnualPlanItemStatus, IsraelHoliday } from '@/types/db';
 
 type BrandOption = {
@@ -39,6 +40,9 @@ type BrandOption = {
 };
 
 type PlanningBasis = 'ideas' | 'holidays' | 'both';
+type PlanMode = 'file' | 'events' | 'manual' | null;
+type WizardStep = 1 | 2 | 3 | 4 | 5;
+type ManualEvent = { id: string; title: string; date: string };
 type ParsedIdea = { title: string; date: string; description?: string; time?: string; location?: string };
 
 // A candidate post produced by the generation step, before it is persisted.
@@ -84,6 +88,43 @@ const STATUS_TONE: Record<AnnualPlanItemStatus, string> = {
   published: 'border-brand/30 bg-[var(--warm-accent-soft)] text-[var(--warm-accent-dark)]',
   error: 'border-red-200 bg-red-50 text-red-700',
 };
+
+const STEP_TITLES = [
+  'תכנון פרסום שנתי',
+  'איך ליצור את התוכן',
+  'בניית התוכן',
+  'עריכת הפוסטים',
+  'בדיקה אחרונה לפני שממשיכים',
+] as const;
+// Recommendation cards shown at once in the step-3 carousel.
+const RECS_PER_PAGE = 4;
+// The only file types the parser can actually read.
+const SUPPORTED_UPLOAD = /\.(xlsx|csv|pdf|docx|txt|md|json)$/i;
+
+// The placement (reel / story / feed post) has no column of its own, so it
+// lives as a leading tag inside design_notes — the field that already travels
+// with the post into the production flow.
+const PLACEMENT_OPTIONS = [
+  { value: 'reels', label: 'רילס' },
+  { value: 'story', label: 'סטורי' },
+  { value: 'post', label: 'פוסט' },
+] as const;
+type Placement = (typeof PLACEMENT_OPTIONS)[number]['value'];
+const PLACEMENT_TAG = /^\[(reels|story|post)\]\s*/;
+
+// design_notes is nullable on older rows, so every helper takes null.
+function placementOf(notes: string | null): Placement | null {
+  return ((notes ?? '').match(PLACEMENT_TAG)?.[1] as Placement | undefined) ?? null;
+}
+
+function stripPlacement(notes: string | null) {
+  return (notes ?? '').replace(PLACEMENT_TAG, '');
+}
+
+function withPlacement(notes: string | null, placement: Placement | null) {
+  const clean = stripPlacement(notes);
+  return placement ? `[${placement}] ${clean}` : clean;
+}
 
 function isoDate(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -179,6 +220,18 @@ function defaultCaption(holiday: IsraelHoliday, sourceText: string, brandName: s
   return `${brandPrefix} עם תוכן שמחבר בין הערך של היום לבין הקהל שלנו.${memoLine}\n\nרעיון לפרסום: מסר קצר, שימושי ואנושי שמזמין את הקהל לעצור, להתחבר ולפעול.${context}`;
 }
 
+// Every date the user actually typed. The AI extractor likes to invent a date
+// (1 בינואר) for an event that was written without one, so a returned date is
+// only trusted when it really appears in the text — otherwise it is today.
+function datesWrittenIn(text: string, fallbackYear: number): Set<string> {
+  const found = new Set<string>();
+  for (const token of text.match(/(?<!\d)\d{1,4}[./-]\d{1,2}(?:[./-]\d{1,4})?(?!\d)/g) ?? []) {
+    const parsed = parseDateFromText(token, fallbackYear);
+    if (parsed) found.add(parsed);
+  }
+  return found;
+}
+
 function extractDatedIdeaLines(sourceText: string, year: number): ParsedIdea[] {
   return sourceText.split(/\r?\n|[;•]/).map((line) => line.trim()).filter(Boolean).flatMap((line) => {
     const date = parseDateFromText(line, year);
@@ -259,6 +312,8 @@ export default function AnnualPlannerPage() {
   const now = new Date();
   const navigate = useNavigate();
   const { profile } = useProfile();
+  // Second-person copy follows the user's gender, like the rest of the app.
+  const g = (male: string, female: string) => genderCopy(profile?.gender, { male, female });
   const [searchParams, setSearchParams] = useSearchParams();
   const [year, setYear] = useState(now.getFullYear());
   const [brands, setBrands] = useState<BrandOption[]>([]);
@@ -269,8 +324,48 @@ export default function AnnualPlannerPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sourceText, setSourceText] = useState('');
   const [planningBasis, setPlanningBasis] = useState<PlanningBasis>('both');
-  // Decision-tree entry point: build from an uploaded file, or from events.
-  const [planMode, setPlanMode] = useState<'file' | 'events' | null>(null);
+  // The wizard step and the decision-tree branch live in the URL (?step=&mode=),
+  // not in local state — so the browser's Back button walks back through the
+  // steps instead of leaving the planner entirely.
+  const stepParam = Number(searchParams.get('step'));
+  const step = (stepParam >= 1 && stepParam <= 5 ? stepParam : 1) as WizardStep;
+  const modeParam = searchParams.get('mode');
+  const planMode: PlanMode = modeParam === 'file' || modeParam === 'events' || modeParam === 'manual' ? modeParam : null;
+
+  // Push (never replace) so each step becomes its own history entry.
+  const goTo = useCallback((next: { step?: WizardStep; mode?: PlanMode }) => {
+    // The result note belongs to the run that produced it — a new step must not
+    // inherit "נוצרו 24 פוסטים" from an earlier generation.
+    setPlanNote(null);
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current);
+      if (next.step !== undefined) params.set('step', String(next.step));
+      if (next.mode !== undefined) {
+        if (next.mode) params.set('mode', next.mode);
+        else params.delete('mode');
+      }
+      params.delete('item');
+      return params;
+    });
+  }, [setSearchParams]);
+  const setStep = useCallback((value: WizardStep) => goTo({ step: value }), [goTo]);
+  // Step 3 (manual): the events the user picked or typed, before generation.
+  const [manualEvents, setManualEvents] = useState<ManualEvent[]>([]);
+  const [manualDraft, setManualDraft] = useState('');
+  const [manualParsing, setManualParsing] = useState(false);
+  // Signed URL for the selected brand's logo, shown next to the picker.
+  const [brandLogoUrl, setBrandLogoUrl] = useState<string | null>(null);
+  // Which way the last post move went, so the card animates in from that side.
+  const [postMove, setPostMove] = useState<'next' | 'prev'>('next');
+  // Row selection in the parsed-file table (indices into fileIdeas).
+  const [selectedIdeas, setSelectedIdeas] = useState<Set<number>>(new Set());
+  // Anchor row for shift-click range selection.
+  const lastIdeaClick = useRef<number | null>(null);
+  // Shift state tracked globally: relying on the click event's shiftKey alone
+  // proved unreliable across the checkbox/row handlers.
+  const shiftHeld = useRef(false);
+  // First visible card of the recommendations carousel in step 3 (manual).
+  const [recIndex, setRecIndex] = useState(0);
   const [holidayRangeMonths, setHolidayRangeMonths] = useState(3);
   const [postsPerWeek, setPostsPerWeek] = useState(2);
   const [sourceFileName, setSourceFileName] = useState('');
@@ -285,15 +380,10 @@ export default function AnnualPlannerPage() {
   const [aiItemId, setAiItemId] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [finishNote, setFinishNote] = useState<string | null>(null);
-  const [reviewOpen, setReviewOpen] = useState(false);
   // Outcome of the last "יצירת תוכנית אוטומטית" click, shown under the button
   // itself — the old note rendered further down the page, so a run that
   // produced nothing looked like a dead button.
   const [planNote, setPlanNote] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
-  // The posts created by the last generation run, shown as a summary table.
-  const [createdPreview, setCreatedPreview] = useState<AnnualPlanItem[]>([]);
-  // Only the checked posts stay in the plan when moving on to the review page.
-  const [selectedPreview, setSelectedPreview] = useState<Set<string>>(new Set());
   const [hashtagAiId, setHashtagAiId] = useState<string | null>(null);
   // The status filter doubles as the summary display — clicking a count
   // filters the list, so the numbers earn their screen space.
@@ -303,6 +393,11 @@ export default function AnnualPlannerPage() {
   // Signed-thumbnail media per item id; hydrated lazily when an item is opened.
   const [mediaCache, setMediaCache] = useState<Record<string, MediaItem[]>>({});
   const saveTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  // Posts we already asked the AI to tag, so the auto-run happens once per post.
+  const autoHashtagTried = useRef(new Set<string>());
+  // itemId → the stored-paths signature we last hydrated, so a record that
+  // fails to sign cannot spin the effect forever.
+  const hydratedSignature = useRef(new Map<string, string>());
   const mediaPersistQueue = useRef(new Map<string, Promise<void>>());
 
   const selectedBrand = brands.find((brand) => brand.id === brandId) ?? null;
@@ -349,7 +444,12 @@ export default function AnnualPlannerPage() {
     setLoading(true);
     setLoadError(null);
 
-    Promise.all([
+    // The plan is per user: an admin can see other people's rows through RLS,
+    // and loading them would mix a stranger's holiday plan into this one.
+    void client.auth.getUser().then(({ data: userData }) => {
+      const userId = userData.user?.id ?? '';
+      if (cancelled) return;
+      return Promise.all([
       client.from('brands').select('id, name, logo_path').eq('is_active', true).order('name'),
       client
         .from('israel_holidays')
@@ -368,6 +468,7 @@ export default function AnnualPlannerPage() {
         .from('annual_plan_items')
         .select('*')
         .eq('year', year)
+        .eq('created_by', userId)
         .order('date', { ascending: true }),
     ]).then(([brandResult, holidayResult, scheduleResult, itemsResult]) => {
       if (cancelled) return;
@@ -399,10 +500,12 @@ export default function AnnualPlannerPage() {
         const returnItem = searchParams.get('item');
         if (returnItem && rows.some((row) => row.id === returnItem)) {
           setSelectedId(returnItem);
-          setSearchParams({}, { replace: true });
+          // Land back on the editing step the graphic was requested from.
+          setSearchParams({ step: '4' }, { replace: true });
         }
       }
       setLoading(false);
+      });
     });
 
     return () => {
@@ -421,18 +524,21 @@ export default function AnnualPlannerPage() {
   }, [profile, isAdmin, brandId, brands]);
 
   useEffect(() => {
-    if (!reviewOpen) return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setReviewOpen(false);
+    const onKey = (event: KeyboardEvent) => {
+      shiftHeld.current = event.shiftKey;
     };
-    window.addEventListener('keydown', onKeyDown);
+    const onBlur = () => {
+      shiftHeld.current = false;
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    window.addEventListener('blur', onBlur);
     return () => {
-      document.body.style.overflow = previous;
-      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+      window.removeEventListener('blur', onBlur);
     };
-  }, [reviewOpen]);
+  }, []);
 
   // Flush pending debounced saves when leaving the page.
   useEffect(() => {
@@ -512,25 +618,73 @@ export default function AnnualPlannerPage() {
     });
   }, [selectedItem?.id, items, updateItem]);
 
-  // Hydrate signed thumbnails for the opened item once.
+  // Hydrate signed thumbnails for the opened item. Keyed by the stored paths,
+  // not by "did we hydrate once": a post whose graphic arrived later (the
+  // production round-trip) had an empty cache entry and stayed image-less.
   useEffect(() => {
     const item = selectedItem;
-    if (!item || mediaCache[item.id]) return;
+    if (!item) return;
+    const records = (item.media ?? []) as StoredMediaRecord[];
+    const storedPaths = records.map((record) => record.storage_path ?? '').join('|');
+    if (hydratedSignature.current.get(item.id) === storedPaths) return;
+    hydratedSignature.current.set(item.id, storedPaths);
     let cancelled = false;
-    void hydrateStoredMedia((item.media ?? []) as StoredMediaRecord[]).then((hydrated) => {
-      if (!cancelled) setMediaCache((prev) => (prev[item.id] ? prev : { ...prev, [item.id]: hydrated }));
+    void hydrateStoredMedia(records).then((hydrated) => {
+      if (!cancelled) setMediaCache((prev) => ({ ...prev, [item.id]: hydrated }));
     });
     return () => {
       cancelled = true;
     };
   }, [selectedItem, mediaCache]);
 
+  // Every post that comes up in the editor gets real, content-based hashtags
+  // from the AI — the generator seeds only the event and brand names, which is
+  // not enough to publish with.
+  useEffect(() => {
+    const item = selectedItem;
+    if (!item || generating) return;
+    if ((item.hashtags ?? []).length >= 3) return;
+    if (autoHashtagTried.current.has(item.id)) return;
+    autoHashtagTried.current.add(item.id);
+    void generateAiHashtags(item);
+    // generateAiHashtags is a stable function declaration in this component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItem, generating]);
+
+  // Sign the selected brand's logo so the header can show which brand the plan
+  // is being built for.
+  useEffect(() => {
+    const logoPath = brands.find((brand) => brand.id === brandId)?.logo_path ?? null;
+    if (!logoPath) {
+      setBrandLogoUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void createSupabaseBrowserClient()
+      .storage.from('branding')
+      .createSignedUrl(logoPath, 60 * 60)
+      .then(({ data }) => {
+        if (!cancelled) setBrandLogoUrl(data?.signedUrl ?? null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [brandId, brands]);
+
   async function handleFile(file: File | null) {
     if (!file) return;
+    if (!SUPPORTED_UPLOAD.test(file.name)) {
+      setSourceFileName('');
+      setFileIdeas([]);
+      setSelectedIdeas(new Set());
+      setSourceFileError('סוג הקובץ אינו נתמך. אפשר להעלות XLSX, CSV, PDF, Word, TXT או Markdown.');
+      return;
+    }
     setSourceFileName(file.name);
     setSourceFileError(null);
     setSourceFileReading(true);
     setFileIdeas([]);
+    setSelectedIdeas(new Set());
     try {
       if (/\.(xlsx)$/i.test(file.name) || file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
         const workbook = new ExcelJS.Workbook();
@@ -619,7 +773,12 @@ export default function AnnualPlannerPage() {
     URL.revokeObjectURL(url);
   }
 
-  async function generatePlan() {
+  // basisOverride: the caller's choice is passed in rather than read from
+  // state, because the step-2 buttons set the basis and generate in the same
+  // click — the state update would not have landed yet.
+  async function generatePlan(ideasOverride?: ParsedIdea[], basisOverride?: PlanningBasis, options?: { pad?: boolean }) {
+    const padToTarget = options?.pad ?? true;
+    const basis = basisOverride ?? planningBasis;
     setGenerating(true);
     setFinishNote(null);
     setPlanNote(null);
@@ -635,8 +794,9 @@ export default function AnnualPlannerPage() {
           if (!ideaMap.has(key)) ideaMap.set(key, idea);
         }
       };
-      addIdeas(fileIdeas);
-      if (fileIdeas.length === 0 && sourceText.trim() && planningBasis !== 'holidays') {
+      const baseIdeas = ideasOverride ?? fileIdeas;
+      addIdeas(baseIdeas);
+      if (baseIdeas.length === 0 && sourceText.trim() && basis !== 'holidays') {
         const { data, error } = await client.functions.invoke('generate-presentation', {
           body: { format: 'annual_planner_events', brief: { source_text: sourceText }, planner_year: year },
         });
@@ -670,7 +830,7 @@ export default function AnnualPlannerPage() {
       // Ideas without a date used to be dropped silently, which is why
       // "רק הרעיונות שלי" + free text produced nothing at all. Spread them over
       // the chosen range at the chosen weekly frequency instead.
-      const undatedIdeaTitles = planningBasis === 'holidays'
+      const undatedIdeaTitles = basis === 'holidays'
         ? []
         : sourceText
           .split(/\r?\n|[;•]/)
@@ -706,9 +866,9 @@ export default function AnnualPlannerPage() {
 
       // Dated ideas win; undated lines only fill in what is left.
       const allIdeaCandidates = ideaCandidates.length > 0 ? ideaCandidates : undatedCandidates;
-      let candidates = planningBasis === 'ideas'
+      let candidates = basis === 'ideas'
         ? allIdeaCandidates
-        : planningBasis === 'holidays'
+        : basis === 'holidays'
           ? holidayCandidates
           : [...allIdeaCandidates, ...holidayCandidates];
       const seedCandidates = [...candidates];
@@ -729,7 +889,9 @@ export default function AnnualPlannerPage() {
       candidates = candidates.filter((candidate) => {
         const key = weekKey(candidate.date);
         const count = perWeek.get(key) ?? 0;
-        if (count >= postsPerWeek) return false;
+        // The weekly cap shapes an auto-built plan; it must not throw away an
+        // event the user picked by hand.
+        if (padToTarget && count >= postsPerWeek) return false;
         perWeek.set(key, count + 1);
         return true;
       }).slice(0, MAX_TOTAL_POSTS);
@@ -737,7 +899,7 @@ export default function AnnualPlannerPage() {
       // The counter is a promise, not decoration: if the user asks for two
       // posts a week for one month, build eight usable drafts. Source ideas and
       // relevant holidays act as recurring themes for the extra weekly slots.
-      if (seedCandidates.length > 0 && candidates.length < requestedPostCount) {
+      if (padToTarget && seedCandidates.length > 0 && candidates.length < requestedPostCount) {
         const angles = ['היכרות', 'טיפ שימושי', 'הזמנה', 'תזכורת', 'ערך לקהל', 'מאחורי הקלעים', 'סיכום'];
         const existingKeys = new Set(candidates.map((candidate) => `${candidate.date}|${candidate.title}`));
         for (let slotIndex = 0; candidates.length < requestedPostCount && slotIndex < requestedPostCount * 3; slotIndex += 1) {
@@ -771,11 +933,11 @@ export default function AnnualPlannerPage() {
       if (candidates.length === 0) {
         setPlanNote({
           tone: 'error',
-          text: planningBasis === 'holidays'
+          text: basis === 'holidays'
             ? 'לא נמצאו חגים או מועדים בטווח שנבחר — נסו טווח ארוך יותר.'
-            : 'לא נוצרו פוסטים — לא נמצאו רעיונות בחומרי המקור. כתבו רעיון בכל שורה בתיבת הטקסט, או העלו קובץ תכנון.',
+            : g('לא נוצרו פוסטים — לא נמצאו רעיונות בחומרי המקור. כתוב רעיון בכל שורה בתיבת הטקסט, או העלה קובץ תכנון.', 'לא נוצרו פוסטים — לא נמצאו רעיונות בחומרי המקור. כתבי רעיון בכל שורה בתיבת הטקסט, או העלי קובץ תכנון.'),
         });
-        return;
+        return false;
       }
 
       const { data: userData } = await client.auth.getUser();
@@ -816,6 +978,7 @@ export default function AnnualPlannerPage() {
         .from('annual_plan_items')
         .select('*')
         .eq('year', year)
+        .eq('created_by', userId)
         .order('date', { ascending: true });
       if (refreshError) throw refreshError;
       const rows = (refreshed ?? []) as AnnualPlanItem[];
@@ -824,15 +987,13 @@ export default function AnnualPlannerPage() {
       const insertedRows = (inserted ?? []) as AnnualPlanItem[];
       const firstNew = insertedRows[0];
       setSelectedId(firstNew?.id ?? rows[0]?.id ?? null);
-      setCreatedPreview(insertedRows);
-      setSelectedPreview(new Set(insertedRows.map((item) => item.id)));
       setPlanNote({ tone: 'success', text: `נוצרו ${candidates.length} פוסטים בתוכנית — אפשר לעבור עליהם ולאשר.` });
+      return true;
     } catch (error) {
       const message = `יצירת התוכנית נכשלה: ${error instanceof Error ? error.message : String(error)}`;
-      setCreatedPreview([]);
-      setSelectedPreview(new Set());
       setLoadError(message);
       setPlanNote({ tone: 'error', text: message });
+      return false;
     } finally {
       setGenerating(false);
     }
@@ -870,25 +1031,6 @@ export default function AnnualPlannerPage() {
       setSelectedId(row.id);
     } catch (error) {
       setLoadError(`הוספת פוסט נכשלה: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  // Drop the unchecked posts from the plan, then move on to the review page.
-  async function keepSelectedPreview() {
-    const removed = createdPreview.filter((item) => !selectedPreview.has(item.id));
-    setItems((current) => current.filter((item) => selectedPreview.has(item.id) || !createdPreview.some((created) => created.id === item.id)));
-    if (selectedId && removed.some((item) => item.id === selectedId)) {
-      setSelectedId(createdPreview.find((item) => selectedPreview.has(item.id))?.id ?? null);
-    }
-    setCreatedPreview([]);
-    setSelectedPreview(new Set());
-    setReviewOpen(true);
-    if (removed.length > 0) {
-      const { error } = await createSupabaseBrowserClient()
-        .from('annual_plan_items')
-        .delete()
-        .in('id', removed.map((item) => item.id));
-      if (error) setLoadError(`מחיקת הפוסטים שלא סומנו נכשלה: ${error.message}`);
     }
   }
 
@@ -1054,6 +1196,7 @@ export default function AnnualPlannerPage() {
 
   function selectByOffset(offset: number) {
     if (visibleItems.length === 0) return;
+    setPostMove(offset > 0 ? 'next' : 'prev');
     const index = selectedIndex < 0 ? 0 : (selectedIndex + offset + visibleItems.length) % visibleItems.length;
     setSelectedId(visibleItems[index].id);
     setHashtagInput('');
@@ -1071,13 +1214,13 @@ export default function AnnualPlannerPage() {
           brand_id: item.brand_id ?? brandId ?? null,
           goal: `האשטגים לפוסט: ${item.event_name}`,
           source_text: `${item.title}\n${item.caption}`.slice(0, 1500),
-          content_request: 'החזר אך ורק 4 עד 6 האשטגים קצרים ורלוונטיים לתוכן הפוסט, בעברית, מופרדים ברווחים, בלי שום טקסט אחר. כל האשטג מתחיל ב-#. בלי האשטגים גנריים מדי כמו #פוסט.',
+          content_request: 'החזר אך ורק לפחות 3 ולכל היותר 6 האשטגים קצרים ורלוונטיים לתוכן הפוסט עצמו, בעברית, מופרדים ברווחים, בלי שום טקסט אחר. כל האשטג מתחיל ב-#. בלי האשטגים גנריים כמו #פוסט או #תוכן.',
         },
         item.platform === 'both' ? 'facebook' : item.platform,
         null,
       );
       const tags = [...new Set((text.match(/#[\p{L}\p{N}_]+/gu) ?? []).map(toHashtag).filter(Boolean))].slice(0, 8);
-      if (tags.length === 0) throw new Error('no_tags');
+      if (tags.length < 3) throw new Error('not_enough_tags');
       updateItem(item.id, { hashtags: tags, error_message: null });
     } catch {
       updateItem(item.id, { error_message: 'יצירת האשטגים עם AI נכשלה — אפשר להוסיף ידנית ולנסות שוב.' });
@@ -1110,18 +1253,396 @@ export default function AnnualPlannerPage() {
 
   const selectedMedia = selectedItem ? mediaCache[selectedItem.id] ?? [] : [];
 
+  // Step 3 (manual): the holidays inside the chosen range are the content
+  // recommendations, shown four at a time in a carousel.
+  // Plain const, not useMemo: this runs after the `if (loading) return` above,
+  // so a hook here would change the hook count between renders.
+  const rangeHolidays = (() => {
+    const today = new Date();
+    const start = year === today.getFullYear() ? today : new Date(year, 0, 1);
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + holidayRangeMonths);
+    return holidays.filter((holiday) => {
+      const date = new Date(`${holiday.date}T00:00:00`);
+      return date >= start && date < end;
+    });
+  })();
+
+  const remainingSlots = Math.max(0, estimatedPosts - manualEvents.length);
+
+  // What the user types is free text and can hold several events with their
+  // own dates ("יין בשכונה 27/08 ומצות 09/09"), so it goes through the same AI
+  // extractor the file flow uses, with dated-line parsing as the fallback.
+  async function addManualDraft() {
+    const text = manualDraft.trim();
+    if (!text || manualParsing) return;
+    const fallbackDate = isoDate(year, now.getMonth(), now.getDate());
+    setManualParsing(true);
+    try {
+      let parsed: ParsedIdea[] = [];
+      const { data, error } = await createSupabaseBrowserClient().functions.invoke('generate-presentation', {
+        body: { format: 'annual_planner_events', brief: { source_text: text }, planner_year: year },
+      });
+      if (!error) {
+        parsed = ((data as { events?: ParsedIdea[] } | null)?.events ?? []).filter((event) => event.title && event.date);
+      }
+      if (parsed.length === 0) parsed = extractDatedIdeaLines(text, year);
+      if (parsed.length === 0) {
+        addManualEvent(text, fallbackDate);
+      } else {
+        const written = datesWrittenIn(text, year);
+        for (const idea of parsed) {
+          addManualEvent(idea.title, idea.date && written.has(idea.date) ? idea.date : fallbackDate);
+        }
+      }
+      setManualDraft('');
+    } catch {
+      addManualEvent(text, fallbackDate);
+      setManualDraft('');
+    } finally {
+      setManualParsing(false);
+    }
+  }
+
+  // Click toggles one row; shift-click selects everything between this row and
+  // the previous click, the way a file list behaves.
+  function toggleIdeaRow(index: number, shiftKeyFromEvent: boolean) {
+    const shiftKey = shiftKeyFromEvent || shiftHeld.current;
+    setSelectedIdeas((current) => {
+      const next = new Set(current);
+      const anchor = lastIdeaClick.current ?? (current.size > 0 ? Math.min(...current) : null);
+      if (shiftKey && anchor !== null) {
+        const [from, to] = [anchor, index].sort((a, b) => a - b);
+        const selecting = !current.has(index);
+        for (let row = from; row <= to; row += 1) {
+          if (selecting) next.add(row);
+          else next.delete(row);
+        }
+      } else if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+    lastIdeaClick.current = index;
+  }
+
+  function deleteSelectedIdeas() {
+    setFileIdeas((current) => current.filter((_, index) => !selectedIdeas.has(index)));
+    setSelectedIdeas(new Set());
+    lastIdeaClick.current = null;
+  }
+
+  function addManualEvent(title: string, date: string) {
+    const clean = title.trim();
+    if (!clean) return;
+    setManualEvents((current) => {
+      if (current.some((event) => event.title === clean && event.date === date)) return current;
+      return [...current, { id: `${date}-${clean}-${current.length}`, title: clean, date }];
+    });
+  }
+
+  // Step 3 (manual) → step 4: the picked events are the plan's ideas.
+  async function generateFromManualEvents() {
+    const ideas: ParsedIdea[] = manualEvents.map((event) => ({ title: event.title, date: event.date }));
+    setPlanningBasis('ideas');
+    // Manual mode is literal: one post per event the user picked or typed, on
+    // its own date — no padding the plan out to the weekly target with
+    // recycled angles.
+    if (await generatePlan(ideas, 'ideas', { pad: false })) setStep(4);
+  }
+
+  async function generateFromFile() {
+    if (await generatePlan(undefined, 'ideas')) setStep(4);
+  }
+
+  // "ערוך רק חגים ומועדים": build the whole plan from the holidays in range and
+  // skip step 3 entirely, straight into the editor.
+  async function generateHolidaysOnly() {
+    setPlanningBasis('holidays');
+    if (await generatePlan([], 'holidays')) setStep(4);
+  }
+
+  const editorPanel = selectedItem && (
+    <div
+      key={selectedItem.id}
+      className={`rounded-xl border border-[var(--border-warm)] bg-white p-4 ${postMove === 'next' ? 'planner-post-next' : 'planner-post-prev'}`}
+    >
+      {/* Carousel-style quick navigation between the plan's posts. */}
+      <div className="mb-3 flex items-center justify-between gap-2 border-b border-[var(--border-warm)] pb-3">
+        <button type="button" onClick={() => selectByOffset(-1)} className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--border-warm)] text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]" aria-label="הפוסט הקודם">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+        <div className="text-xs font-bold text-[var(--text-muted)]">
+          פוסט {selectedIndex + 1} מתוך {visibleItems.length}
+          {savingIds.has(selectedItem.id) && <span className="ms-2 text-brand">שומר...</span>}
+        </div>
+        <button type="button" onClick={() => selectByOffset(1)} className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--border-warm)] text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]" aria-label="הפוסט הבא">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-[var(--bg-subtle)] text-center">
+            <div>
+              <div className="text-base font-bold leading-4 text-brand">{selectedItem.date.slice(8, 10)}</div>
+              <div className="text-[10px] text-[var(--text-muted)]">{MONTHS_HE[Number(selectedItem.date.slice(5, 7)) - 1]}</div>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-brand">{selectedItem.event_name}</p>
+            <h3 className="text-base font-bold tracking-normal">{selectedItem.title || 'ללא כותרת'}</h3>
+          </div>
+        </div>
+        <button type="button" onClick={() => void deleteItem(selectedItem.id)} className="grid h-10 w-10 place-items-center rounded-[10px] text-[var(--text-muted)] hover:bg-red-50 hover:text-red-700" aria-label="מחיקת פוסט">
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="mb-4 overflow-hidden rounded-xl border border-[var(--border-warm)] bg-[var(--bg-subtle)]">
+        {selectedMedia[0]?.url && (
+          <img src={selectedMedia[0].url} alt="תצוגה של התמונה" className="max-h-64 w-full object-cover" />
+        )}
+        <div className="p-3">
+          <div className="text-sm font-bold text-[var(--text-strong)]">{selectedItem.title || selectedItem.event_name || 'ללא כותרת'}</div>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--text-muted)]">{selectedItem.caption || 'תוכן הפוסט יופיע כאן.'}</p>
+          {(selectedItem.hashtags ?? []).length > 0 && (
+            <p className="mt-2 text-xs font-semibold leading-5 text-brand">{(selectedItem.hashtags ?? []).map(toHashtag).filter(Boolean).join(' ')}</p>
+          )}
+        </div>
+      </div>
+
+      <label className="text-xs font-bold text-[var(--text-muted)]">
+        שם / נושא הפוסט
+        <input value={selectedItem.title ?? ''} onChange={(event) => updateItem(selectedItem.id, { title: event.target.value })} className="mt-1 h-10 w-full rounded-[10px] border border-[var(--border-warm)] px-3 text-sm outline-none focus:border-brand" />
+      </label>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <label className="text-xs font-bold text-[var(--text-muted)]">
+          תאריך
+          <input
+            type="date"
+            value={selectedItem.date}
+            onChange={(event) => {
+              const date = event.target.value;
+              if (!date) return;
+              updateItem(selectedItem.id, { date, scheduled_at: dayAtHourIso(date, new Date(selectedItem.scheduled_at ?? '').getHours() || 10) });
+            }}
+            className="mt-1 h-10 w-full rounded-[10px] border border-[var(--border-warm)] px-3 text-sm outline-none focus:border-brand"
+          />
+        </label>
+        <label className="text-xs font-bold text-[var(--text-muted)]">
+          תאריך ושעה לתזמון
+          <input
+            type="datetime-local"
+            value={toLocalInput(selectedItem.scheduled_at)}
+            onChange={(event) => {
+              const value = new Date(event.target.value);
+              if (!Number.isNaN(value.getTime())) updateItem(selectedItem.id, { scheduled_at: value.toISOString() });
+            }}
+            className="mt-1 h-10 w-full rounded-[10px] border border-[var(--border-warm)] px-3 text-sm outline-none focus:border-brand"
+          />
+        </label>
+      </div>
+
+      <label className="mt-3 block text-xs font-bold text-[var(--text-muted)]">
+        טקסט לפוסט
+        <textarea value={selectedItem.caption ?? ''} onChange={(event) => updateItem(selectedItem.id, { caption: event.target.value })} rows={7} className="mt-1 w-full rounded-[10px] border border-[var(--border-warm)] p-3 text-sm leading-6 outline-none focus:border-brand" />
+      </label>
+      <div className="mt-1 text-left text-[11px] text-[var(--text-faint)] ltr">{(selectedItem.caption ?? '').length} / 500</div>
+
+      <div className="mt-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-bold text-[var(--text-muted)]">{g('בחר האשטגים', 'בחרי האשטגים')}</span>
+          <button
+            type="button"
+            onClick={() => void generateAiHashtags(selectedItem)}
+            disabled={hashtagAiId === selectedItem.id}
+            className="inline-flex items-center gap-1 rounded-full border border-[var(--border-warm)] bg-white px-2.5 py-1 text-[11px] font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:text-brand disabled:opacity-60"
+          >
+            {hashtagAiId === selectedItem.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+            יצירה עם AI
+          </button>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          {(selectedItem.hashtags ?? []).map(toHashtag).filter(Boolean).map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              title="הסרת האשטג"
+              onClick={() => updateItem(selectedItem.id, { hashtags: (selectedItem.hashtags ?? []).map(toHashtag).filter((t) => t && t !== tag) })}
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--border-warm)] bg-[var(--bg-subtle)] px-2.5 py-1 text-xs font-semibold text-[var(--text-strong)] hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+            >
+              {tag}
+              <span aria-hidden="true">×</span>
+            </button>
+          ))}
+          <input
+            value={hashtagInput}
+            onChange={(event) => setHashtagInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ',') {
+                event.preventDefault();
+                addHashtag(selectedItem);
+              }
+            }}
+            onBlur={() => addHashtag(selectedItem)}
+            placeholder="+ הוספה"
+            className="h-8 w-24 rounded-full border border-dashed border-[var(--border-warm)] bg-white px-2.5 text-xs outline-none focus:border-brand"
+          />
+        </div>
+      </div>
+
+      <fieldset className="mt-3">
+        <legend className="text-xs font-bold text-[var(--text-muted)]">{g('בחר פלטפורמה', 'בחרי פלטפורמה')}</legend>
+        <div className="mt-1 grid grid-cols-3 gap-2" role="group" aria-label="בחירת פלטפורמה">
+          {(['facebook', 'instagram', 'both'] as const).map((platform) => {
+            const active = selectedItem.platform === platform;
+            return (
+              <button
+                key={platform}
+                type="button"
+                aria-pressed={active}
+                onClick={() => updateItem(selectedItem.id, { platform })}
+                className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border px-3 text-sm font-bold transition ${active ? 'border-brand bg-brand text-white shadow-sm' : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:border-brand/40 hover:bg-[var(--bg-subtle)]'}`}
+              >
+                <SocialChannelIcon platform={platform === 'both' ? 'both' : platform} />
+                {platform === 'both' ? 'שניהם' : PLATFORM_LABEL[platform]}
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <fieldset className="mt-3">
+        <legend className="text-xs font-bold text-[var(--text-muted)]">{g('בחר מקום לפרסום', 'בחרי מקום לפרסום')}</legend>
+        <div className="mt-1 grid grid-cols-3 gap-2" role="group" aria-label="בחירת מקום לפרסום">
+          {PLACEMENT_OPTIONS.map((option) => {
+            const active = placementOf(selectedItem.design_notes) === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => updateItem(selectedItem.id, { design_notes: withPlacement(selectedItem.design_notes, option.value) })}
+                className={`inline-flex min-h-10 items-center justify-center rounded-[10px] border px-2 text-xs font-bold transition ${active ? 'border-brand bg-brand text-white shadow-sm' : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:border-brand/40 hover:bg-[var(--bg-subtle)]'}`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      <label className="mt-3 block text-xs font-bold text-[var(--text-muted)]">
+        הנחיות עיצוב ותוכן (חופשי)
+        <textarea
+          value={stripPlacement(selectedItem.design_notes)}
+          onChange={(event) => updateItem(selectedItem.id, { design_notes: withPlacement(event.target.value, placementOf(selectedItem.design_notes)) })}
+          rows={2}
+          placeholder="למשל: צבעים חמים, בלי אנשים בתמונה, טון חגיגי..."
+          className="mt-1 w-full rounded-[10px] border border-[var(--border-warm)] p-3 text-sm leading-6 outline-none focus:border-brand"
+        />
+      </label>
+
+      <div className="mt-3">
+        <MediaEditor media={selectedMedia} setMedia={setSelectedMedia} brandId={selectedItem.brand_id ?? brandId ?? null} />
+      </div>
+
+      <div className="mt-1 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => createGraphicFor(selectedItem)}
+          className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-[10px] border border-brand/40 bg-[var(--warm-accent-soft)] px-4 text-sm font-bold text-brand transition hover:bg-brand hover:text-white"
+        >
+          <Wand2 className="h-4 w-4" />
+          {g('צור תמונה בAI', 'צרי תמונה בAI')}
+        </button>
+        <button
+          type="button"
+          onClick={() => void regenerateCaption(selectedItem)}
+          disabled={aiItemId === selectedItem.id}
+          className="inline-flex min-h-10 items-center gap-2 rounded-[10px] border border-[var(--border-warm)] px-4 text-sm font-bold text-[var(--text-strong)] hover:bg-[var(--bg-subtle)] disabled:opacity-60"
+        >
+          {aiItemId === selectedItem.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+          {g('צור מחדש', 'צרי מחדש')}
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-[var(--text-muted)]">יצירת גרפיקה עוברת למסך יצירת התוכן וחוזרת לכאן אוטומטית עם התוצר.</p>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          aria-pressed={selectedItem.status === 'draft'}
+          onClick={() => updateItem(selectedItem.id, { status: 'draft', error_message: null })}
+          className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border px-4 text-sm font-bold transition ${
+            selectedItem.status === 'draft'
+              ? 'border-[var(--text-muted)] bg-[var(--bg-subtle)] text-[var(--text-strong)]'
+              : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]'
+          }`}
+        >
+          {g('אשר כטיוטה', 'אשרי כטיוטה')}
+        </button>
+        <button
+          type="button"
+          aria-pressed={selectedItem.status !== 'draft'}
+          onClick={() => updateItem(selectedItem.id, { status: 'to_schedule', error_message: null })}
+          className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] px-4 text-sm font-bold transition ${
+            selectedItem.status !== 'draft'
+              ? 'bg-emerald-700 text-white'
+              : 'bg-emerald-600 text-white hover:bg-emerald-700'
+          }`}
+        >
+          {selectedItem.status !== 'draft' ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+          {selectedItem.status !== 'draft' ? 'הפוסט אושר' : g('אשר פוסט', 'אשרי פוסט')}
+        </button>
+      </div>
+      <p className="mt-1 text-center text-[11px] text-[var(--text-faint)]">כל שינוי נשמר אוטומטית.</p>
+    </div>
+  );
+
+  const emptyPlanNotice = (
+    <div className="grid min-h-[320px] place-items-center rounded-xl border border-dashed border-[var(--border-warm)] bg-[var(--bg-subtle)] p-8 text-center text-[var(--text-muted)]">
+      <div>
+        <Sparkles className="mx-auto mb-3 h-8 w-8 text-brand" />
+        <p className="font-semibold text-[var(--text-strong)]">עדיין אין פוסטים בתוכנית</p>
+        <p className="mt-1 text-sm">{g('חזור לשלב 2 וצור תוכן, או הוסף פוסט ידנית.', 'חזרי לשלב 2 וצרי תוכן, או הוסיפי פוסט ידנית.')}</p>
+        <button
+          type="button"
+          onClick={() => void addManualPost()}
+          className="mt-3 inline-flex min-h-10 items-center justify-center gap-1.5 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold text-[var(--text-strong)] hover:border-brand/40 hover:text-brand"
+        >
+          <Plus className="h-4 w-4" />
+          הוספת פוסט
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div dir="rtl" className="mx-auto flex max-w-7xl flex-col gap-5 text-right">
       <header className="flex flex-col gap-3 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)] lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-normal text-[var(--text-strong)]">תכנון תוכן שנתי</h1>
+        <div className="flex items-center gap-4">
+          {brandLogoUrl && (
+            <img
+              src={brandLogoUrl}
+              alt={selectedBrand?.name ?? 'לוגו המותג'}
+              className="h-20 w-20 shrink-0 rounded-xl border border-[var(--border-warm)] bg-white object-contain p-1.5"
+            />
+          )}
+          <div>
+            <h1 className="text-2xl font-bold tracking-normal text-[var(--text-strong)]">תכנון פרסום שנתי</h1>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">{STEP_TITLES[step - 1]}</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {isAdmin && (
             <select
               value={brandId}
               onChange={(event) => setBrandId(event.target.value)}
-              className="h-11 max-w-52 rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm font-bold outline-none focus:border-brand"
+              className={`h-11 max-w-52 rounded-[10px] border bg-white px-3 text-sm font-bold outline-none focus:border-brand ${brandId ? 'border-[var(--border-warm)]' : 'border-red-300 text-red-700'}`}
               aria-label="בחירת מותג"
             >
               <option value="">בחירת מותג</option>
@@ -1138,6 +1659,34 @@ export default function AnnualPlannerPage() {
         </div>
       </header>
 
+      {/* The five steps of the flow, always visible so the user knows where they are. */}
+      <nav aria-label="שלבי התכנון" className="flex flex-wrap items-center gap-1.5 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-3 shadow-[var(--warm-shadow-card)]">
+        {STEP_TITLES.map((title, index) => {
+          const value = (index + 1) as WizardStep;
+          const active = step === value;
+          const reachable = value <= step || (value >= 4 && items.length > 0);
+          return (
+            <button
+              key={title}
+              type="button"
+              disabled={!reachable}
+              onClick={() => setStep(value)}
+              aria-current={active ? 'step' : undefined}
+              className={`inline-flex min-h-10 items-center gap-2 rounded-full border px-3 text-xs font-bold transition ${
+                active
+                  ? 'border-brand bg-brand text-white'
+                  : reachable
+                    ? 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:border-brand/40 hover:text-brand'
+                    : 'cursor-not-allowed border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-faint)]'
+              }`}
+            >
+              <span className={`grid h-5 w-5 place-items-center rounded-full text-[11px] ${active ? 'bg-white/20' : 'bg-[var(--bg-subtle)]'}`}>{value}</span>
+              {title}
+            </button>
+          );
+        })}
+      </nav>
+
       {loadError && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {loadError}
@@ -1145,90 +1694,228 @@ export default function AnnualPlannerPage() {
         </div>
       )}
 
-      <section className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
-        <h2 className="mb-4 text-lg font-bold tracking-normal">איך לבנות את התוכנית?</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {([
-            { value: 'file', label: 'להעלות פוסטים מקובץ', hint: 'קובץ אקסל, Word או PDF שכבר מוכן', icon: FileUp },
-            { value: 'events', label: 'להכין לפי אירועים קיימים', hint: 'חגים, מועדים והרעיונות שלך', icon: CalendarDays },
-          ] as const).map((option, index) => {
-            const active = planMode === option.value;
-            const Icon = option.icon;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => {
-                  setPlanMode(option.value);
-                  // File mode builds only from the uploaded content; events mode
-                  // keeps the holiday-based default.
-                  setPlanningBasis(option.value === 'file' ? 'ideas' : 'both');
-                }}
-                aria-pressed={active}
-                className={`group flex items-center gap-3 rounded-2xl border p-4 text-right transition ${
-                  active
-                    ? 'border-brand bg-[var(--warm-accent-soft)] shadow-[var(--warm-shadow-card)]'
-                    : 'border-[var(--border-warm)] bg-white hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)]'
-                }`}
+      {loading && (
+        <div className="flex items-center justify-center rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-8">
+          <Spinner />
+        </div>
+      )}
+
+      {/* ── שלב 1 — כמות הפוסטים לעריכה ─────────────────────────────── */}
+      {step === 1 && (
+        <section className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+          <h2 className="mb-4 text-lg font-bold tracking-normal">כמה תוכן לתכנן?</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm font-bold text-[var(--text-strong)]">
+              כמה פוסטים בשבוע?
+              <select
+                value={postsPerWeek}
+                onChange={(event) => setPostsPerWeek(Number(event.target.value))}
+                className="mt-1 h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand"
               >
-                <span
-                  className={`grid h-11 w-11 shrink-0 place-items-center rounded-full border text-base font-extrabold transition ${
+                {[1, 2, 3, 4, 5, 6].map((count) => (
+                  <option key={count} value={count}>{count === 1 ? 'פוסט אחד בשבוע' : `${count} פוסטים בשבוע`}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm font-bold text-[var(--text-strong)]">
+              כמה חודשים קדימה?
+              <select
+                value={holidayRangeMonths}
+                onChange={(event) => setHolidayRangeMonths(Number(event.target.value))}
+                className="mt-1 h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand"
+              >
+                {Array.from({ length: 12 }, (_, index) => index + 1).map((count) => (
+                  <option key={count} value={count}>{count === 1 ? 'חודש אחד' : `${count} חודשים`}</option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs font-normal text-[var(--text-muted)]">החגים יתחילו מהחודש הנוכחי ולא מינואר.</span>
+            </label>
+          </div>
+
+          <div className="mt-5">
+            <h3 className="mb-2 text-sm font-bold text-[var(--text-muted)]">כמות הפוסטים לעריכה</h3>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'סה״כ', value: estimatedPosts },
+                { label: 'לכמה חודשים', value: holidayRangeMonths },
+                { label: 'כמה לשבוע', value: postsPerWeek },
+              ].map((tile) => (
+                <div key={tile.label} className="rounded-xl border border-brand/30 bg-brand/5 p-4 text-center">
+                  <div className="text-2xl font-extrabold text-brand">{tile.value}</div>
+                  <div className="mt-1 text-xs font-bold text-[var(--text-muted)]">{tile.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setStep(2)}
+            disabled={!brandId}
+            className="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand px-5 text-base font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
+          >
+            המשך
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          {!brandId && (
+            <p className="mt-2 text-center text-xs font-semibold text-red-600">
+              {g('בחר מותג למעלה לפני שממשיכים — התוכן נבנה לפי המותג.', 'בחרי מותג למעלה לפני שממשיכים — התוכן נבנה לפי המותג.')}
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* ── שלב 2 — איך תרצו ליצור את התוכן ─────────────────────────── */}
+      {step === 2 && (
+        <section className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+          <h2 className="mb-4 text-lg font-bold tracking-normal">{g('איך תרצה ליצור את התוכן?', 'איך תרצי ליצור את התוכן?')}</h2>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {/* RTL order, matching the flow board: manual on the right,
+                file in the middle, holidays-only on the left. */}
+            {([
+              { value: 'manual', label: 'עריכת לוח שנה ידנית', hint: g('בוחר אירועים מההמלצות או כותב בעצמך', 'בוחרת אירועים מההמלצות או כותבת בעצמך'), icon: Pencil },
+              { value: 'file', label: g('העלה קובץ', 'העלי קובץ'), hint: 'אקסל, Word או PDF שכבר מוכן', icon: FileUp },
+              { value: 'events', label: g('ערוך רק חגים ומועדים', 'ערכי רק חגים ומועדים'), hint: 'נבנה תוכנית מכל החגים והמועדים בטווח — וממשיכים ישר לעריכה', icon: CalendarDays },
+            ] as const).map((option) => {
+              const Icon = option.icon;
+              const active = planMode === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={generating}
+                  onClick={() => {
+                    if (option.value === 'events') {
+                      goTo({ mode: 'events' });
+                      void generateHolidaysOnly();
+                      return;
+                    }
+                    setPlanningBasis('ideas');
+                    // Entering step 3 always starts clean — nothing carried
+                    // over from an earlier visit to the planner.
+                    setManualEvents([]);
+                    setManualDraft('');
+                    setRecIndex(0);
+                    setFileIdeas([]);
+                    setSourceFileName('');
+                    setSourceFileError(null);
+                    setSourceText('');
+                    goTo({ step: 3, mode: option.value });
+                  }}
+                  aria-pressed={active}
+                  className={`group flex flex-col gap-2 rounded-2xl border p-4 text-right transition disabled:opacity-60 ${
                     active
-                      ? 'border-brand bg-brand text-white'
-                      : 'border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-muted)] group-hover:border-brand/40 group-hover:text-brand'
+                      ? 'border-brand bg-[var(--warm-accent-soft)] shadow-[var(--warm-shadow-card)]'
+                      : 'border-[var(--border-warm)] bg-white hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)]'
                   }`}
                 >
-                  {index + 1}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-bold text-[var(--text-strong)]">{option.label}</span>
-                  <span className="mt-0.5 block text-xs leading-5 text-[var(--text-muted)]">{option.hint}</span>
-                </span>
-                <Icon className={`h-5 w-5 shrink-0 transition ${active ? 'text-brand' : 'text-[var(--text-faint)] group-hover:text-brand'}`} aria-hidden="true" />
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      {planMode && (
-        <section className="grid gap-4">
-  {planMode === 'file' && (
-          <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <button
-                type="button"
-                onClick={() => void downloadTemplate()}
-                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:bg-[var(--bg-subtle)] hover:text-brand"
-              >
-                <Download className="h-4 w-4" />
-                הורדת טמפלט
-              </button>
-              <label className="inline-flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-brand/40 bg-brand/5 px-4 text-sm font-bold text-brand transition hover:bg-brand/10">
-                {sourceFileReading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
-                <span className="truncate">{sourceFileName || 'העלה קובץ תכנון שנתי'}</span>
-                <input type="file" className="sr-only" accept=".xlsx,.txt,.md,.csv,.json,.pdf,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void handleFile(event.target.files?.[0] ?? null)} />
-              </label>
+                  <span className={`grid h-11 w-11 place-items-center rounded-full border ${active ? 'border-brand bg-brand text-white' : 'border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-muted)] group-hover:text-brand'}`}>
+                    {generating && active ? <Loader2 className="h-5 w-5 animate-spin" /> : <Icon className="h-5 w-5" />}
+                  </span>
+                  <span className="text-sm font-bold text-[var(--text-strong)]">{option.label}</span>
+                  <span className="text-xs leading-5 text-[var(--text-muted)]">{option.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+          {planNote?.tone === 'error' && (
+            <div role="status" className="mt-4 rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700">
+              {planNote.text}
             </div>
-            <p className="mt-2 text-xs text-[var(--text-muted)]">אם יש לך תוכן מוכן, העלה כאן — PDF / Word / XLSX / TXT / CSV.</p>
-            {sourceFileError && <p className="mt-2 text-sm text-red-600">{sourceFileError}</p>}
-            {fileIdeas.length > 0 && (
-              <>
-                <p className="mt-2 text-sm font-semibold text-emerald-700">
-                  זוהו {fileIdeas.length} אירועים עם תאריכים מהקובץ — הם ישמשו כבסיס לתוכנית.
-                </p>
-                <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-[var(--border-warm)]">
-                  <table className="w-full border-collapse text-right text-sm">
-                    <thead className="sticky top-0 bg-[var(--bg-subtle)] text-xs text-[var(--text-muted)]">
-                      <tr>
-                        <th className="px-3 py-2 font-semibold">תאריך</th>
-                        <th className="px-3 py-2 font-semibold">אירוע</th>
-                        <th className="px-3 py-2 font-semibold">פרטים</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {fileIdeas.map((idea, index) => (
-                        <tr key={`${idea.date}-${idea.title}-${index}`} className="border-t border-[var(--border-warm)] align-top">
+          )}
+        </section>
+      )}
+
+      {/* ── שלב 3 — בניית התוכן ─────────────────────────────────────── */}
+      {step === 3 && planMode === 'file' && (
+        <section className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+          <h2 className="mb-4 text-lg font-bold tracking-normal">{g('העלה קובץ', 'העלי קובץ')}</h2>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => void downloadTemplate()}
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:bg-[var(--bg-subtle)] hover:text-brand"
+            >
+              <Download className="h-4 w-4" />
+              הורדת טמפלט
+            </button>
+            <label className="inline-flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-brand/40 bg-brand/5 px-4 text-sm font-bold text-brand transition hover:bg-brand/10">
+              {sourceFileReading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
+              <span className="truncate">{sourceFileName || g('העלה קובץ תכנון שנתי', 'העלי קובץ תכנון שנתי')}</span>
+              <input type="file" className="sr-only" accept=".xlsx,.txt,.md,.csv,.json,.pdf,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void handleFile(event.target.files?.[0] ?? null)} />
+            </label>
+          </div>
+          {sourceFileError && <p className="mt-2 text-sm text-red-600">{sourceFileError}</p>}
+          {fileIdeas.length > 0 && (
+            <>
+              <p className="mt-2 text-sm font-semibold text-emerald-700">
+                זוהו {fileIdeas.length} אירועים עם תאריכים מהקובץ — הם ישמשו כבסיס לתוכנית.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-[var(--text-muted)]">
+                  {selectedIdeas.size > 0 ? `סומנו ${selectedIdeas.size} מתוך ${fileIdeas.length}` : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={deleteSelectedIdeas}
+                  disabled={selectedIdeas.size === 0}
+                  className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[var(--border-warm)] bg-white px-3 text-xs font-bold text-[var(--text-strong)] transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  מחיקת המסומנים
+                </button>
+              </div>
+              <div className="mt-2 max-h-72 overflow-auto rounded-xl border border-[var(--border-warm)]">
+                <table className="w-full border-collapse text-right text-sm">
+                  <thead className="sticky top-0 bg-[var(--bg-subtle)] text-xs text-[var(--text-muted)]">
+                    <tr>
+                      <th className="w-10 px-3 py-2">
+                        <input
+                          type="checkbox"
+                          aria-label="סימון כל השורות"
+                          className="h-4 w-4 accent-[var(--brand)]"
+                          checked={selectedIdeas.size === fileIdeas.length && fileIdeas.length > 0}
+                          ref={(node) => {
+                            if (node) node.indeterminate = selectedIdeas.size > 0 && selectedIdeas.size < fileIdeas.length;
+                          }}
+                          onChange={(event) => {
+                            setSelectedIdeas(event.target.checked ? new Set(fileIdeas.map((_, index) => index)) : new Set());
+                            lastIdeaClick.current = null;
+                          }}
+                        />
+                      </th>
+                      <th className="px-3 py-2 font-semibold">תאריך</th>
+                      <th className="px-3 py-2 font-semibold">אירוע</th>
+                      <th className="px-3 py-2 font-semibold">פרטים</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fileIdeas.map((idea, index) => {
+                      const checked = selectedIdeas.has(index);
+                      return (
+                        <tr
+                          key={`${idea.date}-${idea.title}-${index}`}
+                          onMouseDown={(event) => {
+                            // Shift-clicking a row would otherwise select the
+                            // page text between the two rows.
+                            if (event.shiftKey) event.preventDefault();
+                          }}
+                          onClick={(event) => toggleIdeaRow(index, event.shiftKey)}
+                          className={`cursor-pointer select-none border-t border-[var(--border-warm)] align-top transition ${checked ? 'bg-[var(--warm-accent-soft)]' : 'hover:bg-[var(--bg-subtle)]'}`}
+                        >
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              aria-label={`סימון ${idea.title}`}
+                              className="h-4 w-4 accent-[var(--brand)]"
+                              checked={checked}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleIdeaRow(index, event.shiftKey);
+                              }}
+                              onChange={() => undefined}
+                            />
+                          </td>
                           <td className="whitespace-nowrap px-3 py-2 font-semibold text-[var(--text-strong)]">
                             {dateLabel(idea.date)}{idea.time ? ` · ${idea.time}` : ''}
                           </td>
@@ -1237,250 +1924,222 @@ export default function AnnualPlannerPage() {
                             {[idea.location, idea.description].filter(Boolean).join(' · ')}
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          <label className="mt-4 block text-sm font-bold text-[var(--text-strong)]">
+            {g('יש עוד תכנים שתרצה להוסיף?', 'יש עוד תכנים שתרצי להוסיף?')}
             <textarea
               value={sourceText}
               onChange={(event) => setSourceText(event.target.value)}
-              rows={1}
-              className="mt-4 w-full resize-none rounded-xl border border-[var(--border-warm)] bg-white p-3 text-sm leading-6 outline-none focus:border-brand"
-              placeholder="אפשר גם להדביק כאן מטרות שנתיות, נושאים, מבצעים, קהלים או טון רצוי..."
+              rows={3}
+              className="mt-1 w-full resize-none rounded-xl border border-[var(--border-warm)] bg-white p-3 text-sm leading-6 outline-none focus:border-brand"
+              placeholder={g('כתוב מה תרצה לפרסם — הבקשה תישמר ותשמש כבסיס לתוכן.', 'כתבי מה תרצי לפרסם — הבקשה תישמר ותשמש כבסיס לתוכן.')}
             />
-            <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3">
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-[var(--text-strong)]">סה״כ ייווצרו</div>
-                <div className="mt-0.5 text-xs leading-5 text-[var(--text-muted)]">
-                  {rangeLabel} × {postsPerWeek === 1 ? 'פוסט אחד בשבוע' : `${postsPerWeek} פוסטים בשבוע`}
-                </div>
-              </div>
-              <div className="shrink-0 text-2xl font-extrabold text-brand" aria-live="polite">
-                {estimatedPosts} פוסטים
-              </div>
-            </div>
-          </div>
-          )}
+          </label>
 
-  {planMode === 'events' && (
-  <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
-            <div className="mb-4 flex items-center gap-2">
-              <CalendarDays className="h-5 w-5 text-brand" />
-              <h2 className="text-lg font-bold tracking-normal">בניית התוכנית</h2>
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-[var(--text-strong)]">סה״כ ייווצרו</div>
+              <div className="mt-0.5 text-xs leading-5 text-[var(--text-muted)]">
+                {rangeLabel} × {postsPerWeek === 1 ? 'פוסט אחד בשבוע' : `${postsPerWeek} פוסטים בשבוע`}
+              </div>
             </div>
-            <Step number={1} title="על בסיס מה ליצור את התוכנית?">
-              <div className="flex flex-wrap gap-1.5">
-                {PLANNING_BASIS_OPTIONS.map((option) => (
+            <div className="shrink-0 text-2xl font-extrabold text-brand" aria-live="polite">{estimatedPosts} פוסטים</div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void generateFromFile()}
+            disabled={generating || !canGeneratePlan}
+            className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand px-5 text-base font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
+          >
+            {generating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
+            {g('צור תוכן', 'צרי תוכן')}
+          </button>
+          {!canGeneratePlan && (
+            <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">{g('העלה קובץ, או כתוב מה תרצה לפרסם — ואז אפשר ליצור.', 'העלי קובץ, או כתבי מה תרצי לפרסם — ואז אפשר ליצור.')}</p>
+          )}
+          {planNote?.tone === 'error' && (
+            <div role="status" className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700">
+              {planNote.text}
+            </div>
+          )}
+        </section>
+      )}
+
+      {step === 3 && planMode === 'manual' && (
+        <section className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+            <h2 className="mb-1 text-lg font-bold tracking-normal">{g('בוא נתחיל ליצור', 'בואי נתחיל ליצור')}</h2>
+            <label className="block text-sm font-bold text-[var(--text-strong)]">
+              {g('כתוב מה תרצה לפרסם', 'כתבי מה תרצי לפרסם')}
+              <div className="mt-1 flex gap-2">
+                <textarea
+                  value={manualDraft}
+                  onChange={(event) => setManualDraft(event.target.value)}
+                  rows={2}
+                  placeholder={g('כאן כותב בצורה חופשית — אפשר כמה אירועים ותאריכים במשפט אחד', 'כאן כותבת בצורה חופשית — אפשר כמה אירועים ותאריכים במשפט אחד')}
+                  className="min-w-0 flex-1 resize-none rounded-[10px] border border-[var(--border-warm)] bg-white p-3 text-sm leading-6 outline-none focus:border-brand"
+                />
+                <button
+                  type="button"
+                  onClick={() => void addManualDraft()}
+                  disabled={manualParsing || !manualDraft.trim()}
+                  className="inline-flex min-h-11 shrink-0 items-center gap-1.5 self-center rounded-[10px] border border-brand/40 bg-brand/5 px-4 text-sm font-bold text-brand transition hover:bg-brand/10 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {manualParsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  {manualParsing ? 'מזהה אירועים…' : 'הוספה'}
+                </button>
+              </div>
+            </label>
+
+            <div className="mt-6 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setRecIndex((value) => Math.max(0, value - RECS_PER_PAGE))}
+                disabled={recIndex === 0}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-[var(--border-warm)] text-[var(--text-strong)] hover:bg-[var(--bg-subtle)] disabled:opacity-40"
+                aria-label="המלצות קודמות"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-4">
+                {rangeHolidays.slice(recIndex, recIndex + RECS_PER_PAGE).map((holiday) => (
                   <button
-                    key={option.value}
+                    key={holiday.id}
                     type="button"
-                    onClick={() => setPlanningBasis(option.value)}
-                    aria-pressed={planningBasis === option.value}
-                    className={`min-h-10 rounded-full border px-3 text-sm font-semibold transition ${
-                      planningBasis === option.value
-                        ? 'border-brand bg-brand/10 text-brand'
-                        : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:border-brand/40'
-                    }`}
+                    onClick={() => addManualEvent(eventName(holiday), holiday.date)}
+                    className="rounded-xl border border-[var(--border-warm)] bg-white p-2 text-right text-xs transition hover:border-brand/40 hover:bg-[var(--bg-subtle)]"
                   >
-                    {option.label}
+                    <div className="truncate font-bold text-[var(--text-strong)]">{eventName(holiday)}</div>
+                    <div className="mt-1 text-[11px] text-[var(--text-muted)] ltr">{holiday.date.slice(8, 10)}/{holiday.date.slice(5, 7)}</div>
+                    <div className="mt-1 text-[11px] font-bold text-brand">המלצות לתוכן</div>
                   </button>
                 ))}
+                {rangeHolidays.length === 0 && (
+                  <p className="col-span-full rounded-xl border border-dashed border-[var(--border-warm)] p-3 text-center text-xs text-[var(--text-muted)]">
+                    אין חגים או מועדים בטווח שנבחר.
+                  </p>
+                )}
               </div>
-            </Step>
-
-            <Step number={2} title="לכמה חודשים קדימה?">
-              <select value={holidayRangeMonths} onChange={(event) => setHolidayRangeMonths(Number(event.target.value))} className="h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
-                <option value={1}>החודש הקרוב</option>
-                <option value={3}>3 חודשים קדימה</option>
-                <option value={6}>6 חודשים קדימה</option>
-                <option value={12}>כל השנה, מהחודש הנוכחי</option>
-              </select>
-              <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">החגים יתחילו מהחודש הנוכחי ולא מינואר.</p>
-            </Step>
-
-            <Step number={3} title="כמה פוסטים בשבוע?">
-              <select value={postsPerWeek} onChange={(event) => setPostsPerWeek(Number(event.target.value))} className="h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
-                {[1, 2, 3, 4, 5].map((count) => (
-                  <option key={count} value={count}>{count === 1 ? 'פוסט אחד בשבוע' : `${count} פוסטים בשבוע`}</option>
-                ))}
-              </select>
-            </Step>
+              <button
+                type="button"
+                onClick={() => setRecIndex((value) => (value + RECS_PER_PAGE < rangeHolidays.length ? value + RECS_PER_PAGE : value))}
+                disabled={recIndex + RECS_PER_PAGE >= rangeHolidays.length}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-[var(--border-warm)] text-[var(--text-strong)] hover:bg-[var(--bg-subtle)] disabled:opacity-40"
+                aria-label="המלצות הבאות"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-          )}
 
-  <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+          <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-lg font-bold tracking-normal">האירועים שבחרת ליצור</h2>
+              <span className="rounded-full border border-brand/30 bg-brand/5 px-3 py-1 text-xs font-bold text-brand" aria-live="polite">
+                נשארו לך עוד {remainingSlots} מתוך {estimatedPosts}
+              </span>
+            </div>
+
+            <div className="max-h-[420px] space-y-2 overflow-y-auto pe-1">
+              {manualEvents.length === 0 && (
+                <p className="rounded-xl border border-dashed border-[var(--border-warm)] bg-[var(--bg-subtle)] p-4 text-center text-sm text-[var(--text-muted)]">
+                  עדיין לא נבחרו אירועים.
+                </p>
+              )}
+              {manualEvents.map((event) => (
+                <div key={event.id} className="flex items-center gap-2 rounded-xl border border-[var(--border-warm)] bg-white p-2">
+                  <span className="line-clamp-2 min-w-0 flex-1 text-sm font-bold leading-6 text-[var(--text-strong)]" title={event.title}>
+                    אירוע שמור - &quot;{event.title}&quot;
+                  </span>
+                  <input
+                    type="date"
+                    value={event.date}
+                    onChange={(change) => setManualEvents((current) => current.map((row) => (row.id === event.id ? { ...row, date: change.target.value } : row)))}
+                    className="h-9 shrink-0 rounded-[10px] border border-[var(--border-warm)] px-2 text-xs outline-none focus:border-brand"
+                    aria-label={`${g('בחר תאריך', 'בחרי תאריך')} ל${event.title}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setManualEvents((current) => current.filter((row) => row.id !== event.id))}
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-[var(--text-muted)] hover:bg-red-50 hover:text-red-700"
+                    aria-label={`הסרת ${event.title}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
             <button
               type="button"
-              onClick={generatePlan}
-              disabled={generating}
-              className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-brand px-5 py-3 text-sm font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
+              onClick={() => void generateFromManualEvents()}
+              disabled={generating || manualEvents.length === 0}
+              className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand px-5 text-base font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
             >
-              {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {generating ? 'יוצר תוכנית…' : 'יצירת תוכנית אוטומטית'}
+              {generating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
+              {g('צור תוכן', 'צרי תוכן')}
             </button>
-            {!canGeneratePlan && (
-              <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
-                {planningBasis === 'holidays'
-                  ? 'אין חגים או מועדים טעונים לשנה הזו.'
-                  : 'כדי ליצור לפי הרעיונות שלך — כתוב רעיון בכל שורה בתיבת הטקסט, או העלה קובץ תכנון.'}
-              </p>
-            )}
-            {planNote && (
-              <div
-                role="status"
-                className={`mt-3 rounded-xl border p-3 text-sm font-semibold ${
-                  planNote.tone === 'success'
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
-                    : 'border-red-300 bg-red-50 text-red-700'
-                }`}
-              >
+            {planNote?.tone === 'error' && (
+              <div role="status" className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700">
                 {planNote.text}
               </div>
             )}
-            {createdPreview.length > 0 && (
-              <>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-[var(--text-muted)]">
-                    סומנו {selectedPreview.size} מתוך {createdPreview.length}
-                  </span>
-                  <span className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPreview(new Set(createdPreview.map((item) => item.id)))}
-                      className="inline-flex min-h-9 items-center rounded-full border border-[var(--border-warm)] bg-white px-3 text-xs font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:text-brand"
-                    >
-                      סימון הכל
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPreview(new Set())}
-                      className="inline-flex min-h-9 items-center rounded-full border border-[var(--border-warm)] bg-white px-3 text-xs font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:text-brand"
-                    >
-                      ניקוי הכל
-                    </button>
-                  </span>
-                </div>
-                <div className="mt-2 max-h-72 overflow-auto rounded-xl border border-[var(--border-warm)]">
-                  <table className="w-full border-collapse text-right text-sm">
-                    <thead className="sticky top-0 bg-[var(--bg-subtle)] text-xs text-[var(--text-muted)]">
-                      <tr>
-                        <th className="w-10 px-3 py-2">
-                          <input
-                            type="checkbox"
-                            aria-label="סימון כל הפוסטים"
-                            className="h-4 w-4 accent-[var(--brand)]"
-                            checked={selectedPreview.size === createdPreview.length}
-                            ref={(node) => {
-                              if (node) node.indeterminate = selectedPreview.size > 0 && selectedPreview.size < createdPreview.length;
-                            }}
-                            onChange={(event) =>
-                              setSelectedPreview(event.target.checked ? new Set(createdPreview.map((item) => item.id)) : new Set())
-                            }
-                          />
-                        </th>
-                        <th className="px-3 py-2 font-semibold">תאריך</th>
-                        <th className="px-3 py-2 font-semibold">אירוע</th>
-                        <th className="px-3 py-2 font-semibold">כותרת</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {createdPreview.map((candidate) => {
-                        const checked = selectedPreview.has(candidate.id);
-                        return (
-                          <tr
-                            key={candidate.id}
-                            className={`border-t border-[var(--border-warm)] align-top ${checked ? 'bg-[var(--warm-accent-soft)]' : ''}`}
-                          >
-                            <td className="px-3 py-2">
-                              <input
-                                type="checkbox"
-                                aria-label={`סימון ${candidate.event_name}`}
-                                className="h-4 w-4 accent-[var(--brand)]"
-                                checked={checked}
-                                onChange={() =>
-                                  setSelectedPreview((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(candidate.id)) next.delete(candidate.id);
-                                    else next.add(candidate.id);
-                                    return next;
-                                  })
-                                }
-                              />
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2 font-semibold text-[var(--text-strong)]">{dateLabel(candidate.date)}</td>
-                            <td className="px-3 py-2 text-[var(--text-strong)]">{candidate.event_name}</td>
-                            <td className="px-3 py-2 text-xs leading-5 text-[var(--text-muted)]">{candidate.title}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void keepSelectedPreview()}
-                  disabled={selectedPreview.size === 0}
-                  className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-brand px-4 text-sm font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
-                >
-                  <Check className="h-4 w-4" />
-                  המשך עם {selectedPreview.size} הפוסטים המסומנים
-                </button>
-                <p className="mt-1 text-center text-[11px] text-[var(--text-faint)]">הפוסטים שלא סומנו יימחקו מהתוכנית.</p>
-              </>
-            )}
           </div>
-      </section>
+        </section>
       )}
 
-      <button
-        type="button"
-        onClick={() => setReviewOpen(true)}
-        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand px-5 text-base font-bold text-white shadow-sm transition hover:bg-brand-dark"
-      >
-        <Check className="h-5 w-5" />
-        עיון ואישור תכנים ({items.length})
-      </button>
+      {step === 3 && !planMode && (
+        <section className="rounded-xl border border-dashed border-[var(--border-warm)] bg-[var(--bg-subtle)] p-6 text-center text-sm text-[var(--text-muted)]">
+          {g('חזור לשלב 2 ובחר איך ליצור את התוכן.', 'חזרי לשלב 2 ובחרי איך ליצור את התוכן.')}
+        </section>
+      )}
 
-      <section className="grid min-h-[620px] gap-4 lg:grid-cols-[300px_1fr]">
-        <aside className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 shadow-[var(--warm-shadow-card)]">
-          <h2 className="mb-3 text-lg font-bold tracking-normal">חגים ומועדים</h2>
-          <div className="max-h-[560px] space-y-3 overflow-y-auto pe-1" aria-label="חגים לפי חודשים">
-            {monthOrder.map((month) => (
-              <div key={month} className="rounded-xl border border-[var(--border-warm)] bg-white p-3">
-                <div className="mb-2 text-sm font-bold text-[var(--text-strong)]">{MONTHS_HE[month]}</div>
-                <div className="space-y-1.5">
-                  {(holidaysByMonth.get(month) ?? []).map((holiday) => {
-                    const relatedItem = orderedItems.find((item) => item.date === holiday.date);
-                    return (
-                      <button
-                        key={holiday.id}
-                        type="button"
-                        onClick={() => {
-                          if (relatedItem) setSelectedId(relatedItem.id);
-                        }}
-                        title={relatedItem ? 'מעבר לפוסט של המועד הזה' : 'אין פוסט למועד הזה בתוכנית'}
-                        className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-right text-xs transition ${relatedItem ? 'text-[var(--text-strong)] hover:bg-brand/10' : 'text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]'}`}
-                      >
-                        <span className="truncate">{eventName(holiday)}</span>
-                        <span className="flex shrink-0 items-center gap-1.5">
-                          {relatedItem && <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden="true" />}
-                          <span className="ltr">{holiday.date.slice(8, 10)}/{holiday.date.slice(5, 7)}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+      {/* ── שלב 4 — עריכת הפוסטים ───────────────────────────────────── */}
+      {step === 4 && (
+        <section className="grid gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 shadow-[var(--warm-shadow-card)]">
+            <div>
+              <h2 className="text-lg font-bold tracking-normal">עריכת התוכן</h2>
+              <p className="mt-1 text-sm text-[var(--text-muted)]">{items.length} פוסטים בתוכנית · {readyCount} מאושרים · {pendingCount} טיוטות</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void addManualPost()}
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold text-[var(--text-strong)] hover:border-brand/40 hover:text-brand"
+              >
+                <Plus className="h-4 w-4" />
+                הוספת פוסט
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep(5)}
+                disabled={items.length === 0}
+                className="inline-flex min-h-11 items-center gap-2 rounded-[10px] bg-brand px-5 text-sm font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
+              >
+                לבדיקה אחרונה
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-        </aside>
+          {items.length === 0 ? emptyPlanNotice : <div className="mx-auto w-full max-w-2xl">{editorPanel}</div>}
+        </section>
+      )}
 
-        <div className={`${reviewOpen ? 'fixed inset-0 z-[80] overflow-y-auto bg-[var(--bg-subtle)] p-4 sm:p-6' : 'hidden'} rounded-xl border border-[var(--border-warm)] shadow-[var(--warm-shadow-card)]`} role="dialog" aria-modal="true" aria-label="עיון ואישור תכנים">
-          <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+      {/* ── שלב 5 — בדיקה אחרונה לפני שממשיכים ──────────────────────── */}
+      {step === 5 && (
+        <section className="grid gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 shadow-[var(--warm-shadow-card)]">
             <div className="min-w-0">
-              <h2 className="text-lg font-bold tracking-normal">עיון ואישור תכנים</h2>
+              <h2 className="text-lg font-bold tracking-normal">בדיקה אחרונה לפני שממשיכים</h2>
               <p className="mt-1 text-sm text-[var(--text-muted)]">
                 {items.length} פוסטים · {readyCount + doneCount} מוכנים או נשלחו · {pendingCount} טיוטות
               </p>
@@ -1490,23 +2149,18 @@ export default function AnnualPlannerPage() {
                 </div>
               )}
             </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setReviewOpen(false)} className="min-h-11 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold">חזרה לתכנון</button>
-              <button
-                type="button"
-                onClick={() => void finishAll()}
-                disabled={!brandId || readyCount === 0 || finishing}
-                className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-[10px] bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
-              >
-                {finishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                סיום — תזמן הכל ({readyCount})
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => void finishAll()}
+              disabled={!brandId || readyCount === 0 || finishing}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-[10px] bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
+            >
+              {finishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              פרסום / תזמון כל המודעות ({readyCount})
+            </button>
           </div>
 
-          {/* One filter bar instead of two static chip rows: each count is a
-              working filter on the list, so the numbers do a job. */}
-          <div className="mb-4 flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <FilterTab label="הכל" count={items.length} active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} />
             <FilterTab label="טיוטות" count={pendingCount} active={statusFilter === 'draft'} onClick={() => setStatusFilter('draft')} />
             <FilterTab label="לתזמון" count={toScheduleCount} active={statusFilter === 'to_schedule'} onClick={() => setStatusFilter('to_schedule')} />
@@ -1516,292 +2170,62 @@ export default function AnnualPlannerPage() {
           </div>
 
           {finishNote && (
-            <div className="mb-4 rounded-xl border border-brand/30 bg-[var(--warm-accent-soft)] p-3 text-sm text-[var(--text-strong)]">{finishNote}</div>
+            <div className="rounded-xl border border-brand/30 bg-[var(--warm-accent-soft)] p-3 text-sm text-[var(--text-strong)]">
+              {finishNote}
+              <button
+                type="button"
+                onClick={() => navigate('/admin/holidays')}
+                className="ms-3 font-bold text-brand underline"
+              >
+                מעבר לתצוגת לוח השנה
+              </button>
+            </div>
           )}
 
-          {orderedItems.length === 0 ? (
-            <div className="grid min-h-[460px] place-items-center rounded-xl border border-dashed border-[var(--border-warm)] bg-[var(--bg-subtle)] p-8 text-center text-[var(--text-muted)]">
-              <div>
-                <Sparkles className="mx-auto mb-3 h-8 w-8 text-brand" />
-                <p className="font-semibold text-[var(--text-strong)]">עדיין אין פוסטים בתוכנית</p>
-                <p className="mt-1 text-sm">לחצו על יצירת תוכנית אוטומטית, או הוסיפו פוסט ידנית.</p>
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
-              <div className="max-h-[452px] space-y-3 overflow-y-auto pe-1">
-                <button
-                  type="button"
-                  onClick={() => void addManualPost()}
-                  className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-[var(--border-warm)] bg-white px-3 py-2 text-xs font-bold text-[var(--text-muted)] transition hover:border-brand/40 hover:text-brand"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  הוספת פוסט
-                </button>
-                {visibleItems.length === 0 && (
-                  <p className="rounded-xl border border-dashed border-[var(--border-warm)] bg-[var(--bg-subtle)] p-4 text-center text-sm text-[var(--text-muted)]">
-                    אין פוסטים בסטטוס הזה.
-                  </p>
-                )}
-                {visibleItems.map((item) => {
-                  const active = selectedItem?.id === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => { setSelectedId(item.id); setHashtagInput(''); }}
-                      className={`w-full rounded-xl border p-3 text-right transition ${active ? 'border-brand bg-[var(--warm-accent-soft)]' : 'border-[var(--border-warm)] bg-white hover:bg-[var(--bg-subtle)]'}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        {mediaCache[item.id]?.[0] && (
-                          <img src={mediaCache[item.id][0].url} alt="תצוגה מקדימה" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
-                        )}
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-bold text-[var(--text-strong)]">{item.title || item.event_name || 'ללא כותרת'}</div>
-                          <div className="mt-1 text-xs text-[var(--text-muted)]">
-                            {dateLabel(item.date)} · {item.platform === 'both' ? 'פייסבוק ואינסטגרם' : PLATFORM_LABEL[item.platform]}
-                            {((item.media ?? []) as StoredMediaRecord[]).length > 0 && ' · 🖼 יש גרפיקה'}
-                          </div>
-                        </div>
-                        <span className={`shrink-0 rounded-full border px-2 py-1 text-[11px] font-bold ${STATUS_TONE[item.status]}`}>{STATUS_LABEL[item.status]}</span>
-                      </div>
-                      {item.error_message && <p className="mt-2 text-xs text-red-600">{item.error_message}</p>}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {selectedItem && (
-                <div className="sticky top-4 self-start rounded-xl border border-[var(--border-warm)] bg-white p-4">
-                  {/* Carousel-style quick navigation between the plan's posts. */}
-                  <div className="mb-3 flex items-center justify-between gap-2 border-b border-[var(--border-warm)] pb-3">
-                    <button type="button" onClick={() => selectByOffset(1)} className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--border-warm)] text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]" aria-label="הפוסט הבא">
-                      <ChevronLeft className="h-4 w-4" />
-                    </button>
-                    <div className="text-xs font-bold text-[var(--text-muted)]">
-                      פוסט {selectedIndex + 1} מתוך {visibleItems.length}
-                      {savingIds.has(selectedItem.id) && <span className="ms-2 text-brand">שומר...</span>}
-                    </div>
-                    <button type="button" onClick={() => selectByOffset(-1)} className="grid h-9 w-9 place-items-center rounded-[10px] border border-[var(--border-warm)] text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]" aria-label="הפוסט הקודם">
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-                  </div>
-
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-3">
-                      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-[var(--bg-subtle)] text-center">
-                        <div>
-                          <div className="text-base font-bold leading-4 text-brand">{selectedItem.date.slice(8, 10)}</div>
-                          <div className="text-[10px] text-[var(--text-muted)]">{MONTHS_HE[Number(selectedItem.date.slice(5, 7)) - 1]}</div>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-brand">{selectedItem.event_name}</p>
-                        <h3 className="text-base font-bold tracking-normal">{selectedItem.title || 'ללא כותרת'}</h3>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button type="button" onClick={() => updateItem(selectedItem.id, { status: 'to_schedule', error_message: null })} className="min-h-10 rounded-[10px] bg-brand px-3 text-xs font-bold text-white">תזמן</button>
-                      <button type="button" onClick={() => void deleteItem(selectedItem.id)} className="grid h-10 w-10 place-items-center rounded-[10px] text-[var(--text-muted)] hover:bg-red-50 hover:text-red-700" aria-label="מחיקת פוסט">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mb-4 overflow-hidden rounded-xl border border-[var(--border-warm)] bg-[var(--bg-subtle)]">
-                    {selectedMedia[0]?.url && (
-                      <img src={selectedMedia[0].url} alt="Preview של הפוסט" className="max-h-64 w-full object-cover" />
-                    )}
-                    <div className="p-3">
-                      <div className="text-sm font-bold text-[var(--text-strong)]">{selectedItem.title || selectedItem.event_name || 'ללא כותרת'}</div>
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--text-muted)]">{selectedItem.caption || 'תוכן הפוסט יופיע כאן.'}</p>
-                      {(selectedItem.hashtags ?? []).length > 0 && (
-                        <p className="mt-2 text-xs font-semibold leading-5 text-brand">{(selectedItem.hashtags ?? []).map(toHashtag).filter(Boolean).join(' ')}</p>
-                      )}
-                    </div>
-                  </div>
-
-                  <fieldset className="mb-3">
-                    <legend className="text-xs font-bold text-[var(--text-muted)]">סטטוס</legend>
-                    <div className="mt-1 grid grid-cols-3 gap-2" role="group" aria-label="סטטוס הפוסט">
-                      {(['to_publish', 'to_schedule', 'draft'] as const).map((status) => {
-                        const active = selectedItem.status === status
-                          || (status === 'to_schedule' && selectedItem.status === 'scheduled')
-                          || (status === 'to_publish' && selectedItem.status === 'published');
-                        return (
-                          <button
-                            key={status}
-                            type="button"
-                            aria-pressed={active}
-                            onClick={() => updateItem(selectedItem.id, { status, error_message: null })}
-                            className={`inline-flex min-h-10 items-center justify-center rounded-[10px] border px-2 text-xs font-bold transition ${active ? 'border-brand bg-brand text-white shadow-sm' : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:border-brand/40 hover:bg-[var(--bg-subtle)]'}`}
-                          >
-                            {STATUS_LABEL[status]}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {(selectedItem.status === 'scheduled' || selectedItem.status === 'published') && (
-                      <p className="mt-1 text-xs text-emerald-700">{STATUS_LABEL[selectedItem.status]} — בחירת סטטוס חדש תחזיר את הפוסט לתהליך.</p>
-                    )}
-                  </fieldset>
-
-                  <label className="text-xs font-bold text-[var(--text-muted)]">
-                    כותרת
-                    <input value={selectedItem.title} onChange={(event) => updateItem(selectedItem.id, { title: event.target.value })} className="mt-1 h-10 w-full rounded-[10px] border border-[var(--border-warm)] px-3 text-sm outline-none focus:border-brand" />
-                  </label>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <label className="text-xs font-bold text-[var(--text-muted)]">
-                      תאריך
-                      <input
-                        type="date"
-                        value={selectedItem.date}
-                        onChange={(event) => {
-                          const date = event.target.value;
-                          if (!date) return;
-                          updateItem(selectedItem.id, { date, scheduled_at: dayAtHourIso(date, new Date(selectedItem.scheduled_at ?? '').getHours() || 10) });
-                        }}
-                        className="mt-1 h-10 w-full rounded-[10px] border border-[var(--border-warm)] px-3 text-sm outline-none focus:border-brand"
-                      />
-                    </label>
-                    <label className="text-xs font-bold text-[var(--text-muted)]">
-                      מועד פרסום
-                      <input
-                        type="datetime-local"
-                        value={toLocalInput(selectedItem.scheduled_at)}
-                        onChange={(event) => {
-                          const value = new Date(event.target.value);
-                          if (!Number.isNaN(value.getTime())) updateItem(selectedItem.id, { scheduled_at: value.toISOString() });
-                        }}
-                        className="mt-1 h-10 w-full rounded-[10px] border border-[var(--border-warm)] px-3 text-sm outline-none focus:border-brand"
-                      />
-                    </label>
-                  </div>
-
-                  <fieldset className="mt-3">
-                    <legend className="text-xs font-bold text-[var(--text-muted)]">ערוץ</legend>
-                    <div className="mt-1 grid grid-cols-3 gap-2" role="group" aria-label="בחירת ערוץ לפרסום">
-                      {(['facebook', 'instagram', 'both'] as const).map((platform) => {
-                        const active = selectedItem.platform === platform;
-                        return (
-                          <button
-                            key={platform}
-                            type="button"
-                            aria-pressed={active}
-                            onClick={() => updateItem(selectedItem.id, { platform })}
-                            className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border px-3 text-sm font-bold transition ${active ? 'border-brand bg-brand text-white shadow-sm' : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:border-brand/40 hover:bg-[var(--bg-subtle)]'}`}
-                          >
-                            <SocialChannelIcon platform={platform === 'both' ? 'both' : platform} />
-                            {platform === 'both' ? 'שניהם' : PLATFORM_LABEL[platform]}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </fieldset>
-
-                  <label className="mt-3 block text-xs font-bold text-[var(--text-muted)]">
-                    תוכן הפוסט
-                    <textarea value={selectedItem.caption} onChange={(event) => updateItem(selectedItem.id, { caption: event.target.value })} rows={7} className="mt-1 w-full rounded-[10px] border border-[var(--border-warm)] p-3 text-sm leading-6 outline-none focus:border-brand" />
-                  </label>
-                  <div className="mt-1 text-left text-[11px] text-[var(--text-faint)] ltr">{selectedItem.caption.length} / 500</div>
-
-                  <div className="mt-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-bold text-[var(--text-muted)]">האשטגים</span>
+          {items.length === 0 ? emptyPlanNotice : (
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+              <div>{editorPanel}</div>
+              <aside className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 shadow-[var(--warm-shadow-card)]">
+                <h3 className="mb-3 text-sm font-bold text-[var(--text-strong)]">כל האירועים</h3>
+                <div className="max-h-[560px] space-y-2 overflow-y-auto pe-1">
+                  {visibleItems.length === 0 && (
+                    <p className="rounded-xl border border-dashed border-[var(--border-warm)] bg-[var(--bg-subtle)] p-4 text-center text-sm text-[var(--text-muted)]">
+                      אין פוסטים בסטטוס הזה.
+                    </p>
+                  )}
+                  {visibleItems.map((item, index) => {
+                    const active = selectedItem?.id === item.id;
+                    return (
                       <button
+                        key={item.id}
                         type="button"
-                        onClick={() => void generateAiHashtags(selectedItem)}
-                        disabled={hashtagAiId === selectedItem.id}
-                        className="inline-flex items-center gap-1 rounded-full border border-[var(--border-warm)] bg-white px-2.5 py-1 text-[11px] font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:text-brand disabled:opacity-60"
+                        onClick={() => { setSelectedId(item.id); setHashtagInput(''); }}
+                        className={`w-full rounded-xl border p-2.5 text-right transition ${active ? 'border-brand bg-[var(--warm-accent-soft)]' : 'border-[var(--border-warm)] bg-white hover:bg-[var(--bg-subtle)]'}`}
                       >
-                        {hashtagAiId === selectedItem.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                        יצירה עם AI
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="min-w-0 truncate text-sm font-bold text-[var(--text-strong)]">
+                            אירוע {index + 1} · {item.title || item.event_name || 'ללא כותרת'}
+                          </span>
+                          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-bold ${STATUS_TONE[item.status]}`}>{STATUS_LABEL[item.status]}</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-[var(--text-muted)]">
+                          {dateLabel(item.date)} · {item.platform === 'both' ? 'פייסבוק ואינסטגרם' : PLATFORM_LABEL[item.platform]}
+                          {((item.media ?? []) as StoredMediaRecord[]).length > 0 && ' · 🖼 יש גרפיקה'}
+                        </div>
+                        {item.error_message && <p className="mt-1 text-[11px] text-red-600">{item.error_message}</p>}
                       </button>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                      {(selectedItem.hashtags ?? []).map(toHashtag).filter(Boolean).map((tag) => (
-                        <button
-                          key={tag}
-                          type="button"
-                          title="הסרת האשטג"
-                          onClick={() => updateItem(selectedItem.id, { hashtags: (selectedItem.hashtags ?? []).map(toHashtag).filter((t) => t && t !== tag) })}
-                          className="inline-flex items-center gap-1 rounded-full border border-[var(--border-warm)] bg-[var(--bg-subtle)] px-2.5 py-1 text-xs font-semibold text-[var(--text-strong)] hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-                        >
-                          {tag}
-                          <span aria-hidden="true">×</span>
-                        </button>
-                      ))}
-                      <input
-                        value={hashtagInput}
-                        onChange={(event) => setHashtagInput(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ',') {
-                            event.preventDefault();
-                            addHashtag(selectedItem);
-                          }
-                        }}
-                        onBlur={() => addHashtag(selectedItem)}
-                        placeholder="+ הוספה"
-                        className="h-8 w-24 rounded-full border border-dashed border-[var(--border-warm)] bg-white px-2.5 text-xs outline-none focus:border-brand"
-                      />
-                    </div>
-                  </div>
-
-                  <label className="mt-3 block text-xs font-bold text-[var(--text-muted)]">
-                    הנחיות עיצוב ותוכן (חופשי)
-                    <textarea
-                      value={selectedItem.design_notes}
-                      onChange={(event) => updateItem(selectedItem.id, { design_notes: event.target.value })}
-                      rows={2}
-                      placeholder="למשל: צבעים חמים, בלי אנשים בתמונה, טון חגיגי..."
-                      className="mt-1 w-full rounded-[10px] border border-[var(--border-warm)] p-3 text-sm leading-6 outline-none focus:border-brand"
-                    />
-                  </label>
-
-                  <div className="mt-3">
-                    <MediaEditor media={selectedMedia} setMedia={setSelectedMedia} brandId={selectedItem.brand_id ?? brandId ?? null} />
-                  </div>
-
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => createGraphicFor(selectedItem)}
-                      className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-[10px] border border-brand/40 bg-[var(--warm-accent-soft)] px-4 text-sm font-bold text-brand transition hover:bg-brand hover:text-white"
-                    >
-                      <Wand2 className="h-4 w-4" />
-                      יצירת תמונה עם AI
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void regenerateCaption(selectedItem)}
-                      disabled={aiItemId === selectedItem.id}
-                      className="inline-flex min-h-10 items-center gap-2 rounded-[10px] border border-[var(--border-warm)] px-4 text-sm font-bold text-[var(--text-strong)] hover:bg-[var(--bg-subtle)] disabled:opacity-60"
-                    >
-                      {aiItemId === selectedItem.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
-                      צור מחדש
-                    </button>
-                  </div>
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">יצירת גרפיקה עוברת למסך יצירת התוכן וחוזרת לכאן אוטומטית עם התוצר.</p>
-
-                  <button
-                    type="button"
-                    onClick={() => selectByOffset(1)}
-                    className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-emerald-600 px-4 text-sm font-bold text-white transition hover:bg-emerald-700"
-                  >
-                    <Send className="h-4 w-4" />
-                    שמור ועבור לבא
-                  </button>
-                  <p className="mt-1 text-center text-[11px] text-[var(--text-faint)]">כל שינוי נשמר אוטומטית.</p>
+                    );
+                  })}
                 </div>
-              )}
+              </aside>
             </div>
           )}
-        </div>
-      </section>
+        </section>
+      )}
     </div>
   );
 }
+
 
 function SocialChannelIcon({ platform }: { platform: SocialPlatform | 'both' }) {
   if (platform === 'both') {
@@ -1816,18 +2240,6 @@ function SocialChannelIcon({ platform }: { platform: SocialPlatform | 'both' }) 
       <circle cx="12" cy="12" r="4" />
       <circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" />
     </svg>
-  );
-}
-
-function Step({ number, title, children }: { number: number; title: string; children: ReactNode }) {
-  return (
-    <div className="mt-3 rounded-xl border border-[var(--border-warm)] bg-[var(--bg-subtle)] p-3">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand text-xs font-bold text-white">{number}</span>
-        <span className="text-sm font-bold text-[var(--text-strong)]">{title}</span>
-      </div>
-      {children}
-    </div>
   );
 }
 

@@ -184,7 +184,7 @@ export default function SocialScheduleSection({
   trailingAction = null,
   onScheduled,
   producedImages = null,
-  triggerLabel = 'תזמון לרשתות חברתיות',
+  triggerLabel = 'תזמון',
   triggerClassName = '',
 }: {
   captionSource?: CaptionSource;
@@ -314,15 +314,15 @@ export default function SocialScheduleSection({
   return (
     <div>
       {title && <label className="block text-sm font-semibold mb-2">{title}</label>}
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
         <button
           type="button"
           onClick={openSchedule}
-          className={`inline-flex min-h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50 ${triggerClassName}`}
+          className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-violet-200 bg-white px-2.5 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50 ${triggerClassName}`}
         >
+          <span>{triggerLabel}</span>
           <FacebookIcon />
           <InstagramIcon />
-          <span>{triggerLabel}</span>
         </button>
         {trailingAction}
       </div>
