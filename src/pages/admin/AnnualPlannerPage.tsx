@@ -269,6 +269,8 @@ export default function AnnualPlannerPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sourceText, setSourceText] = useState('');
   const [planningBasis, setPlanningBasis] = useState<PlanningBasis>('both');
+  // Decision-tree entry point: build from an uploaded file, or from events.
+  const [planMode, setPlanMode] = useState<'file' | 'events' | null>(null);
   const [holidayRangeMonths, setHolidayRangeMonths] = useState(3);
   const [postsPerWeek, setPostsPerWeek] = useState(2);
   const [sourceFileName, setSourceFileName] = useState('');
@@ -288,6 +290,10 @@ export default function AnnualPlannerPage() {
   // itself — the old note rendered further down the page, so a run that
   // produced nothing looked like a dead button.
   const [planNote, setPlanNote] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  // The posts created by the last generation run, shown as a summary table.
+  const [createdPreview, setCreatedPreview] = useState<AnnualPlanItem[]>([]);
+  // Only the checked posts stay in the plan when moving on to the review page.
+  const [selectedPreview, setSelectedPreview] = useState<Set<string>>(new Set());
   const [hashtagAiId, setHashtagAiId] = useState<string | null>(null);
   // The status filter doubles as the summary display — clicking a count
   // filters the list, so the numbers earn their screen space.
@@ -547,13 +553,17 @@ export default function AnnualPlannerPage() {
           if (cells.some((cell) => cell.trim())) rows.push(cells);
         });
         if (rows.length === 0) throw new Error('הגיליון הראשון ריק');
-        setFileIdeas(parseSpreadsheetRows(rows, year));
-        setSourceText(rows.map((cells) => cells.join(' | ')).join('\n').trim().slice(0, 6000));
+        const ideas = parseSpreadsheetRows(rows, year);
+        setFileIdeas(ideas);
+        // Structured events are shown in a table below, so the free-text box
+        // stays clean for the user's own notes.
+        setSourceText(ideas.length > 0 ? '' : rows.map((cells) => cells.join(' | ')).join('\n').trim().slice(0, 6000));
       } else if (/\.csv$/i.test(file.name) || /csv/i.test(file.type)) {
         const text = (await file.text()).trim();
         const rows = text.split(/\r?\n/).map((line) => line.split(/[,;\t]/).map((cell) => cell.trim())).filter((cells) => cells.some(Boolean));
-        setFileIdeas(parseSpreadsheetRows(rows, year));
-        setSourceText(text.slice(0, 6000));
+        const ideas = parseSpreadsheetRows(rows, year);
+        setFileIdeas(ideas);
+        setSourceText(ideas.length > 0 ? '' : text.slice(0, 6000));
       } else if (/\.json$/i.test(file.name) || /json/i.test(file.type)) {
         setSourceText((await file.text()).slice(0, 6000));
       } else {
@@ -573,10 +583,10 @@ export default function AnnualPlannerPage() {
 
   async function downloadTemplate() {
     const rows = [
-      ['חודש', 'תאריך יעד', 'נושא/קמפיין', 'קהל יעד', 'מסר מרכזי', 'הצעה/מבצע', 'ערוצים', 'טון כתיבה', 'הערות'],
-      ['ינואר', `${year}-01-15`, 'פתיחת שנה ותוכניות קדימה', 'לקוחות קיימים', 'מתחילים את השנה עם סדר ובהירות', '', 'פייסבוק, אינסטגרם', 'מקצועי וחם', 'אפשר להתאים לחג/אירוע סמוך'],
-      ['מרץ', `${year}-03-10`, 'קמפיין אביב', 'לקוחות חדשים', 'זמן טוב לרענן תהליך/שירות', 'פגישת ייעוץ ראשונה', 'פייסבוק', 'קליל וישיר', ''],
-      ['ספטמבר', `${year}-09-01`, 'חזרה לשגרה', 'קהילה מקומית', 'חוזרים לפעילות עם תוכן שימושי', '', 'אינסטגרם', 'קהילתי', ''],
+      ['חודש', 'תאריך יעד', 'נושא', 'מסר מרכזי', 'הצעה/מבצע', 'ערוצים', 'טון כתיבה', 'הערות'],
+      ['ינואר', `${year}-01-15`, 'פתיחת שנה ותוכניות קדימה', 'מתחילים את השנה עם סדר ובהירות', '', 'פייסבוק, אינסטגרם', 'מקצועי וחם', 'אפשר להתאים לחג/אירוע סמוך'],
+      ['מרץ', `${year}-03-10`, 'קמפיין אביב', 'זמן טוב לרענן תהליך/שירות', 'פגישת ייעוץ ראשונה', 'פייסבוק', 'קליל וישיר', ''],
+      ['ספטמבר', `${year}-09-01`, 'חזרה לשגרה', 'חוזרים לפעילות עם תוכן שימושי', '', 'אינסטגרם', 'קהילתי', ''],
     ];
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'PrimeOS';
@@ -588,7 +598,6 @@ export default function AnnualPlannerPage() {
       { width: 14 },
       { width: 14 },
       { width: 28 },
-      { width: 20 },
       { width: 34 },
       { width: 20 },
       { width: 20 },
@@ -812,11 +821,16 @@ export default function AnnualPlannerPage() {
       const rows = (refreshed ?? []) as AnnualPlanItem[];
       setItems(rows);
       setMediaCache({});
-      const firstNew = ((inserted ?? []) as AnnualPlanItem[])[0];
+      const insertedRows = (inserted ?? []) as AnnualPlanItem[];
+      const firstNew = insertedRows[0];
       setSelectedId(firstNew?.id ?? rows[0]?.id ?? null);
+      setCreatedPreview(insertedRows);
+      setSelectedPreview(new Set(insertedRows.map((item) => item.id)));
       setPlanNote({ tone: 'success', text: `נוצרו ${candidates.length} פוסטים בתוכנית — אפשר לעבור עליהם ולאשר.` });
     } catch (error) {
       const message = `יצירת התוכנית נכשלה: ${error instanceof Error ? error.message : String(error)}`;
+      setCreatedPreview([]);
+      setSelectedPreview(new Set());
       setLoadError(message);
       setPlanNote({ tone: 'error', text: message });
     } finally {
@@ -856,6 +870,25 @@ export default function AnnualPlannerPage() {
       setSelectedId(row.id);
     } catch (error) {
       setLoadError(`הוספת פוסט נכשלה: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  // Drop the unchecked posts from the plan, then move on to the review page.
+  async function keepSelectedPreview() {
+    const removed = createdPreview.filter((item) => !selectedPreview.has(item.id));
+    setItems((current) => current.filter((item) => selectedPreview.has(item.id) || !createdPreview.some((created) => created.id === item.id)));
+    if (selectedId && removed.some((item) => item.id === selectedId)) {
+      setSelectedId(createdPreview.find((item) => selectedPreview.has(item.id))?.id ?? null);
+    }
+    setCreatedPreview([]);
+    setSelectedPreview(new Set());
+    setReviewOpen(true);
+    if (removed.length > 0) {
+      const { error } = await createSupabaseBrowserClient()
+        .from('annual_plan_items')
+        .delete()
+        .in('id', removed.map((item) => item.id));
+      if (error) setLoadError(`מחיקת הפוסטים שלא סומנו נכשלה: ${error.message}`);
     }
   }
 
@@ -1112,123 +1145,294 @@ export default function AnnualPlannerPage() {
         </div>
       )}
 
-      <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <button
-              type="button"
-              onClick={() => void downloadTemplate()}
-              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:bg-[var(--bg-subtle)] hover:text-brand"
-            >
-              <Download className="h-4 w-4" />
-              הורדת טמפלט
-            </button>
-            <label className="inline-flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-brand/40 bg-brand/5 px-4 text-sm font-bold text-brand transition hover:bg-brand/10">
-              {sourceFileReading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
-              <span className="truncate">{sourceFileName || 'העלה קובץ תכנון שנתי'}</span>
-              <input type="file" className="sr-only" accept=".xlsx,.txt,.md,.csv,.json,.pdf,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void handleFile(event.target.files?.[0] ?? null)} />
-            </label>
-          </div>
-          <p className="mt-2 text-xs text-[var(--text-muted)]">אם יש לך תוכן מוכן, העלה כאן — PDF / Word / XLSX / TXT / CSV.</p>
-          {sourceFileError && <p className="mt-2 text-sm text-red-600">{sourceFileError}</p>}
-          {fileIdeas.length > 0 && (
-            <p className="mt-2 text-sm font-semibold text-emerald-700">
-              זוהו {fileIdeas.length} אירועים עם תאריכים מהקובץ — הם ישמשו כבסיס לתוכנית.
-            </p>
-          )}
-          <textarea
-            value={sourceText}
-            onChange={(event) => setSourceText(event.target.value)}
-            rows={1}
-            className="mt-4 w-full resize-none rounded-xl border border-[var(--border-warm)] bg-white p-3 text-sm leading-6 outline-none focus:border-brand"
-            placeholder="אפשר גם להדביק כאן מטרות שנתיות, נושאים, מבצעים, קהלים או טון רצוי..."
-          />
-        </div>
-
-        <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
-          <div className="mb-4 flex items-center gap-2">
-            <CalendarDays className="h-5 w-5 text-brand" />
-            <h2 className="text-lg font-bold tracking-normal">בניית התוכנית</h2>
-          </div>
-          <Step number={1} title="על בסיס מה ליצור את התוכנית?">
-            <div className="flex flex-wrap gap-1.5">
-              {PLANNING_BASIS_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setPlanningBasis(option.value)}
-                  aria-pressed={planningBasis === option.value}
-                  className={`min-h-10 rounded-full border px-3 text-sm font-semibold transition ${
-                    planningBasis === option.value
-                      ? 'border-brand bg-brand/10 text-brand'
-                      : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:border-brand/40'
+      <section className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+        <h2 className="mb-4 text-lg font-bold tracking-normal">איך לבנות את התוכנית?</h2>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {([
+            { value: 'file', label: 'להעלות פוסטים מקובץ', hint: 'קובץ אקסל, Word או PDF שכבר מוכן', icon: FileUp },
+            { value: 'events', label: 'להכין לפי אירועים קיימים', hint: 'חגים, מועדים והרעיונות שלך', icon: CalendarDays },
+          ] as const).map((option, index) => {
+            const active = planMode === option.value;
+            const Icon = option.icon;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  setPlanMode(option.value);
+                  // File mode builds only from the uploaded content; events mode
+                  // keeps the holiday-based default.
+                  setPlanningBasis(option.value === 'file' ? 'ideas' : 'both');
+                }}
+                aria-pressed={active}
+                className={`group flex items-center gap-3 rounded-2xl border p-4 text-right transition ${
+                  active
+                    ? 'border-brand bg-[var(--warm-accent-soft)] shadow-[var(--warm-shadow-card)]'
+                    : 'border-[var(--border-warm)] bg-white hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-[var(--warm-shadow-card)]'
+                }`}
+              >
+                <span
+                  className={`grid h-11 w-11 shrink-0 place-items-center rounded-full border text-base font-extrabold transition ${
+                    active
+                      ? 'border-brand bg-brand text-white'
+                      : 'border-[var(--border-warm)] bg-[var(--bg-subtle)] text-[var(--text-muted)] group-hover:border-brand/40 group-hover:text-brand'
                   }`}
                 >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </Step>
-
-          <Step number={2} title="לכמה חודשים קדימה?">
-            <select value={holidayRangeMonths} onChange={(event) => setHolidayRangeMonths(Number(event.target.value))} className="h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
-              <option value={1}>החודש הקרוב</option>
-              <option value={3}>3 חודשים קדימה</option>
-              <option value={6}>6 חודשים קדימה</option>
-              <option value={12}>כל השנה, מהחודש הנוכחי</option>
-            </select>
-            <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">החגים יתחילו מהחודש הנוכחי ולא מינואר.</p>
-          </Step>
-
-          <Step number={3} title="כמה פוסטים בשבוע?">
-            <select value={postsPerWeek} onChange={(event) => setPostsPerWeek(Number(event.target.value))} className="h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
-              {[1, 2, 3, 4, 5].map((count) => (
-                <option key={count} value={count}>{count === 1 ? 'פוסט אחד בשבוע' : `${count} פוסטים בשבוע`}</option>
-              ))}
-            </select>
-          </Step>
-
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3">
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-[var(--text-strong)]">סה״כ ייווצרו</div>
-              <div className="mt-0.5 text-xs leading-5 text-[var(--text-muted)]">
-                {rangeLabel} × {postsPerWeek === 1 ? 'פוסט אחד בשבוע' : `${postsPerWeek} פוסטים בשבוע`}
-              </div>
-            </div>
-            <div className="shrink-0 text-2xl font-extrabold text-brand" aria-live="polite">
-              {estimatedPosts} פוסטים
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={generatePlan}
-            disabled={generating}
-            className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-brand px-5 py-3 text-sm font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
-          >
-            {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {generating ? 'יוצר תוכנית…' : 'יצירת תוכנית אוטומטית'}
-          </button>
-          {!canGeneratePlan && (
-            <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
-              {planningBasis === 'holidays'
-                ? 'אין חגים או מועדים טעונים לשנה הזו.'
-                : 'כדי ליצור לפי הרעיונות שלך — כתוב רעיון בכל שורה בתיבת הטקסט, או העלה קובץ תכנון.'}
-            </p>
-          )}
-          {planNote && (
-            <div
-              role="status"
-              className={`mt-3 rounded-xl border p-3 text-sm font-semibold ${
-                planNote.tone === 'success'
-                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
-                  : 'border-red-300 bg-red-50 text-red-700'
-              }`}
-            >
-              {planNote.text}
-            </div>
-          )}
+                  {index + 1}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-bold text-[var(--text-strong)]">{option.label}</span>
+                  <span className="mt-0.5 block text-xs leading-5 text-[var(--text-muted)]">{option.hint}</span>
+                </span>
+                <Icon className={`h-5 w-5 shrink-0 transition ${active ? 'text-brand' : 'text-[var(--text-faint)] group-hover:text-brand'}`} aria-hidden="true" />
+              </button>
+            );
+          })}
         </div>
       </section>
+
+      {planMode && (
+        <section className="grid gap-4">
+  {planMode === 'file' && (
+          <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <button
+                type="button"
+                onClick={() => void downloadTemplate()}
+                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-white px-4 text-sm font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:bg-[var(--bg-subtle)] hover:text-brand"
+              >
+                <Download className="h-4 w-4" />
+                הורדת טמפלט
+              </button>
+              <label className="inline-flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-brand/40 bg-brand/5 px-4 text-sm font-bold text-brand transition hover:bg-brand/10">
+                {sourceFileReading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
+                <span className="truncate">{sourceFileName || 'העלה קובץ תכנון שנתי'}</span>
+                <input type="file" className="sr-only" accept=".xlsx,.txt,.md,.csv,.json,.pdf,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void handleFile(event.target.files?.[0] ?? null)} />
+              </label>
+            </div>
+            <p className="mt-2 text-xs text-[var(--text-muted)]">אם יש לך תוכן מוכן, העלה כאן — PDF / Word / XLSX / TXT / CSV.</p>
+            {sourceFileError && <p className="mt-2 text-sm text-red-600">{sourceFileError}</p>}
+            {fileIdeas.length > 0 && (
+              <>
+                <p className="mt-2 text-sm font-semibold text-emerald-700">
+                  זוהו {fileIdeas.length} אירועים עם תאריכים מהקובץ — הם ישמשו כבסיס לתוכנית.
+                </p>
+                <div className="mt-3 max-h-72 overflow-auto rounded-xl border border-[var(--border-warm)]">
+                  <table className="w-full border-collapse text-right text-sm">
+                    <thead className="sticky top-0 bg-[var(--bg-subtle)] text-xs text-[var(--text-muted)]">
+                      <tr>
+                        <th className="px-3 py-2 font-semibold">תאריך</th>
+                        <th className="px-3 py-2 font-semibold">אירוע</th>
+                        <th className="px-3 py-2 font-semibold">פרטים</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fileIdeas.map((idea, index) => (
+                        <tr key={`${idea.date}-${idea.title}-${index}`} className="border-t border-[var(--border-warm)] align-top">
+                          <td className="whitespace-nowrap px-3 py-2 font-semibold text-[var(--text-strong)]">
+                            {dateLabel(idea.date)}{idea.time ? ` · ${idea.time}` : ''}
+                          </td>
+                          <td className="px-3 py-2 text-[var(--text-strong)]">{idea.title}</td>
+                          <td className="px-3 py-2 text-xs leading-5 text-[var(--text-muted)]">
+                            {[idea.location, idea.description].filter(Boolean).join(' · ')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+            <textarea
+              value={sourceText}
+              onChange={(event) => setSourceText(event.target.value)}
+              rows={1}
+              className="mt-4 w-full resize-none rounded-xl border border-[var(--border-warm)] bg-white p-3 text-sm leading-6 outline-none focus:border-brand"
+              placeholder="אפשר גם להדביק כאן מטרות שנתיות, נושאים, מבצעים, קהלים או טון רצוי..."
+            />
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[var(--text-strong)]">סה״כ ייווצרו</div>
+                <div className="mt-0.5 text-xs leading-5 text-[var(--text-muted)]">
+                  {rangeLabel} × {postsPerWeek === 1 ? 'פוסט אחד בשבוע' : `${postsPerWeek} פוסטים בשבוע`}
+                </div>
+              </div>
+              <div className="shrink-0 text-2xl font-extrabold text-brand" aria-live="polite">
+                {estimatedPosts} פוסטים
+              </div>
+            </div>
+          </div>
+          )}
+
+  {planMode === 'events' && (
+  <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+            <div className="mb-4 flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-brand" />
+              <h2 className="text-lg font-bold tracking-normal">בניית התוכנית</h2>
+            </div>
+            <Step number={1} title="על בסיס מה ליצור את התוכנית?">
+              <div className="flex flex-wrap gap-1.5">
+                {PLANNING_BASIS_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setPlanningBasis(option.value)}
+                    aria-pressed={planningBasis === option.value}
+                    className={`min-h-10 rounded-full border px-3 text-sm font-semibold transition ${
+                      planningBasis === option.value
+                        ? 'border-brand bg-brand/10 text-brand'
+                        : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:border-brand/40'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </Step>
+
+            <Step number={2} title="לכמה חודשים קדימה?">
+              <select value={holidayRangeMonths} onChange={(event) => setHolidayRangeMonths(Number(event.target.value))} className="h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
+                <option value={1}>החודש הקרוב</option>
+                <option value={3}>3 חודשים קדימה</option>
+                <option value={6}>6 חודשים קדימה</option>
+                <option value={12}>כל השנה, מהחודש הנוכחי</option>
+              </select>
+              <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">החגים יתחילו מהחודש הנוכחי ולא מינואר.</p>
+            </Step>
+
+            <Step number={3} title="כמה פוסטים בשבוע?">
+              <select value={postsPerWeek} onChange={(event) => setPostsPerWeek(Number(event.target.value))} className="h-11 w-full rounded-[10px] border border-[var(--border-warm)] bg-white px-3 text-sm outline-none focus:border-brand">
+                {[1, 2, 3, 4, 5].map((count) => (
+                  <option key={count} value={count}>{count === 1 ? 'פוסט אחד בשבוע' : `${count} פוסטים בשבוע`}</option>
+                ))}
+              </select>
+            </Step>
+          </div>
+          )}
+
+  <div className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-5 shadow-[var(--warm-shadow-card)]">
+            <button
+              type="button"
+              onClick={generatePlan}
+              disabled={generating}
+              className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-brand px-5 py-3 text-sm font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
+            >
+              {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {generating ? 'יוצר תוכנית…' : 'יצירת תוכנית אוטומטית'}
+            </button>
+            {!canGeneratePlan && (
+              <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
+                {planningBasis === 'holidays'
+                  ? 'אין חגים או מועדים טעונים לשנה הזו.'
+                  : 'כדי ליצור לפי הרעיונות שלך — כתוב רעיון בכל שורה בתיבת הטקסט, או העלה קובץ תכנון.'}
+              </p>
+            )}
+            {planNote && (
+              <div
+                role="status"
+                className={`mt-3 rounded-xl border p-3 text-sm font-semibold ${
+                  planNote.tone === 'success'
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                    : 'border-red-300 bg-red-50 text-red-700'
+                }`}
+              >
+                {planNote.text}
+              </div>
+            )}
+            {createdPreview.length > 0 && (
+              <>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-[var(--text-muted)]">
+                    סומנו {selectedPreview.size} מתוך {createdPreview.length}
+                  </span>
+                  <span className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPreview(new Set(createdPreview.map((item) => item.id)))}
+                      className="inline-flex min-h-9 items-center rounded-full border border-[var(--border-warm)] bg-white px-3 text-xs font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:text-brand"
+                    >
+                      סימון הכל
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPreview(new Set())}
+                      className="inline-flex min-h-9 items-center rounded-full border border-[var(--border-warm)] bg-white px-3 text-xs font-bold text-[var(--text-strong)] transition hover:border-brand/40 hover:text-brand"
+                    >
+                      ניקוי הכל
+                    </button>
+                  </span>
+                </div>
+                <div className="mt-2 max-h-72 overflow-auto rounded-xl border border-[var(--border-warm)]">
+                  <table className="w-full border-collapse text-right text-sm">
+                    <thead className="sticky top-0 bg-[var(--bg-subtle)] text-xs text-[var(--text-muted)]">
+                      <tr>
+                        <th className="w-10 px-3 py-2">
+                          <input
+                            type="checkbox"
+                            aria-label="סימון כל הפוסטים"
+                            className="h-4 w-4 accent-[var(--brand)]"
+                            checked={selectedPreview.size === createdPreview.length}
+                            ref={(node) => {
+                              if (node) node.indeterminate = selectedPreview.size > 0 && selectedPreview.size < createdPreview.length;
+                            }}
+                            onChange={(event) =>
+                              setSelectedPreview(event.target.checked ? new Set(createdPreview.map((item) => item.id)) : new Set())
+                            }
+                          />
+                        </th>
+                        <th className="px-3 py-2 font-semibold">תאריך</th>
+                        <th className="px-3 py-2 font-semibold">אירוע</th>
+                        <th className="px-3 py-2 font-semibold">כותרת</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {createdPreview.map((candidate) => {
+                        const checked = selectedPreview.has(candidate.id);
+                        return (
+                          <tr
+                            key={candidate.id}
+                            className={`border-t border-[var(--border-warm)] align-top ${checked ? 'bg-[var(--warm-accent-soft)]' : ''}`}
+                          >
+                            <td className="px-3 py-2">
+                              <input
+                                type="checkbox"
+                                aria-label={`סימון ${candidate.event_name}`}
+                                className="h-4 w-4 accent-[var(--brand)]"
+                                checked={checked}
+                                onChange={() =>
+                                  setSelectedPreview((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(candidate.id)) next.delete(candidate.id);
+                                    else next.add(candidate.id);
+                                    return next;
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 font-semibold text-[var(--text-strong)]">{dateLabel(candidate.date)}</td>
+                            <td className="px-3 py-2 text-[var(--text-strong)]">{candidate.event_name}</td>
+                            <td className="px-3 py-2 text-xs leading-5 text-[var(--text-muted)]">{candidate.title}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void keepSelectedPreview()}
+                  disabled={selectedPreview.size === 0}
+                  className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-brand px-4 text-sm font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
+                >
+                  <Check className="h-4 w-4" />
+                  המשך עם {selectedPreview.size} הפוסטים המסומנים
+                </button>
+                <p className="mt-1 text-center text-[11px] text-[var(--text-faint)]">הפוסטים שלא סומנו יימחקו מהתוכנית.</p>
+              </>
+            )}
+          </div>
+      </section>
+      )}
 
       <button
         type="button"
@@ -1324,8 +1528,8 @@ export default function AnnualPlannerPage() {
               </div>
             </div>
           ) : (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-              <div className="max-h-[900px] space-y-3 overflow-y-auto pe-1">
+            <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+              <div className="max-h-[452px] space-y-3 overflow-y-auto pe-1">
                 <button
                   type="button"
                   onClick={() => void addManualPost()}
