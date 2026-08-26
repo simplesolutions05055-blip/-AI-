@@ -16,7 +16,6 @@ export default function RequestsCostsPage() {
       <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-normal">עלויות לפי בקשה</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">בדקו כמה עלתה כל בקשה ומה הופק עבורה.</p>
         </div>
         <div className="inline-flex w-full rounded-lg border border-[var(--border)] bg-white p-1 text-sm sm:w-auto">
           <button

@@ -5,6 +5,13 @@ import { randomUUID } from '@/lib/uuid';
 import { useProfile } from '@/lib/useProfile';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import { confirmDialog } from '@/lib/dialog';
+import {
+  PRODUCTION_PERMISSION_TYPES,
+  normalizeOutputPermissions,
+  type OutputPermissions,
+  type OutputPermissionsRole,
+  type ProductionPermissionType,
+} from '@/lib/outputPermissions';
 
 interface ProfileRow {
   id: string;
@@ -64,7 +71,8 @@ export default function PermissionsPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [tab, setTab] = useState<'admins' | 'users' | 'invites'>('admins');
+  const [tab, setTab] = useState<'admins' | 'users' | 'invites' | 'permissions'>('admins');
+  const [outputPermissions, setOutputPermissions] = useState<OutputPermissions>(() => normalizeOutputPermissions(null));
   const [invites, setInvites] = useState<InviteRow[]>([]);
   const [generating, setGenerating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -102,11 +110,12 @@ export default function PermissionsPage() {
 
   useEffect(() => {
     (async () => {
-      const [{ data: profs }, { data: brs }, { data: ub }, { data: inv }] = await Promise.all([
+      const [{ data: profs }, { data: brs }, { data: ub }, { data: inv }, { data: permissionRow }] = await Promise.all([
         db.from('profiles').select('id, email, role, can_create_outputs, created_at').order('created_at'),
         db.from('brands').select('id, name, is_active, logo_path').order('name'),
         db.from('user_brands').select('user_id, brand_id'),
         db.from('brand_invites').select('id, token, brand_id, uses, revoked, created_at, last_used_at').order('created_at', { ascending: false }),
+        db.from('settings').select('value_json').eq('key', 'output_permissions').maybeSingle(),
       ]);
       const map: Record<string, Set<string>> = {};
       ((ub as { user_id: string; brand_id: string }[]) ?? []).forEach((row) => {
@@ -125,6 +134,7 @@ export default function PermissionsPage() {
       setBrandLogoUrls(Object.fromEntries(logoEntries.filter(([, url]) => !!url)));
       setGrants(map);
       setInvites((inv as unknown as InviteRow[]) ?? []);
+      setOutputPermissions(normalizeOutputPermissions((permissionRow as { value_json?: unknown } | null)?.value_json));
       setLoading(false);
     })();
   }, [db]);
@@ -186,6 +196,27 @@ export default function PermissionsPage() {
       return flash('שמירה נכשלה');
     }
     flash('נשמר');
+  }
+
+  async function toggleOutputPermission(type: ProductionPermissionType, role: OutputPermissionsRole) {
+    const previous = outputPermissions;
+    const next: OutputPermissions = {
+      ...previous,
+      [type]: { ...previous[type], [role]: !previous[type][role] },
+    };
+    const saveKey = `${type}:${role}`;
+    setOutputPermissions(next);
+    setSavingId(saveKey);
+    const { error } = await db.from('settings').upsert(
+      { key: 'output_permissions', value_json: next } as never,
+      { onConflict: 'key' },
+    );
+    setSavingId(null);
+    if (error) {
+      setOutputPermissions(previous);
+      return flash('שמירת ההרשאה נכשלה');
+    }
+    flash('ההרשאה נשמרה');
   }
 
   async function deleteUser(p: ProfileRow) {
@@ -303,9 +334,6 @@ export default function PermissionsPage() {
     <div dir="rtl">
       <div className="mb-4">
         <h1 className="text-xl font-semibold tracking-normal">משתמשים והרשאות</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          נהלו משתמשים, מותגים והרשאות גישה.
-        </p>
       </div>
 
       {toast && (
@@ -346,9 +374,25 @@ export default function PermissionsPage() {
         >
           הזמנות ({invites.filter((i) => !i.revoked).length})
         </button>
+        <button
+          onClick={() => setTab('permissions')}
+          className={`shrink-0 whitespace-nowrap px-3 py-3 text-sm font-semibold border-b-2 transition sm:px-4 ${
+            tab === 'permissions'
+              ? 'border-brand text-brand'
+              : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          הרשאות
+        </button>
       </div>
 
-      {tab === 'invites' ? (
+      {tab === 'permissions' ? (
+        <OutputPermissionsTab
+          permissions={outputPermissions}
+          savingId={savingId}
+          onToggle={toggleOutputPermission}
+        />
+      ) : tab === 'invites' ? (
         <InvitesTab
           brands={brands}
           brandLogoUrls={brandLogoUrls}
@@ -363,30 +407,102 @@ export default function PermissionsPage() {
         />
       ) : (
 
-      <div className="space-y-3">
+      <>
+      <div className="space-y-3 lg:hidden">
         {(tab === 'admins' ? admins : users).map((p) => {
           const userBrands = grants[p.id] ?? new Set<string>();
           const isAdmin = p.role === 'admin';
           return (
             <div key={p.id} className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
-              {/* header: avatar + email + date */}
               <div className="flex items-center gap-3">
                 <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold uppercase ${isAdmin ? 'bg-brand/10 text-brand' : 'bg-gray-100 text-[var(--muted)]'}`}>
                   {p.email.slice(0, 2)}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">
-                    <bdi>{p.email}</bdi>
-                  </div>
-                  <div className="text-xs text-[var(--muted)] mt-0.5">
+                  <div className="truncate text-sm font-semibold"><bdi>{p.email}</bdi></div>
+                  <div className="mt-0.5 text-xs text-[var(--muted)]">
                     {isAdmin ? 'אדמין · ' : ''}הצטרף {new Date(p.created_at).toLocaleDateString('he-IL')}
                   </div>
                 </div>
               </div>
 
-              {/* actions row */}
               <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
-                {/* role toggle */}
+                <div className="inline-flex rounded-lg border border-[var(--border)] p-0.5 text-xs">
+                  <button onClick={() => setRole(p, 'user')} className={`rounded-md px-2.5 py-1 font-medium transition ${!isAdmin ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'}`}>רגיל</button>
+                  <button onClick={() => setRole(p, 'admin')} className={`rounded-md px-2.5 py-1 font-medium transition ${isAdmin ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'}`}>אדמין</button>
+                </div>
+                {!isAdmin && (
+                  <button
+                    onClick={() => toggleCreate(p)}
+                    disabled={savingId === p.id}
+                    className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition disabled:opacity-60 ${p.can_create_outputs ? 'border-green-300 bg-green-50 text-green-700' : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'}`}
+                  >
+                    {p.can_create_outputs ? '✓ יצירה' : 'סגור'}
+                  </button>
+                )}
+                {me?.id !== p.id && (
+                  <button onClick={() => deleteUser(p)} disabled={savingId === p.id} className="ms-auto rounded-lg border border-red-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60">מחיקה</button>
+                )}
+              </div>
+
+              {!isAdmin && brands.length > 2 && (
+                <div className="mt-3 border-t border-[var(--border)] pt-3">
+                  <div className="mb-2 text-xs font-medium">מותג:</div>
+                  <BrandSelectionModal
+                    userBrands={userBrands}
+                    brands={brands}
+                    brandLogoUrls={brandLogoUrls}
+                    onToggle={(brandId) => toggleBrand(p, brandId)}
+                    disabled={savingId === p.id}
+                  />
+                </div>
+              )}
+
+              <div className="mt-3 border-t border-[var(--border)] pt-3">
+                <button type="button" onClick={() => void openUserDetails(p)} className="w-full rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm font-semibold text-brand transition hover:bg-brand/10">
+                  פרטים ופעילות
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-xl border border-[var(--border)] bg-white shadow-sm lg:block">
+        <table className="w-full min-w-[880px] text-sm">
+          <caption className="sr-only">{tab === 'admins' ? 'טבלת אדמינים' : 'טבלת משתמשים'}</caption>
+          <thead className="bg-gray-50 text-xs font-semibold text-[var(--muted)]">
+            <tr className="border-b border-[var(--border)]">
+              <th scope="col" className="px-4 py-3 text-right">משתמש</th>
+              <th scope="col" className="px-4 py-3 text-right">תאריך הצטרפות</th>
+              <th scope="col" className="px-4 py-3 text-right">תפקיד</th>
+              <th scope="col" className="px-4 py-3 text-right">הרשאת יצירה</th>
+              <th scope="col" className="px-4 py-3 text-right">מותג</th>
+              <th scope="col" className="px-4 py-3 text-right">פעולות</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)]">
+        {(tab === 'admins' ? admins : users).map((p) => {
+          const userBrands = grants[p.id] ?? new Set<string>();
+          const isAdmin = p.role === 'admin';
+          return (
+            <tr key={p.id} className="transition hover:bg-gray-50/70">
+              <td className="px-4 py-3">
+                <div className="flex min-w-[220px] items-center gap-3">
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold uppercase ${isAdmin ? 'bg-brand/10 text-brand' : 'bg-gray-100 text-[var(--muted)]'}`}>
+                  {p.email.slice(0, 2)}
+                </div>
+                <div className="min-w-0">
+                  <div className="max-w-[260px] truncate font-semibold">
+                    <bdi>{p.email}</bdi>
+                  </div>
+                </div>
+              </div>
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">
+                {new Date(p.created_at).toLocaleDateString('he-IL')}
+              </td>
+              <td className="px-4 py-3">
                 <div className="inline-flex rounded-lg border border-[var(--border)] p-0.5 text-xs">
                   <button
                     onClick={() => setRole(p, 'user')}
@@ -401,8 +517,8 @@ export default function PermissionsPage() {
                     אדמין
                   </button>
                 </div>
-
-                {/* create outputs toggle */}
+              </td>
+              <td className="px-4 py-3">
                 {!isAdmin && (
                   <button
                     onClick={() => toggleCreate(p)}
@@ -416,26 +532,12 @@ export default function PermissionsPage() {
                     {p.can_create_outputs ? '✓ יצירה' : 'סגור'}
                   </button>
                 )}
-
-                {/* delete button */}
-                {me?.id !== p.id && (
-                  <button
-                    onClick={() => deleteUser(p)}
-                    disabled={savingId === p.id}
-                    className="ms-auto rounded-lg border border-red-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-                  >
-                    מחיקה
-                  </button>
-                )}
-              </div>
-
-              {/* brands for regular users */}
-                {!isAdmin && brands.length > 0 && (
-                <>
-                  {/* Mobile: modal for many brands */}
-                  {brands.length > 2 ? (
-                    <div className="mt-3 pt-3 border-t border-[var(--border)] lg:hidden">
-                      <div className="text-xs font-medium mb-2">מותג:</div>
+                {isAdmin && <span className="text-[var(--muted)]">—</span>}
+              </td>
+              <td className="px-4 py-3">
+                {!isAdmin && brands.length > 0 ? (
+                  <div className="min-w-[170px]">
+                    {brands.length > 2 ? (
                       <BrandSelectionModal
                         userBrands={userBrands}
                         brands={brands}
@@ -443,12 +545,7 @@ export default function PermissionsPage() {
                         onToggle={(brandId) => toggleBrand(p, brandId)}
                         disabled={savingId === p.id}
                       />
-                    </div>
-                  ) : null}
-
-                  {/* Desktop: buttons grid */}
-                  <div className="mt-3 pt-3 border-t border-[var(--border)] hidden lg:block">
-                    <div className="text-xs font-medium mb-2">מותג (אחד בלבד):</div>
+                    ) : (
                     <div className="flex flex-wrap gap-1.5">
                       {brands.map((b) => {
                         const on = userBrands.has(b.id);
@@ -477,23 +574,39 @@ export default function PermissionsPage() {
                         );
                       })}
                     </div>
+                    )}
                   </div>
-                </>
+                ) : (
+                  <span className="text-[var(--muted)]">—</span>
                 )}
-
-              <div className="mt-3 border-t border-[var(--border)] pt-3">
+              </td>
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-2 whitespace-nowrap">
                 <button
                   type="button"
                   onClick={() => void openUserDetails(p)}
-                  className="w-full rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm font-semibold text-brand transition hover:bg-brand/10"
+                  className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-semibold text-brand transition hover:bg-brand/10"
                 >
                   פרטים ופעילות
                 </button>
+                {me?.id !== p.id && (
+                  <button
+                    onClick={() => deleteUser(p)}
+                    disabled={savingId === p.id}
+                    className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                  >
+                    מחיקה
+                  </button>
+                )}
               </div>
-            </div>
+              </td>
+            </tr>
           );
         })}
+          </tbody>
+        </table>
       </div>
+      </>
       )}
 
       {selectedUser && (
@@ -507,6 +620,55 @@ export default function PermissionsPage() {
         />
       )}
     </div>
+  );
+}
+
+function OutputPermissionsTab({
+  permissions,
+  savingId,
+  onToggle,
+}: {
+  permissions: OutputPermissions;
+  savingId: string | null;
+  onToggle: (type: ProductionPermissionType, role: OutputPermissionsRole) => void;
+}) {
+  return (
+    <section className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+      <h2 className="font-semibold">הרשאות לפי סוג תוצר</h2>
+      <p className="mb-4 mt-1 text-sm text-[var(--muted)]">השינויים נשמרים מיד.</p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[420px] border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-right text-xs text-[var(--muted)]">
+              <th className="py-3 pe-2 font-semibold">פעולה</th>
+              <th className="w-28 py-3 text-center font-semibold">משתמש רגיל</th>
+              <th className="w-28 py-3 text-center font-semibold">אדמין</th>
+            </tr>
+          </thead>
+          <tbody>
+            {PRODUCTION_PERMISSION_TYPES.map((item) => (
+              <tr key={item.type} className="border-b border-[var(--border)] last:border-0">
+                <td className="py-3 pe-2 font-medium">{item.label}</td>
+                {(['user', 'admin'] as const).map((role) => {
+                  return (
+                    <td key={role} className="py-3 text-center">
+                      <input
+                        type="checkbox"
+                        checked={permissions[item.type][role]}
+                        disabled={savingId !== null}
+                        aria-label={`${item.label} — ${role === 'admin' ? 'אדמין' : 'משתמש רגיל'}`}
+                        onChange={() => onToggle(item.type, role)}
+                        className="h-5 w-5 accent-brand disabled:opacity-50"
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -613,9 +775,7 @@ function InvitesTab({
       {/* generator */}
       <div className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
         <h2 className="font-semibold">יצירת קישור הזמנה</h2>
-        <p className="text-sm text-[var(--muted)] mt-1">
-          בחרו מותג וצרו קישור הרשמה ייעודי. מי שנרשם דרכו משויך אוטומטית למותג ויכול להתחיל לעבוד מיד.
-        </p>
+        <p className="mt-1 text-sm text-[var(--muted)]">הנרשמים ישויכו אוטומטית למותג.</p>
         {brands.length === 0 ? (
           <p className="mt-4 text-sm text-[var(--muted)]">אין מותגים פעילים. הוסיפו מותג במסך המיתוג תחילה.</p>
         ) : allBrandsUsed ? (

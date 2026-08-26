@@ -7,13 +7,12 @@ import type { Profile } from '@/lib/useProfile';
 export function needsOnboardingGate(
   profile: Profile,
   hasBrand: boolean,
-  requireUploads: boolean,
+  _requireUploads: boolean,
 ): boolean {
   if (profile.role === 'admin') return false;
   const ob = profile.onboarding ?? {};
   if (!ob.details_done) return true; // user details are always mandatory
   if (!hasBrand || !ob.brand_done) return true; // brand assignment is now self-service but mandatory
-  if (requireUploads && hasBrand && (!ob.docs_done || !ob.files_done)) return true;
   return false;
 }
 

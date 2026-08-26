@@ -54,14 +54,13 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/admin/permissions', label: 'משתמשים והרשאות', adminOnly: true, icon: 'users' },
       { href: '/admin/holidays', label: 'גאנט', icon: 'calendar' },
       { href: '/admin/annual-planner', label: 'תכנון שנתי', icon: 'annualPlanner' },
-      { href: '/admin/branding', label: 'מיתוג', adminOnly: true, icon: 'palette' },
+      { href: '/admin/branding', label: 'מיתוג', icon: 'palette' },
     ],
   },
   {
     title: 'תוכן',
     links: [
       { href: '/admin/files', label: 'תוצרים', icon: 'files' },
-      { href: '/admin/simulator', label: 'סימולטור צ׳אט', icon: 'chat' },
     ],
   },
   {

@@ -174,9 +174,6 @@ export default function SkillsPage() {
     <div className="max-w-6xl">
       <div className="mb-6">
         <h1 className="text-xl font-semibold tracking-normal">סקילים</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          נהלו יכולות, גרסאות והפעלה לפי סוג תוצר.
-        </p>
         {/* legend: what each enforcement tag means */}
         <div className="mt-3 grid gap-2 text-xs sm:flex sm:flex-wrap sm:items-center sm:gap-3">
           {(Object.keys(ENFORCEMENT) as SkillEnforcement[]).map((k) => (

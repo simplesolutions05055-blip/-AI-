@@ -1,5 +1,5 @@
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarClock, ChevronLeft, ChevronRight, Copy, Download, Eye, Lightbulb, Trash2, X } from 'lucide-react';
 import { randomUUID } from '@/lib/uuid';
 import { Spinner } from '@/components/ui/Spinner';
@@ -187,6 +187,7 @@ export default function HolidaysCalendarPage() {
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [editPostId, setEditPostId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EditScheduleForm>({ title: '', scheduledAt: '', caption: '' });
+  const editScheduleDateRef = useRef<HTMLInputElement>(null);
   const [editMedia, setEditMedia] = useState<MediaItem[]>([]);
   const [editMediaLoading, setEditMediaLoading] = useState(false);
   // The publish target (Facebook page / Instagram account) the edited post
@@ -563,7 +564,8 @@ export default function HolidaysCalendarPage() {
   async function saveScheduleEdit(post: ScheduledSocialPost) {
     const cleanTitle = editForm.title.trim();
     const cleanCaption = editForm.caption.trim();
-    if (!cleanTitle || !cleanCaption || !editForm.scheduledAt || savingEditPostId) return;
+    const scheduledAtValue = editScheduleDateRef.current?.value || editForm.scheduledAt;
+    if (!cleanTitle || !cleanCaption || !scheduledAtValue || savingEditPostId) return;
 
     // Resolve the chosen publish target. A facebook/instagram post can only be
     // saved as 'scheduled' with a connection + target (DB constraint), so block
@@ -585,7 +587,13 @@ export default function HolidaysCalendarPage() {
     setSavingEditPostId(post.id);
     setEditError(null);
 
-    const nextScheduledAt = new Date(editForm.scheduledAt);
+    const nextScheduledAt = new Date(scheduledAtValue);
+    if (Number.isNaN(nextScheduledAt.getTime()) || nextScheduledAt.getTime() <= Date.now()) {
+      setSavingEditPostId(null);
+      setEditError('בחרו תאריך ושעה עתידיים.');
+      return;
+    }
+
     let storedMedia: StoredMediaRecord[];
     try {
       storedMedia = await uploadPendingMedia(editMedia, post.request_id || 'manual');
@@ -601,7 +609,7 @@ export default function HolidaysCalendarPage() {
     const rearm = post.status === 'failed' && nextScheduledAt.getTime() > Date.now();
     const nextStatus = rearm ? 'scheduled' : post.status;
 
-    const { error: updateError } = await createSupabaseBrowserClient()
+    const { data: updatedPost, error: updateError } = await createSupabaseBrowserClient()
       .from('scheduled_social_posts')
       .update({
         title: cleanTitle,
@@ -614,11 +622,17 @@ export default function HolidaysCalendarPage() {
         status: nextStatus,
         error_message: rearm ? null : undefined,
       } as never)
-      .eq('id', post.id);
+      .eq('id', post.id)
+      .select('id, scheduled_at')
+      .maybeSingle();
 
     setSavingEditPostId(null);
     if (updateError) {
       setEditError(updateError.message);
+      return;
+    }
+    if (!updatedPost) {
+      setEditError('השינוי לא נשמר במסד הנתונים. רעננו את העמוד ונסו שוב.');
       return;
     }
 
@@ -881,7 +895,6 @@ export default function HolidaysCalendarPage() {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="lg:hidden">
           <h1 className="text-xl font-semibold tracking-normal">לוח פרסומים וחגים</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">נהלו חגים, אירועים ותזמוני פרסום.</p>
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3 lg:w-full lg:justify-between">
           <div className="flex gap-1.5 lg:gap-2 lg:order-1">
@@ -1296,9 +1309,14 @@ export default function HolidaysCalendarPage() {
                     <label className="block text-sm font-semibold">
                       תאריך ושעה
                       <input
+                        ref={editScheduleDateRef}
                         type="datetime-local"
                         value={editForm.scheduledAt}
-                        onChange={(event) => setEditForm((current) => ({ ...current, scheduledAt: event.target.value }))}
+                        onInput={(event) => {
+                          const scheduledAt = event.currentTarget.value;
+                          setEditForm((current) => ({ ...current, scheduledAt }));
+                        }}
+                        min={datetimeLocalFromIso(new Date().toISOString())}
                         className="mt-2 block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm ltr"
                       />
                     </label>

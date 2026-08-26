@@ -103,7 +103,6 @@ export default function RequestsPage({ embedded = false }: { embedded?: boolean 
       {!embedded && (
         <div className="mb-4">
           <h1 className="text-xl font-semibold tracking-normal">בקשות</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">צפו בבקשות, סטטוסים ובריפים שנשלחו למערכת.</p>
         </div>
       )}
 

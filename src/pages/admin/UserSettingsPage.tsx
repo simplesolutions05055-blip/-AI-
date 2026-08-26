@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Download, X } from 'lucide-react';
-import OnboardingPage from '@/pages/OnboardingPage';
+import { Download, FileText, Palette, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 export default function UserSettingsPage() {
   const [installOpen, setInstallOpen] = useState(false);
@@ -10,9 +10,6 @@ export default function UserSettingsPage() {
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-normal text-[var(--text)]">הגדרות</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            עדכון פרטים אישיים, פרטי מותג, מסמכים וקבצים שישמשו את המערכת.
-          </p>
         </div>
         <button
           type="button"
@@ -24,7 +21,26 @@ export default function UserSettingsPage() {
         </button>
       </div>
 
-      <OnboardingPage embedded />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Link
+          to="/admin/branding#brand-details"
+          className="group rounded-xl border border-[var(--border)] bg-white p-5 shadow-sm transition hover:border-brand/40 hover:shadow-md"
+        >
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-brand/10 text-brand"><Palette className="h-5 w-5" /></span>
+          <h2 className="mt-4 text-lg font-bold">המותג</h2>
+          <p className="mt-1 text-sm leading-6 text-[var(--muted)]">פרטי המותג, לוגו, צבעים, סגנון ופרטי קשר.</p>
+          <span className="mt-4 inline-block text-sm font-bold text-brand">פתיחת הגדרות המותג ←</span>
+        </Link>
+        <Link
+          to="/admin/branding#brand-documents"
+          className="group rounded-xl border border-[var(--border)] bg-white p-5 shadow-sm transition hover:border-brand/40 hover:shadow-md"
+        >
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-brand/10 text-brand"><FileText className="h-5 w-5" /></span>
+          <h2 className="mt-4 text-lg font-bold">מסמכי המותג</h2>
+          <p className="mt-1 text-sm leading-6 text-[var(--muted)]">העלאת מסמכי תוכן ותמונות שישמשו ליצירת התוצרים.</p>
+          <span className="mt-4 inline-block text-sm font-bold text-brand">פתיחת מסמכי המותג ←</span>
+        </Link>
+      </div>
 
       {installOpen && <InstallInstructionsModal onClose={() => setInstallOpen(false)} />}
     </section>
