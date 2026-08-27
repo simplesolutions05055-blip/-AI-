@@ -2130,7 +2130,55 @@ export default function AnnualPlannerPage() {
               </button>
             </div>
           </div>
-          {items.length === 0 ? emptyPlanNotice : <div className="mx-auto w-full max-w-2xl">{editorPanel}</div>}
+          {items.length === 0 ? emptyPlanNotice : (
+            <div className="mx-auto w-full max-w-5xl">
+              <div className={`grid gap-4 ${planMode === 'file' ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : ''}`} dir="ltr">
+                <div dir="rtl">{editorPanel}</div>
+                {planMode === 'file' && (
+                  <aside
+                    dir="rtl"
+                    className="hidden max-h-[calc(100vh-2rem)] self-start overflow-hidden rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 shadow-[var(--warm-shadow-card)] lg:sticky lg:top-4 lg:block"
+                    aria-label="כל הפוסטים בתוכנית"
+                  >
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-bold text-[var(--text-strong)]">כל הפוסטים</h3>
+                      <span className="rounded-full bg-[var(--bg-subtle)] px-2 py-0.5 text-xs font-bold text-[var(--text-muted)]">
+                        {visibleItems.length}
+                      </span>
+                    </div>
+                    <div className="max-h-[calc(100vh-6.5rem)] space-y-2 overflow-y-auto pe-1">
+                      {visibleItems.map((item, index) => {
+                        const active = selectedItem?.id === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => { setSelectedId(item.id); setHashtagInput(''); }}
+                            aria-current={active ? 'true' : undefined}
+                            className={`w-full rounded-xl border p-2.5 text-right transition ${active ? 'border-brand bg-[var(--warm-accent-soft)]' : 'border-[var(--border-warm)] bg-white hover:bg-[var(--bg-subtle)]'}`}
+                          >
+                            <div className="flex items-start gap-2">
+                              <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-bold ${active ? 'bg-brand text-white' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)]'}`}>
+                                {index + 1}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-bold text-[var(--text-strong)]">
+                                  {item.title || item.event_name || 'ללא כותרת'}
+                                </span>
+                                <span className="mt-1 block text-[11px] text-[var(--text-muted)]">
+                                  {dateLabel(item.date)} · {STATUS_LABEL[item.status]}
+                                </span>
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </aside>
+                )}
+              </div>
+            </div>
+          )}
         </section>
       )}
 
