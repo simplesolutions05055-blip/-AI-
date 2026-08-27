@@ -1202,6 +1202,20 @@ export default function AnnualPlannerPage() {
     setHashtagInput('');
   }
 
+  function approveCurrentAndContinue() {
+    if (!selectedItem) return;
+    const nextItem = visibleItems.length > 1
+      ? visibleItems[(selectedIndex + 1 + visibleItems.length) % visibleItems.length]
+      : null;
+
+    updateItem(selectedItem.id, { status: 'to_schedule', error_message: null });
+    if (!nextItem) return;
+
+    setPostMove('next');
+    setSelectedId(nextItem.id);
+    setHashtagInput('');
+  }
+
   // AI hashtags: one focused call per post (not 50 upfront — cost/latency),
   // through the existing social_caption pipeline. The reply is instructed to be
   // hashtags-only and parsed defensively by #-token, so format drift can't
@@ -1588,7 +1602,7 @@ export default function AnnualPlannerPage() {
         <button
           type="button"
           aria-pressed={selectedItem.status !== 'draft'}
-          onClick={() => updateItem(selectedItem.id, { status: 'to_schedule', error_message: null })}
+          onClick={approveCurrentAndContinue}
           className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] px-4 text-sm font-bold transition ${
             selectedItem.status !== 'draft'
               ? 'bg-emerald-700 text-white'
