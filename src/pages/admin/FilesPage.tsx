@@ -1033,9 +1033,13 @@ export default function FilesPage() {
                 </button>
               </div>
             </header>
-            <div className="flex-1 overflow-auto bg-gray-100">
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-gray-100">
               {viewerFile.row.output_type === 'image' ? (
-                <img src={viewerFile.url} alt="" className="mx-auto h-auto w-full object-contain" />
+                <img
+                  src={viewerFile.url}
+                  alt=""
+                  className="max-h-full max-w-full object-contain"
+                />
               ) : (
                 <iframe src={viewerFile.url} className="h-full w-full border-0 bg-white" />
               )}
