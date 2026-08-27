@@ -4,7 +4,7 @@ import {
   AlertTriangle,
   Bot,
   CalendarDays,
-  CalendarRange,
+  ClipboardList,
   Cpu,
   Files,
   Gauge,
@@ -279,7 +279,7 @@ function NavIcon({ name, className = 'h-4 w-4' }: { name: NavIconName; active?: 
   const icons = {
     alert: AlertTriangle,
     calendar: CalendarDays,
-    annualPlanner: CalendarRange,
+    annualPlanner: ClipboardList,
     chat: MessageSquare,
     cpu: Cpu,
     dashboard: Gauge,
