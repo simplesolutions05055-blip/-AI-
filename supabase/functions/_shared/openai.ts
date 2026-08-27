@@ -771,6 +771,58 @@ export async function extractAnnualPlannerEvents(text: string, year: number, api
   }
 }
 
+export async function generateAnnualPlannerCaptions(
+  posts: Array<{ index: number; title: string; eventName: string; date: string }>,
+  context: { brandName?: string; businessContext?: string; sourceText?: string },
+  apiKey?: string,
+) {
+  const safePosts = posts.slice(0, 100).map((post) => ({
+    index: post.index,
+    title: post.title.slice(0, 160),
+    event_name: post.eventName.slice(0, 160),
+    date: post.date,
+  }));
+  const { content, usage } = await chat(
+    [
+      {
+        role: 'system',
+        content: `אתה קופירייטר לרשתות חברתיות. כתוב טקסט שיווקי מלא ומוכן לפרסום בעברית לכל פוסט שקיבלת.
+החזר JSON בלבד במבנה {"posts":[{"index":0,"caption":"..."}]} ובדיוק רשומה אחת לכל index.
+
+כללים לכל caption:
+- 3–6 משפטים טבעיים. פתיחה מושכת, ערך או הקשר ברור, וסיום עם קריאה לפעולה מתאימה.
+- טון חם, אנושי, מקצועי ושיווקי. לא בריף, לא תבנית, לא הערה פנימית.
+- אל תפתח בתוויות כמו "הזמנה:", "תזכורת:", "טיפ שימושי:" או "ערך לקהל:".
+- אל תכתוב טקסט מכני כמו "שמרו את התאריך" בלבד. כל פוסט חייב להיות ייחודי לנושא שלו.
+- אפשר לשלב עד 3 אימוג'ים טבעיים. בלי האשטגים; הם נשמרים בשדה נפרד.
+- אל תמציא עובדות, שעות, מקומות, מחירים או מבצעים. השתמש רק במידע שסופק.
+- תאריך יכול להופיע רק אם הוא תורם לטקסט.`,
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          brand_name: context.brandName?.slice(0, 160) || undefined,
+          business_context: context.businessContext?.slice(0, 6000) || undefined,
+          source_context: context.sourceText?.slice(0, 2500) || undefined,
+          posts: safePosts,
+        }),
+      },
+    ],
+    { json: true, temperature: 0.75, model: 'gpt-4o-mini', apiKey },
+  );
+  try {
+    const parsed = JSON.parse(content) as { posts?: Array<{ index?: unknown; caption?: unknown }> };
+    const captions = Array.isArray(parsed.posts)
+      ? parsed.posts
+        .filter((post) => Number.isInteger(post.index) && typeof post.caption === 'string' && post.caption.trim().length > 20)
+        .map((post) => ({ index: Number(post.index), caption: String(post.caption).trim() }))
+      : [];
+    return { captions, usage };
+  } catch {
+    return { captions: [], usage };
+  }
+}
+
 export async function generateDocumentText(systemPrompt: string, brief: unknown, note?: string) {
   const { content, usage } = await chat(
     [

@@ -946,6 +946,33 @@ export default function AnnualPlannerPage() {
         return false;
       }
 
+      // One inexpensive batch call gives every generated item finished marketing
+      // copy. Keep local captions as a resilient fallback if AI is unavailable.
+      const { data: captionData, error: captionError } = await client.functions.invoke('generate-presentation', {
+        body: {
+          format: 'annual_planner_captions',
+          brief: {
+            brand_id: brandId || undefined,
+            brand_name: brandName || undefined,
+            source_text: sourceText.trim().slice(0, 2500) || undefined,
+            posts: candidates.map((candidate, index) => ({
+              index,
+              title: candidate.title,
+              event_name: candidate.eventName,
+              date: candidate.date,
+            })),
+          },
+        },
+      });
+      if (!captionError) {
+        const aiCaptions = (captionData as { captions?: Array<{ index?: unknown; caption?: unknown }> } | null)?.captions ?? [];
+        for (const row of aiCaptions) {
+          if (!Number.isInteger(row.index) || typeof row.caption !== 'string' || row.caption.trim().length <= 20) continue;
+          const candidate = candidates[Number(row.index)];
+          if (candidate) candidate.caption = row.caption.trim();
+        }
+      }
+
       const { data: userData } = await client.auth.getUser();
       const userId = userData.user?.id;
       if (!userId) throw new Error('not_authenticated');

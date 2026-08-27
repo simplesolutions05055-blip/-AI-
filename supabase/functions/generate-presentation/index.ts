@@ -1,5 +1,5 @@
 import { db } from '../_shared/db.ts';
-import { generatePresentationOutline, generateDeckSlides, rewriteDeckSlide, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption, extractAnnualPlannerEvents } from '../_shared/openai.ts';
+import { generatePresentationOutline, generateDeckSlides, rewriteDeckSlide, generateQuote, generateImage, generateImageWithReferences, generateSocialCaption, extractAnnualPlannerEvents, generateAnnualPlannerCaptions } from '../_shared/openai.ts';
 import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateImageCost, imageUnitCost } from '../_shared/util.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
@@ -147,6 +147,51 @@ Deno.serve(async (req) => {
       const result = await extractAnnualPlannerEvents(text, Number(planner_year) || new Date().getFullYear(), overrideKey);
       await recordUsageAndCost(database, requestId ?? null, { provider: 'openai', model: aiModelsPlanner?.text_model || 'gpt-4o', input: result.usage?.prompt_tokens ?? 0, output: result.usage?.completion_tokens ?? 0, cost: estimateTextCost(result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0) });
       return new Response(JSON.stringify({ ok: true, events: result.events }), { headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
+    }
+
+    if (format === 'annual_planner_captions') {
+      const plannerBrief = brief as {
+        brand_id?: string;
+        brand_name?: string;
+        source_text?: string;
+        posts?: Array<{ index?: unknown; title?: unknown; event_name?: unknown; date?: unknown }>;
+      };
+      const posts = Array.isArray(plannerBrief.posts)
+        ? plannerBrief.posts.slice(0, 100).flatMap((post) => (
+          Number.isInteger(post.index)
+          && typeof post.title === 'string'
+          && typeof post.event_name === 'string'
+          && typeof post.date === 'string'
+            ? [{ index: Number(post.index), title: post.title, eventName: post.event_name, date: post.date }]
+            : []
+        ))
+        : [];
+      if (posts.length === 0) {
+        return new Response(JSON.stringify({ error: 'posts required' }), { status: 400, headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
+      }
+
+      let businessContext = '';
+      if (typeof plannerBrief.brand_id === 'string' && plannerBrief.brand_id) {
+        const [{ data: plannerBrand }, { data: plannerSources }] = await Promise.all([
+          database.from('brands').select('name, color_palette, style_notes, is_active, client_type').eq('id', plannerBrief.brand_id).single(),
+          database.from('business_text_sources').select('title, content, source_kind').eq('brand_id', plannerBrief.brand_id).order('created_at', { ascending: false }).limit(12),
+        ]);
+        businessContext = buildBusinessBrainContext(plannerBrand, plannerSources ?? []).content ?? '';
+      }
+
+      const result = await generateAnnualPlannerCaptions(posts, {
+        brandName: plannerBrief.brand_name,
+        businessContext,
+        sourceText: plannerBrief.source_text,
+      }, overrideKey);
+      await recordUsageAndCost(database, requestId ?? null, {
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        input: result.usage?.prompt_tokens ?? 0,
+        output: result.usage?.completion_tokens ?? 0,
+        cost: estimateTextCost(result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0),
+      });
+      return new Response(JSON.stringify({ ok: true, captions: result.captions }), { headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
     }
 
     // 'deck' mode: return rich structured 10-slide content for the PDF renderer.
