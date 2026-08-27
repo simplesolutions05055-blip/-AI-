@@ -136,7 +136,7 @@ export async function routeSkillsLLM(
 
 async function chat(
   messages: { role: string; content: string }[],
-  opts: { json?: boolean; temperature?: number; model?: string; apiKey?: string } = {}
+  opts: { json?: boolean; temperature?: number | null; model?: string; apiKey?: string } = {}
 ): Promise<{ content: string; usage: ChatUsage }> {
   const res = await openAiFetch(
     `${API}/chat/completions`,
@@ -146,7 +146,7 @@ async function chat(
       body: JSON.stringify({
         model: opts.model || textModel(),
         messages,
-        temperature: opts.temperature ?? 0.5,
+        ...(opts.temperature === null ? {} : { temperature: opts.temperature ?? 0.5 }),
         ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
       }),
     }),
@@ -789,11 +789,18 @@ export async function generateAnnualPlannerCaptions(
         content: `אתה קופירייטר לרשתות חברתיות. כתוב טקסט שיווקי מלא ומוכן לפרסום בעברית לכל פוסט שקיבלת.
 החזר JSON בלבד במבנה {"posts":[{"index":0,"caption":"..."}]} ובדיוק רשומה אחת לכל index.
 
-כללים לכל caption:
-- 3–6 משפטים טבעיים. פתיחה מושכת, ערך או הקשר ברור, וסיום עם קריאה לפעולה מתאימה.
-- טון חם, אנושי, מקצועי ושיווקי. לא בריף, לא תבנית, לא הערה פנימית.
+עקרונות כתיבה לכל caption:
+- בהירות לפני יצירתיות: הקורא צריך להבין מיד במה הפוסט עוסק ולמה זה רלוונטי עבורו.
+- הקשר לפני קלישאה: התייחס לנושא, לקהל ולמועד הספציפיים. אל תכתוב משפטים שיכולים להתאים לכל עסק.
+- תועלת ברורה: הראה מה הקהל מקבל — מידע, חוויה, פתרון, השראה, הזדמנות או תחושת שייכות.
+- 3–6 משפטים טבעיים. פתיחה מושכת, גוף עם ערך או הקשר, וסיום עם CTA שמציין פעולה ברורה.
+- טון חם, אנושי, מקצועי ושיווקי. קצר במילים, לא קצר במידע. לא בריף, לא תבנית, לא הערה פנימית.
+- עברית טבעית וניטרלית־מגדרית. בלי לוכסנים כמו "הירשמ/י" ובלי ניסוח מסורבל.
+- שמור על מונחים עקביים ועל קול המותג מתוך ההקשר העסקי שסופק.
 - אל תפתח בתוויות כמו "הזמנה:", "תזכורת:", "טיפ שימושי:" או "ערך לקהל:".
 - אל תכתוב טקסט מכני כמו "שמרו את התאריך" בלבד. כל פוסט חייב להיות ייחודי לנושא שלו.
+- הימנע מקלישאות ריקות כמו "אל תפספסו", "משהו גדול קורה" או "זה הזמן שלכם", אלא אם יש להן הצדקה ממשית בהקשר.
+- CTA צריך להיות פעולה+מטרה, למשל "לפרטים ולהרשמה...", "כתבו לנו מה הכי חשוב לכם..." או "שמרו את המועד ביומן..." — רק כשמתאים למידע הקיים.
 - אפשר לשלב עד 3 אימוג'ים טבעיים. בלי האשטגים; הם נשמרים בשדה נפרד.
 - אל תמציא עובדות, שעות, מקומות, מחירים או מבצעים. השתמש רק במידע שסופק.
 - תאריך יכול להופיע רק אם הוא תורם לטקסט.`,
@@ -808,7 +815,7 @@ export async function generateAnnualPlannerCaptions(
         }),
       },
     ],
-    { json: true, temperature: 0.75, model: 'gpt-4o-mini', apiKey },
+    { json: true, temperature: null, model: 'gpt-5-mini', apiKey },
   );
   try {
     const parsed = JSON.parse(content) as { posts?: Array<{ index?: unknown; caption?: unknown }> };

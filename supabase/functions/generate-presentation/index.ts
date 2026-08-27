@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
       }, overrideKey);
       await recordUsageAndCost(database, requestId ?? null, {
         provider: 'openai',
-        model: 'gpt-4o-mini',
+        model: 'gpt-5-mini',
         input: result.usage?.prompt_tokens ?? 0,
         output: result.usage?.completion_tokens ?? 0,
         cost: estimateTextCost(result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0),
