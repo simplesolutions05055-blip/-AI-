@@ -19,6 +19,22 @@ const fallbackSystemMessage =
 // GPT-Images deck flow; abuse guard prices the batch before generating).
 const MAX_DECK_IMAGES = 15;
 
+function normalizePlannerCachePart(value: string) {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('he');
+}
+
+function plannerCacheKey(
+  brandId: string | undefined,
+  post: { title: string; eventName: string; date: string },
+) {
+  return [
+    brandId || 'global',
+    post.date,
+    normalizePlannerCachePart(post.eventName),
+    normalizePlannerCachePart(post.title),
+  ].join('|');
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: cors(req, 'POST') });
@@ -171,8 +187,25 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ error: 'posts required' }), { status: 400, headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
       }
 
+      const keyedPosts = posts.map((post) => ({
+        ...post,
+        cacheKey: plannerCacheKey(plannerBrief.brand_id, post),
+      }));
+      const { data: cachedRows } = await database
+        .from('annual_planner_content_cache')
+        .select('cache_key, caption, hashtags')
+        .in('cache_key', keyedPosts.map((post) => post.cacheKey));
+      const cachedByKey = new Map((cachedRows ?? []).map((row) => [row.cache_key, row]));
+      const cachedCaptions = keyedPosts.flatMap((post) => {
+        const cached = cachedByKey.get(post.cacheKey);
+        return cached && typeof cached.caption === 'string'
+          ? [{ index: post.index, caption: cached.caption, hashtags: Array.isArray(cached.hashtags) ? cached.hashtags : [] }]
+          : [];
+      });
+      const missingPosts = keyedPosts.filter((post) => !cachedByKey.has(post.cacheKey));
+
       let businessContext = '';
-      if (typeof plannerBrief.brand_id === 'string' && plannerBrief.brand_id) {
+      if (missingPosts.length > 0 && typeof plannerBrief.brand_id === 'string' && plannerBrief.brand_id) {
         const [{ data: plannerBrand }, { data: plannerSources }] = await Promise.all([
           database.from('brands').select('name, color_palette, style_notes, is_active, client_type').eq('id', plannerBrief.brand_id).single(),
           database.from('business_text_sources').select('title, content, source_kind').eq('brand_id', plannerBrief.brand_id).order('created_at', { ascending: false }).limit(12),
@@ -180,19 +213,45 @@ Deno.serve(async (req) => {
         businessContext = buildBusinessBrainContext(plannerBrand, plannerSources ?? []).content ?? '';
       }
 
-      const result = await generateAnnualPlannerCaptions(posts, {
-        brandName: plannerBrief.brand_name,
-        businessContext,
-        sourceText: plannerBrief.source_text,
-      }, overrideKey);
-      await recordUsageAndCost(database, requestId ?? null, {
-        provider: 'openai',
-        model: 'gpt-5-mini',
-        input: result.usage?.prompt_tokens ?? 0,
-        output: result.usage?.completion_tokens ?? 0,
-        cost: estimateTextCost(result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0),
-      });
-      return new Response(JSON.stringify({ ok: true, captions: result.captions }), { headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
+      const result = missingPosts.length > 0
+        ? await generateAnnualPlannerCaptions(missingPosts, {
+            brandName: plannerBrief.brand_name,
+            businessContext,
+            sourceText: plannerBrief.source_text,
+          }, overrideKey)
+        : { captions: [], usage: { prompt_tokens: 0, completion_tokens: 0 } };
+
+      if (missingPosts.length > 0) {
+        await recordUsageAndCost(database, requestId ?? null, {
+          provider: 'openai',
+          model: 'gpt-5-mini',
+          input: result.usage?.prompt_tokens ?? 0,
+          output: result.usage?.completion_tokens ?? 0,
+          cost: estimateTextCost(result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0),
+        });
+        const generatedByIndex = new Map(result.captions.map((caption) => [caption.index, caption]));
+        const rowsToCache = missingPosts.flatMap((post) => {
+          const generated = generatedByIndex.get(post.index);
+          return generated
+            ? [{
+                cache_key: post.cacheKey,
+                brand_id: plannerBrief.brand_id || null,
+                event_date: post.date,
+                event_name: post.eventName,
+                title: post.title,
+                caption: generated.caption,
+                hashtags: generated.hashtags,
+                model: 'gpt-5-mini',
+              }]
+            : [];
+        });
+        if (rowsToCache.length > 0) {
+          await database.from('annual_planner_content_cache').upsert(rowsToCache, { onConflict: 'cache_key' });
+        }
+      }
+
+      const captions = [...cachedCaptions, ...result.captions].sort((a, b) => a.index - b.index);
+      return new Response(JSON.stringify({ ok: true, captions, cache_hits: cachedCaptions.length }), { headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
     }
 
     // 'deck' mode: return rich structured 10-slide content for the PDF renderer.
