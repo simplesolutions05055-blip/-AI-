@@ -1005,13 +1005,20 @@ export default function FilesPage() {
 
       {viewerFile && (
         <div
-          className="fixed inset-0 z-50 flex justify-end bg-black/50"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
           dir="rtl"
           onClick={() => setViewerFile(null)}
         >
           <section
-            className="flex h-full w-full max-w-3xl flex-col bg-white shadow-2xl"
+            className={`mx-3 flex flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${
+              viewerFile.row.output_type === 'image'
+                ? 'max-h-[90dvh] w-[calc(100%_-_1.5rem)] sm:max-h-[92dvh] sm:w-fit sm:max-w-[90vw]'
+                : 'h-[90dvh] w-[calc(100%_-_1.5rem)] sm:h-[92dvh] sm:w-[90vw] sm:max-w-5xl'
+            }`}
             onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`תצוגת ${labelFor(viewerFile.row.output_type)}`}
           >
             <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] p-4">
               <div>
@@ -1033,12 +1040,16 @@ export default function FilesPage() {
                 </button>
               </div>
             </header>
-            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-gray-100">
+            <div
+              className={`items-center justify-center overflow-hidden bg-gray-100 ${
+                viewerFile.row.output_type === 'image' ? 'flex flex-none' : 'flex min-h-0 flex-1'
+              }`}
+            >
               {viewerFile.row.output_type === 'image' ? (
                 <img
                   src={viewerFile.url}
                   alt=""
-                  className="max-h-full max-w-full object-contain"
+                  className="h-auto max-h-[calc(90dvh-73px)] w-full object-contain sm:max-h-[calc(92dvh-73px)] sm:w-auto sm:max-w-[90vw]"
                 />
               ) : (
                 <iframe src={viewerFile.url} className="h-full w-full border-0 bg-white" />

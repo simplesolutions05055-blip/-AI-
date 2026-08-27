@@ -3,6 +3,7 @@ import { fetchSocialCaption, type SocialPlatform } from '@/lib/social';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { randomUUID } from '@/lib/uuid';
 import { Tooltip } from '@/components/ui/Tooltip';
+import AiImageModal from '@/components/AiImageModal';
 
 const PLATFORM_LABEL: Record<SocialPlatform, string> = {
   facebook: 'פייסבוק',
@@ -34,13 +35,14 @@ export type MediaItem = {
   storagePath?: string; // present for outputs (or already-saved uploads)
   aiGenerated?: boolean; // the image produced by the AI pipeline for this very post
   producedKey?: string; // identity of the produced slot this item mirrors (see ProducedImage)
+  requestId?: string; // the image request behind this item — required for AI edits
 };
 
 // An AI image the host page produced for this post. `key` is a stable identity
 // ("main" for the page's primary image, the request id for carousel extras) so
 // that when a new version of the same image is produced, it replaces the old
 // one in the attached media instead of leaving a stale copy behind.
-export type ProducedImage = { key: string; url: string; storagePath: string };
+export type ProducedImage = { key: string; url: string; storagePath: string; requestId?: string };
 
 // The shape persisted to the scheduled_social_posts.media jsonb column.
 export type StoredMediaRecord = {
@@ -49,6 +51,8 @@ export type StoredMediaRecord = {
   name: string;
   storage_path: string | null;
   mime_type: string | null;
+  // Kept so an attached AI image can be re-edited later from the post editor.
+  request_id?: string | null;
 };
 
 // A publish target (Facebook page / Instagram account) from get-meta-connections.
@@ -137,7 +141,7 @@ export async function uploadPendingMedia(media: MediaItem[], uploadPrefix: strin
   return Promise.all(
     media.map(async (item) => {
       if (item.storagePath) {
-        return { kind: item.kind, source: item.source, name: item.name, storage_path: item.storagePath, mime_type: null };
+        return { kind: item.kind, source: item.source, name: item.name, storage_path: item.storagePath, mime_type: null, request_id: item.requestId ?? null };
       }
       if (!item.file) throw new Error('קובץ מדיה חסר');
       const safeName = item.file.name.replace(/[^\w.\-]+/g, '_').slice(-120);
@@ -147,7 +151,7 @@ export async function uploadPendingMedia(media: MediaItem[], uploadPrefix: strin
         upsert: false,
       });
       if (error) throw error;
-      return { kind: item.kind, source: item.source, name: item.name, storage_path: path, mime_type: item.file.type || null };
+      return { kind: item.kind, source: item.source, name: item.name, storage_path: path, mime_type: item.file.type || null, request_id: item.requestId ?? null };
     })
   );
 }
@@ -168,6 +172,8 @@ export async function hydrateStoredMedia(records: StoredMediaRecord[] | null | u
         source: record.source === 'upload' ? 'upload' : 'output',
         name: record.name || record.storage_path.split('/').pop() || 'מדיה',
         storagePath: record.storage_path,
+        requestId: record.request_id ?? undefined,
+        aiGenerated: Boolean(record.request_id),
       } as MediaItem;
     })
   );
@@ -184,8 +190,10 @@ export default function SocialScheduleSection({
   trailingAction = null,
   onScheduled,
   producedImages = null,
+  aiBrief = null,
   triggerLabel = 'תזמון',
   triggerClassName = '',
+  variant = 'trigger',
 }: {
   captionSource?: CaptionSource;
   requestId?: string | null;
@@ -199,8 +207,13 @@ export default function SocialScheduleSection({
   // Auto-attached to the post media; a new version of an image replaces the old
   // one in place, so the preview always shows the latest edit.
   producedImages?: ProducedImage[] | null;
+  // The brief behind the post's image, enabling AI carousel slides in the media editor.
+  aiBrief?: Record<string, unknown> | null;
   triggerLabel?: string;
   triggerClassName?: string;
+  // 'trigger' shows a button that expands the form; 'page' renders the form on
+  // its own, for hosts that give scheduling a whole screen.
+  variant?: 'trigger' | 'page';
 } = {}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [platforms, setPlatforms] = useState<SocialPlatform[]>(['facebook', 'instagram']);
@@ -269,7 +282,7 @@ export default function SocialScheduleSection({
   // version of an image replaces the old one in place (so the preview never
   // shows a pre-edit version), fresh carousel images are appended, and images
   // the user removed stay removed.
-  const producedSignature = (producedImages ?? []).map((p) => `${p.key}:${p.storagePath}`).join('|');
+  const producedSignature = (producedImages ?? []).map((p) => `${p.key}:${p.storagePath}:${p.requestId ?? ''}`).join('|');
   useEffect(() => {
     if (!producedImages?.length) return;
     setMedia((cur) => {
@@ -281,7 +294,7 @@ export default function SocialScheduleSection({
         const idx = next.findIndex((m) => m.producedKey === produced.key);
         if (idx >= 0) {
           if (next[idx].storagePath === produced.storagePath) continue;
-          next = next.map((m, i) => (i === idx ? { ...m, url: produced.url, storagePath: produced.storagePath } : m));
+          next = next.map((m, i) => (i === idx ? { ...m, url: produced.url, storagePath: produced.storagePath, requestId: produced.requestId } : m));
         } else {
           const item: MediaItem = {
             id: randomUUID(),
@@ -290,6 +303,7 @@ export default function SocialScheduleSection({
             source: 'output',
             name: produced.key === 'main' ? 'התמונה שנוצרה עם AI' : 'תמונה נוספת לקרוסלה',
             storagePath: produced.storagePath,
+            requestId: produced.requestId,
             aiGenerated: true,
             producedKey: produced.key,
           };
@@ -301,8 +315,14 @@ export default function SocialScheduleSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [producedSignature]);
 
-  function openSchedule() {
-    setModalOpen(true);
+  // On a dedicated screen the caption has to be ready without a click.
+  useEffect(() => {
+    if (variant === 'page') void ensureCaption(platforms[0] ?? 'facebook');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant]);
+
+  function toggleSchedule() {
+    setModalOpen((open) => !open);
     void ensureCaption(platforms[0] ?? 'facebook');
   }
 
@@ -314,11 +334,15 @@ export default function SocialScheduleSection({
   return (
     <div>
       {title && <label className="block text-sm font-semibold mb-2">{title}</label>}
+      {variant === 'trigger' && (
       <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
         <button
           type="button"
-          onClick={openSchedule}
-          className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-violet-200 bg-white px-2.5 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50 ${triggerClassName}`}
+          onClick={toggleSchedule}
+          aria-expanded={modalOpen}
+          className={`inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            modalOpen ? 'border-violet-600 bg-violet-50 text-violet-800' : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
+          } ${triggerClassName}`}
         >
           <span>{triggerLabel}</span>
           <FacebookIcon />
@@ -326,14 +350,15 @@ export default function SocialScheduleSection({
         </button>
         {trailingAction}
       </div>
+      )}
 
-      {modalOpen && (
-        <ScheduleModal
+      {(variant === 'page' || modalOpen) && (
+        <ScheduleForm
           platforms={platforms}
           onPlatformsChange={updatePlatforms}
           caption={caption}
+          onCaptionChange={setCaption}
           captionLoading={captionLoading}
-          captionError={captionError}
           media={media}
           setMedia={setMedia}
           onMediaRemoved={(item) => {
@@ -343,12 +368,17 @@ export default function SocialScheduleSection({
           outputId={outputId}
           brandId={brandId}
           defaultScheduledAt={defaultScheduledAt}
+          aiBrief={aiBrief}
           onSaved={(message) => {
             setScheduleSaved(message);
             onScheduled?.();
           }}
           onClose={() => setModalOpen(false)}
         />
+      )}
+
+      {captionError && (
+        <p className="mt-3 text-sm text-red-600">{captionError}</p>
       )}
 
       {scheduleSaved && (
@@ -360,12 +390,12 @@ export default function SocialScheduleSection({
   );
 }
 
-function ScheduleModal({
+function ScheduleForm({
   platforms,
   onPlatformsChange,
   caption,
+  onCaptionChange,
   captionLoading,
-  captionError,
   media,
   setMedia,
   onMediaRemoved,
@@ -373,14 +403,15 @@ function ScheduleModal({
   outputId,
   brandId,
   defaultScheduledAt,
+  aiBrief,
   onSaved,
   onClose,
 }: {
   platforms: SocialPlatform[];
   onPlatformsChange: (platforms: SocialPlatform[]) => void;
   caption: string;
+  onCaptionChange: (value: string) => void;
   captionLoading: boolean;
-  captionError: string | null;
   media: MediaItem[];
   setMedia: React.Dispatch<React.SetStateAction<MediaItem[]>>;
   onMediaRemoved?: (item: MediaItem) => void;
@@ -388,13 +419,13 @@ function ScheduleModal({
   outputId: string | null;
   brandId: string | null;
   defaultScheduledAt: string;
+  aiBrief: Record<string, unknown> | null;
   onSaved: (message: string) => void;
   onClose: () => void;
 }) {
   const [scheduledAt, setScheduledAt] = useState(defaultScheduledAt);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   // Where the post actually publishes: the brand's Meta connection and the
   // chosen page/account per platform (pre-filled with the brand's default).
@@ -456,14 +487,18 @@ function ScheduleModal({
   const targetsReady =
     metaTargets.status === 'ready' && missingTargetPlatforms.length === 0;
 
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  // Everything that can stop a save, as one sentence instead of five banners.
+  const blocker: string | null =
+    !hasPlatforms ? 'בחרו לפחות רשת אחת לפרסום.'
+    : metaTargets.status === 'disconnected' ? 'המותג לא מחובר ל-Meta. חברו חשבון במסך ההגדרות.'
+    : metaTargets.status === 'error' ? 'לא הצלחנו לטעון את חשבונות הפרסום. רעננו ונסו שוב.'
+    : metaTargets.status === 'loading' ? 'טוען את חשבונות הפרסום…'
+    : !targetsReady ? `בחרו ${missingTargetPlatforms.includes('facebook') ? 'עמוד פייסבוק' : 'חשבון אינסטגרם'} לפרסום.`
+    : !scheduledAt ? 'בחרו תאריך ושעה.'
+    : !caption.trim() ? 'הוסיפו כיתוב לפרסום.'
+    : includesInstagram && media.length === 0 ? 'אינסטגרם דורש תמונה או וידאו.'
+    : igTooManyItems ? `קרוסלה באינסטגרם מוגבלת ל־10 פריטים. הסירו ${media.length - 10}.`
+    : null;
 
   function togglePlatform(platform: SocialPlatform) {
     const next = platforms.includes(platform)
@@ -517,75 +552,43 @@ function ScheduleModal({
   }
 
   return (
-    <div
-      dir="rtl"
-      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 px-3 pb-[calc(var(--safe-bottom)+12px)] pt-4 sm:items-center sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="תזמון לרשתות חברתיות"
-      onClick={onClose}
-    >
-      <div
-        dir="rtl"
-        className="flex max-h-[90dvh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white text-right shadow-2xl sm:rounded-xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] p-3 sm:gap-3 sm:p-5">
-          <div className="min-w-0">
-            <h2 className="text-base font-bold leading-6 sm:text-lg">תזמון לרשתות חברתיות</h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              בחרו איפה הפוסט יפורסם, הוסיפו מועד ושמרו תזמון אחד.
-            </p>
-          </div>
-          <Tooltip content="סגירה">
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="סגירה"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-            >
-              <CloseIcon />
-            </button>
-          </Tooltip>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#f6f8fb] p-3 sm:p-5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
-            <section className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
-          <fieldset className="mb-4">
-            <legend className="mb-2 block text-sm font-semibold">איפה לפרסם?</legend>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <PlatformToggle
-                platform="facebook"
-                checked={platforms.includes('facebook')}
-                onChange={() => togglePlatform('facebook')}
-              />
-              <PlatformToggle
-                platform="instagram"
-                checked={platforms.includes('instagram')}
-                onChange={() => togglePlatform('instagram')}
+    <div dir="rtl" className="rounded-xl border border-[var(--border)] bg-white p-3 text-right shadow-sm sm:p-4">
+      <div>
+        <div>
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)]">
+            <section>
+          {/* "When" and "where" read as one row on a wide screen. */}
+          <div className="mb-4 grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="schedule-compose-datetime" className="mb-2 block text-sm font-semibold">תאריך ושעה</label>
+              <input
+                id="schedule-compose-datetime"
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={(e) => setScheduledAt(e.target.value)}
+                className="block h-12 w-full min-w-0 rounded-lg border border-[var(--border)] px-3 text-right text-sm ltr"
               />
             </div>
-            {!hasPlatforms && (
-              <p className="mt-2 text-xs text-red-600">בחרו לפחות רשת חברתית אחת לפרסום.</p>
-            )}
+            <fieldset>
+              <legend className="mb-2 block text-sm font-semibold">איפה לפרסם?</legend>
+              <div className="grid grid-cols-2 gap-2">
+                <PlatformToggle
+                  platform="facebook"
+                  checked={platforms.includes('facebook')}
+                  onChange={() => togglePlatform('facebook')}
+                />
+                <PlatformToggle
+                  platform="instagram"
+                  checked={platforms.includes('instagram')}
+                  onChange={() => togglePlatform('instagram')}
+                />
+              </div>
+            </fieldset>
+          </div>
 
-            {metaTargets.status === 'loading' && (
-              <p className="mt-2 text-xs text-[var(--muted)]">טוען את חשבונות הפרסום המחוברים…</p>
-            )}
-            {metaTargets.status === 'error' && (
-              <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                לא הצלחנו לטעון את חשבונות הפרסום. רעננו את העמוד ונסו שוב.
-              </p>
-            )}
-            {metaTargets.status === 'disconnected' && (
-              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                המותג עדיין לא מחובר לפייסבוק ואינסטגרם, ולכן אי אפשר לתזמן פרסום אוטומטי.
-                חברו חשבון Meta במסך ההגדרות ונסו שוב.
-              </p>
-            )}
+          <div className="mb-4">
             {metaTargets.status === 'ready' && (
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-2">
                 {platforms.includes('facebook') && (
                   <TargetSelect
                     label="עמוד פייסבוק לפרסום"
@@ -606,90 +609,50 @@ function ScheduleModal({
                 )}
               </div>
             )}
-            {metaTargets.status === 'ready' && missingTargetPlatforms.length > 0 && (
-              <p className="mt-2 text-xs text-red-600">
-                בחרו {missingTargetPlatforms.includes('facebook') ? 'עמוד פייסבוק' : 'חשבון אינסטגרם'} לפרסום.
-              </p>
-            )}
-          </fieldset>
+          </div>
 
-          <label className="mb-2 block text-sm font-semibold">תאריך ושעה</label>
-          <input
-            type="datetime-local"
-            value={scheduledAt}
-            onChange={(e) => setScheduledAt(e.target.value)}
-            className="mb-4 block w-full min-w-0 max-w-full rounded-lg border border-[var(--border)] px-2.5 py-3 text-right text-sm leading-5 sm:px-3 sm:py-2"
+          <label className="mb-2 block text-sm font-semibold">כיתוב לפרסום</label>
+          <textarea
+            dir="auto"
+            rows={8}
+            value={captionLoading ? 'כותב טקסט לפרסום...' : caption}
+            onChange={(event) => onCaptionChange(event.target.value)}
+            disabled={captionLoading}
+            className="mb-4 block w-full resize-y rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm leading-6"
           />
 
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <label className="block text-sm font-semibold">כיתוב לפרסום</label>
-            <span className="text-xs text-[var(--muted)]">שם הפוסט נקבע אוטומטית</span>
+          <div className="mb-4">
+            <MediaEditor
+              media={media}
+              setMedia={setMedia}
+              brandId={brandId}
+              onRemove={onMediaRemoved}
+              aiBrief={aiBrief}
+              aiBaseRequestId={requestId}
+              instagram={includesInstagram}
+            />
           </div>
-          <div className="relative mb-1 min-h-24 whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">
-            {captionLoading ? 'כותב טקסט לפרסום...' : caption || 'אין כיתוב לפרסום.'}
-          </div>
-          <p className="mb-3 text-xs text-[var(--muted)]">תצוגה בלבד. שינוי הטקסט נעשה במסך העריכה.</p>
-          {captionLoading && (
-            <p className="mb-3 text-xs text-[var(--muted)]">כותב טקסט מוכן לפרסום לפי הבריף...</p>
-          )}
-          {!captionLoading && !captionError && <div className="mb-3" />}
-
-          {includesInstagram && media.length === 0 && (
-            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
-            </div>
-          )}
-          {igTooManyItems && (
-            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              קרוסלה באינסטגרם מוגבלת ל־10 תמונות. הסירו {media.length - 10} מהמדיה כדי להמשיך.
-            </div>
-          )}
-          {saveError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
             </section>
 
-            <aside className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div className="text-sm font-bold text-[#071a33]">תצוגה מקדימה</div>
-                <button
-                  type="button"
-                  onClick={() => setPreviewOpen(true)}
-                  disabled={!caption.trim() && media.length === 0}
-                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-[#1877F2]/30 bg-[#1877F2]/5 px-3 py-1.5 text-xs font-semibold text-[#1877F2] hover:bg-[#1877F2]/10 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <EyeIcon />
-                  <span>פתחו בגדול</span>
-                </button>
-              </div>
+            <aside>
+              <div className="mb-2 text-sm font-bold text-[#071a33]">תצוגה מקדימה</div>
               <InlinePostPreview caption={caption} media={media} brandId={brandId} />
             </aside>
           </div>
         </div>
 
-        {previewOpen && (
-          <PostPreviewModal
-            caption={caption}
-            media={media}
-            brandId={brandId}
-            onClose={() => setPreviewOpen(false)}
-          />
-        )}
-
-        <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-[var(--border)] bg-white p-3 sm:flex sm:justify-start sm:gap-3 sm:p-5">
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[var(--border)] pt-4">
           <button
             type="button"
             onClick={saveSchedule}
-            disabled={saving || !hasPlatforms || !targetsReady || !scheduledAt || !caption.trim() || (includesInstagram && media.length === 0) || igTooManyItems}
-            className="min-h-11 min-w-0 rounded-lg bg-brand px-2 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:px-4 sm:text-base"
+            disabled={saving || blocker !== null}
+            className="min-h-11 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? 'שומר...' : 'תזמון הפרסום'}
           </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="min-h-11 min-w-0 rounded-lg border border-[var(--border)] px-2 py-2.5 text-sm font-semibold hover:bg-gray-50 sm:px-4 sm:text-base"
-          >
-            ביטול
-          </button>
+          {(blocker || saveError) && (
+            <p className="text-sm text-[var(--muted)]">{saveError ?? blocker}</p>
+          )}
         </div>
       </div>
     </div>
@@ -698,7 +661,7 @@ function ScheduleModal({
 
 // Dropdown of the brand's connected pages/accounts for one platform. A single
 // option renders as a static line — nothing to choose.
-function TargetSelect({
+export function TargetSelect({
   label,
   options,
   value,
@@ -747,7 +710,7 @@ function TargetSelect({
   );
 }
 
-function PlatformToggle({
+export function PlatformToggle({
   platform,
   checked,
   onChange,
@@ -759,7 +722,7 @@ function PlatformToggle({
   const isFacebook = platform === 'facebook';
   return (
     <label
-      className={`flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+      className={`platform-toggle flex h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border px-3 text-sm font-semibold transition-colors ${
         checked
           ? isFacebook
             ? 'border-blue-500 bg-blue-50 text-blue-700'
@@ -767,16 +730,9 @@ function PlatformToggle({
           : 'border-[var(--border)] bg-white text-[var(--text)] hover:bg-gray-50'
       }`}
     >
-      <span className="inline-flex items-center gap-2">
-        {isFacebook ? <FacebookIcon /> : <InstagramIcon />}
-        <span>{PLATFORM_LABEL[platform]}</span>
-      </span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={onChange}
-        className="h-5 w-5 accent-brand"
-      />
+      {isFacebook ? <FacebookIcon /> : <InstagramIcon />}
+      <span className="platform-toggle-name truncate">{PLATFORM_LABEL[platform]}</span>
+      <input type="checkbox" checked={checked} onChange={onChange} className="sr-only" />
     </label>
   );
 }
@@ -904,14 +860,28 @@ export function MediaEditor({
   setMedia,
   brandId,
   onRemove,
+  aiBrief = null,
+  aiBaseRequestId = null,
+  instagram = false,
 }: {
   media: MediaItem[];
   setMedia: React.Dispatch<React.SetStateAction<MediaItem[]>>;
   brandId: string | null;
   onRemove?: (item: MediaItem) => void;
+  // Instagram caps a carousel at 10 items and needs at least one.
+  instagram?: boolean;
+  // When a brief is supplied the editor can also produce carousel slides with
+  // AI, and any image that carries a requestId can be re-edited in place.
+  aiBrief?: Record<string, unknown> | null;
+  aiBaseRequestId?: string | null;
 }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [aiTarget, setAiTarget] = useState<MediaItem | null>(null);
+  const [aiCreating, setAiCreating] = useState(false);
+  const [viewing, setViewing] = useState<MediaItem | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   function addUploadedFiles(files: FileList | null) {
     if (!files?.length) return;
@@ -971,12 +941,40 @@ export function MediaEditor({
     });
   }
 
+  function applyAiImage(target: MediaItem | null, image: { requestId: string; storagePath: string; previewUrl: string }) {
+    setMedia((cur) => {
+      const next: MediaItem = {
+        id: target?.id ?? randomUUID(),
+        url: image.previewUrl,
+        kind: 'image',
+        source: 'output',
+        name: target?.name ?? 'תמונה שנוצרה עם AI',
+        storagePath: image.storagePath,
+        requestId: image.requestId,
+        aiGenerated: true,
+        producedKey: target?.producedKey,
+      };
+      if (!target) return [...cur, next];
+      return cur.map((m) => (m.id === target.id ? next : m));
+    });
+    setAiTarget(null);
+    setAiCreating(false);
+  }
+
+  const addChoices = [
+    { label: 'העלאה מהמחשב', icon: <UploadIcon />, onClick: () => { setAddOpen(false); fileInputRef.current?.click(); } },
+    { label: 'מתוך התוצרים שלנו', icon: <GalleryIcon />, onClick: () => { setAddOpen(false); setPickerOpen(true); } },
+    ...(aiBrief ? [{ label: 'יצירה עם AI', icon: <span aria-hidden>✨</span>, onClick: () => { setAddOpen(false); setAiCreating(true); } }] : []),
+  ];
+
   return (
     <>
-      <label className="mb-1 block text-sm font-semibold">מדיה לפרסום</label>
-      <p className="mb-2 text-xs text-[var(--muted)]">
-        אפשר לצרף כמה תמונות — הן יפורסמו כפוסט קרוסלה לפי הסדר שכאן.
-      </p>
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <label className="block text-sm font-semibold">תמונות הפוסט</label>
+        <span className="text-xs text-[var(--muted)]">
+          {media.length > 1 ? `קרוסלה של ${media.length} תמונות · הסדר כאן הוא סדר הפרסום` : 'הוסיפו תמונה שנייה כדי ליצור קרוסלה'}
+        </span>
+      </div>
       <input
         ref={fileInputRef}
         type="file"
@@ -988,35 +986,51 @@ export function MediaEditor({
           e.target.value = ''; // allow re-selecting the same file
         }}
       />
-      <div className="mb-3 flex min-w-0 flex-wrap gap-2">
-        <Tooltip content="העלאת תמונות/סרטונים">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="העלאת תמונות או סרטונים"
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-gray-50"
-          >
-            <UploadIcon />
-          </button>
-        </Tooltip>
-        <button
-          type="button"
-          onClick={() => setPickerOpen(true)}
-          className="inline-flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-2.5 py-2 text-sm font-semibold hover:bg-gray-50 sm:flex-none sm:px-3"
-        >
-          <GalleryIcon />
-          <span className="truncate">מתוך התוצרים שלנו</span>
-        </button>
-      </div>
 
-      {media.length > 0 && (
+      {/* Empty: one dropzone that names all three ways to add an image.
+          Non-empty: the same choices live behind the trailing "+" tile, so the
+          images themselves stay the biggest thing on screen. */}
+      {media.length === 0 ? (
+        <div
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            addUploadedFiles(event.dataTransfer.files);
+          }}
+          className={`mb-4 rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
+            dragging ? 'border-brand bg-brand/5' : 'border-[var(--border)] bg-[#fbfdfc]'
+          }`}
+        >
+          <p className="text-sm font-semibold">גררו לכאן תמונות, או הוסיפו:</p>
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            {addChoices.map((choice) => (
+              <button
+                key={choice.label}
+                type="button"
+                onClick={choice.onClick}
+                className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm font-semibold hover:bg-gray-50"
+              >
+                {choice.icon}
+                <span>{choice.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
         <div className="mb-4 grid grid-cols-3 gap-2">
           {media.map((m, idx) => (
             <div key={m.id} className="group relative aspect-square overflow-hidden rounded-lg border border-[var(--border)] bg-gray-50">
               {m.kind === 'video' ? (
                 <video src={m.url} className="h-full w-full object-cover" muted />
               ) : (
-                <img src={m.url} alt={m.name} className="h-full w-full object-cover" />
+                <button type="button" onClick={() => setViewing(m)} aria-label={`הצגת ${m.name}`} className="h-full w-full">
+                  <img src={m.url} alt={m.name} className="h-full w-full object-cover" />
+                </button>
               )}
               {media.length > 1 && (
                 <span className="absolute right-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-black/60 px-1 text-[11px] font-bold text-white">
@@ -1062,17 +1076,110 @@ export function MediaEditor({
               {m.kind === 'video' && (
                 <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">וידאו</span>
               )}
-              {m.aiGenerated && m.kind !== 'video' && (
-                <span className="absolute bottom-1 right-1 rounded bg-violet-600/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                  נוצרה עם AI
-                </span>
+              {m.requestId && m.kind !== 'video' && (
+                <Tooltip content="עריכה עם AI">
+                  <button
+                    type="button"
+                    onClick={() => setAiTarget(m)}
+                    aria-label="עריכת התמונה עם AI"
+                    className="absolute bottom-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-violet-600 text-[11px] text-white hover:bg-violet-700"
+                  >
+                    ✨
+                  </button>
+                </Tooltip>
               )}
             </div>
           ))}
+
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-[var(--border)] text-[var(--muted)] hover:border-brand hover:text-brand"
+          >
+            <span className="text-2xl leading-none" aria-hidden>+</span>
+            <span className="px-1 text-center text-[11px] font-semibold leading-tight">הוספת תמונה</span>
+          </button>
+        </div>
+      )}
+
+      {instagram && media.length === 0 && (
+        <p className="mb-3 text-xs text-amber-700">אינסטגרם דורש תמונה או וידאו לפרסום.</p>
+      )}
+      {instagram && media.length > 10 && (
+        <p className="mb-3 text-xs text-amber-700">קרוסלה באינסטגרם מוגבלת ל־10 פריטים. הסירו {media.length - 10}.</p>
+      )}
+
+      {addOpen && (
+        <div
+          dir="rtl"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="הוספת תמונה"
+          onClick={() => setAddOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm overflow-hidden rounded-2xl bg-white text-right shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] p-4">
+              <h2 className="text-base font-bold">הוספת תמונה</h2>
+              <button type="button" onClick={() => setAddOpen(false)} aria-label="סגירה" className="text-2xl leading-none text-[var(--muted)] hover:text-black">
+                ×
+              </button>
+            </div>
+            <div className="p-2">
+              {addChoices.map((choice) => (
+                <button
+                  key={choice.label}
+                  type="button"
+                  onClick={choice.onClick}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-right text-sm font-semibold hover:bg-gray-50"
+                >
+                  {choice.icon}
+                  <span>{choice.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewing && (
+        <div
+          dir="rtl"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={viewing.name}
+          onClick={() => setViewing(null)}
+        >
+          <img src={viewing.url} alt={viewing.name} className="max-h-[90dvh] max-w-full rounded-lg object-contain" />
         </div>
       )}
 
       {pickerOpen && <OutputsPickerModal brandId={brandId} onClose={() => setPickerOpen(false)} onConfirm={addFromOutputs} />}
+
+      {aiTarget && (
+        <AiImageModal
+          mode="edit"
+          initial={{ requestId: aiTarget.requestId as string, storagePath: aiTarget.storagePath ?? '', previewUrl: aiTarget.url }}
+          onDone={(image) => applyAiImage(aiTarget, image)}
+          onClose={() => setAiTarget(null)}
+        />
+      )}
+
+      {aiCreating && (
+        <AiImageModal
+          mode="create"
+          brief={aiBrief}
+          baseRequestId={aiBaseRequestId}
+          brandId={brandId}
+          slideIndex={media.length + 1}
+          onDone={(image) => applyAiImage(null, image)}
+          onClose={() => setAiCreating(false)}
+        />
+      )}
     </>
   );
 }
@@ -1237,221 +1344,6 @@ function OutputsPickerModal({
 // on top, the AI image below it, and the standard engagement/action rows.
 // Colors follow Facebook's palette: #1877F2 (blue), #050505 (text),
 // #65676B (secondary), #F0F2F5 (feed bg), #CED0D4 (dividers).
-function PostPreviewModal({
-  caption,
-  media,
-  brandId,
-  onClose,
-}: {
-  caption: string;
-  media: MediaItem[];
-  brandId: string | null;
-  onClose: () => void;
-}) {
-  const [pageName, setPageName] = useState('העמוד שלכם');
-  const [pageLogoUrl, setPageLogoUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
-    }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
-  // The page identity in the preview is the brand: its name + logo as avatar.
-  useEffect(() => {
-    let alive = true;
-    if (!brandId) return;
-    (async () => {
-      const client = createSupabaseBrowserClient();
-      const { data: brand } = await client.from('brands').select('name, logo_path').eq('id', brandId).maybeSingle();
-      if (!alive || !brand) return;
-      if ((brand as { name?: string }).name) setPageName((brand as { name: string }).name);
-      const logoPath = (brand as { logo_path?: string | null }).logo_path;
-      if (logoPath) {
-        const { data: signed } = await client.storage.from('branding').createSignedUrl(logoPath, 600);
-        if (alive && signed?.signedUrl) setPageLogoUrl(signed.signedUrl);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [brandId]);
-
-  const images = media.filter((m) => m.kind === 'image');
-  // Carousel position; clamped so removing images never leaves it out of range.
-  const [slide, setSlide] = useState(0);
-  const activeSlide = Math.min(slide, Math.max(images.length - 1, 0));
-
-  return (
-    <div
-      dir="rtl"
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-[90dvh] w-full max-w-[540px] flex-col overflow-hidden rounded-2xl bg-white text-right shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] p-4">
-          <div>
-            <h2 className="text-lg font-bold">דוגמה של הפוסט</h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">כך הפוסט ייראה בפיד של פייסבוק. תצוגה להמחשה בלבד.</p>
-          </div>
-          <Tooltip content="סגירה">
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="סגירה"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
-            >
-              <CloseIcon />
-            </button>
-          </Tooltip>
-        </div>
-
-        {/* Facebook feed background */}
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[#F0F2F5] p-3 sm:p-5">
-          {/* The post card */}
-          <div className="overflow-hidden rounded-lg bg-white shadow-[0_1px_2px_rgba(0,0,0,0.2)]">
-            {/* Header: avatar + page name + time */}
-            <div className="flex items-center justify-between px-4 pt-3">
-              <div className="flex items-center gap-2.5">
-                {pageLogoUrl ? (
-                  <img src={pageLogoUrl} alt={pageName} className="h-10 w-10 shrink-0 rounded-full border border-black/5 bg-white object-cover" />
-                ) : (
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1877F2] text-lg font-bold text-white">
-                    {pageName.trim().charAt(0) || 'ע'}
-                  </span>
-                )}
-                <div className="leading-tight">
-                  <div className="text-[15px] font-semibold text-[#050505]">{pageName}</div>
-                  <div className="mt-0.5 flex items-center gap-1 text-[13px] text-[#65676B]">
-                    <span>עכשיו</span>
-                    <span>·</span>
-                    <GlobeIcon />
-                  </div>
-                </div>
-              </div>
-              <span className="text-[#65676B]" aria-hidden="true">
-                <MoreIcon />
-              </span>
-            </div>
-
-            {/* Caption text — on top, before the image, like on Facebook */}
-            {caption.trim() && (
-              <div className="whitespace-pre-wrap px-4 pb-2 pt-2.5 text-[15px] leading-6 text-[#050505]">
-                {caption.trim()}
-              </div>
-            )}
-
-            {/* The image(s) — full width, no padding. Two or more images render
-                as a browsable carousel, exactly like the published post. */}
-            {images.length === 1 && (
-              <img src={images[0].url} alt="תמונת הפוסט" className="max-h-[440px] w-full bg-black/5 object-cover" />
-            )}
-            {images.length >= 2 && (
-              <div className="relative">
-                <img
-                  src={images[activeSlide].url}
-                  alt={`תמונה ${activeSlide + 1} מתוך ${images.length}`}
-                  className="h-[340px] w-full bg-black/5 object-cover"
-                />
-                <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-xs font-semibold text-white">
-                  {activeSlide + 1}/{images.length}
-                </span>
-                {activeSlide > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setSlide(activeSlide - 1)}
-                    aria-label="התמונה הקודמת"
-                    className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
-                  >
-                    <ChevronIcon dir="right" size={16} />
-                  </button>
-                )}
-                {activeSlide < images.length - 1 && (
-                  <button
-                    type="button"
-                    onClick={() => setSlide(activeSlide + 1)}
-                    aria-label="התמונה הבאה"
-                    className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
-                  >
-                    <ChevronIcon dir="left" size={16} />
-                  </button>
-                )}
-                <div className="absolute bottom-2 left-1/2 flex -translate-x-1/2 gap-1.5">
-                  {images.map((img, idx) => (
-                    <button
-                      key={img.id}
-                      type="button"
-                      onClick={() => setSlide(idx)}
-                      aria-label={`מעבר לתמונה ${idx + 1}`}
-                      className={`h-2 w-2 rounded-full ${idx === activeSlide ? 'bg-white' : 'bg-white/50'}`}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Engagement counts row */}
-            <div className="flex items-center justify-between px-4 py-2.5 text-[13px] text-[#65676B]">
-              <span className="flex items-center gap-1.5">
-                <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[#1877F2] text-white">
-                  <ThumbIcon size={10} filled />
-                </span>
-                <span>אתם ועוד 12</span>
-              </span>
-              <span>3 תגובות · שיתוף אחד</span>
-            </div>
-
-            <div className="mx-3 border-t border-[#CED0D4]" />
-
-            {/* Action buttons row */}
-            <div className="grid grid-cols-3 px-2 py-1">
-              <span className="flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold text-[#65676B] hover:bg-[#F2F2F2]">
-                <ThumbIcon size={18} />
-                <span>אהבתי</span>
-              </span>
-              <span className="flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold text-[#65676B] hover:bg-[#F2F2F2]">
-                <CommentIcon />
-                <span>תגובה</span>
-              </span>
-              <span className="flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-semibold text-[#65676B] hover:bg-[#F2F2F2]">
-                <ShareIcon />
-                <span>שיתוף</span>
-              </span>
-            </div>
-          </div>
-
-          {images.length === 0 && (
-            <p className="mt-3 text-center text-xs text-[#65676B]">
-              לא מצורפת תמונה — הפוסט יפורסם כטקסט בלבד.
-            </p>
-          )}
-          {images.length >= 2 && (
-            <p className="mt-3 text-center text-xs text-[#65676B]">
-              פוסט קרוסלה עם {images.length} תמונות — דפדפו עם החצים כדי לראות את כולן.
-            </p>
-          )}
-        </div>
-
-        <div className="shrink-0 border-t border-[var(--border)] bg-white p-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="min-h-11 w-full rounded-lg bg-brand px-4 py-2.5 font-semibold text-white sm:w-auto"
-          >
-            נראה מצוין, סגירה
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// supabase-js hides the function's JSON body behind error.context, so without
 // this the user sees the generic English "Edge Function returned a non-2xx
 // status code" instead of the actual reason the save failed.
 async function invokeErrorMessage(e: unknown): Promise<string> {
@@ -1571,14 +1463,6 @@ function ChevronIcon({ dir, size = 12 }: { dir: 'left' | 'right'; size?: number 
   );
 }
 
-function EyeIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
 
 function GlobeIcon() {
   return (

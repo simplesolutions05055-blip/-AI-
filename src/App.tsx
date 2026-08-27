@@ -79,6 +79,7 @@ export default function App() {
           <Route path="quote" element={<QuotePage />} />
           <Route path="files" element={<FilesPage />} />
           <Route path="files/:requestId/revise" element={<RevisePage />} />
+          <Route path="schedule/:postId" element={<RevisePage />} />
           <Route path="branding" element={<BrandingPage />} />
           <Route path="models" element={<ModelsPage />} />
           <Route path="skills" element={<SkillsPage />} />

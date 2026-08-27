@@ -25,6 +25,7 @@ const TITLES: { match: (p: string) => boolean; title: string }[] = [
   { match: (p) => p.startsWith('/admin/skills'), title: 'סקילים' },
   { match: (p) => p.startsWith('/admin/permissions'), title: 'משתמשים והרשאות' },
   { match: (p) => p.startsWith('/admin/holidays'), title: 'גאנט' },
+  { match: (p) => p.startsWith('/admin/schedule'), title: 'עריכת תזמון' },
   { match: (p) => p.startsWith('/admin/annual-planner'), title: 'תכנון שנתי' },
   { match: (p) => p.startsWith('/admin/meta-connection'), title: 'חיבור לרשתות' },
   { match: (p) => p.startsWith('/admin/errors'), title: 'שגיאות' },

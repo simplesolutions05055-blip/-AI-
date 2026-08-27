@@ -586,3 +586,11 @@ select {
   .planner-post-next,
   .planner-post-prev { animation: none; }
 }
+
+/* Platform picker: the network name is dropped when its own cell gets too
+   narrow, leaving just the icon. Keyed on the cell's width, not the viewport's,
+   because the picker sits in columns of very different widths. */
+.platform-toggle { container-type: inline-size; }
+@container (max-width: 112px) {
+  .platform-toggle-name { display: none; }
+}

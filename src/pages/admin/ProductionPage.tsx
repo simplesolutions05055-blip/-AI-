@@ -3083,7 +3083,7 @@ function ResultCard({
               }
               producedImages={
                 output.output_type === 'image' && output.storage_path && previewUrl
-                  ? [{ key: 'main', url: previewUrl, storagePath: output.storage_path }]
+                  ? [{ key: 'main', url: previewUrl, storagePath: output.storage_path, requestId: requestId ?? undefined }]
                   : null
               }
             />

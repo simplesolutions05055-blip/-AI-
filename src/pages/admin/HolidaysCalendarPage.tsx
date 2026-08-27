@@ -1,19 +1,13 @@
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, ChevronLeft, ChevronRight, Copy, Download, Eye, Lightbulb, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Lightbulb, X } from 'lucide-react';
 import { randomUUID } from '@/lib/uuid';
 import { Spinner } from '@/components/ui/Spinner';
 import SocialScheduleSection, {
-  MediaEditor,
-  uploadPendingMedia,
   hydrateStoredMedia,
-  scheduleErrorLabel,
-  fetchBrandMetaTargets,
-  type MediaItem,
   type StoredMediaRecord,
-  type MetaTargetOption,
 } from '@/components/SocialScheduleSection';
-import { fetchSocialCaption } from '@/lib/social';
+import { scheduledPostPath } from '@/lib/scheduledPost';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import type { IsraelHoliday } from '@/types/db';
@@ -45,24 +39,10 @@ type ScheduledSocialPost = {
   brands?: { name?: string | null } | null;
 };
 
-// The brand's connected pages/accounts for the platform being edited, plus the
-// currently chosen target. 'disconnected' blocks re-arming a failed post.
-type EditTargetsState =
-  | { status: 'loading' }
-  | { status: 'error' }
-  | { status: 'disconnected' }
-  | { status: 'ready'; connectionId: string; options: MetaTargetOption[] };
-
 type ScheduleThumb = {
   url: string;
   count: number;
   kind: 'image' | 'video';
-};
-
-type EditScheduleForm = {
-  title: string;
-  scheduledAt: string;
-  caption: string;
 };
 
 function isoDate(year: number, month: number, day: number) {
@@ -146,11 +126,6 @@ function datetimeLocalForDate(date: string) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}T${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
 }
 
-function datetimeLocalFromIso(value: string) {
-  const date = new Date(value);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
 function hebrewDateLabel(date: string) {
   const [year, month, day] = date.split('-').map(Number);
   return new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(year, month - 1, day));
@@ -185,19 +160,6 @@ export default function HolidaysCalendarPage() {
   const [mobileAgendaDate, setMobileAgendaDate] = useState<string | null>(null);
   const [scheduleDate, setScheduleDate] = useState<string | null>(null);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
-  const [editPostId, setEditPostId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<EditScheduleForm>({ title: '', scheduledAt: '', caption: '' });
-  const editScheduleDateRef = useRef<HTMLInputElement>(null);
-  const [editMedia, setEditMedia] = useState<MediaItem[]>([]);
-  const [editMediaLoading, setEditMediaLoading] = useState(false);
-  // The publish target (Facebook page / Instagram account) the edited post
-  // will post to, resolved from the post's brand connection.
-  const [editTargets, setEditTargets] = useState<EditTargetsState>({ status: 'loading' });
-  const [editTargetId, setEditTargetId] = useState('');
-  const [editAiLoading, setEditAiLoading] = useState(false);
-  const [editAiError, setEditAiError] = useState<string | null>(null);
-  const [savingEditPostId, setSavingEditPostId] = useState<string | null>(null);
-  const [editError, setEditError] = useState<string | null>(null);
   const [deleteConfirmPostId, setDeleteConfirmPostId] = useState<string | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -365,8 +327,6 @@ export default function HolidaysCalendarPage() {
           setScheduleDate(null);
         } else if (deleteConfirmPostId) {
           setDeleteConfirmPostId(null);
-        } else if (editPostId) {
-          closeEditSchedule();
         } else if (selectedPostId) {
           setSelectedPostId(null);
         } else if (selectedDate) {
@@ -376,7 +336,7 @@ export default function HolidaysCalendarPage() {
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [scheduleDate, selectedDate, selectedPostId, editPostId, deleteConfirmPostId, isMonthPickerOpen]);
+  }, [scheduleDate, selectedDate, selectedPostId, deleteConfirmPostId, isMonthPickerOpen]);
 
   const byDate = useMemo(() => {
     const map = new Map<string, IsraelHoliday[]>();
@@ -414,7 +374,6 @@ export default function HolidaysCalendarPage() {
     setCaptionCopied(false);
     setPublishActionError(null);
   }, [selectedPostId]);
-  const editPost = editPostId ? scheduledPosts.find((post) => post.id === editPostId) ?? null : null;
   const deleteConfirmPost = deleteConfirmPostId ? scheduledPosts.find((post) => post.id === deleteConfirmPostId) ?? null : null;
   const selectedDay = selectedDate ? Number(selectedDate.slice(8, 10)) : null;
   const selectedDateDisplay = selectedDate
@@ -460,11 +419,12 @@ export default function HolidaysCalendarPage() {
     setMobileAgendaDate(mobileActiveDate);
   }, [mobileActiveDate, mobileAgendaDate]);
 
+  // A ?post= deep link now belongs to the dedicated editor page.
   useEffect(() => {
-    if (!deepLinkedPostId || editPostId) return;
+    if (!deepLinkedPostId) return;
     const linkedPost = scheduledPosts.find((post) => post.id === deepLinkedPostId);
     if (linkedPost) openEditSchedule(linkedPost);
-  }, [deepLinkedPostId, editPostId, scheduledPosts]);
+  }, [deepLinkedPostId, scheduledPosts]);
 
   function moveMonth(delta: number) {
     setVisibleMonth((value) => new Date(value.getFullYear(), value.getMonth() + delta, 1));
@@ -486,173 +446,12 @@ export default function HolidaysCalendarPage() {
     setIsMonthPickerOpen(false);
   }
 
+  // Editing a scheduled post happens on its own page, which also carries the
+  // output-revision tools when the post came from a production request.
   function openEditSchedule(post: ScheduledSocialPost) {
-    setEditError(null);
-    setEditAiError(null);
-    setEditPostId(post.id);
-    setEditForm({
-      title: scheduleDisplayTitle(post),
-      scheduledAt: datetimeLocalFromIso(post.scheduled_at),
-      caption: post.caption,
+    navigate(scheduledPostPath(post), {
+      state: { returnTo: `${location.pathname}${location.search}` },
     });
-    setEditMedia([]);
-    setEditMediaLoading(true);
-    void hydrateStoredMedia(post.media)
-      .then((items) => setEditMedia(items))
-      .catch(() => setEditMedia([]))
-      .finally(() => setEditMediaLoading(false));
-
-    // Load the brand's connected pages/accounts so the target can be changed
-    // (and a failed post re-armed) from the edit dialog.
-    setEditTargets({ status: 'loading' });
-    setEditTargetId(post.target_platform_id ?? '');
-    void fetchBrandMetaTargets(post.brand_id)
-      .then((result) => {
-        if (!result) {
-          setEditTargets({ status: 'disconnected' });
-          return;
-        }
-        const options = post.platform === 'facebook' ? result.facebook : result.instagram;
-        setEditTargets({ status: 'ready', connectionId: result.connectionId, options });
-        // Pre-select: keep the post's current target if still valid, else fall
-        // back to the brand default.
-        const current = options.find((o) => o.target_id === post.target_platform_id);
-        const fallback = post.platform === 'facebook' ? result.defaultFacebook : result.defaultInstagram;
-        setEditTargetId(current?.target_id ?? fallback?.target_id ?? '');
-      })
-      .catch(() => setEditTargets({ status: 'error' }));
-  }
-
-  function closeEditSchedule() {
-    setEditMedia((current) => {
-      for (const item of current) if (item.source === 'upload' && !item.storagePath) URL.revokeObjectURL(item.url);
-      return [];
-    });
-    if (editPostId && searchParams.get('post') === editPostId) {
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('post');
-      nextParams.delete('month');
-      setSearchParams(nextParams, { replace: true });
-    }
-    setEditPostId(null);
-  }
-
-  async function generateEditCaption(post: ScheduledSocialPost) {
-    const draft = editForm.caption.trim();
-    if (!draft || editAiLoading) return;
-    setEditAiLoading(true);
-    setEditAiError(null);
-    try {
-      const text = await fetchSocialCaption(
-        {
-          brand_id: post.brand_id,
-          goal: draft,
-          source_text: draft,
-          content_request: 'להפוך את הטקסט החופשי לכיתוב מוכן לפרסום ברשת החברתית, בלי להוסיף עובדות שלא נכתבו.',
-        },
-        post.platform,
-        post.request_id
-      );
-      setEditForm((current) => ({ ...current, caption: text }));
-    } catch {
-      setEditAiError('לא הצלחנו לנסח את הטקסט עם AI. אפשר לערוך ידנית ולנסות שוב.');
-    } finally {
-      setEditAiLoading(false);
-    }
-  }
-
-  async function saveScheduleEdit(post: ScheduledSocialPost) {
-    const cleanTitle = editForm.title.trim();
-    const cleanCaption = editForm.caption.trim();
-    const scheduledAtValue = editScheduleDateRef.current?.value || editForm.scheduledAt;
-    if (!cleanTitle || !cleanCaption || !scheduledAtValue || savingEditPostId) return;
-
-    // Resolve the chosen publish target. A facebook/instagram post can only be
-    // saved as 'scheduled' with a connection + target (DB constraint), so block
-    // early with a clear message when the brand isn't connected or nothing is
-    // selected.
-    const chosen =
-      editTargets.status === 'ready'
-        ? editTargets.options.find((o) => o.target_id === editTargetId) ?? null
-        : null;
-    if (editTargets.status === 'disconnected') {
-      setEditError('המותג לא מחובר לפייסבוק/אינסטגרם, אז אי אפשר לקבוע יעד פרסום. חברו חשבון Meta במסך ההגדרות.');
-      return;
-    }
-    if (!chosen) {
-      setEditError('בחרו עמוד או חשבון לפרסום לפני השמירה.');
-      return;
-    }
-
-    setSavingEditPostId(post.id);
-    setEditError(null);
-
-    const nextScheduledAt = new Date(scheduledAtValue);
-    if (Number.isNaN(nextScheduledAt.getTime()) || nextScheduledAt.getTime() <= Date.now()) {
-      setSavingEditPostId(null);
-      setEditError('בחרו תאריך ושעה עתידיים.');
-      return;
-    }
-
-    let storedMedia: StoredMediaRecord[];
-    try {
-      storedMedia = await uploadPendingMedia(editMedia, post.request_id || 'manual');
-    } catch (uploadErr) {
-      setSavingEditPostId(null);
-      setEditError(scheduleErrorLabel(String((uploadErr as { message?: string })?.message ?? uploadErr)));
-      return;
-    }
-
-    // Re-arm a failed post: a valid target + a future time send it back into the
-    // publish queue. Already-terminal states (published/cancelled) keep their
-    // status; a still-scheduled post stays scheduled.
-    const rearm = post.status === 'failed' && nextScheduledAt.getTime() > Date.now();
-    const nextStatus = rearm ? 'scheduled' : post.status;
-
-    const { data: updatedPost, error: updateError } = await createSupabaseBrowserClient()
-      .from('scheduled_social_posts')
-      .update({
-        title: cleanTitle,
-        caption: cleanCaption,
-        scheduled_at: nextScheduledAt.toISOString(),
-        media: storedMedia,
-        connection_id: editTargets.status === 'ready' ? editTargets.connectionId : post.connection_id,
-        target_platform_id: chosen.target_id,
-        target_name: chosen.name,
-        status: nextStatus,
-        error_message: rearm ? null : undefined,
-      } as never)
-      .eq('id', post.id)
-      .select('id, scheduled_at')
-      .maybeSingle();
-
-    setSavingEditPostId(null);
-    if (updateError) {
-      setEditError(updateError.message);
-      return;
-    }
-    if (!updatedPost) {
-      setEditError('השינוי לא נשמר במסד הנתונים. רעננו את העמוד ונסו שוב.');
-      return;
-    }
-
-    setScheduledPosts((current) => current.map((item) => (
-      item.id === post.id
-        ? {
-            ...item,
-            title: cleanTitle,
-            caption: cleanCaption,
-            scheduled_at: nextScheduledAt.toISOString(),
-            media: storedMedia,
-            connection_id: editTargets.status === 'ready' ? editTargets.connectionId : item.connection_id,
-            target_platform_id: chosen.target_id,
-            target_name: chosen.name,
-            status: nextStatus,
-          }
-        : item
-    )));
-    closeEditSchedule();
-    setScheduleRefreshKey((value) => value + 1);
   }
 
   async function cancelSchedule(post: ScheduledSocialPost) {
@@ -677,7 +476,6 @@ export default function HolidaysCalendarPage() {
       nextParams.delete('month');
       setSearchParams(nextParams, { replace: true });
     }
-    setEditPostId((current) => current === post.id ? null : current);
     setSelectedPostId(null);
     setDeleteConfirmPostId(null);
     setScheduleRefreshKey((value) => value + 1);
@@ -1265,240 +1063,6 @@ export default function HolidaysCalendarPage() {
         </div>
       )}
 
-      {editPost && (
-        <div className="fixed inset-0 z-[74] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="עריכת תזמון" lang="he">
-          <button type="button" className="absolute inset-0 h-full w-full cursor-default" aria-label="סגירת חלון" onClick={closeEditSchedule} />
-          <div className="relative flex max-h-[92dvh] w-full max-w-6xl flex-col overflow-hidden rounded-t-2xl border border-[var(--border)] bg-white text-right shadow-xl sm:rounded-2xl" dir="rtl">
-            <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] p-4 sm:p-5">
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold">עריכת פוסט מתוזמן</h2>
-                <p className="mt-1 text-sm text-[var(--muted)]">
-                  {scheduleStatusLabel(editPost)} · {scheduleLabel(editPost)} · {editPost.brands?.name ?? 'ללא מותג'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeEditSchedule}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[#071a33] hover:bg-[#edf4f2]"
-                aria-label="סגירת חלון"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto bg-[#f6f8fb] p-3 sm:p-5">
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
-                <section className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
-                  <div className="mb-4 flex items-center gap-2 text-sm font-bold text-[#071a33]">
-                    <CalendarClock className="h-4 w-4" />
-                    פרטי התזמון
-                  </div>
-
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="block text-sm font-semibold">
-                      שם התזמון
-                      <input
-                        type="text"
-                        value={editForm.title}
-                        onChange={(event) => setEditForm((current) => ({ ...current, title: event.target.value }))}
-                        maxLength={160}
-                        className="mt-2 block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm"
-                      />
-                    </label>
-
-                    <label className="block text-sm font-semibold">
-                      תאריך ושעה
-                      <input
-                        ref={editScheduleDateRef}
-                        type="datetime-local"
-                        value={editForm.scheduledAt}
-                        onInput={(event) => {
-                          const scheduledAt = event.currentTarget.value;
-                          setEditForm((current) => ({ ...current, scheduledAt }));
-                        }}
-                        min={datetimeLocalFromIso(new Date().toISOString())}
-                        className="mt-2 block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm ltr"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className="block text-sm font-semibold">
-                      {editPost.platform === 'facebook' ? 'עמוד פייסבוק לפרסום' : 'חשבון אינסטגרם לפרסום'}
-                    </label>
-                    {editTargets.status === 'loading' && (
-                      <p className="mt-2 text-xs text-[var(--muted)]">טוען את חשבונות הפרסום המחוברים…</p>
-                    )}
-                    {editTargets.status === 'error' && (
-                      <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                        לא הצלחנו לטעון את חשבונות הפרסום. רעננו את העמוד ונסו שוב.
-                      </p>
-                    )}
-                    {editTargets.status === 'disconnected' && (
-                      <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                        המותג לא מחובר לפייסבוק/אינסטגרם, ולכן אי אפשר לקבוע יעד פרסום. חברו חשבון Meta במסך ההגדרות.
-                      </p>
-                    )}
-                    {editTargets.status === 'ready' && editTargets.options.length === 0 && (
-                      <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                        אין {editPost.platform === 'facebook' ? 'עמודי פייסבוק' : 'חשבונות אינסטגרם'} מחוברים לחשבון ה-Meta של המותג.
-                      </p>
-                    )}
-                    {editTargets.status === 'ready' && editTargets.options.length > 0 && (
-                      <select
-                        value={editTargetId}
-                        onChange={(event) => setEditTargetId(event.target.value)}
-                        className="mt-2 block w-full rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm"
-                      >
-                        <option value="" disabled>בחרו…</option>
-                        {editTargets.options.map((option) => (
-                          <option key={option.target_id} value={option.target_id}>
-                            {option.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    {editPost.status === 'failed' && (
-                      <p className="mt-2 text-xs text-[var(--muted)]">
-                        הפוסט נכשל. בחירת יעד ומועד עתידי יחזירו אותו לתור הפרסום האוטומטי.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="mt-4">
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <label className="block text-sm font-semibold">כיתוב לפרסום</label>
-                      <button
-                        type="button"
-                        onClick={() => void generateEditCaption(editPost)}
-                        disabled={editAiLoading || !editForm.caption.trim()}
-                        className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {editAiLoading ? 'מנסח...' : 'ניסוח עם AI'}
-                      </button>
-                    </div>
-                    <textarea
-                      dir="auto"
-                      rows={8}
-                      value={editForm.caption}
-                      onChange={(event) => {
-                        setEditForm((current) => ({ ...current, caption: event.target.value }));
-                        if (editAiError) setEditAiError(null);
-                      }}
-                      className="block w-full resize-y rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 text-right text-sm leading-6"
-                    />
-                    {editAiError && <p className="mt-2 text-xs text-red-600">{editAiError}</p>}
-                  </div>
-
-                  <div className="mt-4">
-                    {editMediaLoading ? (
-                      <div className="rounded-lg border border-[var(--border)] bg-[#fbfdfc] p-5 text-center text-sm text-[var(--muted)]">טוען מדיה...</div>
-                    ) : (
-                      <MediaEditor media={editMedia} setMedia={setEditMedia} brandId={editPost.brand_id} />
-                    )}
-                    {!editMediaLoading && editPost.platform === 'instagram' && editMedia.length === 0 && (
-                      <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                        אינסטגרם דורש תמונה או וידאו לפרסום. אפשר להעלות קובץ או לבחור מתוך התוצרים.
-                      </div>
-                    )}
-                  </div>
-                </section>
-
-                <section className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 text-sm font-bold text-[#071a33]">
-                      <Eye className="h-4 w-4" />
-                      תצוגה מקדימה
-                    </div>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${scheduleTone(editPost)}`}>
-                      {scheduleStatusLabel(editPost)}
-                    </span>
-                  </div>
-                  <ScheduleInlinePreview
-                    post={editPost}
-                    caption={editForm.caption}
-                    media={editMedia}
-                  />
-                </section>
-              </div>
-            </div>
-
-            {editError && (
-              <div className="mx-3 mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:mx-5">
-                לא ניתן לשמור את העריכה: {editError}
-              </div>
-            )}
-
-            <div className="grid shrink-0 grid-cols-2 gap-3 border-t border-[var(--border)] bg-white p-3 sm:flex sm:justify-start sm:p-5">
-              <button
-                type="button"
-                onClick={() => void saveScheduleEdit(editPost)}
-                disabled={savingEditPostId === editPost.id || editMediaLoading || editTargets.status === 'loading' || editTargets.status === 'disconnected' || !editTargetId || !editForm.title.trim() || !editForm.caption.trim() || !editForm.scheduledAt || (editPost.platform === 'instagram' && editMedia.length === 0)}
-                className="min-h-11 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {savingEditPostId === editPost.id ? 'שומר...' : 'שמירת שינויים'}
-              </button>
-              <button
-                type="button"
-                onClick={closeEditSchedule}
-                className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50"
-              >
-                ביטול
-              </button>
-              {isDueForPublish(editPost) && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void copyPostCaption(editPost)}
-                    className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50"
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      <Copy className="h-4 w-4" />
-                      {captionCopied ? 'הועתק' : 'העתקת כיתוב'}
-                    </span>
-                  </button>
-                  {(editPost.media?.length ?? 0) > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => void downloadPostMedia(editPost)}
-                      disabled={downloadingMedia}
-                      className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      <span className="inline-flex items-center gap-2">
-                        <Download className="h-4 w-4" />
-                        {downloadingMedia ? 'מוריד...' : 'הורדת מדיה'}
-                      </span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void markPostPublished(editPost)}
-                    disabled={markingPublishedId === editPost.id}
-                    className="min-h-11 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
-                  >
-                    {markingPublishedId === editPost.id ? 'מעדכן...' : 'סימון כפורסם'}
-                  </button>
-                </>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  setDeleteError(null);
-                  setDeleteConfirmPostId(editPost.id);
-                }}
-                className="col-span-2 min-h-11 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50 sm:mr-auto"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <Trash2 className="h-4 w-4" />
-                  מחיקת תזמון
-                </span>
-              </button>
-            </div>
-            {publishActionError && <p className="px-5 pb-3 text-sm text-red-600">{publishActionError}</p>}
-          </div>
-        </div>
-      )}
-
       {deleteConfirmPost && (
         <div className="fixed inset-0 z-[75] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="אישור מחיקת תזמון">
           <button type="button" className="absolute inset-0 h-full w-full cursor-default" aria-label="סגירת חלון" onClick={() => setDeleteConfirmPostId(null)} />
@@ -1818,93 +1382,3 @@ export default function HolidaysCalendarPage() {
   );
 }
 
-function ScheduleInlinePreview({
-  post,
-  caption,
-  media,
-}: {
-  post: ScheduledSocialPost;
-  caption: string;
-  media: MediaItem[];
-}) {
-  const images = media.filter((item) => item.kind === 'image');
-  const [slide, setSlide] = useState(0);
-  const activeSlide = Math.min(slide, Math.max(images.length - 1, 0));
-  const pageName = post.brands?.name ?? 'העמוד שלכם';
-
-  return (
-    <div className="overflow-hidden rounded-xl bg-[#f0f2f5] p-3">
-      <article className="overflow-hidden rounded-lg bg-white shadow-[0_1px_2px_rgba(0,0,0,0.16)]">
-        <header className="flex items-center justify-between px-4 pt-3">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand text-base font-black text-white">
-              {pageName.trim().charAt(0) || 'ע'}
-            </span>
-            <div className="min-w-0 leading-tight">
-              <div className="truncate text-[15px] font-semibold text-[#050505]">{pageName}</div>
-              <div className="mt-0.5 flex items-center gap-1 text-[13px] text-[#65676B]">
-                <span>{schedulePlatformLabel(post)}</span>
-                <span>·</span>
-                <span className="ltr">{timeLabel(post.scheduled_at)}</span>
-              </div>
-            </div>
-          </div>
-          <span className="text-xs font-bold text-[#65676B]">{schedulePlatformMark(post)}</span>
-        </header>
-
-        {caption.trim() && (
-          <div dir="auto" className="whitespace-pre-wrap px-4 pb-2 pt-2.5 text-start text-[15px] leading-6 text-[#050505]">
-            {caption.trim()}
-          </div>
-        )}
-
-        {images.length === 1 && (
-          <img src={images[0].url} alt="תמונת הפוסט" className="max-h-[420px] w-full bg-black/5 object-cover" />
-        )}
-
-        {images.length >= 2 && (
-          <div className="relative">
-            <img
-              src={images[activeSlide].url}
-              alt={`תמונה ${activeSlide + 1} מתוך ${images.length}`}
-              className="h-[320px] w-full bg-black/5 object-cover"
-            />
-            <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-xs font-semibold text-white">
-              {activeSlide + 1}/{images.length}
-            </span>
-            {activeSlide > 0 && (
-              <button
-                type="button"
-                onClick={() => setSlide(activeSlide - 1)}
-                aria-label="התמונה הקודמת"
-                className="absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            )}
-            {activeSlide < images.length - 1 && (
-              <button
-                type="button"
-                onClick={() => setSlide(activeSlide + 1)}
-                aria-label="התמונה הבאה"
-                className="absolute left-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-[#050505] shadow hover:bg-white"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-        )}
-
-        {images.length === 0 && (
-          <div className="mx-4 mb-3 rounded-lg border border-dashed border-[#ced0d4] bg-[#f8fafc] p-6 text-center text-sm text-[#65676B]">
-            אין מדיה מצורפת. זה יוצג כפוסט טקסט בלבד.
-          </div>
-        )}
-
-        <footer className="border-t border-[#ced0d4] px-4 py-2 text-xs text-[#65676B]">
-          תצוגה להמחשה לפני פרסום
-        </footer>
-      </article>
-    </div>
-  );
-}

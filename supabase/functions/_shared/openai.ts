@@ -1,3 +1,4 @@
+import { isQuotaExhausted, reportProviderOutage, PROVIDER_QUOTA_ERROR } from './providerOutage.ts';
 // OpenAI access for Edge Functions — reads OPENAI_API_KEY from Supabase secrets.
 const API = 'https://api.openai.com/v1';
 
@@ -60,8 +61,14 @@ async function openAiFetch(
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const res = await fetch(url, init());
     if (res.ok) return res;
-    const transient = res.status === 429 || res.status === 500 || res.status === 502 || res.status === 503 || res.status === 529;
     lastBody = await res.text();
+    // A spent balance fails identically on every retry, and the provider's own
+    // wording (billing links, account state) must never reach an end user.
+    if (isQuotaExhausted(res.status, lastBody)) {
+      await reportProviderOutage(`OpenAI ${label}`, res.status, lastBody);
+      throw new Error(PROVIDER_QUOTA_ERROR);
+    }
+    const transient = res.status === 429 || res.status === 500 || res.status === 502 || res.status === 503 || res.status === 529;
     if (!transient || attempt === MAX_RETRIES) {
       throw new Error(`OpenAI ${label} ${res.status}: ${lastBody}`);
     }

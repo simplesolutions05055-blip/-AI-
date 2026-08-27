@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { randomUUID } from '@/lib/uuid';
 import { RichTextPreview, exportRichTextDocx, exportRichTextPdf, parseRichText, plainTextFromBlocks, type RichTextBlock } from '@/lib/richText';
 import { isValidEmail } from '@/lib/format';
 import { useProfile } from '@/lib/useProfile';
 import DeckExport from '@/components/DeckExport';
-import SocialScheduleSection from '@/components/SocialScheduleSection';
+import SocialScheduleSection, { type CaptionSource } from '@/components/SocialScheduleSection';
 import { fetchSocialCaption, reviseSocialCaption, saveSocialCaption } from '@/lib/social';
 import { fetchBrandImages, fetchBrandAiImages, loadPersistedDeckImage, fetchPresentationVersions, setPrimaryPresentationVersion, deletePresentationVersion, type DeckImage, type PersistedDeckImage, type PresentationVersion } from '@/lib/deck';
 import { confirmDialog } from '@/lib/dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { Spinner } from '@/components/ui/Spinner';
+import ScheduledPostEditor from '@/components/ScheduledPostEditor';
 
 interface SourceImage {
   request_id: string;
@@ -56,9 +57,34 @@ const BRIEF_FIELDS: Array<{ key: string; label: string; multiline?: boolean; lis
 ];
 
 export default function RevisePage() {
-  const { requestId } = useParams();
+  const params = useParams();
+  const requestId = params.requestId;
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
+  // The page doubles as the scheduled-post editor: reached as
+  // /admin/files/:requestId/revise?post=<id> from an output, or as
+  // /admin/schedule/:postId for a post with no request behind it.
+  const scheduledPostId = params.postId ?? searchParams.get('post');
+  // Where the back arrow goes. Callers pass the page they came from; a direct
+  // visit or a refresh falls back to the archive.
+  const backTo = (location.state as { returnTo?: string } | null)?.returnTo ?? '/admin/files';
+  // The page has two modes: editing the output, and scheduling it. Arriving with
+  // a post id (from the calendar) opens straight on the schedule side.
+  const tab: 'output' | 'schedule' =
+    searchParams.get('tab') === 'schedule' || (scheduledPostId && searchParams.get('tab') !== 'output') ? 'schedule' : 'output';
+  // Mounted lazily (resolving a caption costs an AI call) but never unmounted
+  // afterwards — hiding instead of unmounting keeps unsaved edits alive.
+  const [scheduleOpened, setScheduleOpened] = useState(false);
+  useEffect(() => {
+    if (tab === 'schedule') setScheduleOpened(true);
+  }, [tab]);
+
+  function goTab(next: 'output' | 'schedule') {
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', next);
+    setSearchParams(params);
+  }
   // The annual-planner round-trip: when the production flow was entered from a
   // plan item ("יצירת גרפיקה"), its id arrives here via navigation state. In
   // that mode the page shows dedicated save-&-return actions — this is the only
@@ -72,7 +98,7 @@ export default function RevisePage() {
   // production hub can offer a one-click way back here (in case it was a misclick).
   const productionReturnState = { returnTo: `/admin/files/${requestId}/revise` };
   const [source, setSource] = useState<SourceImage | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(requestId));
   const [feedback, setFeedback] = useState('');
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -860,8 +886,38 @@ export default function RevisePage() {
     }
   }
 
-  const pageTitle =
-    outputType === 'presentation'
+  // Everything the schedule tab needs, resolved from whichever output this page
+  // is showing.
+  const scheduleRequestId = outputType === 'text' ? textRequestId : result?.request_id || source?.request_id || null;
+  const scheduleCaptionSource: CaptionSource =
+    outputType === 'text'
+      ? { kind: 'text', text: plainTextFromBlocks(textBlocks) }
+      : postText.trim()
+        ? { kind: 'text', text: postText.trim() }
+        : { kind: 'image', brief, requestId: scheduleRequestId };
+  const scheduleProducedImages =
+    outputType === 'image'
+      ? [
+          ...((result?.previewUrl || source?.previewUrl) && (result?.storagePath || source?.storage_path)
+            ? [{
+                key: 'main',
+                url: (result?.previewUrl || source?.previewUrl) as string,
+                storagePath: (result?.storagePath || source?.storage_path) as string,
+                requestId: result?.request_id || source?.request_id || undefined,
+              }]
+            : []),
+          ...carouselImages.map((image) => ({
+            key: image.requestId,
+            url: image.previewUrl,
+            storagePath: image.storagePath,
+            requestId: image.requestId.startsWith('upload:') ? undefined : image.requestId,
+          })),
+        ]
+      : null;
+
+  const pageTitle = !requestId
+    ? 'עריכת תזמון'
+    : outputType === 'presentation'
       ? 'עריכת מצגת'
       : outputType === 'text'
         ? 'עריכת טקסט'
@@ -871,18 +927,36 @@ export default function RevisePage() {
 
   return (
     <div dir="rtl">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal">{pageTitle}</h1>
-        </div>
-        <Link
-          to="/admin/files"
-          title="חזרה לתוצרים"
-          aria-label="חזרה לתוצרים"
-          className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
+      <div className="mb-4 flex items-center gap-3">
+        {/* From a schedule the user opened here, back means "back to the output".
+            When the schedule itself was the entry point (arriving from the
+            calendar with a post id), back leaves the page. */}
+        <button
+          type="button"
+          onClick={() => (tab === 'schedule' && !scheduledPostId ? goTab('output') : navigate(backTo))}
+          title="חזרה"
+          aria-label="חזרה"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] hover:bg-gray-50 hover:text-black"
         >
           <BackIcon />
-        </Link>
+        </button>
+        <h1 className="text-xl font-semibold tracking-normal">{pageTitle}</h1>
+        {requestId && (
+          <div className="mr-auto inline-flex rounded-lg border border-[var(--border)] bg-white p-1">
+            {(['output', 'schedule'] as const).map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => goTab(key)}
+                className={`min-h-9 rounded-md px-4 text-sm font-semibold transition-colors ${
+                  tab === key ? 'bg-brand text-white' : 'text-[var(--muted)] hover:bg-gray-50'
+                }`}
+              >
+                {key === 'output' ? 'תוצר' : 'תזמון'}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {plannerItemId && (
@@ -920,7 +994,29 @@ export default function RevisePage() {
 
       {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 p-3 text-sm">{error}</div>}
 
-      {loading ? (
+      <div className={tab === 'schedule' ? undefined : 'hidden'}>
+        {scheduleOpened && (
+        scheduledPostId ? (
+          <ScheduledPostEditor
+            postId={scheduledPostId}
+            aiBrief={(brief as Record<string, unknown> | null) ?? null}
+            onDeleted={() => navigate(backTo)}
+          />
+        ) : (
+          <SocialScheduleSection
+            variant="page"
+            requestId={scheduleRequestId}
+            brandId={requestBrandId}
+            aiBrief={(brief as Record<string, unknown> | null) ?? null}
+            captionSource={scheduleCaptionSource}
+            producedImages={scheduleProducedImages}
+          />
+        )
+        )}
+      </div>
+
+      <div className={tab === 'schedule' ? 'hidden' : undefined}>
+      {!requestId ? null : loading ? (
         <div className="text-center text-[var(--muted)] p-10"><Spinner /></div>
       ) : outputType === 'presentation' ? (
         <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
@@ -1059,21 +1155,16 @@ export default function RevisePage() {
               sent: emailSent,
             }}
             social={
-              <SocialScheduleSection
-                requestId={textRequestId}
-                brandId={requestBrandId}
-                title=""
-                trailingAction={
-                  <EmailSend
-                    email={customerEmail}
-                    setEmail={setCustomerEmail}
-                    onSend={() => sendEmail(textRequestId)}
-                    sending={sendingEmail}
-                    sent={emailSent}
-                  />
-                }
-                captionSource={{ kind: 'text', text: plainTextFromBlocks(textBlocks) }}
-              />
+              <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+                <ScheduleTabButton onClick={() => goTab('schedule')} />
+                <EmailSend
+                  email={customerEmail}
+                  setEmail={setCustomerEmail}
+                  onSend={() => sendEmail(textRequestId)}
+                  sending={sendingEmail}
+                  sent={emailSent}
+                />
+              </div>
             }
             resetText="רוצים טקסט אחר לגמרי?"
             onReset={() => navigate('/admin/production', { state: productionReturnState })}
@@ -1368,34 +1459,16 @@ export default function RevisePage() {
                     )
                   }
                 />
-                <SocialScheduleSection
-                  requestId={result?.request_id || source?.request_id || null}
-                  brandId={requestBrandId}
-                  title=""
-                  trailingAction={
-                    <EmailSend
-                      email={customerEmail}
-                      setEmail={setCustomerEmail}
-                      onSend={() => sendEmail(result?.request_id || source?.request_id || null)}
-                      sending={sendingEmail}
-                      sent={emailSent}
-                    />
-                  }
-                  captionSource={
-                    postText.trim()
-                      ? { kind: 'text', text: postText.trim() }
-                      : { kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }
-                  }
-                  producedImages={(() => {
-                    const url = result?.previewUrl || source?.previewUrl;
-                    const storagePath = result?.storagePath || source?.storage_path;
-                    const main = url && storagePath ? [{ key: 'main', url: String(url), storagePath: String(storagePath) }] : [];
-                    return [
-                      ...main,
-                      ...carouselImages.map((img) => ({ key: img.requestId, url: img.previewUrl, storagePath: img.storagePath })),
-                    ];
-                  })()}
-                />
+                <div className="mt-3 flex flex-wrap items-center gap-2 sm:flex-nowrap">
+                  <ScheduleTabButton onClick={() => goTab('schedule')} />
+                  <EmailSend
+                    email={customerEmail}
+                    setEmail={setCustomerEmail}
+                    onSend={() => sendEmail(result?.request_id || source?.request_id || null)}
+                    sending={sendingEmail}
+                    sent={emailSent}
+                  />
+                </div>
               </div>
             }
             resetText="רוצים תמונה אחרת לגמרי?"
@@ -1462,22 +1535,16 @@ export default function RevisePage() {
             )}
 
             <div className="mt-5 border-t border-[var(--border)] pt-4">
-              <SocialScheduleSection
-                requestId={result?.request_id || source?.request_id || null}
-                brandId={requestBrandId}
-                captionSource={postText.trim() ? { kind: 'text', text: postText.trim() } : { kind: 'image', brief, requestId: result?.request_id || source?.request_id || null }}
-                producedImages={[
-                  ...((result?.previewUrl || source?.previewUrl) && (result?.storagePath || source?.storage_path) ? [{ key: 'main', url: (result?.previewUrl || source?.previewUrl) as string, storagePath: (result?.storagePath || source?.storage_path) as string }] : []),
-                  ...carouselImages.map((image) => ({ key: image.requestId, url: image.previewUrl, storagePath: image.storagePath })),
-                ]}
-                trailingAction={
-                  <EmailSend email={customerEmail} setEmail={setCustomerEmail} onSend={() => sendEmail(result?.request_id || source?.request_id || null)} sending={sendingEmail} sent={emailSent} />
-                }
-              />
+              <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+                <ScheduleTabButton onClick={() => goTab('schedule')} />
+                <EmailSend email={customerEmail} setEmail={setCustomerEmail} onSend={() => sendEmail(result?.request_id || source?.request_id || null)} sending={sendingEmail} sent={emailSent} />
+              </div>
             </div>
           </aside>
         </div>
       )}
+
+      </div>
 
       {briefModalOpen && brief && (
         <BriefModal
@@ -2762,11 +2829,24 @@ function ChevronDownIcon({ className = '' }: { className?: string }) {
   );
 }
 
+// Scheduling gets the whole screen, so the entry point is just a tab switch.
+function ScheduleTabButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-50"
+    >
+      תזמון פרסום
+    </button>
+  );
+}
+
 function BackIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <line x1="19" y1="12" x2="5" y2="12" />
-      <polyline points="12 19 5 12 12 5" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
     </svg>
   );
 }
