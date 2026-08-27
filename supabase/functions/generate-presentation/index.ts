@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
   if (denied) return denied;
 
   try {
-    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, slide, slideNumber, instruction, planner_year } = await req.json();
+    const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, slide, slideNumber, instruction, planner_year, planner_today } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
     await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
     if (save_only !== true) {
@@ -144,7 +144,8 @@ Deno.serve(async (req) => {
       const text = typeof (brief as { source_text?: unknown }).source_text === 'string' ? (brief as { source_text: string }).source_text.trim() : '';
       if (!text) return new Response(JSON.stringify({ error: 'source_text required' }), { status: 400, headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
       const aiModelsPlanner = await getSetting<{ text_model?: string }>(database, 'ai_models');
-      const result = await extractAnnualPlannerEvents(text, Number(planner_year) || new Date().getFullYear(), overrideKey);
+      const today = typeof planner_today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(planner_today) ? planner_today : new Date().toISOString().slice(0, 10);
+      const result = await extractAnnualPlannerEvents(text, Number(planner_year) || new Date().getFullYear(), today, overrideKey);
       await recordUsageAndCost(database, requestId ?? null, { provider: 'openai', model: aiModelsPlanner?.text_model || 'gpt-4o', input: result.usage?.prompt_tokens ?? 0, output: result.usage?.completion_tokens ?? 0, cost: estimateTextCost(result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0) });
       return new Response(JSON.stringify({ ok: true, events: result.events }), { headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' } });
     }

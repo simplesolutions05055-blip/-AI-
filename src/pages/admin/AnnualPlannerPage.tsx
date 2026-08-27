@@ -232,6 +232,33 @@ function datesWrittenIn(text: string, fallbackYear: number): Set<string> {
   return found;
 }
 
+const HEBREW_RELATIVE_NUMBERS: Record<string, number> = {
+  אחד: 1, אחת: 1, שני: 2, שתי: 2, שניים: 2, שתיים: 2,
+  שלושה: 3, שלוש: 3, ארבעה: 4, ארבע: 4, חמישה: 5, חמש: 5,
+  שישה: 6, שש: 6, שבעה: 7, שבע: 7, שמונה: 8, תשעה: 9, תשע: 9,
+  עשרה: 10, עשר: 10, שבועיים: 2, חודשיים: 2, שנתיים: 2,
+};
+
+function hasRelativeDateExpression(text: string) {
+  return /מחרתיים|מחר|(?:בעוד|עוד)\s+(?:(?:\d+|[א-ת]+)\s+)?(?:ימים?|שבוע(?:יים|ות)?|חודש(?:יים|ים)?|שנ(?:ה|תיים|ים))/u.test(text);
+}
+
+function relativeDateFromText(text: string, baseDate: Date): string | null {
+  const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
+  if (/מחרתיים/u.test(text)) date.setDate(date.getDate() + 2);
+  else if (/מחר/u.test(text)) date.setDate(date.getDate() + 1);
+  else {
+    const match = text.match(/(?:בעוד|עוד)\s+(?:(\d+|[א-ת]+)\s+)?(יום|ימים|שבוע|שבועיים|שבועות|חודש|חודשיים|חודשים|שנה|שנתיים|שנים)/u);
+    if (!match) return null;
+    const amount = match[1] ? Number(match[1]) || HEBREW_RELATIVE_NUMBERS[match[1]] || 1 : HEBREW_RELATIVE_NUMBERS[match[2]] || 1;
+    if (match[2].startsWith('יום')) date.setDate(date.getDate() + amount);
+    else if (match[2].startsWith('שבוע')) date.setDate(date.getDate() + amount * 7);
+    else if (match[2].startsWith('חודש')) date.setMonth(date.getMonth() + amount);
+    else date.setFullYear(date.getFullYear() + amount);
+  }
+  return isoDate(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
 function extractDatedIdeaLines(sourceText: string, year: number): ParsedIdea[] {
   return sourceText.split(/\r?\n|[;•]/).map((line) => line.trim()).filter(Boolean).flatMap((line) => {
     const date = parseDateFromText(line, year);
@@ -965,11 +992,16 @@ export default function AnnualPlannerPage() {
         },
       });
       if (!captionError) {
-        const aiCaptions = (captionData as { captions?: Array<{ index?: unknown; caption?: unknown }> } | null)?.captions ?? [];
+        const aiCaptions = (captionData as { captions?: Array<{ index?: unknown; caption?: unknown; hashtags?: unknown }> } | null)?.captions ?? [];
         for (const row of aiCaptions) {
           if (!Number.isInteger(row.index) || typeof row.caption !== 'string' || row.caption.trim().length <= 20) continue;
           const candidate = candidates[Number(row.index)];
-          if (candidate) candidate.caption = row.caption.trim();
+          if (!candidate) continue;
+          candidate.caption = row.caption.trim();
+          const aiTags = Array.isArray(row.hashtags)
+            ? [...new Set(row.hashtags.filter((tag): tag is string => typeof tag === 'string').map(toHashtag).filter(Boolean))].slice(0, 7)
+            : [];
+          if (aiTags.length >= 3) candidate.hashtags = aiTags;
         }
       }
 
@@ -1261,12 +1293,12 @@ export default function AnnualPlannerPage() {
           brand_id: item.brand_id ?? brandId ?? null,
           goal: `האשטגים לפוסט: ${item.event_name}`,
           source_text: `${item.title}\n${item.caption}`.slice(0, 1500),
-          content_request: 'החזר אך ורק לפחות 3 ולכל היותר 6 האשטגים קצרים ורלוונטיים לתוכן הפוסט עצמו, בעברית, מופרדים ברווחים, בלי שום טקסט אחר. כל האשטג מתחיל ב-#. בלי האשטגים גנריים כמו #פוסט או #תוכן.',
+          content_request: 'החזר אך ורק 3 עד 7 האשטגים קצרים, נפוצים ובעלי משמעות שרלוונטיים ישירות לתוכן הפוסט, בעברית, מופרדים ברווחים, בלי שום טקסט אחר. כל האשטג מתחיל ב-#. בלי האשטגים גנריים כמו #פוסט או #תוכן ובלי צירופים מומצאים.',
         },
         item.platform === 'both' ? 'facebook' : item.platform,
         null,
       );
-      const tags = [...new Set((text.match(/#[\p{L}\p{N}_]+/gu) ?? []).map(toHashtag).filter(Boolean))].slice(0, 8);
+      const tags = [...new Set((text.match(/#[\p{L}\p{N}_]+/gu) ?? []).map(toHashtag).filter(Boolean))].slice(0, 7);
       if (tags.length < 3) throw new Error('not_enough_tags');
       updateItem(item.id, { hashtags: tags, error_message: null });
     } catch {
@@ -1328,18 +1360,19 @@ export default function AnnualPlannerPage() {
     try {
       let parsed: ParsedIdea[] = [];
       const { data, error } = await createSupabaseBrowserClient().functions.invoke('generate-presentation', {
-        body: { format: 'annual_planner_events', brief: { source_text: text }, planner_year: year },
+        body: { format: 'annual_planner_events', brief: { source_text: text }, planner_year: year, planner_today: fallbackDate },
       });
       if (!error) {
         parsed = ((data as { events?: ParsedIdea[] } | null)?.events ?? []).filter((event) => event.title && event.date);
       }
       if (parsed.length === 0) parsed = extractDatedIdeaLines(text, year);
       if (parsed.length === 0) {
-        addManualEvent(text, fallbackDate);
+        addManualEvent(text, relativeDateFromText(text, now) ?? fallbackDate);
       } else {
         const written = datesWrittenIn(text, year);
+        const relative = hasRelativeDateExpression(text);
         for (const idea of parsed) {
-          addManualEvent(idea.title, idea.date && written.has(idea.date) ? idea.date : fallbackDate);
+          addManualEvent(idea.title, idea.date && (written.has(idea.date) || relative) ? idea.date : fallbackDate);
         }
       }
       setManualDraft('');

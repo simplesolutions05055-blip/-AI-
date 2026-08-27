@@ -748,12 +748,12 @@ export async function generateSocialCaption(
   return { text: content.trim(), usage };
 }
 
-export async function extractAnnualPlannerEvents(text: string, year: number, apiKey?: string) {
+export async function extractAnnualPlannerEvents(text: string, year: number, today: string, apiKey?: string) {
   const { content, usage } = await chat(
     [
       {
         role: 'system',
-        content: `חלץ מתוך טקסט חופשי אירועים לתכנון תוכן שנתי. החזר JSON בלבד במבנה {"events":[{"title":"...","date":"YYYY-MM-DD","description":"..."}]}. זהה כמה אירועים שיש בטקסט, גם אם הם כתובים בשורות, במשפטים, בנקודות או בצורה לא טבלאית. פרש תאריכים בעברית ובפורמטים כמו 19/07, 19.7, "19 ביולי" או "ביום שישי הבא". אם אין שנה בתאריך, השתמש בשנה ${year}. אל תמציא אירועים או תאריכים שלא ניתן להסיק מהטקסט. אם אין תאריך, השתמש בתאריך ${year}-01-01 רק כאשר ברור שמדובר באירוע ללא תאריך, אחרת דלג עליו.`,
+        content: `חלץ מתוך טקסט חופשי אירועים לתכנון תוכן שנתי. היום הוא ${today}. החזר JSON בלבד במבנה {"events":[{"title":"...","date":"YYYY-MM-DD","description":"..."}]}. זהה כמה אירועים שיש בטקסט, גם אם הם כתובים בשורות, במשפטים, בנקודות או בצורה לא טבלאית. פרש תאריכים בעברית ובפורמטים כמו 19/07, 19.7, "19 ביולי", "מחר", "מחרתיים", "עוד חודש", "בעוד 3 ימים" או "ביום שישי הבא", תמיד יחסית להיום ${today}. הסר את ביטוי הזמן היחסי מהכותרת. אם אין שנה בתאריך, השתמש בשנה ${year}. אל תמציא אירועים או תאריכים שלא ניתן להסיק מהטקסט. אם אין תאריך, השתמש בתאריך ${today}.`,
       },
       { role: 'user', content: text.slice(0, 12000) },
     ],
@@ -787,7 +787,7 @@ export async function generateAnnualPlannerCaptions(
       {
         role: 'system',
         content: `אתה קופירייטר לרשתות חברתיות. כתוב טקסט שיווקי מלא ומוכן לפרסום בעברית לכל פוסט שקיבלת.
-החזר JSON בלבד במבנה {"posts":[{"index":0,"caption":"..."}]} ובדיוק רשומה אחת לכל index.
+החזר JSON בלבד במבנה {"posts":[{"index":0,"caption":"...","hashtags":["#האשטג1","#האשטג2","#האשטג3"]}]} ובדיוק רשומה אחת לכל index.
 
 עקרונות כתיבה לכל caption:
 - בהירות לפני יצירתיות: הקורא צריך להבין מיד במה הפוסט עוסק ולמה זה רלוונטי עבורו.
@@ -801,7 +801,8 @@ export async function generateAnnualPlannerCaptions(
 - אל תכתוב טקסט מכני כמו "שמרו את התאריך" בלבד. כל פוסט חייב להיות ייחודי לנושא שלו.
 - הימנע מקלישאות ריקות כמו "אל תפספסו", "משהו גדול קורה" או "זה הזמן שלכם", אלא אם יש להן הצדקה ממשית בהקשר.
 - CTA צריך להיות פעולה+מטרה, למשל "לפרטים ולהרשמה...", "כתבו לנו מה הכי חשוב לכם..." או "שמרו את המועד ביומן..." — רק כשמתאים למידע הקיים.
-- אפשר לשלב עד 3 אימוג'ים טבעיים. בלי האשטגים; הם נשמרים בשדה נפרד.
+- אפשר לשלב עד 3 אימוג'ים טבעיים בטקסט.
+- הוסף 3–7 האשטגים נפוצים ובעלי משמעות, שרלוונטיים ישירות לנושא, לקהל, למקום או למותג. בלי #פוסט, #תוכן, #שיווק ובלי צירופים ארוכים או מומצאים רק כדי לייצר האשטג.
 - אל תמציא עובדות, שעות, מקומות, מחירים או מבצעים. השתמש רק במידע שסופק.
 - תאריך יכול להופיע רק אם הוא תורם לטקסט.`,
       },
@@ -818,11 +819,19 @@ export async function generateAnnualPlannerCaptions(
     { json: true, temperature: null, model: 'gpt-5-mini', apiKey },
   );
   try {
-    const parsed = JSON.parse(content) as { posts?: Array<{ index?: unknown; caption?: unknown }> };
+    const parsed = JSON.parse(content) as { posts?: Array<{ index?: unknown; caption?: unknown; hashtags?: unknown }> };
     const captions = Array.isArray(parsed.posts)
       ? parsed.posts
         .filter((post) => Number.isInteger(post.index) && typeof post.caption === 'string' && post.caption.trim().length > 20)
-        .map((post) => ({ index: Number(post.index), caption: String(post.caption).trim() }))
+        .map((post) => {
+          const hashtags = Array.isArray(post.hashtags)
+            ? [...new Set(post.hashtags
+              .filter((tag): tag is string => typeof tag === 'string')
+              .map((tag) => `#${tag.trim().replace(/^#/, '').replace(/\s+/g, '_').replace(/[^\p{L}\p{N}_]/gu, '')}`)
+              .filter((tag) => tag.length > 1))].slice(0, 7)
+            : [];
+          return { index: Number(post.index), caption: String(post.caption).trim(), hashtags };
+        })
       : [];
     return { captions, usage };
   } catch {
