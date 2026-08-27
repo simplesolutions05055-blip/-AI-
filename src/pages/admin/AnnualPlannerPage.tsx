@@ -415,6 +415,7 @@ export default function AnnualPlannerPage() {
   }), [orderedItems, statusFilter]);
   const selectedItem = (selectedId ? visibleItems.find((item) => item.id === selectedId) ?? null : null) ?? visibleItems[0] ?? null;
   const selectedIndex = selectedItem ? visibleItems.findIndex((item) => item.id === selectedItem.id) : -1;
+  const showEditorPostMenu = planMode === 'file' || planMode === 'manual';
   const pendingCount = items.filter((item) => item.status === 'draft').length;
   const toPublishCount = items.filter((item) => item.status === 'to_publish').length;
   const toScheduleCount = items.filter((item) => item.status === 'to_schedule').length;
@@ -776,8 +777,9 @@ export default function AnnualPlannerPage() {
   // basisOverride: the caller's choice is passed in rather than read from
   // state, because the step-2 buttons set the basis and generate in the same
   // click — the state update would not have landed yet.
-  async function generatePlan(ideasOverride?: ParsedIdea[], basisOverride?: PlanningBasis, options?: { pad?: boolean }) {
+  async function generatePlan(ideasOverride?: ParsedIdea[], basisOverride?: PlanningBasis, options?: { pad?: boolean; preserveIdeas?: boolean }) {
     const padToTarget = options?.pad ?? true;
+    const preserveIdeas = options?.preserveIdeas ?? false;
     const basis = basisOverride ?? planningBasis;
     setGenerating(true);
     setFinishNote(null);
@@ -872,6 +874,9 @@ export default function AnnualPlannerPage() {
           ? holidayCandidates
           : [...allIdeaCandidates, ...holidayCandidates];
       const seedCandidates = [...candidates];
+      const preservedIdeaKeys = preserveIdeas
+        ? new Set(ideaCandidates.map((candidate) => `${candidate.date}|${candidate.title}`))
+        : new Set<string>();
       const requestedPostCount = Math.min(MAX_TOTAL_POSTS, holidayRangeMonths * 4 * postsPerWeek);
 
       // Dedup by date+title, order chronologically, then enforce the weekly
@@ -891,7 +896,8 @@ export default function AnnualPlannerPage() {
         const count = perWeek.get(key) ?? 0;
         // The weekly cap shapes an auto-built plan; it must not throw away an
         // event the user picked by hand.
-        if (padToTarget && count >= postsPerWeek) return false;
+        const isPreservedIdea = preservedIdeaKeys.has(`${candidate.date}|${candidate.title}`);
+        if (padToTarget && !isPreservedIdea && count >= postsPerWeek) return false;
         perWeek.set(key, count + 1);
         return true;
       }).slice(0, MAX_TOTAL_POSTS);
@@ -913,7 +919,7 @@ export default function AnnualPlannerPage() {
           const seed = seedCandidates[slotIndex % seedCandidates.length];
           const cycle = Math.floor(slotIndex / seedCandidates.length);
           const angle = angles[cycle % angles.length];
-          const title = cycle === 0 ? seed.title : `${seed.title} — ${angle}`;
+          const title = preserveIdeas || cycle > 0 ? `${seed.title} — ${angle}` : seed.title;
           const key = `${date}|${title}`;
           if (existingKeys.has(key)) continue;
           existingKeys.add(key);
@@ -923,7 +929,7 @@ export default function AnnualPlannerPage() {
             date,
             title,
             eventName: seed.eventName || seed.title,
-            caption: cycle === 0 ? seed.caption : `${angle}: ${seed.caption}`,
+            caption: preserveIdeas || cycle > 0 ? `${angle}: ${seed.caption}` : seed.caption,
             scheduledAt: dayAtHourIso(date, slotIndex % 2 === 0 ? 10 : 12),
           });
         }
@@ -1361,10 +1367,9 @@ export default function AnnualPlannerPage() {
   async function generateFromManualEvents() {
     const ideas: ParsedIdea[] = manualEvents.map((event) => ({ title: event.title, date: event.date }));
     setPlanningBasis('ideas');
-    // Manual mode is literal: one post per event the user picked or typed, on
-    // its own date — no padding the plan out to the weekly target with
-    // recycled angles.
-    if (await generatePlan(ideas, 'ideas', { pad: false })) setStep(4);
+    // Keep every hand-picked event exact, then fill the remaining calculated
+    // slots with related content angles around the selected planning range.
+    if (await generatePlan(ideas, 'ideas', { preserveIdeas: true })) setStep(4);
   }
 
   async function generateFromFile() {
@@ -2146,9 +2151,9 @@ export default function AnnualPlannerPage() {
           </div>
           {items.length === 0 ? emptyPlanNotice : (
             <div className="mx-auto w-full max-w-5xl">
-              <div className={`grid gap-4 ${planMode === 'file' ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : ''}`} dir="ltr">
+              <div className={`grid gap-4 ${showEditorPostMenu ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : ''}`} dir="ltr">
                 <div dir="rtl">{editorPanel}</div>
-                {planMode === 'file' && (
+                {showEditorPostMenu && (
                   <aside
                     dir="rtl"
                     className="hidden max-h-[calc(100vh-2rem)] self-start overflow-hidden rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 shadow-[var(--warm-shadow-card)] lg:sticky lg:top-4 lg:block"
