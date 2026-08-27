@@ -414,7 +414,7 @@ export default function AnnualPlannerPage() {
   const [hashtagAiId, setHashtagAiId] = useState<string | null>(null);
   // The status filter doubles as the summary display — clicking a count
   // filters the list, so the numbers earn their screen space.
-  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'to_schedule' | 'to_publish' | 'done' | 'error'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'to_schedule' | 'to_publish' | 'done' | 'error'>('all');
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const [hashtagInput, setHashtagInput] = useState('');
   // Signed-thumbnail media per item id; hydrated lazily when an item is opened.
@@ -436,10 +436,10 @@ export default function AnnualPlannerPage() {
     [items],
   );
   const visibleItems = useMemo(() => orderedItems.filter((item) => {
-    if (statusFilter === 'all') return true;
+    if (statusFilter === 'all') return step === 5 ? item.status !== 'draft' : true;
     if (statusFilter === 'done') return item.status === 'scheduled' || item.status === 'published';
     return item.status === statusFilter;
-  }), [orderedItems, statusFilter]);
+  }), [orderedItems, statusFilter, step]);
   const selectedItem = (selectedId ? visibleItems.find((item) => item.id === selectedId) ?? null : null) ?? visibleItems[0] ?? null;
   const selectedIndex = selectedItem ? visibleItems.findIndex((item) => item.id === selectedItem.id) : -1;
   const showEditorPostMenu = planMode === 'file' || planMode === 'manual';
@@ -449,6 +449,7 @@ export default function AnnualPlannerPage() {
   const doneCount = items.filter((item) => item.status === 'scheduled' || item.status === 'published').length;
   const errorCount = items.filter((item) => item.status === 'error').length;
   const readyCount = toPublishCount + toScheduleCount;
+  const reviewedCount = items.length - pendingCount;
 
   const holidaysByMonth = useMemo(() => {
     const map = new Map<number, IsraelHoliday[]>();
@@ -2201,7 +2202,7 @@ export default function AnnualPlannerPage() {
               <button
                 type="button"
                 onClick={() => setStep(5)}
-                disabled={items.length === 0}
+                disabled={readyCount === 0}
                 className="inline-flex min-h-11 items-center gap-2 rounded-[10px] bg-brand px-5 text-sm font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
               >
                 לבדיקה אחרונה
@@ -2268,13 +2269,8 @@ export default function AnnualPlannerPage() {
             <div className="min-w-0">
               <h2 className="text-lg font-bold tracking-normal">בדיקה אחרונה לפני שממשיכים</h2>
               <p className="mt-1 text-sm text-[var(--text-muted)]">
-                {items.length} פוסטים · {readyCount + doneCount} מוכנים או נשלחו · {pendingCount} טיוטות
+                {reviewedCount} פוסטים שאושרו
               </p>
-              {items.length > 0 && (
-                <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-[var(--bg-subtle)]" aria-hidden="true">
-                  <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.round(((readyCount + doneCount) / items.length) * 100)}%` }} />
-                </div>
-              )}
             </div>
             <button
               type="button"
@@ -2288,8 +2284,7 @@ export default function AnnualPlannerPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
-            <FilterTab label="הכל" count={items.length} active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} />
-            <FilterTab label="טיוטות" count={pendingCount} active={statusFilter === 'draft'} onClick={() => setStatusFilter('draft')} />
+            <FilterTab label="הכל" count={reviewedCount} active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} />
             <FilterTab label="לתזמון" count={toScheduleCount} active={statusFilter === 'to_schedule'} onClick={() => setStatusFilter('to_schedule')} />
             <FilterTab label="לפרסום מיידי" count={toPublishCount} active={statusFilter === 'to_publish'} onClick={() => setStatusFilter('to_publish')} />
             <FilterTab label="נשלחו" count={doneCount} active={statusFilter === 'done'} onClick={() => setStatusFilter('done')} />
@@ -2309,7 +2304,15 @@ export default function AnnualPlannerPage() {
             </div>
           )}
 
-          {items.length === 0 ? emptyPlanNotice : (
+          {reviewedCount === 0 ? (
+            <div className="grid min-h-[260px] place-items-center rounded-xl border border-dashed border-[var(--border-warm)] bg-[var(--bg-subtle)] p-8 text-center text-[var(--text-muted)]">
+              <div>
+                <Check className="mx-auto mb-3 h-8 w-8 text-brand" />
+                <p className="font-semibold text-[var(--text-strong)]">עדיין לא אושרו פוסטים</p>
+                <p className="mt-1 text-sm">חזרה לעריכת התוכן ואישור הפוסטים שרוצים להמשיך איתם.</p>
+              </div>
+            </div>
+          ) : (
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
               <div>{editorPanel}</div>
               <aside className="rounded-xl border border-[var(--border-warm)] bg-[var(--bg-surface)] p-4 shadow-[var(--warm-shadow-card)]">
