@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { Spinner } from '@/components/ui/Spinner';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface MetaUser {
   id: string;
@@ -386,12 +386,23 @@ export default function MetaConnectionPage() {
                   אומת לאחרונה: {new Date(data.last_verified_at).toLocaleString('he-IL')}
                 </p>
               </div>
-              <button
-                onClick={disconnectMeta}
-                className="shrink-0 rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50"
-              >
-                נתק חיבור
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  onClick={startMetaOAuth}
+                  disabled={connecting}
+                  title="מרענן את רשימת העמודים והחשבונות מ-AutoPost"
+                  className="inline-flex items-center gap-2 rounded-xl border border-[var(--border-warm)] bg-[var(--surface)] px-4 py-2 text-sm font-semibold text-[var(--text-strong)] transition hover:bg-[var(--surface-2)] disabled:opacity-60"
+                >
+                  {connecting ? <Spinner className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
+                  חבר מחדש
+                </button>
+                <button
+                  onClick={disconnectMeta}
+                  className="rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                >
+                  נתק חיבור
+                </button>
+              </div>
             </div>
 
             {/* Facebook Pages */}
@@ -514,9 +525,13 @@ export default function MetaConnectionPage() {
                   })}
                 </div>
               ) : (
-                <p className="rounded-xl border border-dashed border-[var(--border-warm)] p-4 text-center text-sm text-[var(--muted)]">
-                  לא נמצאו חשבונות Instagram Business
-                </p>
+                <div className="rounded-xl border border-dashed border-[var(--border-warm)] p-5 text-center">
+                  <p className="text-sm font-medium text-[var(--text-strong)]">לא נמצאו חשבונות Instagram Business</p>
+                  <p className="mx-auto mt-1.5 max-w-md text-sm leading-6 text-[var(--muted)]">
+                    הרשימה נלקחת מהחשבון שלכם ב-AutoPost. חברו שם את האינסטגרם (חשבון Business או Creator בלבד),
+                    ואז לחצו "חבר מחדש" למעלה.
+                  </p>
+                </div>
               )}
             </section>
           </div>
