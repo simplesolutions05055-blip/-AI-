@@ -92,7 +92,7 @@ const STATUS_TONE: Record<AnnualPlanItemStatus, string> = {
 };
 
 const STEP_TITLES = [
-  'תכנון פרסום שנתי',
+  'תכנון תוכן שנתי',
   'איך ליצור את התוכן',
   'בניית התוכן',
   'עריכת הפוסטים',
@@ -1715,8 +1715,11 @@ export default function AnnualPlannerPage() {
             />
           )}
           <div>
-            <h1 className="text-2xl font-bold tracking-normal text-[var(--text-strong)]">תכנון פרסום שנתי</h1>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">{STEP_TITLES[step - 1]}</p>
+            <h1 className="text-2xl font-bold tracking-normal text-[var(--text-strong)]">תכנון תוכן שנתי</h1>
+            <p className="mt-1.5 flex items-center gap-1.5 text-sm leading-relaxed text-[var(--text-muted)]">
+              <Sparkles className="h-4 w-4 shrink-0 text-brand" />
+              <span>תכנן עם AI תוכן לכל השנה לפי חגים, מועדים ואירועים שלך</span>
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -1931,6 +1934,7 @@ export default function AnnualPlannerPage() {
               <input type="file" className="sr-only" accept=".xlsx,.txt,.md,.csv,.json,.pdf,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void handleFile(event.target.files?.[0] ?? null)} />
             </label>
           </div>
+          <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">{g('אם יש לך תוכן מוכן, העלה כאן', 'אם יש לך תוכן מוכן, העלי כאן')}</p>
           {sourceFileError && <p className="mt-2 text-sm text-red-600">{sourceFileError}</p>}
           {fileIdeas.length > 0 && (
             <>
