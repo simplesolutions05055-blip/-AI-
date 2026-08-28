@@ -75,7 +75,7 @@ export default function MetaConnectionPage() {
     }
 
     if (autoPostConnected) {
-      setSuccess('AutoPost חובר בהצלחה');
+      // No success banner: the connected card itself is the confirmation.
       window.history.replaceState({}, '', '/admin/meta-connection');
       loadConnectionData();
     } else if (code) {
