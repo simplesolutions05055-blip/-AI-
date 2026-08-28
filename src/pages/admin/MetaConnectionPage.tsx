@@ -508,127 +508,170 @@ export default function MetaConnectionPage() {
 
         </div>
       ) : (
-        <div className="space-y-6">
-          {/* Facebook User */}
-          <div className="border rounded-lg p-6">
-            <h2 className="text-xl font-semibold mb-4">פרופיל Facebook</h2>
-            <div className="flex items-center gap-4">
-              {data.meta_user_picture && (
+        <div className="space-y-5">
+          {/* Connected account header */}
+          <div className="overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[var(--surface)] shadow-sm">
+            <div className="flex flex-wrap items-center gap-4 border-b border-[var(--border-soft)] bg-[var(--surface-2)] px-6 py-5">
+              {data.meta_user_picture ? (
                 <img
                   src={data.meta_user_picture}
                   alt={data.meta_user_name}
-                  className="w-16 h-16 rounded-full"
+                  className="h-14 w-14 rounded-full object-cover ring-2 ring-white"
                 />
+              ) : (
+                <span className="grid h-14 w-14 place-items-center rounded-full bg-[#1877f2] text-white">
+                  <FacebookGlyph />
+                </span>
               )}
-              <div>
-                <p className="font-medium">{data.meta_user_name}</p>
-                <p className="text-sm text-gray-500">ID: {data.meta_user_id}</p>
-                <p className="text-sm text-gray-500">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-lg font-semibold text-[var(--text-strong)]">{data.meta_user_name}</p>
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    מחובר
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-[var(--muted)]">
                   אומת לאחרונה: {new Date(data.last_verified_at).toLocaleString('he-IL')}
                 </p>
               </div>
+              <button
+                onClick={disconnectMeta}
+                className="shrink-0 rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+              >
+                נתק חיבור
+              </button>
             </div>
-          </div>
 
-          {/* Facebook Pages */}
-          <div className="border rounded-lg p-6">
-            <h2 className="text-xl font-semibold mb-4">
-              עמודי Facebook ({data.meta_facebook_pages?.length || 0})
-            </h2>
-            {data.meta_facebook_pages && data.meta_facebook_pages.length > 0 ? (
-              <div className="space-y-3">
-                <p className="text-sm text-gray-500">
-                  עמוד ברירת המחדל נבחר אוטומטית בכל תזמון פרסום (באתר ובוואטסאפ). אפשר להחליף עמוד בכל תזמון בנפרד.
+            {/* Facebook Pages */}
+            <section className="px-6 py-5">
+              <header className="mb-4 flex items-center gap-2.5">
+                <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#1877f2] text-white">
+                  <FacebookGlyph className="h-4 w-4" />
+                </span>
+                <h2 className="text-base font-semibold text-[var(--text-strong)]">עמודי Facebook</h2>
+                <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-xs font-semibold text-[var(--muted)]">
+                  {data.meta_facebook_pages?.length || 0}
+                </span>
+              </header>
+              {data.meta_facebook_pages && data.meta_facebook_pages.length > 0 ? (
+                <div className="space-y-2.5">
+                  <p className="text-sm leading-6 text-[var(--muted)]">
+                    עמוד ברירת המחדל נבחר אוטומטית בכל תזמון פרסום (באתר ובוואטסאפ). אפשר להחליף עמוד בכל תזמון בנפרד.
+                  </p>
+                  {data.meta_facebook_pages.map((page) => {
+                    const isDefault = data.default_facebook_page_id
+                      ? data.default_facebook_page_id === page.id
+                      : data.meta_facebook_pages.length === 1;
+                    return (
+                      <div
+                        key={page.id}
+                        className={`flex items-center gap-3 rounded-xl border p-3 transition ${
+                          isDefault
+                            ? 'border-emerald-500/40 bg-emerald-50/60'
+                            : 'border-[var(--border-soft)] bg-[var(--surface)] hover:border-[var(--border-warm)]'
+                        }`}
+                      >
+                        {page.page_picture ? (
+                          <img src={page.page_picture} alt={page.page_name} className="h-11 w-11 rounded-lg object-cover" />
+                        ) : (
+                          <span className="grid h-11 w-11 place-items-center rounded-lg bg-[var(--surface-2)] text-[var(--muted)]">
+                            <FacebookGlyph className="h-5 w-5" />
+                          </span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium text-[var(--text-strong)]">{page.page_name}</p>
+                          {page.category && <p className="truncate text-sm text-[var(--muted)]">{page.category}</p>}
+                        </div>
+                        {isDefault ? (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            ברירת מחדל
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setDefaultTarget('facebook', page.id)}
+                            className="shrink-0 rounded-lg border border-[var(--border-warm)] px-3 py-1.5 text-xs font-semibold text-[var(--text-strong)] transition hover:bg-[var(--surface-2)]"
+                          >
+                            קבע כברירת מחדל
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-xl border border-dashed border-[var(--border-warm)] p-4 text-center text-sm text-[var(--muted)]">
+                  לא נמצאו עמודים
                 </p>
-                {data.meta_facebook_pages.map((page) => {
-                  const isDefault = data.default_facebook_page_id
-                    ? data.default_facebook_page_id === page.id
-                    : data.meta_facebook_pages.length === 1;
-                  return (
-                    <div key={page.id} className="flex items-center gap-4 p-3 bg-gray-50 rounded">
-                      {page.page_picture && (
-                        <img
-                          src={page.page_picture}
-                          alt={page.page_name}
-                          className="w-12 h-12 rounded"
-                        />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium">{page.page_name}</p>
-                        <p className="text-sm text-gray-500">{page.category}</p>
-                        <p className="text-xs text-gray-400">ID: {page.page_id}</p>
-                      </div>
-                      {isDefault ? (
-                        <span className="shrink-0 rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800">
-                          ✓ ברירת מחדל
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setDefaultTarget('facebook', page.id)}
-                          className="shrink-0 rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
-                        >
-                          קבע כברירת מחדל
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-gray-500">לא נמצאו עמודים</p>
-            )}
-          </div>
+              )}
+            </section>
 
-          {/* Instagram Accounts */}
-          <div className="border rounded-lg p-6">
-            <h2 className="text-xl font-semibold mb-4">
-              חשבונות Instagram Business ({data.meta_instagram_accounts?.length || 0})
-            </h2>
-            {data.meta_instagram_accounts && data.meta_instagram_accounts.length > 0 ? (
-              <div className="space-y-3">
-                {data.meta_instagram_accounts.map((ig) => {
-                  const isDefault = data.default_instagram_account_id
-                    ? data.default_instagram_account_id === ig.id
-                    : data.meta_instagram_accounts.length === 1;
-                  return (
-                    <div key={ig.id} className="flex items-center gap-4 p-3 bg-gray-50 rounded">
-                      {ig.profile_picture_url && (
-                        <img
-                          src={ig.profile_picture_url}
-                          alt={ig.username}
-                          className="w-12 h-12 rounded-full"
-                        />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium">@{ig.username}</p>
-                        <p className="text-xs text-gray-400">ID: {ig.instagram_id}</p>
+            {/* Instagram Accounts */}
+            <section className="border-t border-[var(--border-soft)] px-6 py-5">
+              <header className="mb-4 flex items-center gap-2.5">
+                <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-[#f9ce34] via-[#ee2a7b] to-[#6228d7] text-white">
+                  <InstagramGlyph className="h-4 w-4" />
+                </span>
+                <h2 className="text-base font-semibold text-[var(--text-strong)]">חשבונות Instagram Business</h2>
+                <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-xs font-semibold text-[var(--muted)]">
+                  {data.meta_instagram_accounts?.length || 0}
+                </span>
+              </header>
+              {data.meta_instagram_accounts && data.meta_instagram_accounts.length > 0 ? (
+                <div className="space-y-2.5">
+                  {data.meta_instagram_accounts.map((ig) => {
+                    const isDefault = data.default_instagram_account_id
+                      ? data.default_instagram_account_id === ig.id
+                      : data.meta_instagram_accounts.length === 1;
+                    return (
+                      <div
+                        key={ig.id}
+                        className={`flex items-center gap-3 rounded-xl border p-3 transition ${
+                          isDefault
+                            ? 'border-emerald-500/40 bg-emerald-50/60'
+                            : 'border-[var(--border-soft)] bg-[var(--surface)] hover:border-[var(--border-warm)]'
+                        }`}
+                      >
+                        {ig.profile_picture_url ? (
+                          <img src={ig.profile_picture_url} alt={ig.username} className="h-11 w-11 rounded-full object-cover" />
+                        ) : (
+                          <span className="grid h-11 w-11 place-items-center rounded-full bg-[var(--surface-2)] text-[var(--muted)]">
+                            <InstagramGlyph className="h-5 w-5" />
+                          </span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium text-[var(--text-strong)]">@{ig.username}</p>
+                        </div>
+                        {isDefault ? (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            ברירת מחדל
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setDefaultTarget('instagram', ig.id)}
+                            className="shrink-0 rounded-lg border border-[var(--border-warm)] px-3 py-1.5 text-xs font-semibold text-[var(--text-strong)] transition hover:bg-[var(--surface-2)]"
+                          >
+                            קבע כברירת מחדל
+                          </button>
+                        )}
                       </div>
-                      {isDefault ? (
-                        <span className="shrink-0 rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800">
-                          ✓ ברירת מחדל
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setDefaultTarget('instagram', ig.id)}
-                          className="shrink-0 rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
-                        >
-                          קבע כברירת מחדל
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-gray-500">לא נמצאו חשבונות Instagram Business</p>
-            )}
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-xl border border-dashed border-[var(--border-warm)] p-4 text-center text-sm text-[var(--muted)]">
+                  לא נמצאו חשבונות Instagram Business
+                </p>
+              )}
+            </section>
           </div>
-
           {/* Test Posting */}
-          <div className="border rounded-lg p-6 bg-blue-50">
-            <h2 className="text-xl font-semibold mb-4">בדיקת פרסום</h2>
+          <div className="rounded-2xl border border-[var(--border-soft)] bg-[var(--surface)] p-6 shadow-sm">
+            <h2 className="mb-4 text-base font-semibold text-[var(--text-strong)]">בדיקת פרסום</h2>
             
             {postResult && (
               <div className={`mb-4 p-3 rounded-lg text-sm ${
@@ -811,8 +854,8 @@ export default function MetaConnectionPage() {
           </div>
 
           {/* Scheduled Posts Viewer */}
-          <div className="rounded-lg border border-gray-200 bg-white p-6">
-            <h2 className="text-xl font-semibold mb-4 flex items-center justify-between">
+          <div className="rounded-2xl border border-[var(--border-soft)] bg-[var(--surface)] p-6 shadow-sm">
+            <h2 className="mb-4 flex items-center justify-between text-base font-semibold text-[var(--text-strong)]">
               <span>פרסומים מתוזמנים</span>
               <button
                 onClick={loadScheduledPosts}
@@ -867,15 +910,6 @@ export default function MetaConnectionPage() {
             )}
           </div>
 
-          {/* Disconnect Button */}
-          <div className="flex justify-end">
-            <button
-              onClick={disconnectMeta}
-              className="rounded-lg bg-red-600 hover:bg-red-700 text-white px-4 py-2 text-sm font-semibold"
-            >
-              נתק חיבור
-            </button>
-          </div>
         </div>
       )}
     </div>
@@ -883,17 +917,17 @@ export default function MetaConnectionPage() {
 }
 
 // Meta's brand marks — lucide dropped its brand icons, so they live here.
-function FacebookGlyph() {
+function FacebookGlyph({ className = 'h-7 w-7' }: { className?: string }) {
   return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M13.5 22v-8h2.7l.4-3.1h-3.1V8.9c0-.9.3-1.5 1.6-1.5h1.7V4.6c-.3 0-1.3-.1-2.5-.1-2.5 0-4.2 1.5-4.2 4.3v2.1H7.3V14h2.8v8h3.4Z" />
     </svg>
   );
 }
 
-function InstagramGlyph() {
+function InstagramGlyph({ className = 'h-7 w-7' }: { className?: string }) {
   return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="3" y="3" width="18" height="18" rx="5" />
       <circle cx="12" cy="12" r="4" />
       <circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" />
