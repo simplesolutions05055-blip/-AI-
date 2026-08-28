@@ -2,6 +2,14 @@ import { db } from '../_shared/db.ts';
 import { estimateTextCost, logEvent } from '../_shared/util.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
 import { cors } from '../_shared/cors.ts';
+import {
+  isCircuitOpen,
+  isProviderQuotaError,
+  isQuotaExhausted,
+  reportProviderHealthy,
+  reportProviderOutage,
+  PROVIDER_QUOTA_ERROR,
+} from '../_shared/providerOutage.ts';
 
 type BrandColorRole = 'primary' | 'secondary' | 'accent' | 'background' | 'text';
 
@@ -75,6 +83,10 @@ Deno.serve(async (req) => {
       action: 'brand_color_analysis_failed',
       message: errorMessage(e),
     });
+    // Provider out of credit → neutral code, never the provider's wording.
+    if (isProviderQuotaError(errorMessage(e))) {
+      return json(req, { error: PROVIDER_QUOTA_ERROR }, 402);
+    }
     return json(req, { error: errorMessage(e) }, 500);
   }
 });
@@ -126,6 +138,12 @@ async function fetchImageJson(
   mime: string,
   model: string,
 ): Promise<{ content: string; usage: { prompt_tokens: number; completion_tokens: number } }> {
+  // This function talks to OpenAI directly (it needs a vision payload shape the
+  // shared helper does not expose), so it repeats the breaker + outage reporting
+  // by hand. Anything new should call _shared/openai.ts instead — see
+  // docs/ai-outage-handling.md.
+  if (await isCircuitOpen()) throw new Error(PROVIDER_QUOTA_ERROR);
+
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -147,7 +165,15 @@ async function fetchImageJson(
       ],
     }),
   });
-  if (!res.ok) throw new Error(`OpenAI chat ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    const body = await res.text();
+    if (isQuotaExhausted(res.status, body)) {
+      await reportProviderOutage('OpenAI brand-colors', res.status, body);
+      throw new Error(PROVIDER_QUOTA_ERROR);
+    }
+    throw new Error(`OpenAI chat ${res.status}: ${body}`);
+  }
+  await reportProviderHealthy();
   const data = await res.json();
   return {
     content: data.choices?.[0]?.message?.content ?? '{}',

@@ -4,6 +4,7 @@ import { getSetting, logEvent, recordUsageAndCost, estimateTextCost, estimateIma
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 import { denyUnauthenticated } from '../_shared/auth.ts';
 import { cors } from '../_shared/cors.ts';
+import { isProviderQuotaError, PROVIDER_QUOTA_ERROR } from '../_shared/providerOutage.ts';
 import {
   AbuseGuardError,
   enforceAiLimit,
@@ -44,13 +45,13 @@ Deno.serve(async (req) => {
 
   // Reachable by anyone holding the anon key, which ships in the browser
   // bundle — the platform's verify_jwt gate proves a token exists, not a user.
-  const { denied } = await denyUnauthenticated(req, database, cors(req, 'POST'));
+  const { denied, caller } = await denyUnauthenticated(req, database, cors(req, 'POST'));
   if (denied) return denied;
 
   try {
     const { brief, requestId, format, prompts, slideIndexes, captions, platform, openai_key, current_caption, feedback, output_id, save_only, imageSize, imageQuality, slide, slideNumber, instruction, planner_year, planner_today } = await req.json();
     const overrideKey = typeof openai_key === 'string' && openai_key.trim() ? openai_key.trim() : undefined;
-    await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
+    await rejectClientOpenAiKeyIfDisabled(database, overrideKey, caller.isAdmin);
     if (save_only !== true) {
       const promptChars = JSON.stringify({ brief, prompts, current_caption, feedback }).length;
       const actor = requestId
@@ -589,12 +590,12 @@ Deno.serve(async (req) => {
       message: String(error),
     });
 
-    // OpenAI out of quota/billing → 402 with a specific code so the client can
-    // show a clear "credit ran out" message (and offer a one-off key) instead of
-    // a generic 500.
+    // Provider out of credit → 402 with the neutral code only. The raw provider
+    // text (billing URLs, account state) never leaves the function; admins get it
+    // by email from reportProviderOutage().
     const msg = String(error);
-    if (/insufficient_quota|exceeded your current quota|\b429\b|billing/i.test(msg)) {
-      return new Response(JSON.stringify({ error: 'openai_quota', message: msg }), {
+    if (isProviderQuotaError(msg)) {
+      return new Response(JSON.stringify({ error: PROVIDER_QUOTA_ERROR }), {
         status: 402,
         headers: { ...cors(req, 'POST'), 'Content-Type': 'application/json' },
       });

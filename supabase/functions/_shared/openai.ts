@@ -1,4 +1,10 @@
-import { isQuotaExhausted, reportProviderOutage, PROVIDER_QUOTA_ERROR } from './providerOutage.ts';
+import {
+  isCircuitOpen,
+  isQuotaExhausted,
+  reportProviderHealthy,
+  reportProviderOutage,
+  PROVIDER_QUOTA_ERROR,
+} from './providerOutage.ts';
 // OpenAI access for Edge Functions — reads OPENAI_API_KEY from Supabase secrets.
 const API = 'https://api.openai.com/v1';
 
@@ -57,10 +63,23 @@ async function openAiFetch(
   init: () => RequestInit,
   label: string,
 ): Promise<Response> {
+  // Circuit breaker. A spent balance fails identically for every caller, so once
+  // we know about it we stop paying the latency (and the polling that follows)
+  // for calls that cannot succeed. A caller-supplied one-off key is a different
+  // account — it must always be allowed through, and it is also how an admin
+  // verifies a fix before the breaker's own half-open probe.
+  if (!overrideKey && (await isCircuitOpen())) {
+    throw new Error(PROVIDER_QUOTA_ERROR);
+  }
+
   let lastBody = '';
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const res = await fetch(url, init());
-    if (res.ok) return res;
+    if (res.ok) {
+      // Half-open probe succeeded (or we were healthy all along) → close it.
+      if (!overrideKey) await reportProviderHealthy();
+      return res;
+    }
     lastBody = await res.text();
     // A spent balance fails identically on every retry, and the provider's own
     // wording (billing links, account state) must never reach an end user.

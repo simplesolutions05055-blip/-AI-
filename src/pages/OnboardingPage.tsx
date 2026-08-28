@@ -10,6 +10,7 @@ import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { FileText, Palette, ArrowLeft, ArrowRight } from 'lucide-react';
+import { AI_OUTAGE_USER_MESSAGE, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
 
 type StepKey = 'details' | 'company' | 'hub' | 'brand' | 'content';
 type BrandSectionKey = 'identity' | 'visual' | 'writing' | 'official' | 'documents';
@@ -523,7 +524,14 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       setBrandColorSummary(payload.summary ?? 'זוהו צבעי מותג מרכזיים.');
     } catch (e) {
       console.error(e);
-      setError('זיהוי צבעי המותג נכשל. נסו שוב אחרי בדיקת הלוגו.');
+      // Onboarding is where a brand-new user meets the product: an outage must
+      // read as "our service, not your logo".
+      const raw = await aiErrorText(e);
+      setError(
+        isAiQuotaError(raw)
+          ? AI_OUTAGE_USER_MESSAGE
+          : 'זיהוי צבעי המותג נכשל. נסו שוב אחרי בדיקת הלוגו.',
+      );
     } finally {
       setBrandColorAnalyzing(false);
     }

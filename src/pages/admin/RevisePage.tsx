@@ -13,6 +13,8 @@ import { confirmDialog } from '@/lib/dialog';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { Spinner } from '@/components/ui/Spinner';
 import ScheduledPostEditor from '@/components/ScheduledPostEditor';
+import { AiErrorNotice } from '@/components/AiOutage';
+import { aiErrorText } from '@/lib/aiErrors';
 
 interface SourceImage {
   request_id: string;
@@ -209,7 +211,7 @@ export default function RevisePage() {
       if (sendError) throw sendError;
       setEmailSent(true);
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setSendingEmail(false);
     }
@@ -369,7 +371,7 @@ export default function RevisePage() {
       }
       throw new Error('ההפקה עדיין רצה. אפשר לבדוק במסך הבקשות.');
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setWorking(false);
       setRegenStatus(null);
@@ -428,7 +430,7 @@ export default function RevisePage() {
       setFreshDraft(false);
       setEmailSent(false);
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setVersionBusy(null);
     }
@@ -444,7 +446,7 @@ export default function RevisePage() {
       await setPrimaryPresentationVersion(versionsRootId, versionRequestId);
       setVersions((prev) => prev.map((v) => ({ ...v, isPrimary: v.requestId === versionRequestId })));
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setVersionBusy(null);
     }
@@ -466,7 +468,7 @@ export default function RevisePage() {
       await deletePresentationVersion(versionRequestId);
       await loadVersions(presRequestId ?? versionRequestId);
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setVersionBusy(null);
     }
@@ -517,7 +519,7 @@ export default function RevisePage() {
       }
       throw new Error('ההפקה עדיין רצה. אפשר לבדוק במסך הבקשות.');
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setWorking(false);
       setRegenStatus(null);
@@ -585,7 +587,7 @@ export default function RevisePage() {
       }
       throw new Error('ההפקה עדיין רצה. אפשר לבדוק במסך הבקשות.');
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setWorking(false);
       setRegenStatus(null);
@@ -683,7 +685,7 @@ export default function RevisePage() {
       }
       throw new Error('ההפקה עדיין רצה. אפשר לבדוק במסך הבקשות.');
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setWorking(false);
       setRegenStatus(null);
@@ -742,7 +744,7 @@ export default function RevisePage() {
       attachReferenceImage(null);
       setEmailSent(false);
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setWorking(false);
     }
@@ -992,7 +994,7 @@ export default function RevisePage() {
         </div>
       )}
 
-      {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 p-3 text-sm">{error}</div>}
+      <AiErrorNotice error={error} className="mb-4" />
 
       <div className={tab === 'schedule' ? undefined : 'hidden'}>
         {scheduleOpened && (
@@ -1814,7 +1816,7 @@ function DocumentAiImageModal({
       setImageBrief({ ...built, output_type: 'image', ready: true });
       setStatus('');
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setBusy(null);
     }
@@ -1886,7 +1888,7 @@ function DocumentAiImageModal({
       }
       throw new Error('יצירת התמונה עדיין רצה. אפשר לבדוק את הסטטוס במסך התוצרים.');
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     } finally {
       setBusy(null);
     }
@@ -1902,7 +1904,7 @@ function DocumentAiImageModal({
       const image = await loadPersistedDeckImage(choice.row);
       onInsert({ previewUrl: image.dataUrl, prompt: image.caption || choice.caption });
     } catch (e) {
-      setError(String(e));
+      setError(await aiErrorText(e));
     }
   }
 
@@ -1993,7 +1995,7 @@ function DocumentAiImageModal({
             </div>
 
             {status && <p className="text-sm text-[var(--muted)]">{status}...</p>}
-            {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+            <AiErrorNotice error={error} />
 
             {result ? (
               <img src={result.previewUrl} alt="תמונה שנוצרה ב-AI" className="max-h-[520px] w-full rounded-lg bg-gray-50 object-contain" />
@@ -2313,7 +2315,7 @@ function CarouselImageModal({
       }
       throw new Error('יצירת התמונה עדיין רצה. אפשר לבדוק את הסטטוס במסך התוצרים.');
     } catch (e) {
-      setError(String((e as { message?: string })?.message ?? e));
+      setError(await aiErrorText(e));
     } finally {
       setBusy(false);
       setStatus('');
@@ -2342,7 +2344,7 @@ function CarouselImageModal({
       setResult({ requestId: edited.request_id, storagePath: edited.storage_path, previewUrl });
       setEditInstruction('');
     } catch (e) {
-      setError(String((e as { message?: string })?.message ?? e));
+      setError(await aiErrorText(e));
     } finally {
       setBusy(false);
       setStatus('');
@@ -2389,7 +2391,7 @@ function CarouselImageModal({
               <span>{status}... זה יכול לקחת עד דקה.</span>
             </p>
           )}
-          {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+          <AiErrorNotice error={error} className="mb-3" />
 
           {result && (
             <>

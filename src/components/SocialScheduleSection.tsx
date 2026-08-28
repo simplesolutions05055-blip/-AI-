@@ -5,6 +5,8 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { randomUUID } from '@/lib/uuid';
 import { Tooltip } from '@/components/ui/Tooltip';
 import AiImageModal from '@/components/AiImageModal';
+import { AiErrorNotice } from '@/components/AiOutage';
+import { aiErrorText } from '@/lib/aiErrors';
 
 const PLATFORM_LABEL: Record<SocialPlatform, string> = {
   facebook: 'פייסבוק',
@@ -273,7 +275,7 @@ export default function SocialScheduleSection({
       setCaption(text);
     } catch (e) {
       resolvedRef.current = false; // allow a retry on the next open
-      setCaptionError(String((e as { message?: string })?.message ?? e));
+      setCaptionError(await aiErrorText(e));
     } finally {
       setCaptionLoading(false);
     }
@@ -378,9 +380,7 @@ export default function SocialScheduleSection({
         />
       )}
 
-      {captionError && (
-        <p className="mt-3 text-sm text-red-600">{captionError}</p>
-      )}
+      <AiErrorNotice error={captionError} className="mt-3" />
 
       {scheduleSaved && (
         <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
@@ -1243,7 +1243,7 @@ function OutputsPickerModal({
         );
         if (alive) setItems(resolved.filter((x): x is OutputImage => x !== null));
       } catch (e) {
-        if (alive) setError(String((e as { message?: string })?.message ?? e));
+        if (alive) setError(await aiErrorText(e));
       } finally {
         if (alive) setLoading(false);
       }

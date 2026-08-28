@@ -14,6 +14,7 @@ import type { Brand, BrandAsset, BrandColor, BrandColorRole, BusinessTextSource 
 import { Spinner } from '@/components/ui/Spinner';
 import { useProfile } from '@/lib/useProfile';
 import { alertDialog, confirmDialog } from '@/lib/dialog';
+import { aiErrorLabel, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
 
 const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 const MAX_LOGO_BYTES = 5 * 1024 * 1024;
@@ -399,7 +400,14 @@ export default function BrandingPage() {
       setColorSummary(payload?.summary ?? 'זוהו צבעי מותג מרכזיים.');
     } catch (e) {
       console.error(e);
-      setColorSummary('זיהוי הצבעים נכשל. אפשר לבחור צבעים ידנית.');
+      // A provider outage is not a "bad logo" — say what actually happened, at
+      // the level of detail this user is allowed to see.
+      const raw = await aiErrorText(e);
+      setColorSummary(
+        isAiQuotaError(raw)
+          ? aiErrorLabel(raw, isAdmin)
+          : 'זיהוי הצבעים נכשל. אפשר לבחור צבעים ידנית.',
+      );
     } finally {
       setExtracting(false);
     }

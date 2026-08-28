@@ -5,6 +5,7 @@ import html2canvas from 'html2canvas-pro';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { alertDialog } from '@/lib/dialog';
 import { escapeHtml, safeUrlAttribute } from '@/lib/escape';
+import { AI_OUTAGE_USER_MESSAGE, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
 
 type AttachmentKind = 'image' | 'audio' | 'document';
 
@@ -381,12 +382,17 @@ export default function SimulatorPage() {
     setResponding(false);
 
     if (error || !data?.ok) {
+      // A provider outage gets its own wording: "we are on it", not "your
+      // request was queued for review" — nobody is going to review it.
+      const raw = error ? await aiErrorText(error) : '';
       setMessages((current) => [
         ...current,
         {
           id: `err-${Date.now()}`,
           mine: false,
-          body: `לא הצלחנו להשלים את הפעולה כרגע. הבקשה הועברה לבדיקה.`,
+          body: isAiQuotaError(raw)
+            ? AI_OUTAGE_USER_MESSAGE
+            : 'לא הצלחנו להשלים את הפעולה כרגע. הבקשה הועברה לבדיקה.',
           meta: { action: 'needs_attention', ready: false },
         },
       ]);

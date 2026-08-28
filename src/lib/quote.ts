@@ -14,6 +14,9 @@ import jsPDF from 'jspdf';
 // and supports modern CSS color functions. Drop-in, same API.
 import html2canvas from 'html2canvas-pro';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+// The admin-only, session-scoped one-off OpenAI key — forwarded on every quote
+// path so a failing project key can be worked around in place.
+import { getSessionOpenAiKey } from '@/lib/aiSessionKey';
 
 export interface QuoteComponent {
   title: string;
@@ -205,17 +208,6 @@ export function themeFromQuoteBrand(brand: Quote['brand']): Partial<QuoteTheme> 
   return themeFromBrand(palette, brand.style_notes);
 }
 
-// The session-scoped one-off OpenAI key the user may have entered (shared key
-// name with ProductionPage). Read here so EVERY quote path forwards it — without
-// it, the call falls back to the project key, which may be out of quota.
-const SESSION_OPENAI_KEY = 'openai_session_key';
-function sessionOpenAiKey(): string | null {
-  try {
-    return sessionStorage.getItem(SESSION_OPENAI_KEY);
-  } catch {
-    return null;
-  }
-}
 
 // Ask the Edge function for a structured quote built from this brief. An optional
 // one-off OpenAI key overrides the project secret; when omitted we fall back to
@@ -226,7 +218,7 @@ export async function fetchQuote(
   openaiKey?: string | null,
 ): Promise<Quote> {
   const db = createSupabaseBrowserClient();
-  const key = openaiKey ?? sessionOpenAiKey();
+  const key = openaiKey ?? getSessionOpenAiKey();
   const { data, error } = await db.functions.invoke('generate-presentation', {
     body: { brief, requestId, format: 'quote', openai_key: key || undefined },
   });

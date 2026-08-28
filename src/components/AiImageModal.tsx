@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/ui/Spinner';
-import { aiErrorLabel, aiErrorText, editImageRequest, generateCarouselImage, type AiImage } from '@/lib/aiImage';
-import { useProfile } from '@/lib/useProfile';
+import { aiErrorText, editImageRequest, generateCarouselImage, type AiImage } from '@/lib/aiImage';
+import { AiErrorNotice } from '@/components/AiOutage';
 
 // One modal for both AI image jobs: creating an extra carousel slide from the
 // post's brief, and editing an image that already exists. Deliberately minimal —
@@ -25,7 +25,6 @@ export default function AiImageModal({
   onDone: (image: AiImage) => void;
   onClose: () => void;
 }) {
-  const { profile } = useProfile();
   const [instruction, setInstruction] = useState('');
   const [result, setResult] = useState<AiImage | null>(initial);
   const [busy, setBusy] = useState(false);
@@ -70,7 +69,8 @@ export default function AiImageModal({
       setResult(image);
       setDirty(true);
     } catch (e) {
-      setError(aiErrorLabel(await aiErrorText(e), profile?.role === 'admin'));
+      // Keep the raw text — AiErrorNotice applies the admin/non-admin split.
+      setError(await aiErrorText(e));
     } finally {
       setBusy(false);
       setStatus('');
@@ -111,7 +111,7 @@ export default function AiImageModal({
               <span>{status || 'עובדים על התמונה'}... זה יכול לקחת עד דקה.</span>
             </p>
           )}
-          {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+          <AiErrorNotice error={error} className="mt-3" />
         </div>
 
         <div className="flex shrink-0 gap-2 border-t border-[var(--border)] p-4 sm:p-5">

@@ -32,6 +32,8 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useProfile } from '@/lib/useProfile';
 import { genderCopy } from '@/lib/genderCopy';
 import type { AnnualPlanItem, AnnualPlanItemStatus, IsraelHoliday } from '@/types/db';
+import { AiDegradedBanner } from '@/components/AiOutage';
+import { aiErrorLabel } from '@/lib/aiErrors';
 
 type BrandOption = {
   id: string;
@@ -1767,9 +1769,13 @@ export default function AnnualPlannerPage() {
         })}
       </nav>
 
+      <AiDegradedBanner />
+
       {loadError && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {loadError}
+          {/* Mixed bag: plan/DB failures and AI failures land here. aiErrorLabel
+              rewrites only the provider-outage ones, and passes the rest through. */}
+          {aiErrorLabel(loadError, isAdmin)}
           <button type="button" className="ms-3 font-bold underline" onClick={() => setLoadError(null)}>סגירה</button>
         </div>
       )}

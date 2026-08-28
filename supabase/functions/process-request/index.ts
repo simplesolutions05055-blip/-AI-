@@ -30,7 +30,8 @@ Deno.serve(async (req) => {
     if (!(await canProcessRequest(database, request_id, caller))) return json(req, { error: 'forbidden' }, 403);
 
     const actor = await loadRequestActor(database, request_id);
-    await rejectClientOpenAiKeyIfDisabled(database, openai_key);
+    const { data: callerProfile } = await database.from('profiles').select('role').eq('id', caller).maybeSingle();
+    await rejectClientOpenAiKeyIfDisabled(database, openai_key, callerProfile?.role === 'admin');
     await enforceRequestCost(database, request_id);
     await enforceParallelRequestLimit(database, { ...actor, userId: actor.userId ?? caller }, request_id);
 

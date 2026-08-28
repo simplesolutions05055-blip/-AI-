@@ -23,6 +23,8 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
 import { InfoHint } from '@/components/ui/InfoHint';
+import { AiErrorNotice } from '@/components/AiOutage';
+import { aiErrorText } from '@/lib/aiErrors';
 
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
@@ -232,7 +234,7 @@ export default function GptImagesDeck({
       setSlideImages((prev) => ({ ...prev, ...reused }));
       setPhase('review');
     } catch (e) {
-      setError(String((e as { message?: string })?.message ?? e));
+      setError(await aiErrorText(e));
       setPhase(slidesReady ? 'ready' : 'idle');
     } finally {
       setProgressText('');
@@ -254,7 +256,7 @@ export default function GptImagesDeck({
       setFeedbacks((prev) => ({ ...prev, [idx]: '' }));
       setCostRefresh((n) => n + 1);
     } catch (e) {
-      setError(String((e as { message?: string })?.message ?? e));
+      setError(await aiErrorText(e));
     } finally {
       setRegenBusy(null);
     }
@@ -289,7 +291,7 @@ export default function GptImagesDeck({
       setPreviewSlides(loaded);
       setPreviewOpen(true);
     } catch (e) {
-      setError(String((e as { message?: string })?.message ?? e));
+      setError(await aiErrorText(e));
     } finally {
       setPreviewLoading(false);
     }
@@ -417,7 +419,7 @@ export default function GptImagesDeck({
       setFeedbacks((prev) => ({ ...prev, [idx]: '' }));
       setCostRefresh((n) => n + 1);
     } catch (e) {
-      setError(String((e as { message?: string })?.message ?? e));
+      setError(await aiErrorText(e));
     } finally {
       setRegenBusy(null);
     }
@@ -475,7 +477,7 @@ export default function GptImagesDeck({
       }
       downloadBlob(blob, `${safeName}.${format}`);
     } catch (e) {
-      setError(String((e as { message?: string })?.message ?? e));
+      setError(await aiErrorText(e));
     } finally {
       setBuilding(null);
     }
@@ -851,7 +853,8 @@ export default function GptImagesDeck({
             </button>
           </div>
         )}
-        {(emailError || error) && <p className="mt-2 text-xs text-red-600">{emailError || error}</p>}
+        {emailError && <p className="mt-2 text-xs text-red-600">{emailError}</p>}
+        <AiErrorNotice error={error} className="mt-2" />
       </div>
 
       {slidesReady && phase !== 'generating' && (
@@ -1230,7 +1233,7 @@ function ImageReviewModal({
               );
             })}
           </div>
-          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+          <AiErrorNotice error={error} className="mt-3" />
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] p-4">

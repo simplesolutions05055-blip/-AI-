@@ -10,6 +10,7 @@ import { getActiveSystemPrompt } from '../_shared/util.ts';
 import { buildSkillInstructions } from '../_shared/skills.ts';
 import { buildBusinessBrainContext } from '../_shared/brand.ts';
 import { analyzeBrief } from '../_shared/openai.ts';
+import { isProviderQuotaError, PROVIDER_QUOTA_ERROR } from '../_shared/providerOutage.ts';
 import { AbuseGuardError, enforceAiLimit, rejectClientOpenAiKeyIfDisabled } from '../_shared/abuseGuard.ts';
 import { cors } from '../_shared/cors.ts';
 
@@ -48,9 +49,9 @@ Deno.serve(async (req) => {
     if (!userId) return json(req, { error: 'unauthorized' }, 401);
 
     const database = db();
-    await rejectClientOpenAiKeyIfDisabled(database, overrideKey);
     const { data: profile } = await database.from('profiles').select('role').eq('id', userId).maybeSingle();
     const isAdmin = profile?.role === 'admin';
+    await rejectClientOpenAiKeyIfDisabled(database, overrideKey, isAdmin);
 
     // Resolve the brand (and enforce access the same way other functions do).
     let brand: BrandKit | null = null;
@@ -115,10 +116,12 @@ Deno.serve(async (req) => {
   } catch (e) {
     if (e instanceof AbuseGuardError) return json(req, { error: e.message, code: e.code }, e.status);
     const msg = String(e);
-    // OpenAI ran out of quota/billing — surface a specific code so the client can
-    // raise a clear "OpenAI credit ran out" alert instead of a generic failure.
-    if (/insufficient_quota|exceeded your current quota|\b429\b|billing/i.test(msg)) {
-      return json(req, { error: 'openai_quota', message: msg }, 402);
+    // Provider out of credit. The code is all the client gets: the provider's own
+    // wording names the account and its billing state, and a non-admin must never
+    // see it. reportProviderOutage() (in _shared/openai.ts) already emailed the
+    // admins and opened the circuit.
+    if (isProviderQuotaError(msg)) {
+      return json(req, { error: PROVIDER_QUOTA_ERROR }, 402);
     }
     return json(req, { error: msg }, 500);
   }

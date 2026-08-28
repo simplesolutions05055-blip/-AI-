@@ -28,6 +28,9 @@ import {
   type ProductionPermissionType,
 } from '@/lib/outputPermissions';
 import ImagePickerModal from '@/components/ImagePickerModal';
+import { AiDegradedBanner, AiErrorNotice, OneTimeKeyModal, useAiBlocked } from '@/components/AiOutage';
+import { AI_OUTAGE_USER_MESSAGE, aiErrorLabel, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
+import { getSessionOpenAiKey } from '@/lib/aiSessionKey';
 import { UserContentUploadModal } from '@/components/UserContentUploadModal';
 import DeckExport from '@/components/DeckExport';
 import SocialScheduleSection from '@/components/SocialScheduleSection';
@@ -105,29 +108,7 @@ const PRIMARY_BUTTON =
 const SECONDARY_BUTTON =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-[var(--border-warm)] bg-[var(--bg-surface)] px-5 py-3 text-sm font-semibold text-[var(--text-strong)] shadow-none transition duration-150 hover:border-brand/40 hover:bg-[var(--surface-2)] hover:text-brand active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/20 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)] disabled:cursor-not-allowed disabled:opacity-50';
 
-// One-off OpenAI key, scoped to the browser session (sessionStorage clears when
-// the tab/session ends, so the next visit falls back to the project's key).
-const SESSION_OPENAI_KEY = 'openai_session_key';
-function getSessionOpenAiKey(): string | null {
-  try {
-    return sessionStorage.getItem(SESSION_OPENAI_KEY);
-  } catch {
-    return null;
-  }
-}
-function setSessionOpenAiKey(key: string) {
-  try {
-    sessionStorage.setItem(SESSION_OPENAI_KEY, key);
-  } catch {
-    /* sessionStorage unavailable — key just won't persist for the session */
-  }
-}
 
-const OPENAI_QUOTA_MESSAGE =
-  'נגמר התקציב/המכסה של השירות — לא ניתן לבנות בריף או להפיק תוצרים כרגע. יש להוסיף קרדיט לחשבון או להחליף את מפתח ה-API.';
-
-const IMAGE_QUOTA_MESSAGE =
-  'יצירת התמונה נעצרה כי מפתח ה-API שבשימוש הגיע לתקרת ה-billing/מכסה שלו (billing hard limit / quota). אם הוגדר מפתח חד-פעמי — הוא זה שאזל; אחרת מדובר במפתח הפרויקט. יש להוסיף קרדיט / להעלות את תקרת ה-billing, או להזין מפתח חד-פעמי אחר עם קרדיט, ואז להפיק שוב.';
 
 const DESCRIPTION_MAX_LENGTH = 12000;
 // Documents only — this input extracts *text* into the brief. Images go through
@@ -169,24 +150,6 @@ function timeGreeting(date = new Date()) {
 // typed comma or parenthesis can't corrupt the filter it lands in.
 function sanitizeSearchTerm(term: string) {
   return term.replace(/[%_,()\\]/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-// Detect the function's openai_quota signal (402 with {error:'openai_quota'}) or
-// any raw quota/billing message leaking through the error body.
-async function isOpenAiQuotaError(fnError: unknown): Promise<boolean> {
-  if (!fnError) return false;
-  try {
-    const ctx = (fnError as { context?: Response }).context;
-    if (ctx && typeof ctx.json === 'function') {
-      const body = await ctx.clone().json().catch(() => null);
-      const blob = JSON.stringify(body ?? '');
-      if (/openai_quota|insufficient_quota|exceeded your current quota|billing/i.test(blob)) return true;
-    }
-  } catch {
-    /* fall through to message check */
-  }
-  const message = (fnError as { message?: string }).message ?? String(fnError);
-  return /openai_quota|insufficient_quota|exceeded your current quota|\b429\b|billing/i.test(message);
 }
 
 export default function ProductionPage() {
@@ -314,8 +277,9 @@ function QuoteFlow() {
       setRevision('');
       await buildAndSave(q);
     } catch (e) {
-      const msg = String((e as { message?: string })?.message ?? e);
-      setError(/402|quota|insufficient/i.test(msg) ? OPENAI_QUOTA_MESSAGE : `יצירת ההצעה נכשלה: ${msg}`);
+      // Keep the raw text: AiErrorNotice decides what this user may read.
+      const msg = await aiErrorText(e);
+      setError(isAiQuotaError(msg) ? msg : `יצירת ההצעה נכשלה: ${msg}`);
     } finally {
       setGenerating(false);
     }
@@ -387,7 +351,7 @@ function QuoteFlow() {
 
           {generating && !quote && <QuoteReviewLoader />}
           {building && <QuoteReviewLoader label="בונה ושומר PDF..." />}
-          {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+          <AiErrorNotice error={error} className="mt-4" onKeySaved={() => void generate()} />
 
           {quote && error && (
             <>
@@ -677,7 +641,12 @@ function ProductionPicker({
     [effectivePermissions, profile?.can_create_outputs, role],
   );
   const canUploadContent = canProduceType(effectivePermissions, 'upload', role, profile?.can_create_outputs ?? false);
-  const canCreate = !!selected && allowedTypes.includes(selected) && description.trim().length > 0;
+  // Every production type here goes through the AI pipeline, so a known outage
+  // blocks the entry point outright rather than letting someone wait out a
+  // guaranteed failure. Admins keep it: a one-off key still works for them.
+  const aiBlocked = useAiBlocked();
+  const canCreate =
+    !!selected && allowedTypes.includes(selected) && description.trim().length > 0 && !aiBlocked;
   const singleBrand = brands.length === 1 ? brands[0] : null;
   const selectedBrand = brands.find((brand) => brand.id === brandId) ?? singleBrand ?? null;
   const selectedBrandLogoUrl = selectedBrand ? brandLogoUrls[selectedBrand.id] ?? null : null;
@@ -1069,6 +1038,7 @@ function ProductionPicker({
   }
 
   function handleCreate() {
+    if (aiBlocked) return;
     if (!selected) {
       setShowTypeHint(true);
       return;
@@ -1220,6 +1190,7 @@ function ProductionPicker({
   return (
     <div dir="rtl" className="theme-warm min-h-full overflow-x-hidden bg-transparent">
       <div className="px-5 py-6 sm:px-8 lg:px-10">
+        <AiDegradedBanner />
         {returnTo && (
           <button
             type="button"
@@ -1991,6 +1962,7 @@ function ProductionFlow({ type }: { type: ProductionType }) {
   const brandSelectRef = useRef<HTMLSelectElement | null>(null);
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
+  const flowAiBlocked = useAiBlocked();
   const setOpenAiKeyText = genderCopy(profile?.gender, {
     male: 'שים מפתח API חד-פעמי',
     female: 'שימי מפתח API חד-פעמי',
@@ -2042,10 +2014,11 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       // OpenAI out of credit → raise a clear alert, don't leave a stale brief.
       // Reset to the form step so the actionable quota card (with the one-off key
       // button) is shown instead of an old/partial brief.
-      if (await isOpenAiQuotaError(fnError)) {
+      const fnErrorText = fnError ? await aiErrorText(fnError) : '';
+      if (isAiQuotaError(fnErrorText)) {
         setBrief(null);
         setStep('form');
-        setError(OPENAI_QUOTA_MESSAGE);
+        setError(fnErrorText);
         return;
       }
       // Any other hiccup → fall back to a local brief so the user isn't stuck.
@@ -2061,10 +2034,10 @@ function ProductionFlow({ type }: { type: ProductionType }) {
     }
   }
 
+  // The modal already stored the key; this only re-runs what failed.
   function saveKeyAndRetry(rawKey: string) {
     const k = rawKey.trim();
     if (!k) return;
-    setSessionOpenAiKey(k);
     setKeyModalOpen(false);
     setError(null);
     // If the brief already exists (key was set after a generation/billing stop),
@@ -2230,8 +2203,8 @@ function ProductionFlow({ type }: { type: ProductionType }) {
       setStep('form');
       // OpenAI billing/quota limit on the production key → this is NOT a brief
       // problem. Show the credit message and offer the one-off key, not a clarify.
-      if (/billing|quota|hard_limit|insufficient_quota|exceeded your current quota|\b429\b/i.test(raw)) {
-        setError(IMAGE_QUOTA_MESSAGE);
+      if (isAiQuotaError(raw)) {
+        setError(raw);
         return;
       }
       setError(raw);
@@ -2326,21 +2299,9 @@ function ProductionFlow({ type }: { type: ProductionType }) {
         </div>
       )}
 
-      {error && !freeTextError && (
-        <div className="mb-4 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]">
-          <p>{error}</p>
-          {(error === IMAGE_QUOTA_MESSAGE || error === OPENAI_QUOTA_MESSAGE) && (
-            <button
-              type="button"
-              onClick={() => setKeyModalOpen(true)}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[var(--danger-fg)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
-            >
-              <SparkIcon className="h-3.5 w-3.5" />
-              {getSessionOpenAiKey() ? 'החלפת המפתח החד-פעמי' : setOpenAiKeyText}
-            </button>
-          )}
-        </div>
-      )}
+      <AiDegradedBanner />
+
+      {!freeTextError && <AiErrorNotice error={error} className="mb-4" onKeySaved={saveKeyAndRetry} />}
 
       {step === 'form' && !showBriefLoader && brands.length > 0 && (
         <BrandProductionHeader
@@ -2360,29 +2321,28 @@ function ProductionFlow({ type }: { type: ProductionType }) {
         <div className={`${PANEL} p-8 text-center`}>
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-3xl">⚠️</div>
           <h2 className="mb-2 text-xl font-bold">לא הצלחנו לבנות את הבריף</h2>
-          <p className="mx-auto mb-6 max-w-md text-sm text-[var(--text-muted)]">{error}</p>
+          <p className="mx-auto mb-6 max-w-md text-sm text-[var(--text-muted)]">{aiErrorLabel(error, isAdmin)}</p>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <button type="button" onClick={() => setKeyModalOpen(true)} className={`${PRIMARY_BUTTON} w-fit`}>
-              <SparkIcon className="h-4 w-4" />
-              {setOpenAiKeyText}
-            </button>
+            {/* The one-off key is an operator tool: it bills the admin's own
+                account and only helps someone who can top the project up. */}
+            {isAdmin && (
+              <button type="button" onClick={() => setKeyModalOpen(true)} className={`${PRIMARY_BUTTON} w-fit`}>
+                <SparkIcon className="h-4 w-4" />
+                {setOpenAiKeyText}
+              </button>
+            )}
             <Link to="/admin/production" className={`${SECONDARY_BUTTON} w-fit`}>
               חזרה לבחירת תוצר
             </Link>
           </div>
-          {getSessionOpenAiKey() && (
+          {isAdmin && getSessionOpenAiKey() && (
             <p className="mt-4 text-xs text-[var(--text-muted)]">מוגדר מפתח חד-פעמי לסשן הזה. אפשר לעדכן אותו שוב בכפתור למעלה.</p>
           )}
         </div>
       )}
 
-      {keyModalOpen && (
-        <OpenAiKeyModal
-          onClose={() => setKeyModalOpen(false)}
-          onSave={saveKeyAndRetry}
-          hasExisting={!!getSessionOpenAiKey()}
-          gender={profile?.gender}
-        />
+      {keyModalOpen && isAdmin && (
+        <OneTimeKeyModal onClose={() => setKeyModalOpen(false)} onSave={saveKeyAndRetry} />
       )}
 
       {clarifyOpen && (
@@ -2409,7 +2369,12 @@ function ProductionFlow({ type }: { type: ProductionType }) {
                 )}
               </div>
             )}
-            <button onClick={() => generate()} className={`w-full ${PRIMARY_BUTTON}`}>
+            <button
+              onClick={() => generate()}
+              disabled={flowAiBlocked}
+              title={flowAiBlocked ? AI_OUTAGE_USER_MESSAGE : undefined}
+              className={`w-full ${PRIMARY_BUTTON}`}
+            >
               <SparkIcon className="h-4 w-4" />
               הפקת תוצר
             </button>
@@ -3128,80 +3093,6 @@ const GENERATING_MESSAGES: Record<ProductionType, string[]> = {
   text: ['מנתחים את הבריף', 'מנסחים את הטקסט', 'משפרים את הניסוח', 'עוברים על הפרטים'],
   pdf: ['מנתחים את הבריף', 'מכינים את התוכן', 'מעצבים את המסמך', 'מרכיבים את הקובץ'],
 };
-
-function OpenAiKeyModal({
-  onClose,
-  onSave,
-  hasExisting,
-  gender,
-}: {
-  onClose: () => void;
-  onSave: (key: string) => void;
-  hasExisting: boolean;
-  gender?: 'male' | 'female' | null;
-}) {
-  const [value, setValue] = useState('');
-  return (
-    <div
-      dir="rtl"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md rounded-2xl bg-white p-6 text-right shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="mb-2 text-lg font-bold">מפתח API חד-פעמי</h2>
-        <p className="mb-4 text-sm text-[var(--muted)]">
-          המפתח נשמר לסשן הדפדפן הזה בלבד ומשמש את ההפקה הנוכחית.{' '}
-          {genderCopy(gender, {
-            male: 'כשתסגור את החלון/הדפדפן הוא יימחק',
-            female: 'כשתסגרי את החלון/הדפדפן הוא יימחק',
-            neutral: 'בסגירת החלון/הדפדפן הוא יימחק',
-          })}{' '}
-          והמערכת תחזור למפתח הרגיל של הפרויקט. המפתח לא נשמר בשרת.
-        </p>
-        <input
-          autoFocus
-          type="password"
-          dir="ltr"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') onSave(value);
-          }}
-          placeholder="sk-..."
-          className="mb-4 w-full rounded-xl border border-[var(--border)] px-3 py-3 text-left shadow-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/15"
-        />
-        <div className="flex items-center justify-start gap-3">
-          <button type="button" onClick={() => onSave(value)} disabled={!value.trim()} className={PRIMARY_BUTTON}>
-            <SparkIcon className="h-4 w-4" />
-            שמירה והפקה
-          </button>
-          <button type="button" onClick={onClose} className={SECONDARY_BUTTON}>
-            ביטול
-          </button>
-        </div>
-        {hasExisting && (
-          <button
-            type="button"
-            onClick={() => {
-              try {
-                sessionStorage.removeItem(SESSION_OPENAI_KEY);
-              } catch {
-                /* ignore */
-              }
-              onClose();
-            }}
-            className="mt-4 text-xs font-semibold text-red-600 hover:underline"
-          >
-            הסרת המפתח החד-פעמי וחזרה למפתח הפרויקט
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function ClarificationModal({
   onClose,

@@ -257,8 +257,22 @@ export async function enforceParallelRequestLimit(
   }
 }
 
-export async function rejectClientOpenAiKeyIfDisabled(database: DB, key: unknown): Promise<void> {
+/**
+ * A caller-supplied one-off OpenAI key is an *operator* escape hatch: it is used
+ * when the project key is out of credit, and it bills whoever owns it. Only an
+ * admin may send one — the UI hides it from everyone else, and this is the check
+ * that makes that a rule rather than a decoration.
+ */
+export async function rejectClientOpenAiKeyIfDisabled(
+  database: DB,
+  key: unknown,
+  isAdmin?: boolean,
+): Promise<void> {
   if (typeof key !== 'string' || !key.trim()) return;
+  if (isAdmin === false) {
+    await logEvent(database, { severity: 'warning', action: 'client_openai_key_rejected', metadata: { reason: 'not_admin' } });
+    throw new AbuseGuardError('client_openai_key_forbidden', 'רק מנהל מערכת יכול להשתמש במפתח API חד-פעמי.', 403);
+  }
   const settings = await abuseSettings(database);
   if (!settings.allow_client_openai_key) {
     await logEvent(database, { severity: 'warning', action: 'client_openai_key_rejected' });

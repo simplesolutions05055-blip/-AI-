@@ -3,20 +3,9 @@
 // function to turn the brief into a ready-to-publish Facebook/Instagram caption
 // that pre-fills the "כיתוב לפרסום" field.
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { getSessionOpenAiKey } from '@/lib/aiSessionKey';
 
 export type SocialPlatform = 'facebook' | 'instagram';
-
-// Shared with ProductionPage/quote: the session-scoped one-off OpenAI key the
-// user may have entered. Forwarded so the call doesn't fall back to a project
-// key that might be out of quota.
-const SESSION_OPENAI_KEY = 'openai_session_key';
-function sessionOpenAiKey(): string | null {
-  try {
-    return sessionStorage.getItem(SESSION_OPENAI_KEY);
-  } catch {
-    return null;
-  }
-}
 
 export async function fetchSocialCaption(
   brief: unknown,
@@ -28,7 +17,7 @@ export async function fetchSocialCaption(
   outputId?: string | null,
 ): Promise<string> {
   const db = createSupabaseBrowserClient();
-  const key = openaiKey ?? sessionOpenAiKey();
+  const key = openaiKey ?? getSessionOpenAiKey();
   const { data, error } = await db.functions.invoke('generate-presentation', {
     body: { brief, requestId, format: 'social_caption', platform, openai_key: key || undefined, output_id: outputId || undefined },
   });
@@ -58,7 +47,7 @@ export async function reviseSocialCaption(
       current_caption: currentCaption,
       feedback,
       output_id: outputId || undefined,
-      openai_key: sessionOpenAiKey() || undefined,
+      openai_key: getSessionOpenAiKey() || undefined,
     },
   });
   if (error) throw error;

@@ -97,32 +97,6 @@ export async function generateCarouselImage({
   throw new Error('יצירת התמונה עדיין רצה. אפשר לבדוק את הסטטוס במסך התוצרים.');
 }
 
-// A spent provider balance is an install-wide outage, not something the person
-// in front of the screen did. Admins get the actual cause because they are the
-// ones who can fix it; everyone else gets told it is being handled.
-const QUOTA_PATTERNS = /ai_provider_quota_exhausted|insufficient_quota|credit_balance_exhausted|no credits remaining|exceeded your current quota/i;
-
-// A failed functions.invoke() carries only "non-2xx status code"; the real
-// reason is in the response body.
-export async function aiErrorText(error: unknown): Promise<string> {
-  const context = (error as { context?: Response })?.context;
-  if (context && typeof context.clone === 'function') {
-    try {
-      const payload = (await context.clone().json()) as { error?: string; message?: string } | null;
-      if (payload?.error || payload?.message) return String(payload.error ?? payload.message);
-    } catch {
-      // non-JSON body — fall through
-    }
-  }
-  return String((error as { message?: string })?.message ?? error);
-}
-
-export function aiErrorLabel(error: unknown, isAdmin: boolean): string {
-  const raw = typeof error === 'string' ? error : String((error as { message?: string })?.message ?? error);
-  if (QUOTA_PATTERNS.test(raw)) {
-    return isAdmin
-      ? 'נגמרו הקרדיטים בחשבון ה-AI, ולכן אי אפשר ליצור תמונות. צריך לטעון אשראי אצל הספק והשירות יחזור מיד.'
-      : 'יש כרגע תקלה זמנית ביצירת תמונות. נשלחה התראה למנהלי המערכת, נסו שוב בהמשך.';
-  }
-  return raw;
-}
+// Error copy and quota detection live in one place so every AI screen says the
+// same thing to the same person. Re-exported here for the existing callers.
+export { aiErrorLabel, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
