@@ -463,7 +463,7 @@ export default function MetaConnectionPage() {
 
   return (
     <div className="container max-w-4xl mx-auto p-6" dir="rtl">
-      <h1 className="text-3xl font-bold mb-6">חיבור Meta (Facebook & Instagram)</h1>
+      <h1 className="mb-6 text-2xl font-bold text-[var(--text-strong)]">חיבור Meta (Facebook & Instagram)</h1>
 
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 flex items-center gap-2">
@@ -480,18 +480,32 @@ export default function MetaConnectionPage() {
       )}
 
       {!data ? (
-        <div className="border rounded-lg p-8 text-center">
-          <p className="text-gray-600 mb-4">
-            התחבר ל-Meta כדי לנהל את עמודי הפייסבוק וחשבונות האינסטגרם שלך
-          </p>
-          <button
-            onClick={startMetaOAuth}
-            disabled={connecting}
-            className="rounded-lg bg-brand text-white px-6 py-3 text-base font-semibold disabled:opacity-60 inline-flex items-center gap-2"
-          >
-            {connecting && <Spinner className="w-4 h-4" />}
-            התחבר ל-Meta
-          </button>
+        <div className="overflow-hidden rounded-2xl border-[1.5px] border-emerald-500/40 bg-emerald-50/70 shadow-sm">
+          {/* Hero: the two networks this connection unlocks. */}
+          <div className="px-6 py-12 text-center">
+            <div className="mb-5 flex items-center justify-center gap-3">
+              <span className="grid h-14 w-14 place-items-center rounded-2xl bg-[#1877f2] text-white shadow-sm">
+                <FacebookGlyph />
+              </span>
+              <span className="h-px w-8 bg-emerald-500/30" />
+              <span className="grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#f9ce34] via-[#ee2a7b] to-[#6228d7] text-white shadow-sm">
+                <InstagramGlyph />
+              </span>
+            </div>
+            <h2 className="mb-2 text-2xl font-bold text-[var(--text-strong)]">חברו את הפייסבוק והאינסטגרם שלכם</h2>
+            <p className="mx-auto max-w-md text-sm leading-6 text-[var(--muted)]">
+              חיבור אחד מאפשר לתזמן ולפרסם ישירות לעמודי הפייסבוק ולחשבונות האינסטגרם שלכם.
+            </p>
+            <button
+              onClick={startMetaOAuth}
+              disabled={connecting}
+              className="mt-6 inline-flex min-h-12 items-center gap-2 rounded-xl bg-brand px-8 text-base font-semibold text-white shadow-sm transition hover:bg-brand-dark disabled:opacity-60"
+            >
+              {connecting && <Spinner className="w-4 h-4" />}
+              התחבר ל-Meta
+            </button>
+          </div>
+
         </div>
       ) : (
         <div className="space-y-6">
@@ -865,5 +879,24 @@ export default function MetaConnectionPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// Meta's brand marks — lucide dropped its brand icons, so they live here.
+function FacebookGlyph() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M13.5 22v-8h2.7l.4-3.1h-3.1V8.9c0-.9.3-1.5 1.6-1.5h1.7V4.6c-.3 0-1.3-.1-2.5-.1-2.5 0-4.2 1.5-4.2 4.3v2.1H7.3V14h2.8v8h3.4Z" />
+    </svg>
+  );
+}
+
+function InstagramGlyph() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="5" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" />
+    </svg>
   );
 }

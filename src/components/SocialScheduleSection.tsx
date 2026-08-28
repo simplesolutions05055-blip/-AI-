@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { fetchSocialCaption, type SocialPlatform } from '@/lib/social';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { randomUUID } from '@/lib/uuid';
@@ -490,7 +491,7 @@ function ScheduleForm({
   // Everything that can stop a save, as one sentence instead of five banners.
   const blocker: string | null =
     !hasPlatforms ? 'בחרו לפחות רשת אחת לפרסום.'
-    : metaTargets.status === 'disconnected' ? 'המותג לא מחובר ל-Meta. חברו חשבון במסך ההגדרות.'
+    : metaTargets.status === 'disconnected' ? 'לא חיברתם את חשבון הפייסבוק/אינסטגרם שלכם.'
     : metaTargets.status === 'error' ? 'לא הצלחנו לטעון את חשבונות הפרסום. רעננו ונסו שוב.'
     : metaTargets.status === 'loading' ? 'טוען את חשבונות הפרסום…'
     : !targetsReady ? `בחרו ${missingTargetPlatforms.includes('facebook') ? 'עמוד פייסבוק' : 'חשבון אינסטגרם'} לפרסום.`
@@ -652,6 +653,14 @@ function ScheduleForm({
           </button>
           {(blocker || saveError) && (
             <p className="text-sm text-[var(--muted)]">{saveError ?? blocker}</p>
+          )}
+          {!saveError && metaTargets.status === 'disconnected' && (
+            <Link
+              to="/admin/meta-connection"
+              className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+            >
+              חיבור פייסבוק ואינסטגרם
+            </Link>
           )}
         </div>
       </div>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CalendarClock, ChevronLeft, ChevronRight, Copy, Download, Trash2 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { confirmDialog } from '@/lib/dialog';
@@ -384,7 +385,7 @@ export default function ScheduledPostEditor({
   const blocker: string | null =
     mediaLoading ? 'טוען מדיה…'
     : targets.status === 'loading' ? 'טוען את חשבונות הפרסום…'
-    : targets.status === 'disconnected' ? 'המותג לא מחובר ל-Meta. חברו חשבון במסך ההגדרות.'
+    : targets.status === 'disconnected' ? 'לא חיברתם את חשבון הפייסבוק/אינסטגרם שלכם.'
     : targets.status === 'error' ? 'לא הצלחנו לטעון את חשבונות הפרסום. רעננו ונסו שוב.'
     : !targetId ? `בחרו ${platform === 'facebook' ? 'עמוד פייסבוק' : 'חשבון אינסטגרם'} לפרסום.`
     : !form.scheduledAt ? 'בחרו תאריך ושעה.'
@@ -528,6 +529,14 @@ export default function ScheduledPostEditor({
         <span className="text-sm text-[var(--muted)]">
           {saving ? 'שומר…' : blocker ? blocker : saved ? 'נשמר ✓' : 'השינויים נשמרים אוטומטית'}
         </span>
+        {targets.status === 'disconnected' && (
+          <Link
+            to="/admin/meta-connection"
+            className="inline-flex min-h-10 items-center rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-semibold text-[var(--text)] hover:bg-gray-50"
+          >
+            חיבור פייסבוק ואינסטגרם
+          </Link>
+        )}
         <button
           type="button"
           onClick={() => void remove()}
