@@ -72,6 +72,11 @@ verify_jwt = false
 [functions.meta-oauth-callback]
 verify_jwt = false
 
+# Facebook redirects the browser here — no Supabase JWT on a top-level redirect.
+# The function verifies the signed OAuth state itself (verifyOAuthState).
+[functions.autopost-oauth-callback]
+verify_jwt = false
+
 [functions.publish-scheduled-posts]
 verify_jwt = false
 
