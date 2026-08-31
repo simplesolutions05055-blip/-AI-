@@ -11,6 +11,7 @@ import {
   estimateTextCost,
   estimateImageCost,
   round4,
+  isGreetingOnly,
 } from './util.ts';
 import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption, generateOutputTitle } from './openai.ts';
 // WhatsApp goes out through whatsapp.ts, the provider switch (Twilio or
@@ -97,6 +98,36 @@ function isBriefApproval(text: string): boolean {
 function isProductionFormTarget(to: string): boolean {
   return to === 'production-form' || to === 'whatsapp:production-form';
 }
+
+// How much the user actually told us *in this request*. Menu digits, greetings
+// and bare acknowledgements say nothing about what to produce, so they are
+// stripped before measuring.
+//
+// This deliberately ignores the brief the analyzer returned. The analyzer is
+// fed up to 16 messages of prior conversation for context, so on an empty
+// request it happily fills `goal` from the PREVIOUS deliverable — which is how
+// one clinic post kept coming back for every unrelated message.
+export function ownBriefContent(
+  msgs: Array<{ direction: string; body: string | null }> | null,
+): string {
+  return (msgs ?? [])
+    .filter((m) => m.direction === 'inbound' && m.body)
+    .map((m) => String(m.body))
+    .flatMap((body) => body.split('\n'))
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => !/^\d{1,2}[.)]?$/.test(line))
+    .filter((line) => !isGreetingOnly(line))
+    .filter((line) => !/^(תודה|מעולה|אחלה|סבבה|וואו|יפה|מושלם|אוקיי|אוקי|ok|👍|🙏|❤️)[!.]*$/i.test(line))
+    .join(' ')
+    .trim();
+}
+
+// Below this there is nothing to work from. A real request names at least a
+// subject ("טיול נופים ברחבי מגדל העמק" is 26 chars); anything shorter is a
+// menu choice, a greeting, or small talk that slipped through — generating
+// from it means inventing a deliverable the user never asked for.
+export const MIN_BRIEF_CONTENT_CHARS = 25;
 
 function forceBriefReady(
   brief: Record<string, unknown>,
@@ -663,6 +694,31 @@ async function runRequestPipeline(
     if (requestedOutputType === 'presentation_kit') {
       requestedOutputType = 'presentation';
       b.output_type = 'presentation';
+    }
+
+    // Fast flow means "don't interrogate the user", not "invent a deliverable".
+    // Two independent signals have to agree before we ask: the analyzer says the
+    // brief isn't ready, AND the user never gave us enough to go on. When the
+    // request is substantive we still skip the questions, exactly as before.
+    const userContent = ownBriefContent(msgs);
+    const analyzerUnsure = Boolean(effectiveNextQuestion) || b.ready !== true;
+    if (analyzerUnsure && userContent.length < MIN_BRIEF_CONTENT_CHARS) {
+      await logEvent(database, {
+        requestId,
+        action: 'brief_empty_asked_user',
+        metadata: { chars: userContent.length, output_type: requestedOutputType },
+      });
+      const ask = effectiveNextQuestion?.trim()
+        ? effectiveNextQuestion
+        : 'לא הבנתי מה להכין — הבקשה הגיעה בלי פרטים. אפשר לכתוב לי במשפט אחד מה התוצר, למי הוא מיועד ומה חשוב שיופיע בו?';
+      await database
+        .from('requests')
+        .update({ structured_brief: b, output_type: (b.output_type as string) ?? null, customer_email: email })
+        .eq('id', requestId);
+      await setStatus(database, requestId, 'collecting_details');
+      await sendOut(database, conversation.id, requestId, waFrom, ask, conversation.simulated);
+      await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+      return;
     }
 
     if (effectiveNextQuestion || b.ready !== true) {
