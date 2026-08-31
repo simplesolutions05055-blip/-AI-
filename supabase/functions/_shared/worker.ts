@@ -25,6 +25,7 @@ import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { loadPdfBrandSettings, sendDeliverableCopy } from './deliverableEmail.ts';
 import { deliverableTitle } from './deliverableTitle.ts';
 import { matchBrandInText, buildBusinessBrainContext, normalizeHe, type BrandMatch, type BrandRow } from './brand.ts';
+import { allowedBrandIds, filterBrandsForUser, isBrandAllowed } from './brandAccess.ts';
 import { buildSkillInstructions, applyBriefSkillGate } from './skills.ts';
 import {
   loadLearnedRules,
@@ -154,10 +155,18 @@ function forceBriefReady(
 
 // Find an active brand whose name/alias appears in any inbound message.
 // Matching logic (exact + fuzzy) lives in the shared brand module.
+//
+// Candidates are narrowed to the requester's own brands FIRST, so naming
+// another authority in a message can never pull that authority's brand kit,
+// business brain or learned rules into this request. A request with no owner
+// matches nothing rather than everything.
 async function matchBrand(
   database: DB,
-  msgs: Array<{ body: string | null; direction: string }>
+  msgs: Array<{ body: string | null; direction: string }>,
+  ownerId: string | null,
 ): Promise<BrandMatch | null> {
+  const allowed = await allowedBrandIds(database, ownerId);
+  if (!allowed.length) return null;
   const { data: brands } = await database
     .from('brands')
     .select('id, name, aliases')
@@ -168,7 +177,7 @@ async function matchBrand(
     .filter((m) => m.direction === 'inbound' && m.body)
     .map((m) => m.body!)
     .join(' ');
-  return matchBrandInText((brands as BrandRow[]) ?? [], inboundText);
+  return matchBrandInText(filterBrandsForUser((brands as BrandRow[]) ?? [], allowed), inboundText);
 }
 
 type BrandStep = 'awaiting' | 'continue';
@@ -177,11 +186,12 @@ type BrandStep = 'awaiting' | 'continue';
 // sent a question and the worker should stop and wait for the next message.
 async function handleBrandConfirmation(
   database: DB,
-  request: { id: string; structured_brief: Record<string, unknown> | null },
+  request: { id: string; structured_brief: Record<string, unknown> | null; created_by?: string | null },
   conversation: Conv,
   msgs: Array<{ body: string | null; direction: string }>,
   templates: Record<string, string>
 ): Promise<BrandStep> {
+  const ownerId = (request.created_by as string | null) ?? null;
   const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
   const pendingId = brief.pending_brand_id as string | undefined;
 
@@ -193,6 +203,17 @@ async function handleBrandConfirmation(
 
   if (pendingId) {
     if (isYes(lastInbound)) {
+      // Re-check on confirmation too: the pending id was written on an earlier
+      // turn, and membership may have changed (or the row been tampered with)
+      // since. A "yes" must never be the thing that grants access.
+      if (!(await isBrandAllowed(database, ownerId, pendingId))) {
+        await saveBrief({ pending_brand_id: null });
+        await logEvent(database, {
+          requestId: request.id, severity: 'warning', action: 'brand_access_denied',
+          metadata: { brand_id: pendingId, owner_id: ownerId, stage: 'confirm' },
+        });
+        return 'continue';
+      }
       const { data: brand } = await database.from('brands').select('name').eq('id', pendingId).single();
       await database.from('requests').update({ brand_id: pendingId }).eq('id', request.id);
       await saveBrief({ pending_brand_id: null });
@@ -205,9 +226,10 @@ async function handleBrandConfirmation(
       // The user rejected the guess — they may have named a different place in
       // the same message ("לא, זה רמת השרון"). Re-match the correction against
       // other brands (excluding the one just rejected) and re-confirm it.
+      const allowed = await allowedBrandIds(database, ownerId);
       const { data: brands } = await database.from('brands').select('id, name, aliases').eq('is_active', true);
       const alt = matchBrandInText(
-        ((brands as BrandRow[]) ?? []).filter((b) => b.id !== pendingId),
+        filterBrandsForUser((brands as BrandRow[]) ?? [], allowed).filter((b) => b.id !== pendingId),
         lastInbound
       );
       if (alt && alt.id !== pendingId) {
@@ -255,7 +277,7 @@ async function handleBrandConfirmation(
 
   if (brief.brand_declined) return 'continue';
 
-  const match = await matchBrand(database, msgs);
+  const match = await matchBrand(database, msgs, ownerId);
   if (!match) return 'continue';
 
   if (match.confidence === 'exact') {
@@ -603,7 +625,13 @@ async function runRequestPipeline(
 
       // Skill 10 — turn the correction into a permanent rule for this client.
       if (request.brand_id) {
-        await extractAndStoreRule(database, request.brand_id as string, lastInbound, request.output_type as string | null);
+        await extractAndStoreRule(
+          database,
+          request.brand_id as string,
+          lastInbound,
+          request.output_type as string | null,
+          { userId: (request.created_by as string | null) ?? null },
+        );
       }
       // Re-open the brief so the next pass re-analyses it with the change.
       await setStatus(database, requestId, 'collecting_details');

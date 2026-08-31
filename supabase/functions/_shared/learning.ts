@@ -1,3 +1,5 @@
+import { logEvent } from './util.ts';
+import { isBrandAllowed } from './brandAccess.ts';
 import type { DB } from './db.ts';
 import { extractRuleLLM } from './openai.ts';
 
@@ -32,9 +34,22 @@ export async function extractAndStoreRule(
   brandId: string,
   comment: string,
   contentType?: string | null,
+  opts?: { userId: string | null },
 ): Promise<void> {
   try {
     if (!comment?.trim()) return;
+    // A learned rule is permanent and brand-wide: every future request for this
+    // brand, by any of its users, is generated under it. So the writer has to
+    // be a member of the brand — otherwise an outsider whose request landed on
+    // the wrong brand_id could poison another tenant's rules for good.
+    if (!(await isBrandAllowed(database, opts?.userId ?? null, brandId))) {
+      await logEvent(database, {
+        severity: 'warning',
+        action: 'brand_rule_write_denied',
+        metadata: { brand_id: brandId, user_id: opts?.userId ?? null },
+      });
+      return;
+    }
     const { rule } = await extractRuleLLM(comment);
     if (!rule) return;
     const { data: existing } = await database
