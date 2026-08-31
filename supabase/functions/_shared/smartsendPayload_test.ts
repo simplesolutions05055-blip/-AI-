@@ -3,12 +3,16 @@ import { normalizeSmartSendMessage } from './smartsendPayload.ts';
 
 Deno.test('normalizes documented Smart Send text payload', async () => {
   const result = await normalizeSmartSendMessage({
-    text: '  שלום  ',
-    senderId: '972501234567',
-    senderName: 'ישראל',
-    isGroupMessage: false,
-    type: 'chat',
-    time: 1788170000,
+    phone: '972501234567',
+    conversationId: 'conv-123',
+    contactName: 'ישראל',
+    last_message: '  שלום  ',
+    message_type: 'text',
+    media_url: '',
+    file_url: '',
+    media_type: '',
+    voice_url: '',
+    currentDateTime: '2026-08-31T17:00:00+03:00',
   });
   assertEquals(result?.phone, '972501234567');
   assertEquals(result?.from, 'whatsapp:+972501234567');
@@ -19,12 +23,11 @@ Deno.test('normalizes documented Smart Send text payload', async () => {
 
 Deno.test('normalizes an inbound media extension without text', async () => {
   const result = await normalizeSmartSendMessage({
-    senderId: 'whatsapp:+972501234567',
-    time: '1788170001',
-    media: {
-      downloadUrl: 'https://cdn.example.com/photo.jpg',
-      mimeType: 'image/jpeg',
-    },
+    phone: 'whatsapp:+972501234567',
+    currentDateTime: '2026-08-31T17:01:00+03:00',
+    last_message: '',
+    media_url: 'https://cdn.example.com/photo.jpg',
+    media_type: 'image/jpeg',
   });
   assertEquals(result?.body, '');
   assertEquals(result?.mediaUrl, 'https://cdn.example.com/photo.jpg');

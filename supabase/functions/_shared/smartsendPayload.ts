@@ -1,4 +1,15 @@
 export type SmartSendMessage = {
+  phone?: unknown;
+  conversationId?: unknown;
+  contactName?: unknown;
+  last_message?: unknown;
+  message_type?: unknown;
+  media_url?: unknown;
+  file_url?: unknown;
+  media_type?: unknown;
+  voice_url?: unknown;
+  currentDateTime?: unknown;
+  // Backward-compatible aliases from the older public Zapier contract.
   text?: unknown;
   senderId?: unknown;
   senderName?: unknown;
@@ -46,8 +57,11 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
     const value = values.find((candidate) => typeof candidate === 'string' && candidate.trim());
     return typeof value === 'string' ? value.trim() : null;
   };
-  const body = firstString(message.text, rawMessage.body, rawMessage.caption) ?? '';
+  const body = firstString(message.last_message, message.text, rawMessage.body, rawMessage.caption) ?? '';
   const mediaUrl = firstString(
+    message.media_url,
+    message.file_url,
+    message.voice_url,
     message.mediaUrl,
     message.downloadUrl,
     media.url,
@@ -55,13 +69,20 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
     rawMessage.mediaUrl,
     rawMessage.downloadUrl,
   );
-  const mediaType = firstString(message.mimeType, media.mimeType, rawMessage.mimeType);
-  const senderId = typeof message.senderId === 'string' ? message.senderId.trim() : '';
+  const mediaType = firstString(
+    message.media_type,
+    message.message_type,
+    message.mimeType,
+    media.mimeType,
+    rawMessage.mimeType,
+  );
+  const senderId = firstString(message.phone, message.senderId) ?? '';
   const phone = senderId.replace(/^whatsapp:/i, '').replace(/@c\.us$/i, '').replace(/\D/g, '');
   if ((!body && !mediaUrl) || !phone) return null;
 
-  const time = typeof message.time === 'number' || typeof message.time === 'string'
-    ? String(message.time)
+  const timeValue = message.currentDateTime ?? message.time;
+  const time = typeof timeValue === 'number' || typeof timeValue === 'string'
+    ? String(timeValue)
     : '';
   return {
     id: await messageFingerprint(senderId, time, `${body}\n${mediaUrl ?? ''}`),

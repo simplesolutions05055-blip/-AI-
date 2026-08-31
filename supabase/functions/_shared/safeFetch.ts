@@ -14,7 +14,7 @@
 //
 // Allowlist config (Edge Function secret), comma-separated hostnames; a leading
 // "." means "this domain and its subdomains":
-//   OUTBOUND_FETCH_ALLOWLIST=".supabase.co,.twilio.com,.greenapi.com"
+//   OUTBOUND_FETCH_ALLOWLIST=".supabase.co,.twilio.com,.greenapi.com,.smartsend.co.il"
 // With the secret unset we fall back to the hosts this app legitimately needs,
 // derived from the service URLs already configured.
 
@@ -24,6 +24,7 @@ const DEFAULT_SUFFIXES = [
   '.twilio.com',
   '.greenapi.com',
   '.green-api.com',
+  '.smartsend.co.il',
   '.fbcdn.net',
   '.cdninstagram.com',
 ];

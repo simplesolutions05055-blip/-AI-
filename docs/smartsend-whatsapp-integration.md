@@ -30,14 +30,16 @@ Header: `x-organization-id: <SMARTSEND_ORGANIZATION_ID>`
 
 ```json
 {
-  "text": "שלום",
-  "senderId": "972501234567",
-  "senderName": "ישראל ישראלי",
-  "isGroupMessage": false,
-  "type": "chat",
-  "isMyContact": true,
-  "isChatArchived": false,
-  "time": 1788170000
+  "phone": "972501234567",
+  "conversationId": "conv-123",
+  "contactName": "ישראל ישראלי",
+  "last_message": "שלום",
+  "message_type": "text",
+  "media_url": "",
+  "file_url": "",
+  "media_type": "",
+  "voice_url": "",
+  "currentDateTime": "2026-08-31T17:00:00+03:00"
 }
 ```
 

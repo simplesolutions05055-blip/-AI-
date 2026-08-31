@@ -132,9 +132,15 @@ async function processAcceptedWebhook(raw: unknown, ip: string | null): Promise<
       }
       try {
         const { bytes, contentType } = await downloadMedia(message.mediaUrl);
+        // Smart Send sends a category such as "image" in media_type, not
+        // always a MIME type. Prefer its value only when it is a real MIME;
+        // otherwise trust the CDN response (for example image/png).
+        const effectiveContentType = message.mediaType?.includes('/')
+          ? message.mediaType
+          : contentType;
         const result = await processInboundMediaItem(database, {
           bytes,
-          contentType: message.mediaType || contentType,
+          contentType: effectiveContentType,
           conversationId: conversation.id,
           messageSid: message.id,
           index: 0,
