@@ -85,3 +85,9 @@ verify_jwt = false
 # function validates the signature itself (validateSignature in _shared/twilio.ts).
 [functions.twilio-webhook]
 verify_jwt = false
+
+# Smart Send posts its own JSON payload, not a Supabase JWT. The function
+# validates SMARTSEND_WEBHOOK_SECRET from the Authorization header or the
+# `secret` query parameter included in the registered hook URL.
+[functions.smartsend-webhook]
+verify_jwt = false

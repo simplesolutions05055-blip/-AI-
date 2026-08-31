@@ -50,6 +50,10 @@ async function handleMediaItem(
 }
 
 Deno.serve(async (req) => {
+  // Retired permanently. Keep implementation below as dead reference code.
+  const retired = true;
+  if (retired) return new Response('Twilio transport retired', { status: 410 });
+
   const database = db();
   const raw = await req.text();
   const params: Record<string, string> = {};

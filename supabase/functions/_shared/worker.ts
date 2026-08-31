@@ -358,11 +358,11 @@ export async function sendOut(
       ? await getSettingOr<{ enabled: boolean }>(database, 'whatsapp_interactive_messages', { enabled: false })
       : { enabled: false };
     const useInteractive = Boolean(interactive && (interactiveSetting.enabled || interactive.force));
-    // A real send while the gateway is unlinked or banned is not delivered —
-    // GREEN-API queues it for 24h and then drops it. Failing loudly here keeps
+    // A real send while the gateway is unavailable is not delivered. Failing
+    // loudly here keeps
     // the reply in the DB (and visible to the admin) instead of losing it.
     if (!simulated && !isProductionFormTarget(to) && (await isSendBlocked(database))) {
-      throw new Error('green-api instance is not authorized — send skipped');
+      throw new Error('WhatsApp provider is not authorized - send skipped');
     }
     if (simulated || isProductionFormTarget(to)) {
       sid = `sim-${crypto.randomUUID()}`;
@@ -398,7 +398,7 @@ export async function sendOut(
       conversation_id: conversationId,
       request_id: requestId,
       direction: 'outbound',
-      body: `[לא נשלח — שגיאת GREEN-API] ${body}`,
+      body: `[לא נשלח — שגיאת ספק WhatsApp] ${body}`,
       twilio_message_sid: `undelivered-${crypto.randomUUID()}`,
     });
     return false;

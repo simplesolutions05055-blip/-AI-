@@ -349,6 +349,10 @@ async function handleGroup(database: DB, msg: InboundMessage) {
 }
 
 Deno.serve(async (req) => {
+  // Retired permanently. Keep implementation below as dead reference code.
+  const retired = true;
+  if (retired) return new Response('GREEN-API transport retired', { status: 410 });
+
   const database = db();
   const requestUrl = new URL(req.url);
   console.log('[greenapi-webhook] request:start', JSON.stringify({

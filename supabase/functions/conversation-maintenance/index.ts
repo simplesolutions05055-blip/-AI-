@@ -5,7 +5,7 @@
 // 3. Flags requests stuck mid-processing so the admin can retry.
 // Protected by x-cron-secret (CRON_SECRET); never exposes Twilio creds publicly.
 import { db } from '../_shared/db.ts';
-import { getChannelState, sendText } from '../_shared/whatsapp.ts';
+import { getChannelState, sendText, whatsappProvider } from '../_shared/whatsapp.ts';
 import { recordInstanceState } from '../_shared/instanceState.ts';
 import { getTemplates, getSettingOr, logEvent } from '../_shared/util.ts';
 
@@ -55,7 +55,10 @@ Deno.serve(async (req) => {
           direction: 'outbound',
           body: text,
         });
-      } else {
+      } else if (whatsappProvider() !== 'smartsend') {
+        // Smart Send uses Meta's official WhatsApp API. A free-form idle notice
+        // can be rejected outside the 24-hour customer-service window. Soft-
+        // close the conversation silently; the next inbound message reopens it.
         try { await sendText(c.whatsapp_from as string, text); } catch { /* ignore */ }
       }
     }
