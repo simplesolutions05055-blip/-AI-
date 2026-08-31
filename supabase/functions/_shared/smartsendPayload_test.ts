@@ -47,3 +47,39 @@ Deno.test('rejects groups and empty payloads', async () => {
   }), null);
   assertEquals(await normalizeSmartSendMessage({ text: '', senderId: '' }), null);
 });
+
+Deno.test('drops unrendered Make placeholders instead of treating them as data', async () => {
+  // The real 2026-08-31 payload: the user typed "1", but the scenario forwarded
+  // an unrendered media_url, so numMedia became 1 and the menu branch was
+  // skipped.
+  const result = await normalizeSmartSendMessage({
+    phone: 'whatsapp:+972501234567',
+    currentDateTime: '2026-08-31T17:47:08+03:00',
+    last_message: '1',
+    media_url: '{{media_url}}',
+    media_type: '{{media_type}}',
+  });
+  assertEquals(result?.body, '1');
+  assertEquals(result?.mediaUrl, null);
+  assertEquals(result?.mediaType, null);
+});
+
+Deno.test('falls back past a placeholder body to a real field', async () => {
+  const result = await normalizeSmartSendMessage({
+    phone: 'whatsapp:+972501234567',
+    currentDateTime: '2026-08-31T17:47:46+03:00',
+    last_message: '{{ 1.last_message }}',
+    text: 'טקסט אמיתי',
+    media_url: 'https://cdn.smartsend.co.il/a.jpg',
+  });
+  assertEquals(result?.body, 'טקסט אמיתי');
+  assertEquals(result?.mediaUrl, 'https://cdn.smartsend.co.il/a.jpg');
+});
+
+Deno.test('a placeholder-only payload is not a message', async () => {
+  assertEquals(await normalizeSmartSendMessage({
+    phone: 'whatsapp:+972501234567',
+    last_message: '{{last_message}}',
+    media_url: '{{media_url}}',
+  }), null);
+});

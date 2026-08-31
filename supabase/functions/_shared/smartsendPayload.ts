@@ -53,8 +53,19 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
   const media = message.media && typeof message.media === 'object'
     ? message.media as Record<string, unknown>
     : {};
+  // Smart Send's Make scenario sometimes forwards a field it failed to render,
+  // so the literal template token arrives instead of a value (e.g.
+  // "{{last_message}}" as the body, or "{{media_url}}" as the media URL). Such a
+  // token is missing data, never content: an unrendered media URL made every
+  // message look like it carried an attachment, which skipped the deterministic
+  // menu/greeting/reset branches in inbound.ts and dropped plain "1" straight
+  // into the AI pipeline.
+  const isUnrenderedPlaceholder = (value: string): boolean =>
+    /^\{\{[\s\S]*\}\}$/.test(value.trim());
   const firstString = (...values: unknown[]): string | null => {
-    const value = values.find((candidate) => typeof candidate === 'string' && candidate.trim());
+    const value = values.find((candidate) =>
+      typeof candidate === 'string' && candidate.trim() && !isUnrenderedPlaceholder(candidate)
+    );
     return typeof value === 'string' ? value.trim() : null;
   };
   const body = firstString(message.last_message, message.text, rawMessage.body, rawMessage.caption) ?? '';
