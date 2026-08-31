@@ -537,6 +537,31 @@ export async function processRequest(
   }
 }
 
+// Prior turns of the same conversation, as context for the analyzer.
+//
+// Everything the user said is kept: that is what carries continuity ("another
+// one like the last one"). Previously DELIVERED text is dropped.
+//
+// The reason is specific. A finished deliverable is long, confident, on-brand
+// prose. Handed back to the analyzer alongside a thin new request, it is the
+// most attractive thing in the window to copy, so the analyzer completes the
+// brief from it — which is how a single clinic post came back as the answer to
+// unrelated messages. Questions, menus and acknowledgements are kept: they are
+// short, they carry the state of the dialogue, and nothing wants to copy them.
+//
+// This is conversation-scoped and always was — a conversation belongs to one
+// phone number, so this never crossed users or brands. It is a quality and
+// relevance boundary, not a tenancy one.
+export function conversationContextMessages<
+  T extends { direction: string; request_id?: string | null },
+>(messages: T[], deliveredRequestIds: Set<string>): T[] {
+  return messages.filter((message) =>
+    message.direction === 'inbound' ||
+    !message.request_id ||
+    !deliveredRequestIds.has(message.request_id)
+  );
+}
+
 async function runRequestPipeline(
   database: DB,
   requestId: string,
@@ -573,13 +598,31 @@ async function runRequestPipeline(
 
   const { data: priorMsgsDesc } = await database
     .from('messages')
-    .select('body, direction, created_at')
+    .select('body, direction, created_at, request_id')
     .eq('conversation_id', conversation.id)
     .neq('request_id', requestId)
     .lt('created_at', request.created_at as string)
     .order('created_at', { ascending: false })
     .limit(16);
-  const priorMsgs = [...(priorMsgsDesc ?? [])].reverse();
+  // Which of those earlier requests actually produced something. Their outbound
+  // messages are the delivered text, and that is what gets copied.
+  const priorRequestIds = [...new Set(
+    ((priorMsgsDesc ?? []) as Array<{ request_id: string | null }>)
+      .map((m) => m.request_id)
+      .filter((id): id is string => typeof id === 'string'),
+  )];
+  const { data: priorOutputs } = priorRequestIds.length
+    ? await database.from('outputs').select('request_id').in('request_id', priorRequestIds)
+    : { data: [] };
+  const deliveredRequestIds = new Set(
+    ((priorOutputs ?? []) as Array<{ request_id: string | null }>)
+      .map((o) => o.request_id)
+      .filter((id): id is string => typeof id === 'string'),
+  );
+  const priorMsgs = conversationContextMessages(
+    [...(priorMsgsDesc ?? [])],
+    deliveredRequestIds,
+  ).reverse();
   const priorContext = priorMsgs.length
     ? [
         'הקשר קודם מהשיחה (לעיון בלבד):',
