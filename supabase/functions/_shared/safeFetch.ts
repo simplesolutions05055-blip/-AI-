@@ -14,7 +14,7 @@
 //
 // Allowlist config (Edge Function secret), comma-separated hostnames; a leading
 // "." means "this domain and its subdomains":
-//   OUTBOUND_FETCH_ALLOWLIST=".supabase.co,.twilio.com,.greenapi.com,.smartsend.co.il"
+//   OUTBOUND_FETCH_ALLOWLIST=".supabase.co,.smartsend.co.il"
 // With the secret unset we fall back to the hosts this app legitimately needs,
 // derived from the service URLs already configured.
 
@@ -22,8 +22,6 @@ const DEFAULT_SUFFIXES = [
   '.supabase.co',
   '.supabase.in',
   '.twilio.com',
-  '.greenapi.com',
-  '.green-api.com',
   '.smartsend.co.il',
   '.fbcdn.net',
   '.cdninstagram.com',
@@ -41,7 +39,7 @@ export class BlockedUrlError extends Error {
 function allowedHosts(): string[] {
   const configured = Deno.env.get('OUTBOUND_FETCH_ALLOWLIST')?.trim();
   const extra: string[] = [];
-  for (const name of ['SUPABASE_URL', 'GREENAPI_API_URL', 'APP_URL']) {
+  for (const name of ['SUPABASE_URL', 'APP_URL']) {
     const raw = Deno.env.get(name)?.trim();
     if (!raw) continue;
     try { extra.push(new URL(raw).hostname.toLowerCase()); } catch { /* ignore */ }

@@ -1,10 +1,8 @@
-// Edge Function: twilio-webhook — public WhatsApp entry point when
-// WHATSAPP_PROVIDER=twilio (spec §7). The GREEN-API entry point
-// (whatsapp-group-webhook) stays deployed and untouched; only one of the two
-// gateways is configured to POST at a time.
+// Edge Function: twilio-webhook — legacy WhatsApp entry point for
+// WHATSAPP_PROVIDER=twilio (spec §7). Smart Send is the live gateway now; this
+// stays only as historical code.
 //
-// 1:1 chats only — the WhatsApp Business API has no group messaging, so the
-// group trigger path lives on the GREEN-API side alone.
+// 1:1 chats only — the WhatsApp Business API has no group messaging.
 // Twilio posts directly here, so Twilio creds live only in Supabase secrets.
 // This function is a THIN ADAPTER: it validates the Twilio signature, enforces
 // idempotency / blocked numbers / rate-limit, downloads Twilio media, then hands
