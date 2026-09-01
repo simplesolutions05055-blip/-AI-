@@ -45,7 +45,6 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'עיקר',
     links: [
       { href: '/admin', label: 'לוח בקרה', adminOnly: true, icon: 'dashboard' },
-      { href: '/admin/production', label: 'הפקה', icon: 'spark' },
     ],
   },
   {
@@ -228,8 +227,8 @@ export function AdminBottomNav({
   // destinations remain available in the full menu so compact phones retain
   // comfortable 48px+ touch targets.
   const mobileHrefs = isAdmin
-    ? ['/admin', '/admin/production', '/admin/files', '/admin/holidays']
-    : ['/admin/production', '/admin/files', '/admin/holidays', '/admin/user-settings'];
+    ? ['/admin', '/admin/files', '/admin/holidays', '/admin/annual-planner']
+    : ['/admin/files', '/admin/holidays', '/admin/user-settings'];
 
   const items = mobileHrefs
     .map((href) => allLinks.find((link) => link.href === href))
