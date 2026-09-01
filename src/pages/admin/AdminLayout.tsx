@@ -132,6 +132,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return <Navigate to="/onboarding" replace />;
   }
   const isAdmin = profile.role === 'admin';
+
+  // Content-production screens belong to regular users; the admin works through
+  // a dedicated user account, so these are hidden from the admin nav and blocked
+  // by direct URL too.
+  const ADMIN_BLOCKED_PREFIXES = ['/admin/holidays', '/admin/annual-planner', '/admin/files', '/admin/production'];
+  if (isAdmin && ADMIN_BLOCKED_PREFIXES.some((p) => pathname.startsWith(p))) {
+    return <Navigate to="/admin" replace />;
+  }
+
   const email = profile.email;
   const isProductionLanding = pathname === '/admin/production';
   const showCreateFab = profile.can_create_outputs && !pathname.startsWith('/admin/production');
