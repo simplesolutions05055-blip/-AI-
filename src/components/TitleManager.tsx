@@ -7,7 +7,6 @@ const APP_NAME = 'PrimeOS';
 // Order matters: more specific prefixes must come before generic ones.
 const TITLES: { match: (p: string) => boolean; title: string }[] = [
   { match: (p) => p === '/login', title: 'התחברות' },
-  { match: (p) => p === '/signup', title: 'הרשמה' },
   { match: (p) => p === '/onboarding', title: 'הצטרפות' },
   { match: (p) => p === '/reset-password', title: 'איפוס סיסמה' },
   { match: (p) => p === '/privacy', title: 'מדיניות פרטיות' },

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
+import { useNavigate } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import { randomUUID } from '@/lib/uuid';
 import { useProfile } from '@/lib/useProfile';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import { confirmDialog } from '@/lib/dialog';
@@ -28,16 +27,6 @@ interface BrandRow {
   logo_path: string | null;
 }
 
-interface InviteRow {
-  id: string;
-  token: string;
-  brand_id: string;
-  uses: number;
-  revoked: boolean;
-  created_at: string;
-  last_used_at: string | null;
-}
-
 interface ActivityRow {
   id: string;
   severity: string;
@@ -46,8 +35,10 @@ interface ActivityRow {
   created_at: string;
 }
 
-function inviteUrl(token: string) {
-  return `${window.location.origin}/signup?invite=${token}`;
+function generatePassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(14));
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
 }
 
 function useEscapeClose(open: boolean, onClose: () => void) {
@@ -63,6 +54,7 @@ function useEscapeClose(open: boolean, onClose: () => void) {
 
 export default function PermissionsPage() {
   const db = useMemo(() => createSupabaseBrowserClient(), []);
+  const navigate = useNavigate();
   const { profile: me } = useProfile();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [brands, setBrands] = useState<BrandRow[]>([]);
@@ -71,11 +63,9 @@ export default function PermissionsPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [tab, setTab] = useState<'admins' | 'users' | 'invites' | 'permissions'>('admins');
+  const [tab, setTab] = useState<'admins' | 'users' | 'permissions'>('admins');
   const [outputPermissions, setOutputPermissions] = useState<OutputPermissions>(() => normalizeOutputPermissions(null));
-  const [invites, setInvites] = useState<InviteRow[]>([]);
-  const [generating, setGenerating] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [creatingUser, setCreatingUser] = useState(false);
   const [selectedUser, setSelectedUser] = useState<ProfileRow | null>(null);
   const [activity, setActivity] = useState<ActivityRow[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -110,11 +100,10 @@ export default function PermissionsPage() {
 
   useEffect(() => {
     (async () => {
-      const [{ data: profs }, { data: brs }, { data: ub }, { data: inv }, { data: permissionRow }] = await Promise.all([
+      const [{ data: profs }, { data: brs }, { data: ub }, { data: permissionRow }] = await Promise.all([
         db.from('profiles').select('id, email, role, can_create_outputs, created_at').order('created_at'),
         db.from('brands').select('id, name, is_active, logo_path').order('name'),
         db.from('user_brands').select('user_id, brand_id'),
-        db.from('brand_invites').select('id, token, brand_id, uses, revoked, created_at, last_used_at').order('created_at', { ascending: false }),
         db.from('settings').select('value_json').eq('key', 'output_permissions').maybeSingle(),
       ]);
       const map: Record<string, Set<string>> = {};
@@ -133,7 +122,6 @@ export default function PermissionsPage() {
       setBrands(nextBrands);
       setBrandLogoUrls(Object.fromEntries(logoEntries.filter(([, url]) => !!url)));
       setGrants(map);
-      setInvites((inv as unknown as InviteRow[]) ?? []);
       setOutputPermissions(normalizeOutputPermissions((permissionRow as { value_json?: unknown } | null)?.value_json));
       setLoading(false);
     })();
@@ -267,69 +255,61 @@ export default function PermissionsPage() {
     }
   }
 
-  async function createInvite(brandId: string): Promise<boolean> {
-    if (!brandId) {
-      flash('בחרו מותג');
+  // Admin-provisioned account creation. Self-service signup is disabled — the
+  // admin sets the final password here and either attaches an existing brand or
+  // creates a new one (then finishes it in the branding screen).
+  async function createUser(input: {
+    email: string;
+    password: string;
+    brandMode: 'existing' | 'new';
+    brandId: string;
+    brandName: string;
+  }): Promise<boolean> {
+    setCreatingUser(true);
+    const { data, error } = await db.functions.invoke('admin-create-user', {
+      body: {
+        email: input.email,
+        password: input.password,
+        brand_mode: input.brandMode,
+        brand_id: input.brandMode === 'existing' ? input.brandId : undefined,
+        brand_name: input.brandMode === 'new' ? input.brandName : undefined,
+      },
+    });
+    setCreatingUser(false);
+    const code = (data as { error?: string } | null)?.error;
+    if (error || code) {
+      const messages: Record<string, string> = {
+        invalid_email: 'כתובת מייל לא תקינה',
+        weak_password: 'הסיסמה צריכה להכיל לפחות 8 תווים',
+        email_taken: 'כתובת המייל כבר רשומה',
+        brand_required: 'בחרו מותג',
+        brand_not_found: 'המותג לא נמצא',
+        brand_name_required: 'הזינו שם מותג',
+        brand_exists: 'כבר קיים מותג בשם הזה',
+        forbidden: 'אין הרשאה',
+      };
+      flash(messages[code ?? ''] ?? 'יצירת המשתמש נכשלה');
       return false;
     }
-    if (invites.some((i) => i.brand_id === brandId && !i.revoked)) {
-      flash('כבר קיים קישור פעיל למותג הזה');
-      return false;
+    const result = data as { user_id: string; brand_id: string; brand_created: boolean };
+    setProfiles((prev) => [
+      ...prev,
+      {
+        id: result.user_id,
+        email: input.email.trim().toLowerCase(),
+        role: 'user',
+        can_create_outputs: true,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    setGrants((prev) => ({ ...prev, [result.user_id]: new Set([result.brand_id]) }));
+    if (result.brand_created) {
+      flash('המשתמש נוצר. השלימו את פרטי המותג במסך המיתוג');
+      navigate('/admin/branding');
+    } else {
+      flash('המשתמש נוצר');
     }
-    setGenerating(true);
-    const token = randomUUID();
-    const { data, error } = await db
-      .from('brand_invites')
-      .insert({ token, brand_id: brandId, created_by: me?.id ?? null } as never)
-      .select('id, token, brand_id, uses, revoked, created_at, last_used_at')
-      .single();
-    setGenerating(false);
-    if (error || !data) {
-      flash('יצירת הקישור נכשלה');
-      return false;
-    }
-    const row = data as unknown as InviteRow;
-    setInvites((prev) => [row, ...prev]);
-    void copyLink(row);
     return true;
-  }
-
-  async function copyLink(invite: InviteRow) {
-    try {
-      await navigator.clipboard.writeText(inviteUrl(invite.token));
-      setCopiedId(invite.id);
-      setTimeout(() => setCopiedId((cur) => (cur === invite.id ? null : cur)), 2000);
-      flash('הקישור הועתק');
-    } catch {
-      flash('ההעתקה נכשלה — העתיקו ידנית');
-    }
-  }
-
-  async function toggleRevoke(invite: InviteRow) {
-    // Optimistic: flip in the UI first, roll back if the save fails.
-    const next = !invite.revoked;
-    setInvites((prev) => prev.map((x) => (x.id === invite.id ? { ...x, revoked: next } : x)));
-    setSavingId(invite.id);
-    const { error } = await db.from('brand_invites').update({ revoked: next } as never).eq('id', invite.id);
-    setSavingId(null);
-    if (error) {
-      setInvites((prev) => prev.map((x) => (x.id === invite.id ? { ...x, revoked: !next } : x)));
-      return flash('שמירה נכשלה');
-    }
-    flash(next ? 'הקישור בוטל' : 'הקישור הופעל מחדש');
-  }
-
-  async function deleteInvite(invite: InviteRow) {
-    if (!(await confirmDialog({ message: 'למחוק את הקישור? לא יהיה ניתן להירשם דרכו יותר.', danger: true, confirmText: 'מחיקה' }))) return;
-    // Optimistic: drop the row in the UI first, restore it if the delete fails.
-    const snapshot = invites;
-    setInvites((prev) => prev.filter((x) => x.id !== invite.id));
-    const { error } = await db.from('brand_invites').delete().eq('id', invite.id);
-    if (error) {
-      setInvites(snapshot);
-      return flash('המחיקה נכשלה');
-    }
-    flash('הקישור נמחק');
   }
 
   if (loading) return <div dir="rtl"><PageSkeleton tabs rows={6} label="המשתמשים וההרשאות נטענים" /></div>;
@@ -369,16 +349,6 @@ export default function PermissionsPage() {
           משתמשים ({users.length})
         </button>
         <button
-          onClick={() => setTab('invites')}
-          className={`shrink-0 whitespace-nowrap px-3 py-3 text-sm font-semibold border-b-2 transition sm:px-4 ${
-            tab === 'invites'
-              ? 'border-brand text-brand'
-              : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
-          }`}
-        >
-          הזמנות ({invites.filter((i) => !i.revoked).length})
-        </button>
-        <button
           onClick={() => setTab('permissions')}
           className={`shrink-0 whitespace-nowrap px-3 py-3 text-sm font-semibold border-b-2 transition sm:px-4 ${
             tab === 'permissions'
@@ -396,22 +366,14 @@ export default function PermissionsPage() {
           savingId={savingId}
           onToggle={toggleOutputPermission}
         />
-      ) : tab === 'invites' ? (
-        <InvitesTab
-          brands={brands}
-          brandLogoUrls={brandLogoUrls}
-          invites={invites}
-          generating={generating}
-          savingId={savingId}
-          copiedId={copiedId}
-          onCreate={createInvite}
-          onCopy={copyLink}
-          onToggleRevoke={toggleRevoke}
-          onDelete={deleteInvite}
-        />
       ) : (
 
       <>
+      {tab === 'users' && (
+        <div className="mb-4">
+          <CreateUserModal brands={brands} creating={creatingUser} onCreate={createUser} />
+        </div>
+      )}
       <div className="space-y-3 lg:hidden">
         {(tab === 'admins' ? admins : users).map((p) => {
           const userBrands = grants[p.id] ?? new Set<string>();
@@ -747,166 +709,58 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
   return <div className="rounded-lg border border-[var(--border)] p-3"><div className="text-xs text-[var(--muted)]">{label}</div><div className="mt-1 font-medium">{children}</div></div>;
 }
 
-function InvitesTab({
+function CreateUserModal({
   brands,
-  brandLogoUrls,
-  invites,
-  generating,
-  savingId,
-  copiedId,
+  creating,
   onCreate,
-  onCopy,
-  onToggleRevoke,
-  onDelete,
 }: {
   brands: BrandRow[];
-  brandLogoUrls: Record<string, string>;
-  invites: InviteRow[];
-  generating: boolean;
-  savingId: string | null;
-  copiedId: string | null;
-  onCreate: (brandId: string) => Promise<boolean>;
-  onCopy: (invite: InviteRow) => void;
-  onToggleRevoke: (invite: InviteRow) => void;
-  onDelete: (invite: InviteRow) => void;
-}) {
-  const brandById = new Map(brands.map((b) => [b.id, b]));
-  const usedBrandIds = new Set(invites.filter((i) => !i.revoked).map((i) => i.brand_id));
-  const allBrandsUsed = brands.length > 0 && brands.every((b) => usedBrandIds.has(b.id));
-
-  return (
-    <div className="space-y-6">
-      {/* generator */}
-      <div className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
-        <h2 className="font-semibold">יצירת קישור הזמנה</h2>
-        <p className="mt-1 text-sm text-[var(--muted)]">הנרשמים ישויכו אוטומטית למותג.</p>
-        {brands.length === 0 ? (
-          <p className="mt-4 text-sm text-[var(--muted)]">אין מותגים פעילים. הוסיפו מותג במסך המיתוג תחילה.</p>
-        ) : allBrandsUsed ? (
-          <p className="mt-4 text-sm text-[var(--muted)]">לכל המותגים כבר יש קישור הזמנה פעיל.</p>
-        ) : (
-          <div className="mt-4">
-            <CreateInviteModal
-              brands={brands}
-              brandLogoUrls={brandLogoUrls}
-              usedBrandIds={usedBrandIds}
-              generating={generating}
-              onPick={onCreate}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* existing invites */}
-      {invites.length === 0 ? (
-        <p className="text-sm text-[var(--muted)]">עדיין לא נוצרו קישורי הזמנה.</p>
-      ) : (
-        <div className="space-y-3">
-          {invites.map((invite) => {
-            const brand = brandById.get(invite.brand_id);
-            const logoUrl = brand ? brandLogoUrls[brand.id] ?? null : null;
-            const url = inviteUrl(invite.token);
-            return (
-              <div
-                key={invite.id}
-                className={`rounded-xl border bg-white p-4 shadow-sm ${
-                  invite.revoked ? 'border-[var(--border)] opacity-70' : 'border-[var(--border)]'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-white">
-                    {logoUrl ? (
-                      <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
-                    ) : (
-                      <span className="text-[10px] font-bold text-brand">{(brand?.name ?? '?').slice(0, 2)}</span>
-                    )}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-sm truncate">{brand?.name ?? 'מותג נמחק'}</div>
-                    <div className="text-xs text-[var(--muted)] mt-0.5">
-                      {invite.revoked ? 'מבוטל · ' : ''}{invite.uses} נרשמו · נוצר {new Date(invite.created_at).toLocaleDateString('he-IL')}
-                    </div>
-                  </div>
-                  {invite.revoked && (
-                    <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600">מבוטל</span>
-                  )}
-                </div>
-
-                <div className="mt-3 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-gray-50 px-3 py-2">
-                  <div dir="rtl" className="min-w-0 flex-1 truncate text-start text-xs text-[var(--muted)]">
-                    <bdi>{url}</bdi>
-                  </div>
-                  <button
-                    onClick={() => onCopy(invite)}
-                    className="shrink-0 rounded-md border border-[var(--border)] bg-white px-2.5 py-1 text-xs font-semibold hover:bg-gray-50"
-                  >
-                    {copiedId === invite.id ? '✓ הועתק' : 'העתקה'}
-                  </button>
-                </div>
-
-                {!invite.revoked && <InviteShare url={url} brandName={brand?.name} />}
-
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
-                  <button
-                    onClick={() => onToggleRevoke(invite)}
-                    disabled={savingId === invite.id}
-                    className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition disabled:opacity-60 ${
-                      invite.revoked
-                        ? 'border-green-300 bg-green-50 text-green-700'
-                        : 'border-[var(--border)] text-[var(--muted)] hover:bg-gray-50'
-                    }`}
-                  >
-                    {invite.revoked ? 'הפעלה מחדש' : 'ביטול'}
-                  </button>
-                  <button
-                    onClick={() => onDelete(invite)}
-                    disabled={savingId === invite.id}
-                    className="ms-auto rounded-lg border border-red-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-                  >
-                    מחיקה
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CreateInviteModal({
-  brands,
-  brandLogoUrls,
-  usedBrandIds,
-  generating,
-  onPick,
-}: {
-  brands: BrandRow[];
-  brandLogoUrls: Record<string, string>;
-  usedBrandIds: Set<string>;
-  generating: boolean;
-  onPick: (brandId: string) => Promise<boolean>;
+  creating: boolean;
+  onCreate: (input: {
+    email: string;
+    password: string;
+    brandMode: 'existing' | 'new';
+    brandId: string;
+    brandName: string;
+  }) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
-  const [pickingId, setPickingId] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(true);
+  const [brandMode, setBrandMode] = useState<'existing' | 'new'>('existing');
+  const [brandId, setBrandId] = useState('');
+  const [brandName, setBrandName] = useState('');
   useEscapeClose(open, () => setOpen(false));
 
-  async function pick(brandId: string) {
-    setPickingId(brandId);
-    const ok = await onPick(brandId);
-    setPickingId(null);
-    if (ok) setOpen(false);
+  function reset() {
+    setEmail('');
+    setPassword('');
+    setBrandMode(brands.length ? 'existing' : 'new');
+    setBrandId('');
+    setBrandName('');
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const ok = await onCreate({ email, password, brandMode, brandId, brandName });
+    if (ok) {
+      setOpen(false);
+      reset();
+    }
   }
 
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        className="w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 sm:w-auto"
+        onClick={() => {
+          reset();
+          setOpen(true);
+        }}
+        className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
       >
-        בחירת מותג ויצירת קישור
+        + צור משתמש
       </button>
 
       {open && (
@@ -916,200 +770,116 @@ function CreateInviteModal({
             if (event.target === event.currentTarget) setOpen(false);
           }}
         >
-          <div
+          <form
+            onSubmit={submit}
             dir="rtl"
             role="dialog"
             aria-modal="true"
-            aria-label="בחירת מותג ליצירת קישור"
-            className="max-h-[80vh] w-full overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200 sm:h-fit sm:max-w-md sm:rounded-2xl sm:border"
+            aria-label="יצירת משתמש חדש"
+            className="max-h-[90vh] w-full space-y-4 overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white p-5 shadow-lg sm:max-w-md sm:rounded-2xl sm:border"
           >
-            <div className="sticky top-0 flex items-center justify-between border-b border-[var(--border)] bg-white px-4 py-3">
-              <h2 className="text-lg font-bold">בחירת מותג</h2>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-lg p-1 text-[var(--muted)] transition hover:bg-gray-100"
-                aria-label="סגירה"
-              >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">יצירת משתמש חדש</h2>
+              <button type="button" onClick={() => setOpen(false)} aria-label="סגירה" className="rounded-lg p-1 text-xl text-[var(--muted)] hover:bg-gray-100">×</button>
             </div>
 
-            <p className="px-4 pt-3 text-sm text-[var(--muted)]">בחרו מותג כדי ליצור עבורו קישור הזמנה ייעודי.</p>
-
-            <div className="space-y-2 p-4">
-              {brands.map((b) => {
-                const logoUrl = brandLogoUrls[b.id] ?? null;
-                const busy = pickingId === b.id;
-                const used = usedBrandIds.has(b.id);
-                return (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => pick(b.id)}
-                    disabled={generating || used}
-                    title={used ? 'כבר קיים קישור פעיל למותג הזה' : undefined}
-                    className="flex w-full items-center gap-3 rounded-lg border border-[var(--border)] bg-white px-4 py-3 text-start text-sm font-semibold transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
-                  >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-white">
-                      {logoUrl ? (
-                        <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
-                      ) : (
-                        <span className="text-[10px] font-bold text-brand">{b.name.slice(0, 2)}</span>
-                      )}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">{b.name}</span>
-                    {busy ? (
-                      <span className="shrink-0 text-xs text-[var(--muted)]">יוצר…</span>
-                    ) : used ? (
-                      <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-[var(--muted)]">קיים קישור</span>
-                    ) : (
-                      <svg className="shrink-0 text-[var(--muted)]" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <polyline points="15 18 9 12 15 6" />
-                      </svg>
-                    )}
-                  </button>
-                );
-              })}
+            <div>
+              <label className="mb-1 block text-sm font-medium" htmlFor="new-user-email">כתובת מייל (שם המשתמש)</label>
+              <input
+                id="new-user-email"
+                type="email"
+                dir="ltr"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-start text-sm"
+              />
             </div>
-          </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium" htmlFor="new-user-password">סיסמה</label>
+              <div className="flex gap-2">
+                <input
+                  id="new-user-password"
+                  type={showPassword ? 'text' : 'password'}
+                  dir="ltr"
+                  required
+                  minLength={8}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-start text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="shrink-0 rounded-lg border border-[var(--border)] px-2.5 text-xs font-semibold hover:bg-gray-50"
+                >
+                  {showPassword ? 'הסתר' : 'הצג'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPassword(generatePassword());
+                    setShowPassword(true);
+                  }}
+                  className="shrink-0 rounded-lg border border-[var(--border)] px-2.5 text-xs font-semibold hover:bg-gray-50"
+                >
+                  צור אוטומטית
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-[var(--muted)]">לפחות 8 תווים. העתיקו והעבירו למשתמש — הסיסמה לא תוצג שוב.</p>
+            </div>
+
+            <div className="border-t border-[var(--border)] pt-3">
+              <div className="mb-2 text-sm font-medium">מותג</div>
+              <div className="flex gap-2 text-sm">
+                <label className={`flex-1 cursor-pointer rounded-lg border px-3 py-2 text-center font-medium ${brandMode === 'existing' ? 'border-brand bg-brand/10 text-brand' : 'border-[var(--border)]'}`}>
+                  <input type="radio" name="brand-mode" className="sr-only" checked={brandMode === 'existing'} onChange={() => setBrandMode('existing')} disabled={brands.length === 0} />
+                  מותג קיים
+                </label>
+                <label className={`flex-1 cursor-pointer rounded-lg border px-3 py-2 text-center font-medium ${brandMode === 'new' ? 'border-brand bg-brand/10 text-brand' : 'border-[var(--border)]'}`}>
+                  <input type="radio" name="brand-mode" className="sr-only" checked={brandMode === 'new'} onChange={() => setBrandMode('new')} />
+                  מותג חדש
+                </label>
+              </div>
+
+              {brandMode === 'existing' ? (
+                <select
+                  required
+                  value={brandId}
+                  onChange={(e) => setBrandId(e.target.value)}
+                  className="mt-2 w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                >
+                  <option value="">בחרו מותג…</option>
+                  {brands.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    required
+                    value={brandName}
+                    onChange={(e) => setBrandName(e.target.value)}
+                    placeholder="שם המותג"
+                    className="mt-2 w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                  />
+                  <p className="mt-1 text-xs text-[var(--muted)]">המותג ייווצר וישויך למשתמש. תועברו למסך המיתוג להשלמת לוגו, צבעים ומסמכים.</p>
+                </>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={creating}
+              className="w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
+            >
+              {creating ? 'יוצר…' : 'צור משתמש'}
+            </button>
+          </form>
         </div>
       )}
     </>
-  );
-}
-
-function InviteShare({ url, brandName }: { url: string; brandName?: string }) {
-  const [waOpen, setWaOpen] = useState(false);
-  const [qrOpen, setQrOpen] = useState(false);
-  const [phone, setPhone] = useState('');
-  useEscapeClose(qrOpen, () => setQrOpen(false));
-
-  function openWhatsApp() {
-    let n = phone.replace(/\D/g, '');
-    if (n.startsWith('972')) n = n.slice(3); // strip country code if pasted
-    n = n.replace(/^0+/, ''); // strip national trunk prefix
-    if (!n) return;
-    const message = `שלום! הוזמנת להצטרף${brandName ? ` ל${brandName}` : ''}. להרשמה דרך הקישור: ${url}`;
-    const waUrl = `https://api.whatsapp.com/send?phone=972${n}&text=${encodeURIComponent(message)}`;
-    window.open(waUrl, '_blank', 'noopener,noreferrer');
-    setWaOpen(false);
-    setPhone('');
-  }
-
-  return (
-    <div className="mt-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setWaOpen((v) => !v)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[#25D366] bg-[#25D366]/10 px-2.5 py-1 text-xs font-semibold text-[#128C7E] transition hover:bg-[#25D366]/20"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38c1.45.79 3.08 1.21 4.79 1.21 5.46 0 9.91-4.45 9.91-9.91C21.95 6.45 17.5 2 12.04 2zm5.8 14.04c-.24.68-1.42 1.31-1.96 1.36-.5.05-1.14.07-1.84-.12-.42-.13-.97-.31-1.67-.61-2.94-1.27-4.86-4.23-5-4.43-.15-.2-1.2-1.6-1.2-3.05s.76-2.16 1.03-2.46c.27-.3.59-.37.79-.37.2 0 .39 0 .57.01.18.01.43-.07.67.51.24.59.83 2.03.9 2.18.07.15.12.32.02.51-.1.2-.15.32-.3.49-.15.18-.31.39-.45.53-.15.15-.3.31-.13.6.17.3.77 1.27 1.65 2.06 1.14 1.02 2.1 1.33 2.4 1.48.3.15.47.12.64-.07.17-.2.74-.86.94-1.16.2-.3.39-.25.66-.15.27.1 1.71.81 2 .96.3.15.5.22.57.34.07.12.07.71-.17 1.39z" />
-          </svg>
-          שליחה ב-WhatsApp
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setQrOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-2.5 py-1 text-xs font-semibold text-[var(--text)] transition hover:bg-gray-50"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <rect x="3" y="3" width="7" height="7" rx="1" />
-            <rect x="14" y="3" width="7" height="7" rx="1" />
-            <rect x="3" y="14" width="7" height="7" rx="1" />
-            <path d="M14 14h3v3M21 14v3M14 17v4h3M20 20h1" />
-          </svg>
-          קוד QR
-        </button>
-
-        <button
-          type="button"
-          disabled
-          title="שליחה במייל תהיה זמינה בקרוב"
-          className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-semibold text-[var(--muted)] opacity-60"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <rect x="3" y="5" width="18" height="14" rx="2" />
-            <polyline points="3 7 12 13 21 7" />
-          </svg>
-          שליחה במייל
-          <span className="rounded bg-gray-100 px-1 py-0.5 text-[10px] font-medium">בקרוב</span>
-        </button>
-      </div>
-
-      {waOpen && (
-        <div className="mt-2 flex items-center gap-2">
-          <input
-            type="tel"
-            inputMode="tel"
-            dir="ltr"
-            autoFocus
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') openWhatsApp();
-            }}
-            placeholder="050-000-0000"
-            aria-label="מספר טלפון לשליחה ב-WhatsApp"
-            className="min-w-0 flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-start text-sm"
-          />
-          <button
-            type="button"
-            onClick={openWhatsApp}
-            disabled={!phone.trim()}
-            className="shrink-0 rounded-lg bg-[#25D366] px-3 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-          >
-            פתיחה
-          </button>
-        </div>
-      )}
-
-      {qrOpen && (
-        <div
-          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 sm:items-center"
-          onPointerDown={(event) => {
-            if (event.target === event.currentTarget) setQrOpen(false);
-          }}
-        >
-          <div
-            dir="rtl"
-            role="dialog"
-            aria-modal="true"
-            aria-label="קוד QR להזמנה"
-            className="max-h-[90vh] w-full overflow-auto rounded-t-2xl border-t border-[var(--border)] bg-white shadow-lg animate-in slide-in-from-bottom duration-200 sm:h-fit sm:max-w-xs sm:rounded-2xl sm:border"
-          >
-            <div className="sticky top-0 flex items-center justify-between border-b border-[var(--border)] bg-white px-4 py-3">
-              <h2 className="text-lg font-bold">קוד QR להזמנה</h2>
-              <button
-                type="button"
-                onClick={() => setQrOpen(false)}
-                className="rounded-lg p-1 text-[var(--muted)] transition hover:bg-gray-100"
-                aria-label="סגירה"
-              >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <div className="flex flex-col items-center gap-4 p-6">
-              <p className="text-center text-sm text-[var(--muted)]">
-                סרקו את הקוד כדי לפתוח את קישור ההרשמה{brandName ? ` של ${brandName}` : ''}.
-              </p>
-              <div className="rounded-xl border border-[var(--border)] bg-white p-3">
-                <QRCodeSVG value={url} size={216} level="M" includeMargin />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 

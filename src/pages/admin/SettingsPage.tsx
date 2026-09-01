@@ -32,7 +32,7 @@ interface GreenApiStatus {
     secret_matches: boolean;
   } | null;
 }
-type SettingsTab = 'whatsapp' | 'signup' | 'permissions' | 'email' | 'models' | 'approval' | 'limits' | 'models_page' | 'skills';
+type SettingsTab = 'whatsapp' | 'signup' | 'permissions' | 'models' | 'limits' | 'models_page' | 'skills';
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'permissions', label: 'הרשאות תוצרים' },
@@ -41,9 +41,7 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'skills', label: 'סקילים' },
   { id: 'limits', label: 'מגבלות' },
   { id: 'whatsapp', label: 'WhatsApp' },
-  { id: 'signup', label: 'הרשמה' },
-  { id: 'email', label: 'מייל' },
-  { id: 'approval', label: 'אישור' },
+  { id: 'signup', label: 'כללי' },
 ];
 
 // These tabs embed self-contained pages that own their save/state, so the
@@ -286,22 +284,16 @@ export default function SettingsPage() {
   }
 
   const tpl = settings.whatsapp_templates ?? {};
-  const email = settings.email_settings ?? {};
   const aiModels = settings.ai_models ?? {
     image_model: 'gpt-image-2',
     image_size: '1024x1024',
     image_quality: 'auto',
   };
-  const approval = settings.approval_mode ?? { mode: 'by_output_type', by_type: {} };
-  const approvalQuickReply = settings.whatsapp_approval_quick_reply ?? { enabled: false, content_sid: '' };
   const limits = settings.rate_limits ?? {};
   const budget = settings.request_budget_usd ?? { max: 0.08 };
   const outputPermissions = normalizeOutputPermissions(settings.output_permissions);
   const interactiveWhatsAppEnabled = settings.whatsapp_interactive_messages?.enabled === true;
   const groupSettings = settings.whatsapp_group_settings ?? { enabled: false, trigger_word: 'גרפיקה' };
-  // Default to visible: only an explicit stored `false` hides the link.
-  const signupVisible = settings.public_signup_visible !== false;
-  const requireOnboardingUploads = settings.onboarding_require_uploads === true;
   const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 
   if (loading) return <PageSkeleton action tabs rows={5} label="הגדרות המערכת נטענות" />;
@@ -522,7 +514,7 @@ export default function SettingsPage() {
 
       {activeTab === 'signup' && (
       <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-        <h2 className="font-semibold mb-3">הרשמה</h2>
+        <h2 className="font-semibold mb-3">כללי</h2>
         <div className="mb-4 border-b border-[var(--border)] pb-4">
           <div className="mb-1 text-sm font-medium">לשון פנייה אישית</div>
           <p className="mb-3 text-xs text-[var(--muted)]">
@@ -544,33 +536,8 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={signupVisible}
-            onChange={(e) => update('public_signup_visible', e.target.checked)}
-          />
-          הצגת הקישור "הירשם" במסך הכניסה
-        </label>
-        <p className="text-xs text-[var(--muted)] mt-2">
-          כשמכובה, אין קישור הרשמה פתוח במסך הכניסה — אפשר עדיין לצרף משתמשים דרך קישורי הזמנה ממותגים
-          (משתמשים והרשאות → הזמנות). הרשמה ישירה דרך הכתובת /signup עדיין אפשרית.
-        </p>
-
-        <label className="mt-4 flex items-center gap-2 border-t border-[var(--border)] pt-4 text-sm">
-          <input
-            type="checkbox"
-            checked={requireOnboardingUploads}
-            onChange={(e) => update('onboarding_require_uploads', e.target.checked)}
-          />
-          חובה להעלות מסמכים וקבצים באונבורדינג
-        </label>
-        <p className="text-xs text-[var(--muted)] mt-2">
-          כשמופעל, משתמש עם מותג משויך חייב להעלות לפחות מסמך אחד וקובץ אחד בשלבי האונבורדינג לפני
-          הכניסה למערכת. שם מלא ולשון פנייה הם תמיד חובה; טלפון ותפקיד הם אופציונליים.
-        </p>
-
-        <div className="mt-4 border-t border-[var(--border)] pt-4">
+        <div className="mt-4">
+          <div className="mb-1 text-sm font-medium">התקנת האפליקציה</div>
           <div className="mb-1 text-sm font-medium">התקנת האפליקציה</div>
           <p className="text-xs text-[var(--muted)]">
             כדי להתקין את האפליקציה, פתחו את תפריט הדפדפן ובחרו התקנה או הוספה למסך הבית.
@@ -651,21 +618,6 @@ export default function SettingsPage() {
             </tbody>
           </table>
         </div>
-      </section>
-      )}
-
-      {activeTab === 'email' && (
-      <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-        <h2 className="font-semibold mb-3">מייל</h2>
-        <Field label="שם שולח">
-          <input className={input} value={email.from_name ?? ''} onChange={(e) => update('email_settings', { ...email, from_name: e.target.value })} />
-        </Field>
-        <Field label="נושא">
-          <input className={input} value={email.subject_rule ?? ''} onChange={(e) => update('email_settings', { ...email, subject_rule: e.target.value })} />
-        </Field>
-        <Field label="חתימה">
-          <textarea className={`${input} h-20`} value={email.signature ?? ''} onChange={(e) => update('email_settings', { ...email, signature: e.target.value })} />
-        </Field>
       </section>
       )}
 
@@ -767,36 +719,6 @@ export default function SettingsPage() {
             </p>
           </section>
         </>
-      )}
-
-      {activeTab === 'approval' && (
-      <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-        <h2 className="font-semibold mb-3">מצב אישור</h2>
-        <Field label="מצב כללי">
-          <select className={input} value={approval.mode} onChange={(e) => update('approval_mode', { ...approval, mode: e.target.value })}>
-            <option value="manual">ידני לכל התוצרים</option>
-            <option value="automatic">אוטומטי לאחר בדיקות מערכת</option>
-            <option value="by_output_type">לפי סוג תוצר</option>
-          </select>
-        </Field>
-        <label className="mb-3 flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={Boolean(approvalQuickReply.enabled)}
-            onChange={(e) => update('whatsapp_approval_quick_reply', { ...approvalQuickReply, enabled: e.target.checked })}
-          />
-          שליחת כפתור "מאשר" ב-WhatsApp
-        </label>
-        <Field label="Twilio ContentSid לכפתור מאשר">
-          <input
-            className={input}
-            dir="ltr"
-            placeholder="HX..."
-            value={approvalQuickReply.content_sid ?? ''}
-            onChange={(e) => update('whatsapp_approval_quick_reply', { ...approvalQuickReply, content_sid: e.target.value.trim() })}
-          />
-        </Field>
-      </section>
       )}
 
       {activeTab === 'limits' && (

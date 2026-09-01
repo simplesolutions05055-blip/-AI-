@@ -18,6 +18,13 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: cors(req, 'POST') });
   }
   try {
+    // Self-service registration is disabled: accounts are provisioned by an
+    // admin (admin-create-user). Set SIGNUP_ENABLED=true to re-open the flow
+    // below.
+    if (Deno.env.get('SIGNUP_ENABLED') !== 'true') {
+      return json(req, { error: 'signup_disabled' });
+    }
+
     const { email, password, invite_token } = (await req.json()) as Body;
 
     const cleanEmail = (email ?? '').trim().toLowerCase();

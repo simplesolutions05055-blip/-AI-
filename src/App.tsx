@@ -2,7 +2,6 @@ import React from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import LoginPage from '@/pages/LoginPage';
-import SignupPage from '@/pages/SignupPage';
 import ResetPasswordPage from '@/pages/ResetPasswordPage';
 import OnboardingPage from '@/pages/OnboardingPage';
 import PrivacyPolicyPage from '@/pages/legal/PrivacyPolicyPage';
@@ -62,7 +61,6 @@ export default function App() {
           <Route path="/" element={<Navigate to="/admin" replace />} />
           <Route path="/app" element={<Navigate to="/admin" replace />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/privacy" element={<PrivacyPolicyPage />} />
