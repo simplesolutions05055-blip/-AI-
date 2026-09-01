@@ -4,10 +4,9 @@ import { Plus } from 'lucide-react';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
 import SocialConnectPrompt from '@/components/social/SocialConnectPrompt';
-import OnboardingBanner from '@/components/OnboardingBanner';
 import { useProfile } from '@/lib/useProfile';
 import { useBrandTheme } from '@/lib/useBrandTheme';
-import { needsOnboardingGate, shouldShowOnboardingBanner } from '@/lib/onboarding';
+import { needsOnboardingGate } from '@/lib/onboarding';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { genderCopy } from '@/lib/genderCopy';
 import { PageSkeleton, Skeleton } from '@/components/ui/Skeleton';
@@ -132,8 +131,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   if (needsOnboardingGate(profile, hasBrand, requireUploads)) {
     return <Navigate to="/onboarding" replace />;
   }
-  const showBanner = shouldShowOnboardingBanner(profile, hasBrand, requireUploads);
-
   const isAdmin = profile.role === 'admin';
   const email = profile.email;
   const isProductionLanding = pathname === '/admin/production';
@@ -211,7 +208,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       )}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
-        {showBanner && <OnboardingBanner userId={profile.id} onboarding={profile.onboarding} />}
         {/* mobile top bar */}
         <main
           id="main-content"
