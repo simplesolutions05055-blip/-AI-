@@ -1,16 +1,11 @@
 // WhatsApp transport switch — the ONE module the engine imports.
 //
-// Smart Send is the only live gateway. The old Twilio and GREEN-API modules stay
-// in the repository as dead historical code, but this switch deliberately has
-// no route to them. Changing an environment variable cannot reactivate them.
+// Smart Send is the only live gateway. The old Twilio module stays in the
+// repository as dead historical code, but this switch deliberately has no route
+// to it. Changing an environment variable cannot reactivate it.
 //
-// Provider differences the caller must know about:
-//   * GROUPS — GREEN-API can post into a WhatsApp group ("<id>@g.us"); the
-//     Twilio Business API cannot. Group sends throw under 'twilio' instead of
-//     failing silently, and the group webhook path only exists on GREEN-API.
-//   * 24h WINDOW — Twilio may only send free-form text inside the 24-hour
-//     service window opened by the user's last inbound message. Outside it
-//     Meta rejects the send and only an approved template goes through.
+// Provider note: Smart Send cannot post into a WhatsApp group; group sends
+// throw rather than fail silently.
 import * as smartsend from './smartsend.ts';
 import { db } from './db.ts';
 
@@ -86,17 +81,9 @@ export async function sendFile(to: string, mediaUrl: string, caption?: string): 
   return await smartsend.sendFile(to, mediaUrl, caption);
 }
 
-// Inbound media. Under GREEN-API the notification carries a public downloadUrl;
-// under Twilio the MediaUrl needs the account's basic auth.
+// Inbound media. Smart Send hands us a downloadable URL on the webhook.
 export async function downloadMedia(
   mediaUrl: string,
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
   return await smartsend.downloadMedia(mediaUrl);
-}
-
-// Channel health, in GREEN-API's vocabulary so the existing
-// `greenapi_instance_state` setting, alerting and admin UI keep working:
-// 'authorized' means the gateway answers and the sender is usable.
-export async function getChannelState(): Promise<string> {
-  return await smartsend.getState();
 }

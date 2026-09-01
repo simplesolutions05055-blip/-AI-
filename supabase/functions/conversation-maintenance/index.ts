@@ -5,8 +5,7 @@
 // 3. Flags requests stuck mid-processing so the admin can retry.
 // Protected by x-cron-secret (CRON_SECRET); never exposes Twilio creds publicly.
 import { db } from '../_shared/db.ts';
-import { getChannelState, sendText, whatsappProvider } from '../_shared/whatsapp.ts';
-import { recordInstanceState } from '../_shared/instanceState.ts';
+import { sendText, whatsappProvider } from '../_shared/whatsapp.ts';
 import { getTemplates, getSettingOr, logEvent } from '../_shared/util.ts';
 
 Deno.serve(async (req) => {
@@ -18,15 +17,6 @@ Deno.serve(async (req) => {
   }
 
   const database = db();
-
-  // 0. Gateway health. The stateInstanceChanged webhook is the fast path, but
-  // it only fires if the setting is on and the notification actually lands, so
-  // this five-minute poll is the backstop that guarantees we notice.
-  try {
-    await recordInstanceState(database, await getChannelState());
-  } catch (e) {
-    await logEvent(database, { severity: 'warning', action: 'greenapi_state_check_failed', message: String(e) });
-  }
 
   const templates = await getTemplates(database);
   const cfg = await getSettingOr<{ close_minutes: number; stuck_minutes: number }>(

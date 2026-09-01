@@ -3,7 +3,9 @@
 // share brief context. The composed routing target "group:<groupId>:<sender>"
 // travels through the existing engine as the conversation's whatsapp_from, and
 // the outbound layer (worker.ts sendOut / media senders) detects the prefix and
-// ships replies to the GROUP via the GREEN-API gateway instead of Twilio.
+// routes replies to the GROUP. NOTE: the live gateway (Smart Send) cannot post
+// to a real WhatsApp group — only the simulated brand group is deliverable
+// today; real-group sends throw.
 //
 // In a group the bot answers ONLY messages that start with the trigger word
 // (e.g. "גרפיקה תכין לי פוסט" or "@גרפיקה ...") — everything else is ignored,
@@ -101,10 +103,8 @@ export async function findOrCreateGroupConversation(
 }
 
 // ── group senders (real groups only — simulated never reaches here) ──────────
-// A group id IS a GREEN-API chatId ("120363...@g.us"), so these are thin
-// aliases over the transport switch. Groups exist ONLY on the GREEN-API
-// provider — under WHATSAPP_PROVIDER=twilio these throw, since the WhatsApp
-// Business API has no group support. See whatsapp.ts.
+// Thin aliases over the transport switch. The live gateway (Smart Send) has no
+// real-group support, so these throw today. See whatsapp.ts.
 export async function sendGroupText(groupId: string, body: string): Promise<string> {
   return await sendText(groupId, body);
 }

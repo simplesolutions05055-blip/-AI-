@@ -141,6 +141,25 @@ export async function enforceAiLimit(
   }
   await enforceLimit(database, actor, key, 'ai_hour', settings.ai_per_hour);
   await enforceLimit(database, actor, key, 'ai_day', settings.ai_per_day);
+  // UI-configured per-actor cap on finished outputs in a rolling 24h window
+  // (Settings → מגבלות → "יצירות ל-24 שעות"). Counted from its own event so it
+  // tracks outputs, not utility/media AI calls. 0 disables it.
+  if (opts.kind === 'generation') {
+    const rateLimits = await getSettingOr<{ generations_per_24h?: number }>(database, 'rate_limits', {});
+    const genMax = Number(rateLimits.generations_per_24h ?? 0);
+    if (genMax > 0) {
+      const used = await countEvents(database, key, 'generation_day', 86400);
+      if (used >= genMax) {
+        await logEvent(database, {
+          requestId: actor.requestId ?? null,
+          severity: 'warning',
+          action: 'abuse_guard_rate_limited',
+          metadata: { key, eventType: 'generation_day', current: used, max: genMax },
+        });
+        throw new AbuseGuardError('generations_per_24h_exceeded', 'הגעת למכסת היצירות היומית. אפשר לנסות שוב מאוחר יותר.');
+      }
+    }
+  }
   if (opts.kind === 'media') {
     await enforceLimit(database, actor, key, 'media_ai_hour', settings.media_ai_per_hour);
   }
@@ -158,6 +177,7 @@ export async function enforceAiLimit(
   }
   await recordEvent(database, key, 'ai_hour');
   await recordEvent(database, key, 'ai_day');
+  if (opts.kind === 'generation') await recordEvent(database, key, 'generation_day');
   if (opts.kind === 'media') await recordEvent(database, key, 'media_ai_hour');
   if (bKey) await recordEvent(database, bKey, 'ai_brand_day');
   await logEvent(database, {

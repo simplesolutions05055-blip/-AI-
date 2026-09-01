@@ -14,12 +14,11 @@ import {
   isGreetingOnly,
 } from './util.ts';
 import { analyzeBrief, generateText, generateDocumentText, generatePresentationOutline, generateImage, generateImageWithReferences, generateSocialCaption, generateOutputTitle } from './openai.ts';
-// WhatsApp goes out through whatsapp.ts, the provider switch (Twilio or
-// GREEN-API). whatsappText.ts holds the shared message shapes (the interactive
-// types the simulator still renders).
+// WhatsApp goes out through whatsapp.ts, the provider switch (Smart Send).
+// whatsappText.ts holds the shared message shapes (the interactive types the
+// simulator still renders).
 import { type WhatsAppInteractive } from './whatsappText.ts';
 import { sendFile, sendText } from './whatsapp.ts';
-import { isSendBlocked } from './instanceState.ts';
 import { isGroupTarget, parseGroupTarget, sendGroupText, sendGroupMedia } from './group.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { loadPdfBrandSettings, sendDeliverableCopy } from './deliverableEmail.ts';
@@ -386,13 +385,8 @@ async function releaseLock(database: DB, requestId: string): Promise<void> {
   await database.rpc('release_request_lock', { p_request_id: requestId });
 }
 
-// The 24h WhatsApp window and the approved-template fallback were WhatsApp
-// Business API rules enforced by Twilio. GREEN-API drives a linked personal
-// account, where neither exists — the bot can always reply, so both are gone.
-
 // Returns true when the message actually reached the user (real send or
-// simulated), false when delivery failed (a GREEN-API error — most often the
-// instance being unauthorized or rate-limited). Callers that advance request
+// simulated), false when delivery failed (a provider error). Callers that advance request
 // state — question rounds, brand handshake — MUST gate that progress on a
 // true return, so a failed send never silently burns the user's budget.
 export async function sendOut(
@@ -411,12 +405,6 @@ export async function sendOut(
       ? await getSettingOr<{ enabled: boolean }>(database, 'whatsapp_interactive_messages', { enabled: false })
       : { enabled: false };
     const useInteractive = Boolean(interactive && (interactiveSetting.enabled || interactive.force));
-    // A real send while the gateway is unavailable is not delivered. Failing
-    // loudly here keeps
-    // the reply in the DB (and visible to the admin) instead of losing it.
-    if (!simulated && !isProductionFormTarget(to) && (await isSendBlocked(database))) {
-      throw new Error('WhatsApp provider is not authorized - send skipped');
-    }
     if (simulated || isProductionFormTarget(to)) {
       sid = `sim-${crypto.randomUUID()}`;
       // Groups never get interactive buttons (platform limit) — the simulated
@@ -427,10 +415,10 @@ export async function sendOut(
       if (!target) throw new Error(`bad group target: ${to}`);
       sid = await sendGroupText(target.groupId, body);
     } else {
-      // Real 1:1 chat. GREEN-API has no interactive-message equivalent to
-      // Twilio's Content resources, so `body` — which the engine already builds
-      // with the numbered-menu fallback text — is what goes out. `interactive`
-      // still reaches the simulator above, which renders real buttons.
+      // Real 1:1 chat. Smart Send has no interactive-message type, so `body` —
+      // which the engine already builds with the numbered-menu fallback text —
+      // is what goes out. `interactive` still reaches the simulator above,
+      // which renders real buttons.
       sid = await sendText(to, body);
     }
     await database.from('messages').insert({

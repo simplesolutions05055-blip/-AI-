@@ -83,8 +83,7 @@ export default function SettingsPage() {
           // editable form, otherwise a later admin save could overwrite a
           // newer cache created by an Edge Function.
           if (row.key === 'whatsapp_interactive_content_cache') return;
-          // Legacy runtime-written key from the retired GREEN-API transport —
-          // never edited here, so keep it out of the save payload.
+          // Legacy runtime-written key — never edited here, keep it out of save().
           if (row.key === 'greenapi_instance_state') return;
           next[row.key] = row.value_json;
         });
@@ -641,7 +640,7 @@ export default function SettingsPage() {
           <Field label="יצירות ל-24 שעות">
             <input type="number" inputMode="numeric" className={input} value={limits.generations_per_24h ?? 10} onChange={(e) => update('rate_limits', { ...limits, generations_per_24h: Number(e.target.value) })} />
             <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
-              מקסימום תוצרים שניתן להפיק ממספר טלפון בודד ב-24 שעות. הערך נשמר אך אינו נאכף כרגע במערכת — כרגע רק מגבלת ההודעות פעילה בפועל.
+              מקסימום תוצרים שניתן להפיק ממספר טלפון בודד (או משתמש) בחלון של 24 שעות. בהגעה לתקרה יצירת תוצר חדש נחסמת והבקשה עוברת לטיפול מנהל. 0 = ללא הגבלה.
             </span>
           </Field>
         </div>
