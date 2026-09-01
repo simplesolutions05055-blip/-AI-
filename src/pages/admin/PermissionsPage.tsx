@@ -146,6 +146,10 @@ export default function PermissionsPage() {
 
   async function setRole(p: ProfileRow, role: 'admin' | 'user') {
     if (p.role === role) return;
+    // Never leave the system without an admin.
+    if (role === 'user' && p.role === 'admin' && profiles.filter((x) => x.role === 'admin').length <= 1) {
+      return flash('חייב להישאר לפחות אדמין אחד');
+    }
     // Regular users may hold only one brand — trim extras before demoting.
     if (role === 'user') {
       const current = [...(grants[p.id] ?? new Set<string>())];
