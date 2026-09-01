@@ -31,7 +31,7 @@ type ScheduledSocialPost = {
   platform: 'facebook' | 'instagram';
   caption: string;
   scheduled_at: string;
-  status: 'scheduled' | 'published' | 'failed' | 'cancelled';
+  status: 'draft' | 'scheduled' | 'published' | 'failed' | 'cancelled';
   media?: StoredMediaRecord[] | null;
   connection_id?: string | null;
   target_platform_id?: string | null;
@@ -74,6 +74,7 @@ function isDueForPublish(post: ScheduledSocialPost) {
 }
 
 function scheduleStatusLabel(post: ScheduledSocialPost) {
+  if (post.status === 'draft') return 'טיוטה — לא מפורסם';
   if (post.status === 'published') return 'פורסם';
   if (post.status === 'failed') return 'נכשל';
   if (post.status === 'cancelled') return 'בוטל';
@@ -81,6 +82,7 @@ function scheduleStatusLabel(post: ScheduledSocialPost) {
 }
 
 function scheduleTone(post: ScheduledSocialPost) {
+  if (post.status === 'draft') return 'border-amber-300 bg-amber-50 text-amber-800';
   if (post.status === 'failed') return 'border-red-200 bg-red-50 text-red-700';
   if (post.status === 'published') return 'border-[#10b981] bg-[#ecfdf5] text-[#065f46]';
   if (post.platform === 'facebook') return 'border-[#60a5fa] bg-[#eff6ff] text-[#1d4ed8]';
@@ -167,6 +169,7 @@ export default function HolidaysCalendarPage() {
   const [captionCopied, setCaptionCopied] = useState(false);
   const [downloadingMedia, setDownloadingMedia] = useState(false);
   const [markingPublishedId, setMarkingPublishedId] = useState<string | null>(null);
+  const [approvingPostId, setApprovingPostId] = useState<string | null>(null);
   const [publishActionError, setPublishActionError] = useState<string | null>(null);
   const [brands, setBrands] = useState<BrandOption[]>([]);
   const [selectedBrandId, setSelectedBrandId] = useState('');
@@ -519,6 +522,33 @@ export default function HolidaysCalendarPage() {
     } finally {
       setDownloadingMedia(false);
     }
+  }
+
+  // Approve a planner draft for publishing: the row already carries the Meta
+  // connection + target, so flipping it to 'scheduled' hands it straight to the
+  // publish worker for the named time. A past time is bumped 90 min ahead so the
+  // worker doesn't reject it.
+  async function approvePostForPublish(post: ScheduledSocialPost) {
+    if (approvingPostId) return;
+    setApprovingPostId(post.id);
+    setPublishActionError(null);
+    const minTime = Date.now() + 90 * 60 * 1000;
+    const when = new Date(post.scheduled_at).getTime();
+    const scheduledAtIso = new Date(Number.isNaN(when) || when < minTime ? minTime : when).toISOString();
+    const { error: updateError } = await createSupabaseBrowserClient()
+      .from('scheduled_social_posts')
+      .update({ status: 'scheduled', scheduled_at: scheduledAtIso } as never)
+      .eq('id', post.id);
+    setApprovingPostId(null);
+    if (updateError) {
+      setPublishActionError('לא הצלחנו לאשר את הפוסט לפרסום. נסו שוב.');
+      return;
+    }
+    setScheduledPosts((current) =>
+      current.map((item) =>
+        item.id === post.id ? { ...item, status: 'scheduled' as const, scheduled_at: scheduledAtIso } : item,
+      ),
+    );
   }
 
   async function markPostPublished(post: ScheduledSocialPost) {
@@ -1147,6 +1177,13 @@ export default function HolidaysCalendarPage() {
               </div>
             )}
 
+            {selectedPost.status === 'draft' && (
+              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+                טיוטה — לא תתפרסם עד שתאשרו. אפשר לערוך את התזמון, ואז ״אישור לפרסום״ ישמור אותה לפרסום
+                אוטומטי בתאריך ובשעה הנקובים.
+              </div>
+            )}
+
             <dl className="space-y-3 rounded-lg border border-[#edf2f0] bg-[#fbfdfc] p-4 text-sm">
               <div className="grid gap-1">
                 <dt className="font-semibold text-[var(--muted)]">סטטוס</dt>
@@ -1174,6 +1211,16 @@ export default function HolidaysCalendarPage() {
                   className="min-h-11 rounded-lg border border-[var(--border)] px-4 py-2.5 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
                 >
                   {downloadingMedia ? 'מוריד...' : `הורדת המדיה (${selectedPost.media?.length})`}
+                </button>
+              )}
+              {selectedPost.status === 'draft' && (
+                <button
+                  type="button"
+                  onClick={() => void approvePostForPublish(selectedPost)}
+                  disabled={approvingPostId === selectedPost.id}
+                  className="min-h-11 rounded-lg border border-emerald-300 bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {approvingPostId === selectedPost.id ? 'מאשר...' : 'אישור לפרסום'}
                 </button>
               )}
               {selectedPost.status === 'scheduled' && (

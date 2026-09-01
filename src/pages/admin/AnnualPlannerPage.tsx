@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  CalendarClock,
   CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
   Download,
+  FileText,
   FileUp,
   Loader2,
   Pencil,
@@ -186,6 +188,14 @@ function toLocalInput(iso: string | null): string {
 function dateLabel(value: string) {
   const [year, month, day] = value.split('-').map(Number);
   return new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(year, month - 1, day));
+}
+
+// "03/09/2026, 10:00" — the exact moment a post goes out, shown on the publish button.
+function whenLabel(iso: string | null) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d);
 }
 
 function eventName(holiday: IsraelHoliday) {
@@ -416,7 +426,7 @@ export default function AnnualPlannerPage() {
   const [hashtagAiId, setHashtagAiId] = useState<string | null>(null);
   // The status filter doubles as the summary display — clicking a count
   // filters the list, so the numbers earn their screen space.
-  const [statusFilter, setStatusFilter] = useState<'all' | 'to_schedule' | 'to_publish' | 'done' | 'error'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'to_schedule' | 'to_publish' | 'draft' | 'done' | 'error'>('all');
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const [hashtagInput, setHashtagInput] = useState('');
   // Signed-thumbnail media per item id; hydrated lazily when an item is opened.
@@ -1162,7 +1172,7 @@ export default function AnnualPlannerPage() {
   // every item marked לפרסום מיידי goes out via post-to-meta right now, and
   // drafts are skipped (exactly the flow Maor described).
   async function finishAll() {
-    if (!brandId || readyCount === 0 || finishing) return;
+    if (!brandId || (readyCount === 0 && pendingCount === 0) || finishing) return;
     setFinishing(true);
     setFinishNote(null);
     const client = createSupabaseBrowserClient();
@@ -1181,9 +1191,12 @@ export default function AnnualPlannerPage() {
     const accessToken = session.session?.access_token;
 
     let scheduled = 0;
+    let drafted = 0;
     let published = 0;
     let failed = 0;
-    const toProcess = orderedItems.filter((item) => item.status === 'to_schedule' || item.status === 'to_publish');
+    const toProcess = orderedItems.filter(
+      (item) => item.status === 'to_schedule' || item.status === 'to_publish' || item.status === 'draft',
+    );
     for (const item of toProcess) {
       const platforms = item.platform === 'both' ? BOTH_PLATFORMS : [item.platform];
       const media = (item.media ?? []) as StoredMediaRecord[];
@@ -1192,11 +1205,15 @@ export default function AnnualPlannerPage() {
         if (platforms.includes('instagram') && media.length === 0) {
           throw new Error('אינסטגרם דורש לפחות תמונה אחת — צרפו גרפיקה או תמונה לפוסט.');
         }
-        if (item.status === 'to_schedule') {
-          // Never send a past time — the Edge function rejects it.
+        if (item.status === 'to_schedule' || item.status === 'draft') {
+          const asDraft = item.status === 'draft';
+          // A live schedule can't carry a past time (the Edge function rejects
+          // it); a draft can — it's approved on the calendar later.
           const minTime = Date.now() + 90 * 60 * 1000;
           const when = new Date(item.scheduled_at ?? '');
-          const scheduledAtIso = (Number.isNaN(when.getTime()) || when.getTime() < minTime ? new Date(minTime) : when).toISOString();
+          const scheduledAtIso = asDraft
+            ? (Number.isNaN(when.getTime()) ? new Date(minTime) : when).toISOString()
+            : (Number.isNaN(when.getTime()) || when.getTime() < minTime ? new Date(minTime) : when).toISOString();
           for (const platform of platforms) {
             const options = platform === 'facebook' ? targets.facebook : targets.instagram;
             const chosen = options.find((option) => option.is_default) ?? options[0] ?? null;
@@ -1208,6 +1225,7 @@ export default function AnnualPlannerPage() {
                 platform,
                 caption: message,
                 scheduled_at: scheduledAtIso,
+                as_draft: asDraft,
                 media,
                 connection_id: targets.connectionId,
                 target_platform_id: chosen.target_id,
@@ -1219,7 +1237,8 @@ export default function AnnualPlannerPage() {
             if (!payload?.ok) throw new Error(payload?.error ?? 'schedule_failed');
           }
           updateItem(item.id, { status: 'scheduled', scheduled_at: scheduledAtIso, error_message: null });
-          scheduled += 1;
+          if (asDraft) drafted += 1;
+          else scheduled += 1;
         } else {
           // Immediate publish: sign the stored media into fetchable URLs and
           // post through the same function the Meta connection page uses.
@@ -1258,7 +1277,7 @@ export default function AnnualPlannerPage() {
         failed += 1;
       }
     }
-    setFinishNote(`הסתיים: ${scheduled} נשמרו ביומן, ${published} פורסמו מיידית${failed > 0 ? `, ${failed} נכשלו — בדקו את הפוסטים המסומנים באדום` : ''}. טיוטות לא נשלחו.`);
+    setFinishNote(`הסתיים: ${scheduled} נשמרו ביומן לפרסום אוטומטי, ${drafted} נשמרו כטיוטה בלוח השנה (לאישור ידני), ${published} פורסמו מיידית${failed > 0 ? `, ${failed} נכשלו — בדקו את הפוסטים המסומנים באדום` : ''}.`);
     setFinishing(false);
   }
 
@@ -1657,6 +1676,24 @@ export default function AnnualPlannerPage() {
       <div className="mt-3 grid grid-cols-2 gap-2">
         <button
           type="button"
+          aria-pressed={selectedItem.status === 'to_schedule'}
+          onClick={approveCurrentAndContinue}
+          className={`inline-flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-[10px] px-3 py-1.5 text-sm font-bold transition ${
+            selectedItem.status === 'to_schedule'
+              ? 'bg-emerald-700 text-white'
+              : 'bg-emerald-600 text-white hover:bg-emerald-700'
+          }`}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            {selectedItem.status === 'to_schedule' ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+            פרסום הפוסט
+          </span>
+          {whenLabel(selectedItem.scheduled_at) && (
+            <span className="text-[11px] font-semibold opacity-90">{whenLabel(selectedItem.scheduled_at)}</span>
+          )}
+        </button>
+        <button
+          type="button"
           aria-pressed={selectedItem.status === 'draft'}
           onClick={() => updateItem(selectedItem.id, { status: 'draft', error_message: null })}
           className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border px-4 text-sm font-bold transition ${
@@ -1665,22 +1702,24 @@ export default function AnnualPlannerPage() {
               : 'border-[var(--border-warm)] bg-white text-[var(--text-strong)] hover:bg-[var(--bg-subtle)]'
           }`}
         >
-          {g('אשר כטיוטה', 'אשרי כטיוטה')}
-        </button>
-        <button
-          type="button"
-          aria-pressed={selectedItem.status !== 'draft'}
-          onClick={approveCurrentAndContinue}
-          className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] px-4 text-sm font-bold transition ${
-            selectedItem.status !== 'draft'
-              ? 'bg-emerald-700 text-white'
-              : 'bg-emerald-600 text-white hover:bg-emerald-700'
-          }`}
-        >
-          {selectedItem.status !== 'draft' ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-          {selectedItem.status !== 'draft' ? 'הפוסט אושר' : g('אשר פוסט', 'אשרי פוסט')}
+          <FileText className="h-4 w-4" />
+          {g('אשר טיוטה', 'אשרי טיוטה')}
         </button>
       </div>
+      <p className="mt-1 text-[11px] leading-4 text-[var(--text-muted)]">
+        <span className="font-bold">פרסום הפוסט</span> — נשמר בלוח השנה ומתפרסם אוטומטית בתאריך ובשעה שלמעלה.{' '}
+        <span className="font-bold">אשר טיוטה</span> — נשמר בלוח השנה כטיוטה בלבד; הפרסום מאושר משם ידנית (אפשר גם לשנות את התזמון).
+      </p>
+
+      <button
+        type="button"
+        onClick={() => void finishAll()}
+        disabled={finishing || (readyCount === 0 && pendingCount === 0)}
+        className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-brand/40 bg-[var(--warm-accent-soft)] px-4 text-sm font-bold text-brand transition hover:bg-brand hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {finishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
+        אשר גאנט — פרסום כל הפוסטים לפי התזמונים
+      </button>
       <p className="mt-1 text-center text-[11px] text-[var(--text-faint)]">כל שינוי נשמר אוטומטית.</p>
     </div>
   );
@@ -2212,7 +2251,7 @@ export default function AnnualPlannerPage() {
               <button
                 type="button"
                 onClick={() => setStep(5)}
-                disabled={readyCount === 0}
+                disabled={readyCount === 0 && pendingCount === 0}
                 className="inline-flex min-h-11 items-center gap-2 rounded-[10px] bg-brand px-5 text-sm font-bold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
               >
                 לבדיקה אחרונה
@@ -2279,17 +2318,17 @@ export default function AnnualPlannerPage() {
             <div className="min-w-0">
               <h2 className="text-lg font-bold tracking-normal">בדיקה אחרונה לפני שממשיכים</h2>
               <p className="mt-1 text-sm text-[var(--text-muted)]">
-                {reviewedCount} פוסטים שאושרו
+                {readyCount} לפרסום · {pendingCount} טיוטות
               </p>
             </div>
             <button
               type="button"
               onClick={() => void finishAll()}
-              disabled={!brandId || readyCount === 0 || finishing}
+              disabled={!brandId || (readyCount === 0 && pendingCount === 0) || finishing}
               className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-[10px] bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:text-[var(--text-faint)]"
             >
-              {finishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              פרסום / תזמון כל המודעות ({readyCount})
+              {finishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
+              אשר גאנט ({readyCount + pendingCount})
             </button>
           </div>
 
@@ -2297,6 +2336,7 @@ export default function AnnualPlannerPage() {
             <FilterTab label="הכל" count={reviewedCount} active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} />
             <FilterTab label="לתזמון" count={toScheduleCount} active={statusFilter === 'to_schedule'} onClick={() => setStatusFilter('to_schedule')} />
             <FilterTab label="לפרסום מיידי" count={toPublishCount} active={statusFilter === 'to_publish'} onClick={() => setStatusFilter('to_publish')} />
+            {pendingCount > 0 && <FilterTab label="טיוטות" count={pendingCount} active={statusFilter === 'draft'} onClick={() => setStatusFilter('draft')} />}
             <FilterTab label="נשלחו" count={doneCount} active={statusFilter === 'done'} onClick={() => setStatusFilter('done')} />
             {errorCount > 0 && <FilterTab label="שגיאות" count={errorCount} active={statusFilter === 'error'} onClick={() => setStatusFilter('error')} danger />}
           </div>
@@ -2314,7 +2354,7 @@ export default function AnnualPlannerPage() {
             </div>
           )}
 
-          {reviewedCount === 0 ? (
+          {reviewedCount === 0 && pendingCount === 0 ? (
             <div className="grid min-h-[260px] place-items-center rounded-xl border border-dashed border-[var(--border-warm)] bg-[var(--bg-subtle)] p-8 text-center text-[var(--text-muted)]">
               <div>
                 <Check className="mx-auto mb-3 h-8 w-8 text-brand" />

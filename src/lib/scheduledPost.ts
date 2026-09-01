@@ -10,7 +10,7 @@ export type ScheduledSocialPost = {
   platform: 'facebook' | 'instagram';
   caption: string;
   scheduled_at: string;
-  status: 'scheduled' | 'published' | 'failed' | 'cancelled';
+  status: 'draft' | 'scheduled' | 'published' | 'failed' | 'cancelled';
   media?: StoredMediaRecord[] | null;
   connection_id?: string | null;
   target_platform_id?: string | null;
@@ -28,6 +28,7 @@ export function isDueForPublish(post: ScheduledSocialPost) {
 }
 
 export function scheduleStatusLabel(post: ScheduledSocialPost) {
+  if (post.status === 'draft') return 'טיוטה — לא מפורסם';
   if (post.status === 'published') return 'פורסם';
   if (post.status === 'failed') return 'נכשל';
   if (post.status === 'cancelled') return 'בוטל';
@@ -35,6 +36,7 @@ export function scheduleStatusLabel(post: ScheduledSocialPost) {
 }
 
 export function scheduleTone(post: ScheduledSocialPost) {
+  if (post.status === 'draft') return 'border-amber-300 bg-amber-50 text-amber-800';
   if (post.status === 'failed') return 'border-red-200 bg-red-50 text-red-700';
   if (post.status === 'published') return 'border-[#10b981] bg-[#ecfdf5] text-[#065f46]';
   if (post.platform === 'facebook') return 'border-[#60a5fa] bg-[#eff6ff] text-[#1d4ed8]';

@@ -16,6 +16,9 @@ interface Body {
   platforms?: Platform[];
   caption?: string;
   scheduled_at?: string;
+  // When true the row is stored as an unpublished draft: it appears on the
+  // calendar but the publish worker ignores it until a human approves it there.
+  as_draft?: boolean;
   media?: Array<{
     kind: 'image' | 'video';
     source: 'upload' | 'output';
@@ -58,9 +61,12 @@ Deno.serve(async (req) => {
     if (!caption) return json(req, { error: 'caption_required' }, 400);
     const title = (body.title ?? '').trim().slice(0, 160);
 
+    const asDraft = body.as_draft === true;
     const scheduledAt = new Date(body.scheduled_at ?? '');
     if (Number.isNaN(scheduledAt.getTime())) return json(req, { error: 'invalid_scheduled_at' }, 400);
-    if (scheduledAt.getTime() <= Date.now() + 60_000) return json(req, { error: 'scheduled_at_must_be_future' }, 400);
+    // A draft is not going anywhere until it's approved, so a past time is fine
+    // here — the calendar's approval step re-checks it.
+    if (!asDraft && scheduledAt.getTime() <= Date.now() + 60_000) return json(req, { error: 'scheduled_at_must_be_future' }, 400);
 
     const media = normalizeMedia(body.media ?? []);
     // Instagram can't publish text-only posts — require stored media or a
@@ -125,7 +131,7 @@ Deno.serve(async (req) => {
         caption,
         scheduled_at: scheduledAt.toISOString(),
         media,
-        status: 'scheduled',
+        status: asDraft ? 'draft' : 'scheduled',
         created_by: callerId,
         // Meta-specific fields
         connection_id: connection.connection_id,
