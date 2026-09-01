@@ -27,15 +27,6 @@ export function escapeHtml(value: unknown): string {
 }
 
 /**
- * Escape, then reintroduce <br> for newlines — in that order, so the <br> this
- * function adds is the only tag that survives. Escaping after would neutralise
- * it; adding it before would let a payload smuggle its own tags through.
- */
-export function escapeMultiline(value: unknown): string {
-  return escapeHtml(value).replace(/\n/g, '<br>');
-}
-
-/**
  * URLs that will land in a src/href attribute. Attribute escaping alone is not
  * enough here — `javascript:` and `data:text/html` execute without needing a
  * single special character. Only the schemes these exports actually produce

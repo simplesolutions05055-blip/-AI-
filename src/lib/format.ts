@@ -28,11 +28,6 @@ export function formatUsd(n: number): string {
 
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 
-export function extractEmail(text: string): string | null {
-  const m = text.match(EMAIL_RE);
-  return m ? m[0] : null;
-}
-
 export function isValidEmail(email: string): boolean {
   return EMAIL_RE.test(email);
 }
