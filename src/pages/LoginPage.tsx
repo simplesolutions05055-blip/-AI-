@@ -4,7 +4,6 @@ import { Eye, EyeOff } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import LegalLinks from '@/components/legal/LegalLinks';
 import { logError } from '@/lib/errorReporting';
-import GoogleAuthButton from '@/components/GoogleAuthButton';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -25,11 +24,6 @@ export default function LoginPage() {
       ? requestedPath
       : '/admin';
   }, [location.state]);
-  const handleGoogleSuccess = useCallback(() => {
-    navigate(destination(), { replace: true });
-  }, [destination, navigate]);
-  const handleGoogleError = useCallback((message: string) => setError(message), []);
-
   useEffect(() => {
     supabase
       .from('settings')
@@ -73,17 +67,6 @@ export default function LoginPage() {
             </Link>
         <h1 className="mb-1 text-xl font-semibold tracking-normal">כניסה למערכת</h1>
         <p className="mb-4 text-sm text-[var(--muted)]">התחברו כדי להמשיך לעבודה במערכת.</p>
-
-        <GoogleAuthButton
-          mode="login"
-          onSuccess={handleGoogleSuccess}
-          onError={handleGoogleError}
-        />
-        <div className="my-4 flex items-center gap-3 text-xs text-[var(--muted)]" aria-hidden="true">
-          <span className="h-px flex-1 bg-[var(--border)]" />
-          <span>או באמצעות מייל וסיסמה</span>
-          <span className="h-px flex-1 bg-[var(--border)]" />
-        </div>
 
         <label className="block mb-1 text-sm font-medium" htmlFor="email">כתובת מייל</label>
         <input id="email" type="email" dir="ltr" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mb-4 rounded-lg border border-[var(--border)] px-3 py-2 text-start" style={{ textAlign: 'left' }} />

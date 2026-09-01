@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -6,7 +6,6 @@ import { applyBrandPalette, resetBrandTheme, type PaletteEntry } from '@/lib/use
 import { Spinner } from '@/components/ui/Spinner';
 import LegalLinks from '@/components/legal/LegalLinks';
 import { logError } from '@/lib/errorReporting';
-import GoogleAuthButton from '@/components/GoogleAuthButton';
 
 interface InviteBrand {
   name: string;
@@ -51,10 +50,6 @@ export default function SignupPage() {
   // the brand logo/colors can come in first (avoids a generic→branded flash).
   const [inviteBrand, setInviteBrand] = useState<InviteBrand | null>(null);
   const [resolvingInvite, setResolvingInvite] = useState(!!inviteToken);
-  const handleGoogleSuccess = useCallback(() => {
-    navigate('/onboarding', { replace: true });
-  }, [navigate]);
-  const handleGoogleError = useCallback((message: string) => setError(message), []);
 
   useEffect(() => {
     if (!inviteToken) return;
@@ -244,21 +239,6 @@ export default function SignupPage() {
             <Link to="/admin" aria-label="PrimeOS — לדף הבית" className="mb-6 inline-block">
               <img src="/primeos-logo.png" alt="PrimeOS" className="h-12 w-auto object-contain" />
             </Link>
-          </>
-        )}
-
-        {!inviteToken && (
-          <>
-            <GoogleAuthButton
-              mode="signup"
-              onSuccess={handleGoogleSuccess}
-              onError={handleGoogleError}
-            />
-            <div className="my-4 flex items-center gap-3 text-xs text-[var(--muted)]" aria-hidden="true">
-              <span className="h-px flex-1 bg-[var(--border)]" />
-              <span>או באמצעות מייל וסיסמה</span>
-              <span className="h-px flex-1 bg-[var(--border)]" />
-            </div>
           </>
         )}
 

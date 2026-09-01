@@ -48,9 +48,6 @@ verify_jwt = false
 [functions.resolve-invite]
 verify_jwt = false
 
-[functions.google-auth-config]
-verify_jwt = false
-
 # GREEN-API sends the instance's "Webhook authorization header" as a plain
 # Bearer token, not a JWT — the platform gate would reject every notification
 # before the function ran. The function checks GROUP_WEBHOOK_SECRET itself.
