@@ -540,7 +540,13 @@ export async function processRequest(
   try {
     const actor = await loadRequestActor(database, requestId);
     await enforceRequestCost(database, requestId);
-    await enforceAiLimit(database, actor, { kind: 'generation' });
+    // Hourly/daily AI and cost caps apply to this run whatever it turns out to
+    // be. The per-user "generations per 24h" quota is NOT charged here: this
+    // pass may only analyse the brief and ask a question. It is charged in
+    // generateAndQa, where a deliverable is actually produced — otherwise a
+    // request that asked "what should I make?" burned a generation, and on
+    // 2026-09-02 eight delivered images had consumed a quota of ten.
+    await enforceAiLimit(database, actor, { kind: 'utility' });
   } catch (e) {
     if (e instanceof AbuseGuardError) {
       await reportBlockedRequest(database, requestId, e);
@@ -922,6 +928,12 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   const templates = await getTemplates(database);
   const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
   const outputType: string = (request.output_type as string) ?? 'text';
+  // Charge the daily generations quota once per request, here — where a
+  // deliverable really gets made. QA retries re-enter this function and must
+  // not be charged again, so only the first attempt counts.
+  if (((request.attempt_count as number | null) ?? 0) === 0) {
+    await enforceAiLimit(database, await loadRequestActor(database, requestId), { kind: 'generation' });
+  }
   const generalMaxAttempts = (await getSetting<{ max: number }>(database, 'generation_attempts'))?.max ?? 3;
   const imageMaxAttempts = (await getSetting<{ max: number }>(database, 'image_generation_attempts'))?.max ?? 1;
   const maxAttempts = outputType === 'image' ? Math.max(1, imageMaxAttempts) : generalMaxAttempts;

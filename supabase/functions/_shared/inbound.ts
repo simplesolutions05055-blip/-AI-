@@ -12,8 +12,9 @@
 // main menu → brief → post-delivery actions. Free-flow (the legacy analyzer
 // path) still handles anything the menus don't claim.
 import { type DB } from './db.ts';
-import { sendOut, sendOutput } from './worker.ts';
+import { ownBriefContent, sendOut, sendOutput } from './worker.ts';
 import {
+  getSettingOr,
   logEvent,
   isResetCommand,
   isContinueCommand,
@@ -603,24 +604,49 @@ async function createFlowRequest(
   // A file with no words is material, not a brief. Smart Send drops the
   // caption on media messages (last_message arrives as the literal
   // "{{last_message}}"), so the photo lands here alone even when the user
-  // typed next to it. Keep the file on the request, ask for the sentence, and
-  // let the next message — which joins this open request — start the work.
+  // typed next to it — WhatsApp shows one message, we receive two halves.
+  //
+  // Rather than ask immediately, wait out a merge window: a caption typed with
+  // the photo reaches us within seconds, joins this same open request, and
+  // starts the work on its own. Only if nothing arrives do we ask, so the
+  // normal "photo + caption" case never sees the question at all.
   const typedWords = body.trim().length;
   if (!isRevision && !briefText && numMedia > 0 && !media.anyRejected && typedWords < 6) {
     await database.from('requests').update({ status: 'collecting_details' }).eq('id', requestId);
     await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-    const isImage = (media.firstMediaType ?? '').startsWith('image/');
-    await send(
-      isImage
-        ? 'קיבלתי את התמונה 📷 עכשיו כתבו במשפט: מה מכינים, למי, ומה חייב להופיע - ואני יוצא לדרך.'
-        : 'קיבלתי את הקובץ 📎 עכשיו כתבו במשפט: מה מכינים, למי, ומה חייב להופיע - ואני יוצא לדרך.',
-    );
     await logEvent(database, {
       requestId,
       action: 'whatsapp_media_without_brief',
       metadata: { output_type: flow.outputType, media_type: media.firstMediaType, typed_chars: typedWords },
     });
-    return { requestIdToProcess: null };
+    const merge = await getSettingOr<{ media_caption_seconds: number }>(
+      database,
+      'message_merge',
+      { media_caption_seconds: 25 },
+    );
+    const waitMs = Math.max(0, (merge.media_caption_seconds ?? 25) * 1000);
+    const isImage = (media.firstMediaType ?? '').startsWith('image/');
+    const askForBrief = async (): Promise<void> => {
+      if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      // Did the caption land in the meantime? Anything the user typed onto this
+      // request (our own attachment notes excluded) means the work is already
+      // under way — asking now would talk over it.
+      const { data: since } = await database
+        .from('messages')
+        .select('direction, body')
+        .eq('request_id', requestId)
+        .eq('direction', 'inbound');
+      if (ownBriefContent(since ?? []).length > 0) {
+        await logEvent(database, { requestId, action: 'media_caption_merged', metadata: { waited_ms: waitMs } });
+        return;
+      }
+      await send(
+        isImage
+          ? 'קיבלתי את התמונה 📷 עכשיו כתבו במשפט: מה מכינים, למי, ומה חייב להופיע - ואני יוצא לדרך.'
+          : 'קיבלתי את הקובץ 📎 עכשיו כתבו במשפט: מה מכינים, למי, ומה חייב להופיע - ואני יוצא לדרך.',
+      );
+    };
+    return { requestIdToProcess: null, background: askForBrief };
   }
 
   await database.from('jobs').insert({ request_id: requestId, job_type: 'process-request', status: 'pending' });
