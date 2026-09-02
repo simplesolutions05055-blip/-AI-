@@ -71,6 +71,14 @@ Deno.serve(async (req) => {
     stuck++;
   }
 
+  // ── 2b. Prune the voice-echo ledger ────────────────────────────────────────
+  // Only ever asked "have we heard this exact audio before"; a recording that
+  // has not reappeared in 30 days never will.
+  await database
+    .from('inbound_voice_seen')
+    .delete()
+    .lt('created_at', new Date(now - 30 * 24 * 3600_000).toISOString());
+
   // ── 3. Prune the rate-limit ledger ─────────────────────────────────────────
   // rate_limit_events gets two rows per inbound message plus one per AI call and
   // was never cleaned. The longest window anything asks about is 24 hours, so

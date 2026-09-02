@@ -51,6 +51,31 @@ async function scheduleProcessing(database: DB, requestId: string, messageSid: s
   })());
 }
 
+// Smart Send attaches a voice_url to messages that carry no new recording — in
+// practice the same old note, over and over. Hashing the bytes is the only
+// reliable tell: identical audio from the same number is an echo, never a new
+// recording. Returns true the first time this audio is seen (process it), false
+// afterwards (drop it).
+async function claimVoiceNote(database: DB, phone: string, bytes: Uint8Array): Promise<boolean> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(phone));
+  const audio = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
+  const fingerprint = [digest, audio]
+    .map((buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join(''))
+    .join('-');
+  const { error } = await database
+    .from('inbound_voice_seen')
+    .insert({ fingerprint, phone_number: phone });
+  // A primary-key conflict means we transcribed this exact audio before.
+  if (error) {
+    await logEvent(database, {
+      action: 'inbound_voice_echo_dropped',
+      metadata: { phone, reason: 'duplicate_audio' },
+    });
+    return false;
+  }
+  return true;
+}
+
 async function processAcceptedWebhook(raw: unknown, ip: string | null): Promise<void> {
   const database = db();
   const message = await normalizeSmartSendMessage(raw);
@@ -132,6 +157,14 @@ async function processAcceptedWebhook(raw: unknown, ip: string | null): Promise<
       }
       try {
         const { bytes, contentType } = await downloadMedia(message.mediaUrl);
+        if (message.isVoice && !(await claimVoiceNote(database, message.phone, bytes))) {
+          return {
+            effectiveBody: message.body,
+            firstStoragePath: null,
+            firstMediaType: null,
+            anyRejected: false,
+          };
+        }
         // Smart Send sends a category such as "image" in media_type, not
         // always a MIME type. Prefer its value only when it is a real MIME;
         // otherwise trust the CDN response (for example image/png).

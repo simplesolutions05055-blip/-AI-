@@ -32,6 +32,9 @@ export type NormalizedSmartSendMessage = {
   body: string;
   mediaUrl: string | null;
   mediaType: string | null;
+  // The attachment is a voice note (came from voice_url), which the webhook
+  // de-duplicates by content — Smart Send re-sends the same old recording.
+  isVoice: boolean;
 };
 
 async function messageFingerprint(senderId: string, time: string, text: string): Promise<string> {
@@ -114,5 +117,6 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
     body,
     mediaUrl,
     mediaType,
+    isVoice: Boolean(mediaUrl) && mediaUrl === voiceUrl,
   };
 }
