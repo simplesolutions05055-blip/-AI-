@@ -2578,18 +2578,19 @@ export async function showMainMenu(
   send: SendFn
 ): Promise<void> {
   const perms = await menuPermissions(database, identity);
-  const delivered = await genderedSend(send, identity.gender)(
+  // State first, send second. The user can answer "1" the instant the menu
+  // lands, and a reply that beats the state write would fall through to the
+  // free-text pipeline and generate an artifact out of a menu digit.
+  await setFlow(database, conversation.id, {
+    flow_state: 'main_menu',
+    selected_output_type: null,
+    flow_context: {},
+    status: 'active',
+  });
+  await genderedSend(send, identity.gender)(
     buildMainMenu(identity.displayName, identity.gender, perms),
     buildMainMenuInteraction(perms),
   );
-  if (delivered) {
-    await setFlow(database, conversation.id, {
-      flow_state: 'main_menu',
-      selected_output_type: null,
-      flow_context: {},
-      status: 'active',
-    });
-  }
 }
 
 // ── the state machine ────────────────────────────────────────────────────────

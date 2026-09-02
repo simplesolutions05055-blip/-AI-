@@ -425,6 +425,19 @@ export async function handleInbound(
     }
   }
 
+  // A bare menu digit is never a brief. If the state machine did not claim it
+  // (state lost, menu never recorded), re-show the menu instead of opening a
+  // request and generating an artifact out of "1".
+  if (numMedia === 0 && /^[1-9]\.?$/.test(body.trim()) && !conversation.current_request_id) {
+    const { error: digitClaim } = await database.from('messages').insert({
+      conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
+    });
+    if (digitClaim) return { requestIdToProcess: null };
+    await logEvent(database, { action: 'menu_digit_without_state', metadata: { phone, body: body.trim() } });
+    await showMainMenu(database, conversation, identity, send);
+    return { requestIdToProcess: null };
+  }
+
   // ── active request or new one (legacy free flow) ──────────────────────────
   let requestId = conversation.current_request_id;
   let isNewRequest = false;
