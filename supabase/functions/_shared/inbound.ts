@@ -599,6 +599,30 @@ async function createFlowRequest(
   await database.from('messages').update({
     body: briefText ?? media.effectiveBody, media_type: media.firstMediaType, storage_path: media.firstStoragePath,
   }).eq('twilio_message_sid', messageSid);
+
+  // A file with no words is material, not a brief. Smart Send drops the
+  // caption on media messages (last_message arrives as the literal
+  // "{{last_message}}"), so the photo lands here alone even when the user
+  // typed next to it. Keep the file on the request, ask for the sentence, and
+  // let the next message — which joins this open request — start the work.
+  const typedWords = body.trim().length;
+  if (!isRevision && !briefText && numMedia > 0 && !media.anyRejected && typedWords < 6) {
+    await database.from('requests').update({ status: 'collecting_details' }).eq('id', requestId);
+    await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
+    const isImage = (media.firstMediaType ?? '').startsWith('image/');
+    await send(
+      isImage
+        ? 'קיבלתי את התמונה 📷 עכשיו כתבו במשפט: מה מכינים, למי, ומה חייב להופיע - ואני יוצא לדרך.'
+        : 'קיבלתי את הקובץ 📎 עכשיו כתבו במשפט: מה מכינים, למי, ומה חייב להופיע - ואני יוצא לדרך.',
+    );
+    await logEvent(database, {
+      requestId,
+      action: 'whatsapp_media_without_brief',
+      metadata: { output_type: flow.outputType, media_type: media.firstMediaType, typed_chars: typedWords },
+    });
+    return { requestIdToProcess: null };
+  }
+
   await database.from('jobs').insert({ request_id: requestId, job_type: 'process-request', status: 'pending' });
 
   await logEvent(database, {

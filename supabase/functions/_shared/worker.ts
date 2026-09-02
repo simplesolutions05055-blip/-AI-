@@ -780,7 +780,18 @@ async function runRequestPipeline(
     // request is substantive we still skip the questions, exactly as before.
     const userContent = ownBriefContent(msgs);
     const analyzerUnsure = Boolean(effectiveNextQuestion) || b.ready !== true;
-    if (analyzerUnsure && userContent.length < MIN_BRIEF_CONTENT_CHARS) {
+    // An attachment note is OUR text, and the analyzer is happy to build a
+    // confident brief out of it alone: on 2026-09-02 Smart Send dropped the
+    // caption ("cheese-tasting event, mayor attending, 04/09 18:47") and the
+    // vision description of the photo became a "ready" brief for a post about
+    // "the new official photo". So when the user's own words are missing and
+    // an attachment note is all there is, the analyzer's confidence is not
+    // enough — ask what to make.
+    const onlyAttachmentNote = (msgs ?? []).some(
+      (m: { direction: string; body: string | null }) =>
+        m.direction === 'inbound' && (m.body ?? '').split('\n').some(isAttachmentNote),
+    );
+    if ((analyzerUnsure || onlyAttachmentNote) && userContent.length < MIN_BRIEF_CONTENT_CHARS) {
       await logEvent(database, {
         requestId,
         action: 'brief_empty_asked_user',
