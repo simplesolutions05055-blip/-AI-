@@ -69,10 +69,11 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
     return typeof value === 'string' ? value.trim() : null;
   };
   const body = firstString(message.last_message, message.text, rawMessage.body, rawMessage.caption) ?? '';
-  const mediaUrl = firstString(
+  // Attachments and voice notes are resolved separately on purpose — see the
+  // stale-voice rule below.
+  const attachmentUrl = firstString(
     message.media_url,
     message.file_url,
-    message.voice_url,
     message.mediaUrl,
     message.downloadUrl,
     media.url,
@@ -80,13 +81,24 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
     rawMessage.mediaUrl,
     rawMessage.downloadUrl,
   );
-  const mediaType = firstString(
-    message.media_type,
-    message.message_type,
-    message.mimeType,
-    media.mimeType,
-    rawMessage.mimeType,
-  );
+  const voiceUrl = firstString(message.voice_url);
+  // WhatsApp cannot put a caption on a voice note: a voice note and typed text
+  // never arrive in the same message. When both are present, the voice is an
+  // echo the Smart Send scenario re-attached (in practice the same old file on
+  // every message) — transcribing it appends someone's old sentence to what the
+  // user actually typed, which turned menu replies like "5" into
+  // "5\nהחשלים, מה קורה?" and dropped them out of the guided flow entirely.
+  // The typed text is the real message, so the voice is discarded.
+  const mediaUrl = attachmentUrl ?? (body ? null : voiceUrl);
+  const mediaType = mediaUrl
+    ? firstString(
+      message.media_type,
+      message.message_type,
+      message.mimeType,
+      media.mimeType,
+      rawMessage.mimeType,
+    )
+    : null;
   const senderId = firstString(message.phone, message.senderId) ?? '';
   const phone = senderId.replace(/^whatsapp:/i, '').replace(/@c\.us$/i, '').replace(/\D/g, '');
   if ((!body && !mediaUrl) || !phone) return null;

@@ -83,3 +83,44 @@ Deno.test('a placeholder-only payload is not a message', async () => {
     media_url: '{{media_url}}',
   }), null);
 });
+
+Deno.test('a voice note riding along with typed text is dropped', async () => {
+  // The live Smart Send scenario re-attached the same old voice note to every
+  // inbound message; its transcript was appended to the body and broke every
+  // numbered menu reply.
+  const msg = await normalizeSmartSendMessage({
+    phone: '972502032767',
+    last_message: '5',
+    voice_url: 'https://cdn.smartsend.co.il/voice/old-note.mp4',
+    media_type: 'audio/mp4',
+    currentDateTime: '2026-09-02T17:14:00',
+  });
+  assertEquals(msg?.body, '5');
+  assertEquals(msg?.mediaUrl, null);
+  assertEquals(msg?.mediaType, null);
+});
+
+Deno.test('a real voice note (no text) is still processed', async () => {
+  const msg = await normalizeSmartSendMessage({
+    phone: '972502032767',
+    voice_url: 'https://cdn.smartsend.co.il/voice/real-note.mp4',
+    media_type: 'audio/mp4',
+    currentDateTime: '2026-09-02T17:15:00',
+  });
+  assertEquals(msg?.body, '');
+  assertEquals(msg?.mediaUrl, 'https://cdn.smartsend.co.il/voice/real-note.mp4');
+  assertEquals(msg?.mediaType, 'audio/mp4');
+});
+
+Deno.test('an image with a caption keeps both — captions are real there', async () => {
+  const msg = await normalizeSmartSendMessage({
+    phone: '972502032767',
+    last_message: 'תכניס את מי שבתמונה',
+    media_url: 'https://cdn.smartsend.co.il/img/photo.jpg',
+    media_type: 'image/jpeg',
+    currentDateTime: '2026-09-02T17:16:00',
+  });
+  assertEquals(msg?.body, 'תכניס את מי שבתמונה');
+  assertEquals(msg?.mediaUrl, 'https://cdn.smartsend.co.il/img/photo.jpg');
+  assertEquals(msg?.mediaType, 'image/jpeg');
+});
