@@ -206,10 +206,10 @@ export function buildMainMenu(
     '',
     ...items,
     '',
-    'אפשר להשיב במספר או במילה.',
     // Stated up front, once: nobody discovers a command they were never told
     // about, and "how do I undo that" is the most common dead end here.
-    'בכל שלב: ״אחורה״ לחזרה שלב אחד · ״תפריט״ להתחלה מחדש.',
+    'מספר או מילה, איך שנוח 🙂',
+    'בכל שלב: ״אחורה״ = שלב אחד, ״תפריט״ = מההתחלה.',
   ].join('\n');
 }
 
@@ -287,15 +287,15 @@ export function deniedOutputMessage(outputType: string): string {
 // 21617 — the webhook is never even called, so we can't react after the fact).
 // The only defense is warning up front: long material must arrive as a file.
 const LONG_TEXT_WARNING =
-  'טיפ קטן: חומר ארוך עדיף לשלוח כ־PDF או Word, כדי ששום דבר לא ילך לאיבוד 📎';
+  'טיפ: חומר ארוך? עדיף כ־PDF או Word, ככה כלום לא הולך לאיבוד 📎';
 
 export const BRIEF_PROMPTS: Record<string, string> = {
   image:
-    `מעולה, תמונה או פוסט 🖼️\nספרו לי בקצרה מה להכין ומה חשוב שיופיע. אפשר גם לצרף קובץ עם החומרים.\n\n${LONG_TEXT_WARNING}`,
+    `תמונה או פוסט, הולך 🖼️\nבמשפט-שניים: מה מכינים, למי, ומה חייב להופיע. אפשר גם לצרף קובץ.\n\n${LONG_TEXT_WARNING}`,
   presentation:
-    `מעולה, מצגת 📊\nכתבו לי מה הנושא ומה חשוב שיופיע. אפשר גם לצרף קובץ עם התוכן.\n\n${LONG_TEXT_WARNING}`,
+    `מצגת, הולך 📊\nמה הנושא, למי, ומה חייב להופיע? אפשר גם לצרף קובץ עם התוכן.\n\n${LONG_TEXT_WARNING}`,
   pdf:
-    `מעולה, מסמך 📄\nכתבו לי מה הנושא ומה חשוב שיופיע. אפשר גם לצרף קובץ עם חומרי הגלם.\n\n${LONG_TEXT_WARNING}`,
+    `מסמך, הולך 📄\nמה הנושא, למי, ומה חייב להופיע? אפשר גם לצרף קובץ עם חומרי הגלם.\n\n${LONG_TEXT_WARNING}`,
 };
 
 function backToStartInteraction(body: string): WhatsAppInteractive {
@@ -324,36 +324,36 @@ export function buildPostDeliveryMenu(outputType: string | null | undefined, gen
     return [
       question,
       '',
-      '1️⃣ לתקן את התמונה עם AI ✏️',
-      '2️⃣ לתקן את טקסט הפוסט 📝',
+      '1️⃣ לשנות משהו בתמונה ✏️',
+      '2️⃣ לשנות את טקסט הפוסט 📝',
       '3️⃣ לתזמן פרסום 📅',
-      '4️⃣ לקבל את התוצר במייל 📧',
-      '5️⃣ תוצר חדש ✨',
+      '4️⃣ לשלוח למייל 📧',
+      '5️⃣ להתחיל משהו חדש ✨',
       '',
-      'אפשר להשיב במספר, או פשוט לכתוב מה לשנות — ואני כבר אבין 🙂',
+      'מספר, או פשוט כתבו מה לשנות 🙂',
     ].join('\n');
   }
   if (!canScheduleOutput(outputType)) {
     return [
       question,
       '',
-      '1️⃣ לתקן את התוצר ✏️',
+      '1️⃣ לשנות משהו בתוצר ✏️',
       '2️⃣ לקבל כקובץ Word 📄',
-      '3️⃣ לקבל את התוצר במייל 📧',
-      '4️⃣ תוצר חדש ✨',
+      '3️⃣ לשלוח למייל 📧',
+      '4️⃣ להתחיל משהו חדש ✨',
       '',
-      'אפשר להשיב במספר, או פשוט לכתוב מה לשנות — ואני כבר אבין 🙂',
+      'מספר, או פשוט כתבו מה לשנות 🙂',
     ].join('\n');
   }
   return [
     question,
     '',
-    '1️⃣ לתקן את התוצר ✏️',
+    '1️⃣ לשנות משהו בתוצר ✏️',
     '2️⃣ לתזמן פרסום 📅',
-    '3️⃣ לקבל את התוצר במייל 📧',
-    '4️⃣ תוצר חדש ✨',
+    '3️⃣ לשלוח למייל 📧',
+    '4️⃣ להתחיל משהו חדש ✨',
     '',
-    'אפשר להשיב במספר, או פשוט לכתוב מה לשנות — ואני כבר אבין 🙂',
+    'מספר, או פשוט כתבו מה לשנות 🙂',
   ].join('\n');
 }
 
@@ -2597,7 +2597,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       // instead of burning a generation on garbage.
       if (numMedia === 0 && text.trim().length < 6) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send('חסר לי עוד קצת מידע כדי לדייק 🙂 מה מכינים, למי ומה חשוב שיופיע?');
+        await send('עוד קצת ואני שם 🙂 מה מכינים, למי, ומה חייב להופיע?');
         return { kind: 'handled' };
       }
       const outputType = conversation.selected_output_type ?? 'image';

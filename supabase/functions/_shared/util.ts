@@ -31,16 +31,16 @@ export async function getSettingOr<T>(database: DB, key: string, fallback: T): P
 // Safe defaults for the WhatsApp copy, so a missing/partial settings row still
 // lets the agent reply. Merged over whatever is in the DB.
 export const DEFAULT_TEMPLATES: Record<string, string> = {
-  received: 'קיבלתי את הבקשה ✅ אני מתחיל לעבוד עליה עכשיו.',
+  received: 'יוצא לדרך 🚀 מכין את זה עכשיו — בערך דקה ⏳',
   ask_email: 'לאיזה מייל לשלוח את התוצר? 📧',
   sent: 'שלחתי את התוצר למייל 📧 אם הוא לא מופיע, כדאי לבדוק גם בספאם.',
-  needs_attention: 'חסר לי עוד פרט קטן כדי להמשיך. אשאל מיד מה צריך.',
+  needs_attention: 'נתקעתי קצת 🙈 העברתי למישהו מהצוות שיבדוק, ונחזור אליך בהקדם.',
   rejected_media: 'לא הצלחתי לקרוא את סוג הקובץ הזה. אפשר לשלוח תמונה, PDF או Word עד 10MB.',
   blocked: 'לא הצלחתי לטפל בבקשה הזו.',
   in_progress: 'הבקשה כבר בטיפול ⏳ אעדכן ברגע שהתוצר מוכן.',
   timeout_warning: 'נראה שעצרנו כאן. שמרתי את מה שעשיתי עד עכשיו. אפשר לשלוח הודעה כשרוצים להמשיך.',
   closed_idle: 'נראה שעצרנו כאן. שמרתי את מה שעשיתי עד עכשיו. אפשר לשלוח הודעה כשרוצים להמשיך.',
-  reset: 'סגור, שמרתי את התוצר הקודם ✨ מה ניצור עכשיו?',
+  reset: 'סגור, שמרתי את התוצר הקודם ✨',
   welcome: 'היי! 👋 אני סוכן ה־AI שמכין תכנים, תמונות, מצגות ומסמכים. מה ניצור היום?',
 };
 

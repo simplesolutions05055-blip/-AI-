@@ -39,6 +39,9 @@ import { genderText } from './whatsappCopy.ts';
 
 type Conversation = FlowConversation;
 
+// The one thing we can honestly say the moment a brief lands.
+const CHECKING_ACK = 'קיבלתי 🙌 רגע בודק שיש לי הכול…';
+
 export type MediaResult = {
   effectiveBody: string;
   firstStoragePath: string | null;
@@ -444,10 +447,12 @@ export async function handleInbound(
     return { requestIdToProcess: null };
   }
 
-  // No "received, working on it" ack here: at this point nobody knows yet
-  // whether the brief is complete. The worker acks once generation actually
-  // starts, and asks its question otherwise — never both.
-  void isNewRequest;
+  // Instant, neutral ack on a brand-new request. "Working on it" would be a
+  // lie at this point — the worker may still come back with a question — so
+  // that message is sent only when generation actually starts.
+  if (isNewRequest) {
+    await sendOut(database, conversation.id, requestId, from, CHECKING_ACK, simulated);
+  }
 
   // ── media (channel-specific) → effective body + first stored file ─────────
   const media = await resolveMedia(requestId);
@@ -522,15 +527,16 @@ async function createFlowRequest(
     output_type: flow.outputType,
     created_by: userId,
     brand_id: requestBrandId,
-    // ack_sent tells the worker we already told the user we're working — it
-    // must not send its own "אני עובד על זה" preflight (message economy).
+    // ack_sent (revisions only) tells the worker we already said "working on
+    // it" — a revision never asks questions, so that ack is honest up front. A
+    // new brief may still need a question, so it only gets the neutral ack and
+    // the worker announces the real start.
     structured_brief: isRevision
       ? { ...flow.brief, ack_sent: true }
       : {
           output_type: flow.outputType,
           output_type_locked: true,
           source: flow.briefText ? 'whatsapp_events' : 'whatsapp_menu',
-          ack_sent: true,
         },
   }).select('id').single();
   if (reqErr || !newReq) {
@@ -560,16 +566,12 @@ async function createFlowRequest(
     timeout_warned_at: null,
   }).eq('id', conversation.id);
 
-  // ONE ack for the whole run (the worker skips its preflight — ack_sent).
-  const ACK: Record<string, string> = {
-    image: 'קיבלתי! מכין את התמונה והפוסט — זה לוקח בערך דקה ⏳',
-    presentation: 'קיבלתי! מכין את המצגת ⏳',
-    pdf: 'קיבלתי! מכין את המסמך ⏳',
-    text: 'קיבלתי! מכין את הטקסט ⏳',
-  };
+  // Instant reply, always. A revision is already a complete brief, so it can
+  // promise work; a new brief gets the neutral "checking" ack and the worker
+  // says "working on it" only once it really is.
   await sendOut(
     database, conversation.id, requestId, from,
-    isRevision ? 'קיבלתי ✏️ מכין גרסה מתוקנת, זה ייקח רגע.' : (ACK[flow.outputType] ?? ACK.text),
+    isRevision ? 'קיבלתי ✏️ מכין גרסה מתוקנת — רגע.' : CHECKING_ACK,
     simulated
   );
 

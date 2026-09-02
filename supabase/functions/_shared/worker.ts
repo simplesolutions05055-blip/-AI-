@@ -244,7 +244,7 @@ async function handleBrandConfirmation(
         // actually delivered — otherwise leave state as-is so the next inbound
         // re-matches and re-asks instead of stranding an unseen pending_brand_id.
         const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-          `נראה שמדובר ב${alt.name}. נכון?`, conversation.simulated);
+          `זה בשביל ${alt.name}? 🙂 (כן / לא)`, conversation.simulated);
         if (delivered) {
           await saveBrief({ pending_brand_id: alt.id, brand_unclear_count: 0 });
           await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -254,7 +254,7 @@ async function handleBrandConfirmation(
       }
       await saveBrief({ pending_brand_id: null, brand_declined: true });
       await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-        'הבנתי, אמשיך בלי מיתוג ספציפי.', conversation.simulated);
+        'סגור, ממשיך בלי מיתוג ספציפי 👍', conversation.simulated);
       return 'continue';
     }
     // unclear → re-ask, but cap retries so we never loop forever on "אולי".
@@ -262,13 +262,14 @@ async function handleBrandConfirmation(
     if (unclearCount >= 2) {
       await saveBrief({ pending_brand_id: null, brand_declined: true, brand_unclear_count: unclearCount });
       await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-        'אין בעיה, אמשיך בלי מיתוג ספציפי בינתיים.', conversation.simulated);
+        'אין בעיה, ממשיך בלי מיתוג ספציפי בינתיים 👍', conversation.simulated);
       return 'continue';
     }
     // Only count this retry if the user actually saw the re-ask; a failed send
     // must not march brand_unclear_count toward the give-up cap on its own.
+    const { data: pendingBrand } = await database.from('brands').select('name').eq('id', pendingId).maybeSingle();
     const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-      'רק לוודא: להשתמש במיתוג שזיהיתי?', conversation.simulated);
+      `רק מוודא 🙂 להכין את זה למיתוג של ${pendingBrand?.name ?? 'הלקוח שזיהיתי'}? (כן / לא)`, conversation.simulated);
     if (delivered) {
       await saveBrief({ brand_unclear_count: unclearCount });
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -290,7 +291,7 @@ async function handleBrandConfirmation(
   // Record the pending guess only on delivery, so an undelivered prompt doesn't
   // strand a pending_brand_id the user never saw (the next inbound re-matches).
   const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-    `נראה שמדובר ב${match.name}. נכון?`, conversation.simulated);
+    `זה בשביל ${match.name}? 🙂 (כן / לא)`, conversation.simulated);
   if (delivered) {
     await saveBrief({ pending_brand_id: match.id });
     await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -671,7 +672,7 @@ async function runRequestPipeline(
       request.status = 'collecting_details';
     } else {
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-      await sendOut(database, conversation.id, requestId, waFrom, 'הבריף מוכן. אם הכול נראה טוב, אפשר לכתוב ״מאשר״. לשינוי, אפשר לכתוב לי מה לעדכן.', conversation.simulated);
+      await sendOut(database, conversation.id, requestId, waFrom, 'הבריף מוכן ✅ אם הכול טוב — כתבו ״מאשר״. רוצים לשנות משהו? פשוט כתבו מה.', conversation.simulated);
       return;
     }
   }
@@ -774,7 +775,7 @@ async function runRequestPipeline(
       // requests, not on this one. Ask what to make first; the gate re-runs
       // once there is real content.
       const ask =
-        'לא הבנתי מה להכין — הבקשה הגיעה בלי פרטים. אפשר לכתוב לי במשפט אחד מה התוצר, למי הוא מיועד ומה חשוב שיופיע בו?';
+        'רגע, עוד לא הבנתי מה מכינים 🙂 כתבו לי במשפט: מה התוצר, למי, ומה חייב להופיע בו.';
       await database
         .from('requests')
         .update({ structured_brief: b, output_type: (b.output_type as string) ?? null, customer_email: email })
@@ -927,9 +928,9 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   await setStatus(database, requestId, 'processing');
   const version = (request.attempt_count ?? 0) + 1;
 
-  // One ack, and only now — when generation really starts. Earlier acks lied
-  // ("working on it") right before a clarifying question. Image has its own
-  // wording below; the guided flow already acked (ack_sent).
+  // One ack, and only now — when generation really starts. The inbound side
+  // only ever says "got it, checking"; the honest "working on it" belongs here.
+  // Image has its own wording below; a revision already acked (ack_sent).
   if (outputType !== 'image' && version === 1 && !productionForm && brief.ack_sent !== true) {
     await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.received, conversation.simulated);
   }
@@ -983,7 +984,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       // Skipped entirely when the flow already acked ("קיבלתי! מכין את...").
       if (version === 1 && !productionForm && brief.ack_sent !== true) {
         const delivered = await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-          'מעולה, אני מתחיל ליצור את התמונה 🎨 זה יכול לקחת רגע.', conversation.simulated);
+          'יוצא לדרך 🎨 מכין את התמונה והפוסט — בערך דקה ⏳', conversation.simulated);
         if (!delivered && !conversation.simulated) {
           await logEvent(database, {
             requestId,
