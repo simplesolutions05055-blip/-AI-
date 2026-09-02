@@ -51,25 +51,34 @@ async function scheduleProcessing(database: DB, requestId: string, messageSid: s
   })());
 }
 
-// Smart Send attaches a voice_url to messages that carry no new recording — in
-// practice the same old note, over and over. Hashing the bytes is the only
-// reliable tell: identical audio from the same number is an echo, never a new
-// recording. Returns true the first time this audio is seen (process it), false
-// afterwards (drop it).
-async function claimVoiceNote(database: DB, phone: string, bytes: Uint8Array): Promise<boolean> {
+// Smart Send re-attaches the LAST media file to messages that carry no new
+// one — a photo sent hours earlier arrives again, byte for byte, glued to a
+// typed "1". Hashing the bytes is the only reliable tell. Returns true the
+// first time these bytes are seen for this number (process them). On a repeat:
+// a voice note is always an echo (WhatsApp cannot re-send the same recording
+// silently), and any file riding along with typed text is an echo too — the
+// text is the message. Only a bare re-send of the same file with no text is
+// treated as deliberate.
+async function claimInboundMedia(
+  database: DB,
+  phone: string,
+  bytes: Uint8Array,
+  opts: { isVoice: boolean; hasText: boolean },
+): Promise<boolean> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(phone));
-  const audio = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
-  const fingerprint = [digest, audio]
+  const content = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
+  const fingerprint = [digest, content]
     .map((buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join(''))
     .join('-');
   const { error } = await database
-    .from('inbound_voice_seen')
+    .from('inbound_media_seen')
     .insert({ fingerprint, phone_number: phone });
-  // A primary-key conflict means we transcribed this exact audio before.
-  if (error) {
+  if (!error) return true;
+  // A primary-key conflict means we processed these exact bytes before.
+  if (opts.isVoice || opts.hasText) {
     await logEvent(database, {
-      action: 'inbound_voice_echo_dropped',
-      metadata: { phone, reason: 'duplicate_audio' },
+      action: 'inbound_media_echo_dropped',
+      metadata: { phone, kind: opts.isVoice ? 'voice' : 'file', reason: 'duplicate_bytes' },
     });
     return false;
   }
@@ -169,7 +178,11 @@ async function processAcceptedWebhook(raw: unknown, ip: string | null): Promise<
       }
       try {
         const { bytes, contentType } = await downloadMedia(message.mediaUrl);
-        if (message.isVoice && !(await claimVoiceNote(database, message.phone, bytes))) {
+        const fresh = await claimInboundMedia(database, message.phone, bytes, {
+          isVoice: message.isVoice,
+          hasText: Boolean(message.body.trim()),
+        });
+        if (!fresh) {
           return {
             effectiveBody: message.body,
             firstStoragePath: null,

@@ -1,6 +1,6 @@
 import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { addressUser } from './whatsappCopy.ts';
-import { buildMainMenu, buildMainMenuInteraction, buildPostDeliveryMenu, parseMainMenuChoice } from './flow.ts';
+import { buildMainMenu, buildMainMenuInteraction, buildPostDeliveryMenu, isBareDigit, parseMainMenuChoice } from './flow.ts';
 
 Deno.test('plural copy is rewritten into the profile gender', () => {
   const copy = 'כתבו לי מה הנושא, ואם תרצו — שלחו קובץ. שימו לב שהתוצר שלכם נשמר.';
@@ -86,4 +86,9 @@ Deno.test('the list picker ids match the printed numbers', () => {
 Deno.test('bot copy uses a plain hyphen, never an em dash', () => {
   assertEquals(buildMainMenu('איתי', 'female').includes('—'), false);
   assertEquals(buildPostDeliveryMenu('image', 'female').includes('—'), false);
+});
+
+Deno.test('a bare digit is a menu pick, attachment or not', () => {
+  for (const t of ['1', '3.', ' 5 ']) assertEquals(isBareDigit(t), true, t);
+  for (const t of ['10', '1 תמונה', 'תפריט', '', '0']) assertEquals(isBareDigit(t), false, t);
 });

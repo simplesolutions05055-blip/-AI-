@@ -71,11 +71,11 @@ Deno.serve(async (req) => {
     stuck++;
   }
 
-  // ── 2b. Prune the voice-echo ledger ────────────────────────────────────────
-  // Only ever asked "have we heard this exact audio before"; a recording that
-  // has not reappeared in 30 days never will.
+  // ── 2b. Prune the media-echo ledger ────────────────────────────────────────
+  // Only ever asked "have we seen these exact bytes before"; a file that has
+  // not reappeared in 30 days never will.
   await database
-    .from('inbound_voice_seen')
+    .from('inbound_media_seen')
     .delete()
     .lt('created_at', new Date(now - 30 * 24 * 3600_000).toISOString());
 

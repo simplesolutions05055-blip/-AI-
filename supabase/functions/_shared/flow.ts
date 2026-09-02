@@ -596,6 +596,11 @@ function norm(text: string): string {
   return normalizeHe(text);
 }
 
+// "1" / "3." - a reply that can only be a menu pick, never a brief.
+export function isBareDigit(text: string): boolean {
+  return /^[1-9]\.?$/.test(norm(text));
+}
+
 export function parseMainMenuChoice(
   text: string,
   perms: MenuPermissions = ALL_MENU_PERMISSIONS,
@@ -2635,7 +2640,9 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
     // ── main menu: pick deliverable type ────────────────────────────────────
     case 'main_menu': {
       const menuPerms = await menuPermissions(database, identity);
-      const choice = numMedia === 0 ? parseMainMenuChoice(text, menuPerms) : null;
+      // A bare digit is a menu pick even when an attachment rides along - Smart
+      // Send re-attaches the last file to typed replies.
+      const choice = numMedia === 0 || isBareDigit(text) ? parseMainMenuChoice(text, menuPerms) : null;
       if (await denyIfNotPermitted(database, conversation, identity, choice, text, messageSid, send)) {
         return { kind: 'handled' };
       }
@@ -2711,7 +2718,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       const briefPerms = await menuPermissions(database, identity);
-      const choice = numMedia === 0 ? parseMainMenuChoice(text, briefPerms) : null;
+      const choice = numMedia === 0 || isBareDigit(text) ? parseMainMenuChoice(text, briefPerms) : null;
       if (await denyIfNotPermitted(database, conversation, identity, choice, text, messageSid, send)) {
         return { kind: 'handled' };
       }

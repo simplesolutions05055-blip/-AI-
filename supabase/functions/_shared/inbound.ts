@@ -425,10 +425,11 @@ export async function handleInbound(
     }
   }
 
-  // A bare menu digit is never a brief. If the state machine did not claim it
-  // (state lost, menu never recorded), re-show the menu instead of opening a
-  // request and generating an artifact out of "1".
-  if (numMedia === 0 && /^[1-9]\.?$/.test(body.trim()) && !conversation.current_request_id) {
+  // A bare menu digit is never a brief - with or without an attachment (Smart
+  // Send glues stale media onto typed replies). If the state machine did not
+  // claim it (state lost, menu never recorded), re-show the menu instead of
+  // opening a request and generating an artifact out of "1".
+  if (/^[1-9]\.?$/.test(body.trim()) && !conversation.current_request_id) {
     const { error: digitClaim } = await database.from('messages').insert({
       conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
     });
