@@ -41,8 +41,32 @@ Deno.test('small talk that slipped past the greeting filter is still not a brief
   assertEquals(enough([{ direction: 'inbound', body: 'מה קורה?' }]), false);
 });
 
-Deno.test('an image description counts as content', () => {
+Deno.test('our own description of an attachment is not the user briefing us', () => {
+  // 2026-09-02: a photo of the mayor arrived with its caption lost in transit.
+  // The description we generated was long enough to pass for a brief, so the
+  // bot wrote a post about the photo instead of asking what to make.
   assertEquals(enough([
-    { direction: 'inbound', body: 'תיאור התמונה שצורפה: כרזה עם לוגו העירייה ותאריך' },
+    { direction: 'inbound', body: 'תיאור התמונה שצורפה: אדם יושב מאחורי שולחן, מאחוריו דגל ישראל ודגל עיריית מגדל העמק' },
+  ]), false);
+  assertEquals(enough([
+    { direction: 'inbound', body: 'תוכן המסמך שצורף:\nעיריית מגדל העמק, מחלקת תרבות, סיכום פעילות שנתי' },
+  ]), false);
+});
+
+Deno.test('a caption sent with the photo is the brief, and survives', () => {
+  assertEquals(enough([
+    {
+      direction: 'inbound',
+      body: 'אירוע גבינות במגדל העמק ב-04/09 ברחבת העירייה\nתיאור התמונה שצורפה: אדם יושב מאחורי שולחן',
+    },
   ]), true);
+  assertEquals(
+    ownBriefContent([
+      {
+        direction: 'inbound',
+        body: 'אירוע גבינות במגדל העמק\nתיאור התמונה שצורפה: אדם יושב מאחורי שולחן',
+      },
+    ]),
+    'אירוע גבינות במגדל העמק',
+  );
 });

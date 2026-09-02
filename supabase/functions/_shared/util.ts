@@ -44,6 +44,22 @@ export const DEFAULT_TEMPLATES: Record<string, string> = {
   welcome: 'היי! 👋 אני סוכן ה־AI שמכין תכנים, תמונות, מצגות ומסמכים. מה ניצור היום?',
 };
 
+// Text WE write onto an inbound message when it carries an attachment: the
+// vision description of a photo, the extracted text of a document, or the note
+// that we could not read it. It is our words about the file, never the user's
+// request — so it must never be mistaken for a brief.
+export const ATTACHMENT_NOTE_PREFIXES = [
+  'תיאור התמונה שצורפה:',
+  'תוכן המסמך שצורף:',
+  '[צורפה תמונה שלא הצלחנו לנתח]',
+  '[צורף מסמך שלא הצלחנו לקרוא את תוכנו]',
+];
+
+export function isAttachmentNote(line: string): boolean {
+  const t = line.trim();
+  return ATTACHMENT_NOTE_PREFIXES.some((prefix) => t.startsWith(prefix));
+}
+
 // Detect an explicit "start over / new conversation" command — fuzzy, so typos
 // like "שיחה חדשנ" still trigger it. The user can abandon the current request
 // and begin fresh.

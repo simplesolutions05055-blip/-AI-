@@ -1,5 +1,6 @@
 import { db, type DB } from './db.ts';
 import {
+  isAttachmentNote,
   logEvent,
   getSetting,
   getSettingOr,
@@ -109,13 +110,24 @@ function isProductionFormTarget(to: string): boolean {
 // fed up to 16 messages of prior conversation for context, so on an empty
 // request it happily fills `goal` from the PREVIOUS deliverable — which is how
 // one clinic post kept coming back for every unrelated message.
+//
+// It also ignores the attachment notes WE append to an inbound message (the
+// vision description of a photo, an extracted document). A photo sent with no
+// words is not a brief: on 2026-09-02 a portrait of the mayor arrived with its
+// caption lost in transit, the 300-character description passed for content,
+// and the bot produced a post about "the new official photo" instead of asking
+// what to make. Everything from the note onward is ours, so it is cut.
 export function ownBriefContent(
   msgs: Array<{ direction: string; body: string | null }> | null,
 ): string {
   return (msgs ?? [])
     .filter((m) => m.direction === 'inbound' && m.body)
     .map((m) => String(m.body))
-    .flatMap((body) => body.split('\n'))
+    .flatMap((body) => {
+      const lines = body.split('\n');
+      const note = lines.findIndex(isAttachmentNote);
+      return note === -1 ? lines : lines.slice(0, note);
+    })
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .filter((line) => !/^\d{1,2}[.)]?$/.test(line))
@@ -778,8 +790,15 @@ async function runRequestPipeline(
       // ("what's the event date?") is built on leftovers from earlier
       // requests, not on this one. Ask what to make first; the gate re-runs
       // once there is real content.
-      const ask =
-        'רגע, עוד לא הבנתי מה מכינים 🙂 כתבו לי במשפט: מה התוצר, למי, ומה חייב להופיע בו.';
+      const hasAttachment = (msgs ?? []).some(
+        (m: { direction: string; media_type?: string | null }) =>
+          m.direction === 'inbound' && Boolean(m.media_type),
+      );
+      const ask = hasAttachment
+        // The file arrived, so say so — "לא הבנתי מה מכינים" after sending a
+        // photo reads as if it never got there.
+        ? 'קיבלתי את הקובץ 📎 מה להכין איתו? כתבו לי במשפט: מה התוצר, למי, ומה חייב להופיע בו.'
+        : 'רגע, עוד לא הבנתי מה מכינים 🙂 כתבו לי במשפט: מה התוצר, למי, ומה חייב להופיע בו.';
       await database
         .from('requests')
         .update({ structured_brief: b, output_type: (b.output_type as string) ?? null, customer_email: email })

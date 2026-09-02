@@ -2,6 +2,7 @@ import { type DB } from './db.ts';
 import { transcribeAudio, describeImage } from './openai.ts';
 import { extractDocumentText } from './files.ts';
 import {
+  ATTACHMENT_NOTE_PREFIXES,
   logEvent,
   getSetting,
   isAllowedMime,
@@ -108,25 +109,25 @@ export async function processInboundMediaItem(
           cost: estimateTextCost(usage.prompt_tokens, usage.completion_tokens),
         });
         await logEvent(database, { requestId, action: 'image_described', metadata: { chars: text.length } });
-        return { text: text ? `תיאור התמונה שצורפה: ${text}` : '', storagePath, mediaType: contentType, rejected: false };
+        return { text: text ? `${ATTACHMENT_NOTE_PREFIXES[0]} ${text}` : '', storagePath, mediaType: contentType, rejected: false };
       } catch (e) {
         await logEvent(database, { requestId, severity: 'warning', action: 'image_describe_failed', message: String(e) });
-        return { text: '[צורפה תמונה שלא הצלחנו לנתח]', storagePath, mediaType: contentType, rejected: false };
+        return { text: ATTACHMENT_NOTE_PREFIXES[2], storagePath, mediaType: contentType, rejected: false };
       }
     }
 
     if (isPlainText) {
       const text = textFromBytes(bytes);
       await logEvent(database, { requestId, action: 'document_extracted', metadata: { chars: text.length, contentType } });
-      return { text: text ? `תוכן המסמך שצורף:\n${text}` : '', storagePath, mediaType: contentType, rejected: false };
+      return { text: text ? `${ATTACHMENT_NOTE_PREFIXES[1]}\n${text}` : '', storagePath, mediaType: contentType, rejected: false };
     }
 
     const docText = await extractDocumentText(bytes, contentType);
     if (docText) {
       await logEvent(database, { requestId, action: 'document_extracted', metadata: { chars: docText.length } });
-      return { text: `תוכן המסמך שצורף:\n${docText}`, storagePath, mediaType: contentType, rejected: false };
+      return { text: `${ATTACHMENT_NOTE_PREFIXES[1]}\n${docText}`, storagePath, mediaType: contentType, rejected: false };
     }
-    return { text: '[צורף מסמך שלא הצלחנו לקרוא את תוכנו]', storagePath, mediaType: contentType, rejected: false };
+    return { text: ATTACHMENT_NOTE_PREFIXES[3], storagePath, mediaType: contentType, rejected: false };
   } catch (e) {
     if (e instanceof AbuseGuardError) {
       await logEvent(database, { requestId, severity: 'warning', action: 'media_blocked_by_abuse_guard', message: e.message, metadata: { code: e.code } });
