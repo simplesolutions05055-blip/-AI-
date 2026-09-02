@@ -1,5 +1,5 @@
 import { assertEquals, assertMatch } from 'jsr:@std/assert@1';
-import { normalizeSmartSendMessage } from './smartsendPayload.ts';
+import { describePayloadShape, normalizeSmartSendMessage } from './smartsendPayload.ts';
 
 Deno.test('normalizes documented Smart Send text payload', async () => {
   const result = await normalizeSmartSendMessage({
@@ -123,4 +123,37 @@ Deno.test('an image with a caption keeps both — captions are real there', asyn
   assertEquals(msg?.body, 'תכניס את מי שבתמונה');
   assertEquals(msg?.mediaUrl, 'https://cdn.smartsend.co.il/img/photo.jpg');
   assertEquals(msg?.mediaType, 'image/jpeg');
+});
+
+Deno.test('a caption is found wherever the scenario put it', async () => {
+  const fromCaption = await normalizeSmartSendMessage({
+    phone: '972502032767',
+    caption: 'אירוע גבינות ב-04/09 ברחבת העירייה',
+    media_url: 'https://cdn.smartsend.co.il/img/mayor.jpg',
+    media_type: 'image/jpeg',
+    currentDateTime: '2026-09-02T17:41:00',
+  });
+  assertEquals(fromCaption?.body, 'אירוע גבינות ב-04/09 ברחבת העירייה');
+
+  const fromMediaCaption = await normalizeSmartSendMessage({
+    phone: '972502032767',
+    last_message: '{{last_message}}',
+    media_caption: 'אירוע גבינות ב-04/09',
+    media_url: 'https://cdn.smartsend.co.il/img/mayor.jpg',
+    currentDateTime: '2026-09-02T17:42:00',
+  });
+  assertEquals(fromMediaCaption?.body, 'אירוע גבינות ב-04/09');
+});
+
+Deno.test('the payload shape is reportable without inventing fields', () => {
+  const shape = describePayloadShape({
+    phone: '972502032767',
+    last_message: '{{last_message}}',
+    media_url: 'https://cdn.smartsend.co.il/img/mayor.jpg',
+    media: { mimeType: 'image/jpeg' },
+    isGroupMessage: false,
+  });
+  assertEquals(shape.last_message, '{{last_message}}');
+  assertEquals(shape.media, '<object>');
+  assertEquals(shape.isGroupMessage, 'false');
 });

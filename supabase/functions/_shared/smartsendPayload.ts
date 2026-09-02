@@ -23,7 +23,29 @@ export type SmartSendMessage = {
   mimeType?: unknown;
   media?: unknown;
   rawMessage?: unknown;
+  // Caption aliases — the field carrying a photo's caption has moved between
+  // scenario versions, so every known spelling is accepted.
+  caption?: unknown;
+  media_caption?: unknown;
+  message?: unknown;
+  body?: unknown;
 };
+
+// A media message that arrives with no caption anywhere is worth reporting: the
+// user almost certainly typed one. Returns the payload's own field names and a
+// short preview of each string value, so the missing caption can be traced to
+// the exact field instead of guessed at.
+export function describePayloadShape(raw: unknown): Record<string, string> {
+  const payload = Array.isArray(raw) ? raw[0] : raw;
+  if (!payload || typeof payload !== 'object') return {};
+  const shape: Record<string, string> = {};
+  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+    if (typeof value === 'string') shape[key] = value.slice(0, 80);
+    else if (value && typeof value === 'object') shape[key] = `<${Array.isArray(value) ? 'array' : 'object'}>`;
+    else if (value != null) shape[key] = String(value);
+  }
+  return shape;
+}
 
 export type NormalizedSmartSendMessage = {
   id: string;
@@ -71,7 +93,22 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
     );
     return typeof value === 'string' ? value.trim() : null;
   };
-  const body = firstString(message.last_message, message.text, rawMessage.body, rawMessage.caption) ?? '';
+  // A caption typed with a photo keeps going missing: the scenario renders
+  // last_message empty (or as the literal "{{last_message}}") on media
+  // messages, and the words the user actually wrote never reach the brief.
+  // Every field the caption has been seen in is checked before giving up.
+  const body = firstString(
+    message.last_message,
+    message.text,
+    message.caption,
+    message.media_caption,
+    message.message,
+    message.body,
+    rawMessage.body,
+    rawMessage.caption,
+    rawMessage.text,
+    media.caption,
+  ) ?? '';
   // Attachments and voice notes are resolved separately on purpose — see the
   // stale-voice rule below.
   const attachmentUrl = firstString(

@@ -17,7 +17,7 @@ import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
 import { matchesEnvSecret } from '../_shared/secrets.ts';
 import { downloadMedia } from '../_shared/smartsend.ts';
 import { processInboundMediaItem } from '../_shared/inbound_media.ts';
-import { normalizeSmartSendMessage } from '../_shared/smartsendPayload.ts';
+import { describePayloadShape, normalizeSmartSendMessage } from '../_shared/smartsendPayload.ts';
 
 type DB = ReturnType<typeof db>;
 
@@ -131,6 +131,18 @@ async function processAcceptedWebhook(raw: unknown, ip: string | null): Promise<
     if ((count ?? 0) > limits.messages_per_24h) {
       return;
     }
+  }
+
+  // An attachment with no caption in any known field: record the payload's
+  // shape so the next one can be traced to the field that holds it, instead of
+  // silently producing a deliverable from the picture alone.
+  if (message.mediaUrl && !message.isVoice && !message.body.trim()) {
+    await logEvent(database, {
+      severity: 'warning',
+      action: 'inbound_caption_missing',
+      message: 'Media message arrived with no caption in any known field',
+      metadata: { phone: message.phone, payload_shape: describePayloadShape(raw) },
+    });
   }
 
   const conversation = await findOrCreateConversation(database, message.from, false);
