@@ -215,22 +215,88 @@ export type MenuPermissions = {
 // Everything on, used where permissions are unknown (simulator sessions).
 export const ALL_MENU_PERMISSIONS: MenuPermissions = { image: true, pdf: true, presentation: true };
 
-// The bot must never offer a deliverable the site's permissions deny. Lines for
-// denied types are dropped, but the numbering of the surviving ones never
-// shifts — returning users keep typing the number they already know.
+export type MainMenuAction =
+  | 'image'
+  | 'pdf'
+  | 'presentation'
+  | 'events'
+  | 'schedule_post'
+  | 'manage_schedules';
+
+type MainMenuItem = {
+  action: MainMenuAction;
+  line: string;
+  title: string;
+  description: string;
+  allowed: (perms: MenuPermissions) => boolean;
+};
+
+// ONE ordered source for the main menu: the text lines, the list-picker options
+// and the reply parser all read it, so what the user sees and what a number
+// means can never drift apart.
+const MAIN_MENU_ITEMS: MainMenuItem[] = [
+  {
+    action: 'image',
+    line: 'תמונה / פוסט',
+    title: 'תמונה / פוסט',
+    description: 'יצירת תמונה או פוסט חדש',
+    allowed: (p) => p.image,
+  },
+  {
+    action: 'pdf',
+    line: 'מסמך',
+    title: 'מסמך',
+    description: 'יצירת מסמך חדש',
+    allowed: (p) => p.pdf,
+  },
+  {
+    action: 'presentation',
+    line: 'מצגת 📊',
+    title: 'מצגת',
+    description: 'יצירת מצגת חדשה',
+    allowed: (p) => p.presentation,
+  },
+  {
+    action: 'events',
+    line: 'קבלו רעיון 💡',
+    title: 'קבלו רעיון',
+    description: 'רעיון לתוכן לפי אירועים וחגים קרובים',
+    // The events flow ends in a deliverable, so it needs at least one type.
+    allowed: (p) => p.image || p.pdf || p.presentation,
+  },
+  {
+    action: 'schedule_post',
+    line: 'תזמון פוסט לרשתות 📅',
+    title: 'תזמון פוסט',
+    description: 'תזמון פרסום לרשתות',
+    allowed: () => true,
+  },
+  {
+    action: 'manage_schedules',
+    line: 'ניהול תזמונים 🗂️',
+    title: 'ניהול תזמונים',
+    description: 'צפייה ועריכה של התזמונים הקרובים',
+    allowed: () => true,
+  },
+];
+
+const DIGIT_EMOJI = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣'];
+
+// What this user actually sees, in order. Numbering follows the position in
+// THIS list — a user who may not create documents sees 1,2,3,4 and not
+// 1,4,5,6, which reads like the bot lost half its own menu.
+export function mainMenuItems(perms: MenuPermissions = ALL_MENU_PERMISSIONS): MainMenuItem[] {
+  return MAIN_MENU_ITEMS.filter((item) => item.allowed(perms));
+}
+
 export function buildMainMenu(
   displayName: string,
   gender: AddressGender = null,
   perms: MenuPermissions = ALL_MENU_PERMISSIONS,
 ): string {
-  const items = [
-    perms.image ? '1️⃣ תמונה / פוסט' : null,
-    perms.pdf ? '2️⃣ מסמך' : null,
-    perms.presentation ? '3️⃣ מצגת 📊' : null,
-    perms.image || perms.pdf ? '4️⃣ קבלו רעיון 💡' : null,
-    '5️⃣ תזמון פוסט לרשתות 📅',
-    '6️⃣ ניהול תזמונים 🗂️',
-  ].filter(Boolean) as string[];
+  const items = mainMenuItems(perms).map(
+    (item, i) => `${DIGIT_EMOJI[i] ?? `${i + 1}.`} ${item.line}`,
+  );
   return [
     genderText(gender, {
       male: `היי${displayName ? ` ${displayName}` : ''}, מה תרצה להכין היום? 👋`,
@@ -240,31 +306,26 @@ export function buildMainMenu(
     '',
     ...items,
     '',
-    // Stated up front, once: nobody discovers a command they were never told
-    // about, and "how do I undo that" is the most common dead end here.
+    // Stated up front: nobody discovers a command they were never told about,
+    // and "how do I undo that" is the most common dead end here.
     'מספר או מילה, איך שנוח 🙂',
-    'בכל שלב: ״אחורה״ = שלב אחד, ״תפריט״ = מההתחלה.',
+    '',
+    ...NAV_COMMANDS,
   ].join('\n');
 }
 
 export function buildMainMenuInteraction(
   perms: MenuPermissions = ALL_MENU_PERMISSIONS,
 ): WhatsAppInteractive {
-  const options = [
-    perms.image ? { id: '1', title: 'תמונה / פוסט', description: 'יצירת תמונה או פוסט חדש' } : null,
-    perms.pdf ? { id: '2', title: 'מסמך', description: 'יצירת מסמך חדש' } : null,
-    perms.presentation ? { id: '3', title: 'מצגת', description: 'יצירת מצגת חדשה' } : null,
-    perms.image || perms.pdf
-      ? { id: '4', title: 'קבלו רעיון', description: 'רעיון לתוכן לפי אירועים וחגים קרובים' }
-      : null,
-    { id: '5', title: 'תזמון פוסט', description: 'תזמון פרסום לרשתות' },
-    { id: '6', title: 'ניהול תזמונים', description: 'צפייה ועריכה של התזמונים הקרובים' },
-  ].filter(Boolean) as Array<{ id: string; title: string; description: string }>;
   return {
     kind: 'list_picker',
     body: 'היי! מה תרצה להכין היום? 👋',
     button: 'בחירת תוצר',
-    options,
+    options: mainMenuItems(perms).map((item, i) => ({
+      id: String(i + 1),
+      title: item.title,
+      description: item.description,
+    })),
   };
 }
 
@@ -503,8 +564,8 @@ async function buildScheduleFromSiteMessage(database: DB): Promise<string> {
     'מעולה! כל התוצרים מחכים כאן:',
     `${base}/admin/files`,
     '',
-    'אפשר למצוא את התוצר הרצוי וללחוץ על כפתור התזמון 📅 שבכרטיס שלו — לבחור רשת, תאריך ושעה, וזה מתוזמן.',
-    'וכשרוצים אותי שוב — פשוט כותבים לי כאן 🙂',
+    'אפשר למצוא את התוצר הרצוי וללחוץ על כפתור התזמון 📅 שבכרטיס שלו - לבחור רשת, תאריך ושעה, וזה מתוזמן.',
+    'וכשרוצים אותי שוב - פשוט כותבים לי כאן 🙂',
   ].join('\n');
 }
 
@@ -514,7 +575,7 @@ function customPostContentPrompt(platforms: string[]): string {
     'אפשר טקסט + תמונה (או וידאו) באותה הודעה.',
     platforms.includes('instagram')
       ? 'שימו לב: לפרסום באינסטגרם חובה לצרף תמונה או וידאו.'
-      : 'אפשר גם פוסט של טקסט בלבד — פשוט שלחו רק טקסט.',
+      : 'אפשר גם פוסט של טקסט בלבד - פשוט שלחו רק טקסט.',
   ].join('\n');
 }
 
@@ -525,7 +586,7 @@ export async function buildSignupMessage(database: DB): Promise<string> {
   const base = (site.url ?? '').replace(/\/+$/, '');
   return [
     'היי! עדיין לא מכירים את המספר הזה אצלנו 🙂',
-    `כדי להשתמש בבוט צריך חשבון באתר — נרשמים כאן: ${base}/signup`,
+    `כדי להשתמש בבוט צריך חשבון באתר - נרשמים כאן: ${base}/signup`,
     'בתהליך ההצטרפות הזינו את מספר הוואטסאפ הזה בפרופיל, ומהרגע הזה נזהה אתכם כאן אוטומטית.',
   ].join('\n');
 }
@@ -535,21 +596,31 @@ function norm(text: string): string {
   return normalizeHe(text);
 }
 
-export function parseMainMenuChoice(text: string): 'image' | 'presentation' | 'pdf' | 'schedule_post' | 'events' | 'manage_schedules' | null {
+export function parseMainMenuChoice(
+  text: string,
+  perms: MenuPermissions = ALL_MENU_PERMISSIONS,
+): MainMenuAction | null {
   const t = norm(text);
   if (!t || t.length > 30) return null;
+
+  // A bare number means "the Nth line I was shown", so it resolves against the
+  // same filtered list the user is looking at — never against a fixed table.
+  const digits = t.match(/^([1-9])\.?$/);
+  if (digits) return mainMenuItems(perms)[Number(digits[1]) - 1]?.action ?? null;
+
+  // Keywords are position-independent and stay exact.
   // Managing schedules must be checked before creating one — "ניהול תזמון"
   // contains the schedule keyword.
-  if (/^6\.?$/.test(t) || /(ניהול|לנהל|תזמונים)/.test(t)) return 'manage_schedules';
-  // Schedule keywords win over the generic "פוסט" (which alone means option 1).
-  if (/^5\.?$/.test(t) || /(תזמון|לתזמן|תזמן|פרסום|לפרסם|schedule)/.test(t)) return 'schedule_post';
-  if (/^1\.?$/.test(t) || /(תמונה|פוסט|גרפיק|image|post)/.test(t)) return 'image';
-  if (/^2\.?$/.test(t) || /(מסמך|document|מכתב)/.test(t)) return 'pdf';
-  if (/^3\.?$/.test(t) || /(מצגת|presentation|שקפים)/.test(t)) return 'presentation';
+  if (/(ניהול|לנהל|תזמונים)/.test(t)) return 'manage_schedules';
+  // Schedule keywords win over the generic "פוסט" (which alone means an image).
+  if (/(תזמון|לתזמן|תזמן|פרסום|לפרסם|schedule)/.test(t)) return 'schedule_post';
+  if (/(תמונה|פוסט|גרפיק|image|post)/.test(t)) return 'image';
+  if (/(מסמך|document|מכתב)/.test(t)) return 'pdf';
+  if (/(מצגת|presentation|שקפים)/.test(t)) return 'presentation';
   if (/pdf/.test(t)) return 'pdf';
   // Events last: "תמונה לאירוע" should stay an image request — only a message
   // that matched nothing else lands here.
-  if (/^4\.?$/.test(t) || /(רעיון|אירוע|חגים|לוח שנה|מועדים|events|idea)/.test(t) || /^חג\.?$/.test(t)) return 'events';
+  if (/(רעיון|אירוע|חגים|לוח שנה|מועדים|events|idea)/.test(t) || /^חג\.?$/.test(t)) return 'events';
   return null;
 }
 
@@ -847,14 +918,14 @@ export function isWhereAmICommand(text: string): boolean {
 }
 
 const STEP_LABELS: Record<string, string> = {
-  main_menu: 'בתפריט הראשי — בחירת סוג התוצר',
-  awaiting_brief: 'בכתיבת הבקשה — מה להכין',
+  main_menu: 'בתפריט הראשי - בחירת סוג התוצר',
+  awaiting_brief: 'בכתיבת הבקשה - מה להכין',
   awaiting_email_address: 'בהזנת כתובת המייל לשליחה',
   awaiting_email_confirm: 'באישור כתובת המייל',
   awaiting_fix_feedback: 'בתיאור מה לתקן בתוצר',
   awaiting_image_fix: 'בתיאור מה לשנות בתמונה',
   awaiting_caption_fix: 'בתיאור מה לשנות בכיתוב',
-  post_delivery: 'אחרי קבלת התוצר — אפשר לתקן, לתזמן או להתחיל חדש',
+  post_delivery: 'אחרי קבלת התוצר - אפשר לתקן, לתזמן או להתחיל חדש',
   deck_awaiting_prompt: 'בכתיבת נושא המצגת',
   deck_awaiting_slide_count: 'בבחירת מספר השקופיות',
   deck_awaiting_emails: 'בהזנת כתובות המייל למצגת',
@@ -878,7 +949,19 @@ const STEP_LABELS: Record<string, string> = {
   schedule_manage_cancel: 'באישור ביטול התזמון',
 };
 
-const NAV_HINT = 'אפשר לכתוב ״אחורה״ לחזרה שלב אחד, ״איפה אני״ לסיכום, או ״תפריט״ להתחלה מחדש.';
+// The three commands that work from every step. Written out one per line with
+// the action spelled out — a compressed one-liner ("״אחורה״ = שלב אחד") reads
+// as shorthand for something the user is supposed to already know, and people
+// skipped it. Listed on the main menu, where the user is deciding what to do,
+// and repeated in the "איפה אני" summary, which is where someone stuck asks.
+const NAV_COMMANDS = [
+  'בכל שלב אפשר לכתוב:',
+  '״אחורה״ - כדי לחזור שלב אחד אחורה',
+  '״תפריט״ - כדי לחזור לתפריט הראשי',
+  '״איפה אני״ - כדי לראות באיזה שלב אנחנו ומה נבחר עד עכשיו',
+];
+
+const NAV_HINT = NAV_COMMANDS.join('\n');
 
 function describeCurrentStep(conversation: FlowConversation, state: string | null): string {
   const history = Array.isArray(conversation.flow_history)
@@ -892,7 +975,7 @@ function describeCurrentStep(conversation: FlowConversation, state: string | nul
     : '';
   const back = history.length
     ? `\nאפשר לחזור ${history.length === 1 ? 'שלב אחד' : `עד ${history.length} שלבים`} אחורה.`
-    : '\nזו ההתחלה — אין שלב לחזור אליו.';
+    : '\nזו ההתחלה - אין שלב לחזור אליו.';
   return `📍 אנחנו ${where}.${type}${back}\n\n${NAV_HINT}`;
 }
 
@@ -1263,9 +1346,9 @@ async function startImageFix(
   feedback: string
 ): Promise<FlowResult> {
   await send(genderText(identity.gender, {
-    male: 'קיבלתי! מתקן את התמונה עכשיו — זה לוקח בערך דקה ⏳',
-    female: 'קיבלתי! מתקן את התמונה עכשיו — זה לוקח בערך דקה ⏳',
-    plural: 'קיבלתי! מתקן את התמונה עכשיו — זה לוקח בערך דקה ⏳',
+    male: 'קיבלתי! מתקן את התמונה עכשיו - זה לוקח בערך דקה ⏳',
+    female: 'קיבלתי! מתקן את התמונה עכשיו - זה לוקח בערך דקה ⏳',
+    plural: 'קיבלתי! מתקן את התמונה עכשיו - זה לוקח בערך דקה ⏳',
   }));
   await setFlow(database, conversation.id, { flow_state: 'post_delivery' });
   const background = async () => {
@@ -1446,7 +1529,7 @@ const DECK_SYSTEM_MESSAGE =
 
 const DECK_PROMPT_MSG = [
   'מעולה, מצגת 📊',
-  'כתבו לי את נושא המצגת — מה המטרה, למי היא מיועדת ומה חשוב שיופיע בה.',
+  'כתבו לי את נושא המצגת - מה המטרה, למי היא מיועדת ומה חשוב שיופיע בה.',
   'אפשר לציין גם כמה שקפים תרצו (למשל: "מצגת של 5 שקפים על...").',
   '',
   LONG_TEXT_WARNING,
@@ -1564,22 +1647,22 @@ function formatDeckSlideMessage(slide: DeckSlideContent, index: number, total: n
 function deckReviewQuestion(): string {
   return [
     'מה אומרים? ✨',
-    'אם תרצו לשנות משהו — כתבו מה לשנות ובאיזה שקף (למשל: "שקף 2 — תוסיף נתונים על התוצאות").',
-    'אם הכול טוב — השיבו "מאשר" ונתקדם להכנת המצגת.',
+    'אם תרצו לשנות משהו - כתבו מה לשנות ובאיזה שקף (למשל: "שקף 2 - תוסיף נתונים על התוצאות").',
+    'אם הכול טוב - השיבו "מאשר" ונתקדם להכנת המצגת.',
   ].join('\n');
 }
 
 function deckSlideSelectionPrompt(total: number): string {
   return [
     `איזה שקפים להכין? 🎨 (יש ${total} שקפים)`,
-    'כתבו למשל: 1-2 (טווח), או 1,3 (רשימה), או "הכל" — איך שנוח לכם.',
+    'כתבו למשל: 1-2 (טווח), או 1,3 (רשימה), או "הכל" - איך שנוח לכם.',
   ].join('\n');
 }
 
 function deckEmailsPrompt(suggested: string | null): string {
   const lines = [
     'לאילו כתובות מייל לשלוח את המצגת המוכנה? 📧',
-    'אפשר כמה כתובות — כתבו אותן מופרדות בפסיק או ברווח ואני אבין, למשל:',
+    'אפשר כמה כתובות - כתבו אותן מופרדות בפסיק או ברווח ואני אבין, למשל:',
     'name@gmail.com, other@walla.co.il',
   ];
   if (suggested) lines.push('', `אפשר גם להשיב "כן" לשליחה ל-${suggested}.`);
@@ -1705,7 +1788,7 @@ async function generateDeckAndPresent(
         .eq('id', requestId);
     }
 
-    await send(`הנה תוכן המצגת שהכנתי — ${slides.length} שקפים 👇`);
+    await send(`הנה תוכן המצגת שהכנתי - ${slides.length} שקפים 👇`);
     for (let i = 0; i < slides.length; i++) {
       await raw(send)(formatDeckSlideMessage(slides[i], i, slides.length));
     }
@@ -1787,7 +1870,7 @@ async function startDeckSlideRewrite(
           .eq('id', deck.request_id);
       }
       await raw(send)(formatDeckSlideMessage(slide, slideNumber - 1, updated.length));
-      await send('עדכנתי את השקף ✅\nרוצים לשנות עוד משהו? כתבו מה. אם הכול טוב — השיבו "מאשר".');
+      await send('עדכנתי את השקף ✅\nרוצים לשנות עוד משהו? כתבו מה. אם הכול טוב - השיבו "מאשר".');
       await logEvent(database, {
         requestId: deck.request_id ?? null,
         action: 'whatsapp_deck_slide_rewritten',
@@ -2105,30 +2188,68 @@ function parseSelectedEventIndex(text: string, events: FlowEventItem[]): number 
   return idx >= 0 ? idx : null;
 }
 
-function buildEventTypeMessage(event: FlowEventItem): string {
+// The event menu offers the same deliverables as the main menu, so it filters
+// and numbers the same way — sequentially, over what this user may create.
+const EVENT_TYPE_ITEMS: Array<{ action: 'image' | 'pdf' | 'presentation'; title: string; description: string }> = [
+  { action: 'image', title: 'תמונה / פוסט', description: 'פוסט או גרפיקה לאירוע' },
+  { action: 'pdf', title: 'מסמך', description: 'מסמך לאירוע' },
+  { action: 'presentation', title: 'מצגת', description: 'מצגת לאירוע' },
+];
+
+function eventTypeItems(perms: MenuPermissions) {
+  return EVENT_TYPE_ITEMS.filter((item) => perms[item.action]);
+}
+
+// The "back to the list" option always sits right after the deliverables.
+function eventBackNumber(perms: MenuPermissions): number {
+  return eventTypeItems(perms).length + 1;
+}
+
+function parseEventTypeChoice(
+  text: string,
+  perms: MenuPermissions,
+): 'image' | 'pdf' | 'presentation' | 'back' | null {
+  const t = norm(text);
+  if (!t || t.length > 30) return null;
+  const digits = t.match(/^([1-9])\.?$/);
+  if (digits) {
+    const n = Number(digits[1]);
+    if (n === eventBackNumber(perms)) return 'back';
+    return eventTypeItems(perms)[n - 1]?.action ?? null;
+  }
+  if (t.length <= 20 && /(חזרה|רשימה|back)/.test(t)) return 'back';
+  const choice = parseMainMenuChoice(text, perms);
+  return choice === 'image' || choice === 'pdf' || choice === 'presentation' ? choice : null;
+}
+
+function buildEventTypeMessage(event: FlowEventItem, perms: MenuPermissions = ALL_MENU_PERMISSIONS): string {
   const lines = [`${eventEmoji(event)} ${event.title}`, eventDateLabel(event.date)];
   if (event.memo) lines.push(event.memo);
+  const items = eventTypeItems(perms).map((item, i) => `${DIGIT_EMOJI[i] ?? `${i + 1}.`} ${item.title}`);
   lines.push(
     '',
     'מה להכין לאירוע הזה? 💡',
     '',
-    '1️⃣ תמונה / פוסט',
-    '2️⃣ מסמך',
-    '3️⃣ מצגת',
-    '4️⃣ חזרה לרשימת האירועים',
+    ...items,
+    `${DIGIT_EMOJI[items.length] ?? `${items.length + 1}.`} חזרה לרשימת האירועים`,
   );
   return lines.join('\n');
 }
 
-function buildEventTypeInteraction(event: FlowEventItem): WhatsAppInteractive {
+function buildEventTypeInteraction(
+  event: FlowEventItem,
+  perms: MenuPermissions = ALL_MENU_PERMISSIONS,
+): WhatsAppInteractive {
   return {
     kind: 'list_picker',
-    body: `${eventEmoji(event)} ${event.title} — ${eventDateLabel(event.date)}\nמה להכין לאירוע הזה? 💡`,
+    body: `${eventEmoji(event)} ${event.title} - ${eventDateLabel(event.date)}\nמה להכין לאירוע הזה? 💡`,
     button: 'בחירת תוצר',
     options: [
-      { id: '1', title: 'תמונה / פוסט', description: 'פוסט או גרפיקה לאירוע' },
-      { id: '2', title: 'מסמך', description: 'מסמך לאירוע' },
-      { id: '3', title: 'מצגת', description: 'מצגת לאירוע' },
+      ...eventTypeItems(perms).map((item, i) => ({
+        id: String(i + 1),
+        title: item.title,
+        description: item.description,
+      })),
       { id: 'back', title: 'חזרה לרשימה', description: 'חזרה לרשימת האירועים' },
     ],
   };
@@ -2357,7 +2478,7 @@ function buildScheduleManageMessage(post: FlowScheduleItem, dueShown: boolean): 
     'ניהול תזמון 🛠️',
     `${schedulePlatformHe(post.platform)} · ${scheduleWhenLabel(post.scheduled_at)}`,
   ];
-  if (dueShown) lines.push('⚠️ המועד עבר — הפוסט ממתין לפרסום ידני');
+  if (dueShown) lines.push('⚠️ המועד עבר - הפוסט ממתין לפרסום ידני');
   lines.push(`כותרת: ${scheduleDisplayTitle(post)}`);
   if (post.media_count > 0) lines.push(`📎 ${post.media_count} קבצי מדיה`);
   const caption = post.caption.trim();
@@ -2385,7 +2506,7 @@ function buildScheduleManageInteraction(post: FlowScheduleItem, dueShown: boolea
   ];
   return {
     kind: 'list_picker',
-    body: `${scheduleDisplayTitle(post)} — מה לעשות? 🛠️`,
+    body: `${scheduleDisplayTitle(post)} - מה לעשות? 🛠️`,
     button: 'בחירת פעולה',
     options,
   };
@@ -2512,7 +2633,8 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
   switch (state) {
     // ── main menu: pick deliverable type ────────────────────────────────────
     case 'main_menu': {
-      const choice = numMedia === 0 ? parseMainMenuChoice(text) : null;
+      const menuPerms = await menuPermissions(database, identity);
+      const choice = numMedia === 0 ? parseMainMenuChoice(text, menuPerms) : null;
       if (await denyIfNotPermitted(database, conversation, identity, choice, text, messageSid, send)) {
         return { kind: 'handled' };
       }
@@ -2571,8 +2693,10 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       // Short unrecognized reply → re-show the menu.
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-      const perms = await menuPermissions(database, opts.identity);
-      await send(buildMainMenu(opts.identity.displayName, opts.identity.gender, perms), buildMainMenuInteraction(perms));
+      await send(
+        buildMainMenu(opts.identity.displayName, opts.identity.gender, menuPerms),
+        buildMainMenuInteraction(menuPerms),
+      );
       return { kind: 'handled' };
     }
 
@@ -2585,7 +2709,8 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await send(prompt, backToStartInteraction(prompt));
         return { kind: 'handled' };
       }
-      const choice = numMedia === 0 ? parseMainMenuChoice(text) : null;
+      const briefPerms = await menuPermissions(database, identity);
+      const choice = numMedia === 0 ? parseMainMenuChoice(text, briefPerms) : null;
       if (await denyIfNotPermitted(database, conversation, identity, choice, text, messageSid, send)) {
         return { kind: 'handled' };
       }
@@ -2779,7 +2904,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
 
       if (action === 'fix_freetext') {
-        await send('אפשר לכתוב פשוט מה לשנות — בתמונה או בטקסט — ואני כבר אבין 🙂');
+        await send('אפשר לכתוב פשוט מה לשנות - בתמונה או בטקסט - ואני כבר אבין 🙂');
         return { kind: 'handled' };
       }
 
@@ -3454,7 +3579,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       if (!slideNumber || slideNumber < 1 || slideNumber > deck.slides.length) {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-        await send(`איזה שקף לעדכן? אפשר לכתוב את מספר השקף ואת השינוי, למשל: ״שקף 2 — ${text.trim().slice(0, 40)}״`);
+        await send(`איזה שקף לעדכן? אפשר לכתוב את מספר השקף ואת השינוי, למשל: ״שקף 2 - ${text.trim().slice(0, 40)}״`);
         return { kind: 'handled' };
       }
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
@@ -3585,7 +3710,8 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       const event = events[idx];
-      const delivered = await send(buildEventTypeMessage(event), buildEventTypeInteraction(event));
+      const eventPerms = await menuPermissions(database, identity);
+      const delivered = await send(buildEventTypeMessage(event, eventPerms), buildEventTypeInteraction(event, eventPerms));
       if (delivered) {
         await setFlow(database, conversation.id, {
           flow_state: 'events_output_type',
@@ -3608,18 +3734,18 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await showEventsListAgain(database, conversation, send, events);
         return { kind: 'handled' };
       }
-      const t = norm(text);
-      const wantsBack = /^4\.?$/.test(t) || (t.length <= 20 && /(חזרה|רשימה|back)/.test(t));
-      const choice = wantsBack ? null : parseMainMenuChoice(text);
+      const typePerms = await menuPermissions(database, identity);
+      const picked = parseEventTypeChoice(text, typePerms);
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-      if (wantsBack) {
+      if (picked === 'back') {
         await showEventsListAgain(database, conversation, send, events);
         return { kind: 'handled' };
       }
+      const choice = picked;
       if (choice === 'image' || choice === 'pdf' || choice === 'presentation') {
-        if (identity.userId && !(await menuPermissions(database, identity))[choice]) {
+        if (identity.userId && !typePerms[choice]) {
           await send(deniedOutputMessage(choice));
-          await send(buildEventTypeMessage(event), buildEventTypeInteraction(event));
+          await send(buildEventTypeMessage(event, typePerms), buildEventTypeInteraction(event, typePerms));
           return { kind: 'handled' };
         }
         const delivered = await send(buildEventDetailsPrompt(event, choice), EVENT_DETAILS_INTERACTION);
@@ -3631,7 +3757,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         }
         return { kind: 'handled' };
       }
-      await send(buildEventTypeMessage(event), buildEventTypeInteraction(event));
+      await send(buildEventTypeMessage(event, typePerms), buildEventTypeInteraction(event, typePerms));
       return { kind: 'handled' };
     }
 

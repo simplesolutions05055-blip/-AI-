@@ -31,7 +31,7 @@ export async function getSettingOr<T>(database: DB, key: string, fallback: T): P
 // Safe defaults for the WhatsApp copy, so a missing/partial settings row still
 // lets the agent reply. Merged over whatever is in the DB.
 export const DEFAULT_TEMPLATES: Record<string, string> = {
-  received: 'יוצא לדרך 🚀 מכין את זה עכשיו — בערך דקה ⏳',
+  received: 'יוצא לדרך 🚀 מכין את זה עכשיו - בערך דקה ⏳',
   ask_email: 'לאיזה מייל לשלוח את התוצר? 📧',
   sent: 'שלחתי את התוצר למייל 📧 אם הוא לא מופיע, כדאי לבדוק גם בספאם.',
   needs_attention: 'נתקעתי קצת 🙈 העברתי למישהו מהצוות שיבדוק, ונחזור אליך בהקדם.',

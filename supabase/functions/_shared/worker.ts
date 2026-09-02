@@ -443,7 +443,7 @@ export async function sendOut(
       conversation_id: conversationId,
       request_id: requestId,
       direction: 'outbound',
-      body: `[לא נשלח — שגיאת ספק WhatsApp] ${body}`,
+      body: `[לא נשלח - שגיאת ספק WhatsApp] ${body}`,
       twilio_message_sid: `undelivered-${crypto.randomUUID()}`,
     });
     return false;
@@ -676,7 +676,7 @@ async function runRequestPipeline(
       request.status = 'collecting_details';
     } else {
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-      await sendOut(database, conversation.id, requestId, waFrom, addressUser('הבריף מוכן ✅ אם הכול טוב — כתבו ״מאשר״. רוצים לשנות משהו? פשוט כתבו מה.', gender), conversation.simulated);
+      await sendOut(database, conversation.id, requestId, waFrom, addressUser('הבריף מוכן ✅ אם הכול טוב - כתבו ״מאשר״. רוצים לשנות משהו? פשוט כתבו מה.', gender), conversation.simulated);
       return;
     }
   }
@@ -708,7 +708,7 @@ async function runRequestPipeline(
     // When the client/authority is already identified, tell the analyzer so it
     // never re-asks "which client?" — the user already named it (e.g. "תל אביב").
     const brandKnownDirective = briefBrandName
-      ? `\nהלקוח/הרשות כבר זוהה: ${briefBrandName}. אל תשאל לאיזה לקוח/רשות/עירייה מיועד התוצר — זה ידוע וסגור. השתמש בו ישירות והמשך; שאל רק על פרטים יצירתיים שבאמת חסרים (כגון מסר, קהל, או תאריך אם רלוונטי).`
+      ? `\nהלקוח/הרשות כבר זוהה: ${briefBrandName}. אל תשאל לאיזה לקוח/רשות/עירייה מיועד התוצר - זה ידוע וסגור. השתמש בו ישירות והמשך; שאל רק על פרטים יצירתיים שבאמת חסרים (כגון מסר, קהל, או תאריך אם רלוונטי).`
       : '';
     const briefPrompt =
       systemPrompt +
@@ -989,7 +989,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       // Skipped entirely when the flow already acked ("קיבלתי! מכין את...").
       if (version === 1 && !productionForm && brief.ack_sent !== true) {
         const delivered = await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-          addressUser('יוצא לדרך 🎨 מכין את התמונה והפוסט — בערך דקה ⏳', gender), conversation.simulated);
+          addressUser('יוצא לדרך 🎨 מכין את התמונה והפוסט - בערך דקה ⏳', gender), conversation.simulated);
         if (!delivered && !conversation.simulated) {
           await logEvent(database, {
             requestId,

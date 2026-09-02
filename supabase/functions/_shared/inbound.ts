@@ -572,7 +572,7 @@ async function createFlowRequest(
   // Instant reply, always. A revision is already a complete brief, so it can
   // promise work; a new brief gets the neutral "checking" ack and the worker
   // says "working on it" only once it really is.
-  await send(isRevision ? 'קיבלתי ✏️ מכין גרסה מתוקנת — רגע.' : CHECKING_ACK);
+  await send(isRevision ? 'קיבלתי ✏️ מכין גרסה מתוקנת - רגע.' : CHECKING_ACK);
 
   // Attachments (brief materials) — same handling as the legacy path.
   const media = await resolveMedia(requestId);
