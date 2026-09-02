@@ -16,7 +16,7 @@ import {
 import { processRequest } from '../_shared/worker.ts';
 import { findOrCreateConversation, handleInbound, type MediaResult } from '../_shared/inbound.ts';
 import { processInboundMediaItem, type InboundMediaProcessResult } from '../_shared/inbound_media.ts';
-import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
+import { AbuseGuardError, actorExemption, enforceMessageLimit } from '../_shared/abuseGuard.ts';
 
 function twiml() {
   return new Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
@@ -108,7 +108,8 @@ Deno.serve(async (req) => {
   // Backward-compatible legacy daily limit, kept as an extra ceiling for the
   // existing `rate_limits` setting that admins may already use.
   const limits = await getSettingOr<{ messages_per_24h: number }>(database, 'rate_limits', { messages_per_24h: 80 });
-  if (limits.messages_per_24h > 0) {
+  const exemptSender = (await actorExemption(database, { phone })).exempt;
+  if (!exemptSender && limits.messages_per_24h > 0) {
     const since = new Date(Date.now() - 86400000).toISOString();
     const { count } = await database
       .from('rate_limit_events')

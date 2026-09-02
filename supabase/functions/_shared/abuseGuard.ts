@@ -74,6 +74,58 @@ export async function abuseSettings(database: DB): Promise<typeof DEFAULTS> {
   };
 }
 
+// ── exemptions ───────────────────────────────────────────────────────────────
+// Some accounts must never be throttled — the operator testing the product,
+// first and foremost. The allow-list lives in settings.abuse_exemptions
+// (emails / user_ids / phones), so adding someone is a settings change, not a
+// deploy. An exempt actor skips every per-actor limit: messages, AI calls,
+// daily generations, parallel requests, prompt length and personal cost caps.
+//
+// The SYSTEM-WIDE daily budget is deliberately not skipped by default: it is
+// the last line between a bug and an unbounded OpenAI bill. Set
+// bypass_global_budget: true to lift that too.
+type ExemptionSettings = {
+  emails?: string[];
+  user_ids?: string[];
+  phones?: string[];
+  bypass_global_budget?: boolean;
+};
+
+// "+972-50-203-2767", "0502032767" and "972502032767" are the same number.
+function phoneDigits(value: string | null | undefined): string {
+  const digits = (value ?? '').replace(/\D/g, '');
+  return digits.length > 9 ? digits.slice(-9) : digits;
+}
+
+export type Exemption = { exempt: boolean; bypassGlobalBudget: boolean };
+
+const NOT_EXEMPT: Exemption = { exempt: false, bypassGlobalBudget: false };
+
+export async function actorExemption(database: DB, actor: Actor): Promise<Exemption> {
+  const cfg = await getSettingOr<ExemptionSettings>(database, 'abuse_exemptions', {});
+  const userIds = (cfg.user_ids ?? []).filter(Boolean);
+  const emails = (cfg.emails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean);
+  const phones = (cfg.phones ?? []).map(phoneDigits).filter(Boolean);
+  if (!userIds.length && !emails.length && !phones.length) return NOT_EXEMPT;
+  const hit = (): Exemption => ({ exempt: true, bypassGlobalBudget: cfg.bypass_global_budget === true });
+
+  if (actor.userId && userIds.includes(actor.userId)) return hit();
+  const actorPhone = phoneDigits(actor.phone);
+  if (actorPhone && phones.includes(actorPhone)) return hit();
+  if (actor.userId && emails.length) {
+    const { data: profile } = await database
+      .from('profiles')
+      .select('email, phone')
+      .eq('id', actor.userId)
+      .maybeSingle();
+    const email = ((profile?.email as string | null) ?? '').trim().toLowerCase();
+    if (email && emails.includes(email)) return hit();
+    const profilePhone = phoneDigits(profile?.phone as string | null);
+    if (profilePhone && phones.includes(profilePhone)) return hit();
+  }
+  return NOT_EXEMPT;
+}
+
 export function actorKey(actor: Actor): string {
   if (actor.userId) return `user:${actor.userId}`;
   if (actor.phone) return `phone:${actor.phone}`;
@@ -121,6 +173,7 @@ async function enforceLimit(
 }
 
 export async function enforceMessageLimit(database: DB, actor: Actor): Promise<void> {
+  if ((await actorExemption(database, actor)).exempt) return;
   const settings = await abuseSettings(database);
   const key = actorKey(actor);
   await enforceLimit(database, actor, key, 'message_minute', settings.message_per_minute);
@@ -134,6 +187,19 @@ export async function enforceAiLimit(
   actor: Actor,
   opts: { kind?: 'generation' | 'media' | 'utility'; estimatedCost?: number; promptChars?: number } = {},
 ): Promise<void> {
+  const exemption = await actorExemption(database, actor);
+  if (exemption.exempt && exemption.bypassGlobalBudget) return;
+  if (exemption.exempt) {
+    // Personal caps lifted; the system-wide budget still decides.
+    const budget = await evaluateGlobalDailyBudget(database, { requestId: actor.requestId });
+    if (budget.blocked) {
+      throw new AbuseGuardError(
+        'global_budget_exceeded',
+        'המערכת הגיעה לתקרת ההוצאה היומית. אפשר לנסות שוב מאוחר יותר.',
+      );
+    }
+    return;
+  }
   const settings = await abuseSettings(database);
   const key = actorKey(actor);
   if ((opts.promptChars ?? 0) > settings.max_prompt_chars) {
@@ -192,6 +258,7 @@ export async function enforcePromptLength(
   actor: Actor,
   promptChars: number,
 ): Promise<void> {
+  if ((await actorExemption(database, actor)).exempt) return;
   const settings = await abuseSettings(database);
   if (promptChars <= settings.max_prompt_chars) return;
   await logEvent(database, {
@@ -209,6 +276,7 @@ export async function enforceDailyCost(
   maxCost: number | null | undefined,
 ): Promise<void> {
   if (maxCost == null) return;
+  if ((await actorExemption(database, actor)).exempt) return;
   const since = new Date(Date.now() - 86400000).toISOString();
   let query = database
     .from('requests')
@@ -235,6 +303,7 @@ export async function enforceDailyCost(
 export async function enforceRequestCost(database: DB, requestId: string): Promise<void> {
   const settings = await abuseSettings(database);
   if (settings.max_request_cost_usd == null) return;
+  if ((await actorExemption(database, await loadRequestActor(database, requestId))).exempt) return;
   const { data: request } = await database
     .from('requests')
     .select('estimated_cost')
@@ -256,6 +325,7 @@ export async function enforceParallelRequestLimit(
   actor: Actor,
   excludeRequestId?: string | null,
 ): Promise<void> {
+  if ((await actorExemption(database, actor)).exempt) return;
   const settings = await abuseSettings(database);
   if (!settings.max_parallel_requests_per_actor || (!actor.userId && !actor.brandId)) return;
   let query = database

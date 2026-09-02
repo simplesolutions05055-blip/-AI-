@@ -13,7 +13,7 @@ import { db } from '../_shared/db.ts';
 import { processRequest } from '../_shared/worker.ts';
 import { findOrCreateConversation, handleInbound } from '../_shared/inbound.ts';
 import { getSettingOr, getTemplates, logEvent } from '../_shared/util.ts';
-import { AbuseGuardError, enforceMessageLimit } from '../_shared/abuseGuard.ts';
+import { AbuseGuardError, actorExemption, enforceMessageLimit } from '../_shared/abuseGuard.ts';
 import { matchesEnvSecret } from '../_shared/secrets.ts';
 import { downloadMedia } from '../_shared/smartsend.ts';
 import { processInboundMediaItem } from '../_shared/inbound_media.ts';
@@ -129,7 +129,10 @@ async function processAcceptedWebhook(raw: unknown, ip: string | null): Promise<
     'rate_limits',
     { messages_per_24h: 80 },
   );
-  if (limits.messages_per_24h > 0) {
+  // The exemption list applies to this legacy ceiling too, otherwise an exempt
+  // account is still silently cut off after N messages a day.
+  const exempt = (await actorExemption(database, { phone: message.phone })).exempt;
+  if (!exempt && limits.messages_per_24h > 0) {
     const since = new Date(Date.now() - 86_400_000).toISOString();
     const { count } = await database
       .from('rate_limit_events')
