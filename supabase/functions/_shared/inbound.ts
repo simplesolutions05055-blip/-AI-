@@ -29,9 +29,12 @@ import {
   handleFlowMessage,
   showMainMenu,
   buildSignupMessage,
+  deniedOutputMessage,
   type FlowConversation,
+  type Identity,
   type SendFn,
 } from './flow.ts';
+import { canProduce } from './output_permissions.ts';
 import { genderText } from './whatsappCopy.ts';
 
 type Conversation = FlowConversation;
@@ -320,7 +323,7 @@ export async function handleInbound(
     return { requestIdToProcess: null, background: flow.background ?? null };
   }
   if (flow.kind === 'new_request' || flow.kind === 'revision_request') {
-    return await createFlowRequest(database, opts, identity.userId, identity.brandId, flow);
+    return await createFlowRequest(database, opts, identity, send, flow);
   }
 
   // ── bare greeting / opener → personalized main menu ──────────────────────
@@ -441,10 +444,10 @@ export async function handleInbound(
     return { requestIdToProcess: null };
   }
 
-  // Greet on a brand-new request (after claiming, so a duplicate never re-greets).
-  if (isNewRequest) {
-    await sendOut(database, conversation.id, requestId, from, templates.received, simulated);
-  }
+  // No "received, working on it" ack here: at this point nobody knows yet
+  // whether the brief is complete. The worker acks once generation actually
+  // starts, and asks its question otherwise — never both.
+  void isNewRequest;
 
   // ── media (channel-specific) → effective body + first stored file ─────────
   const media = await resolveMedia(requestId);
@@ -474,15 +477,35 @@ export async function handleInbound(
 async function createFlowRequest(
   database: DB,
   opts: InboundOpts,
-  userId: string | null,
-  brandId: string | null,
+  identity: Identity,
+  send: SendFn,
   flow:
     | { kind: 'new_request'; outputType: string; briefText?: string }
     | { kind: 'revision_request'; outputType: string; brief: Record<string, unknown> }
 ): Promise<InboundResult> {
   const { conversation, from, body, messageSid, numMedia, templates, simulated, resolveMedia } = opts;
+  const { userId, brandId } = identity;
 
   const isRevision = flow.kind === 'revision_request';
+
+  // Server-side backstop: the menu already hides denied types, but a typed
+  // keyword or a stale menu must never create a deliverable the site's
+  // permissions deny. Unknown/unlinked senders never reach here (identity gate).
+  if (userId && !isRevision) {
+    const type = flow.outputType as 'image' | 'pdf' | 'presentation' | 'text';
+    if (type === 'image' || type === 'pdf' || type === 'presentation' || type === 'text') {
+      if (!(await canProduce(database, userId, type))) {
+        const { error: claimErr } = await database.from('messages').insert({
+          conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
+        });
+        if (claimErr) return { requestIdToProcess: null };
+        await logEvent(database, { action: 'whatsapp_output_denied', metadata: { output_type: type, user_id: userId } });
+        await sendOut(database, conversation.id, null, from, deniedOutputMessage(type), simulated);
+        await showMainMenu(database, conversation, identity, send);
+        return { requestIdToProcess: null };
+      }
+    }
+  }
   let requestBrandId = brandId;
   if (isRevision) {
     // A revision keeps the source request's brand (may differ from the user's).

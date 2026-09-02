@@ -77,3 +77,39 @@ function normalizeOutputPermissions(value: unknown): OutputPermissions {
   }
   return next;
 }
+
+// Non-throwing variant for the WhatsApp flow: which deliverable types this user
+// may create. The bot must offer exactly what the site's permissions allow —
+// an unknown/unlinked sender gets nothing.
+export async function allowedOutputTypes(
+  database: any,
+  userId: string | null,
+): Promise<Set<ProductionPermissionType>> {
+  const allowed = new Set<ProductionPermissionType>();
+  if (!userId) return allowed;
+  for (const type of TYPES) {
+    try {
+      await assertCanProduce(database, userId, type);
+      allowed.add(type);
+    } catch (e) {
+      if (!(e instanceof PermissionError)) throw e;
+    }
+  }
+  return allowed;
+}
+
+export async function canProduce(
+  database: any,
+  userId: string | null,
+  type: ProductionPermissionType,
+): Promise<boolean> {
+  try {
+    await assertCanProduce(database, userId, type);
+    return true;
+  } catch (e) {
+    if (e instanceof PermissionError) return false;
+    throw e;
+  }
+}
+
+export type { ProductionPermissionType };

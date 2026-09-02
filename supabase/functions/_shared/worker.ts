@@ -33,7 +33,8 @@ import {
   buildTemplateLockBlock,
   maybeLockTemplate,
 } from './learning.ts';
-import { buildPostDeliveryInteraction, buildPostDeliveryMenu } from './flow.ts';
+import { buildPostDeliveryInteraction, buildPostDeliveryMenu, deniedOutputMessage } from './flow.ts';
+import { assertCanProduce, PermissionError } from './output_permissions.ts';
 import { genderText, normalizeAddressGender } from './whatsappCopy.ts';
 import {
   AbuseGuardError,
@@ -768,9 +769,12 @@ async function runRequestPipeline(
         action: 'brief_empty_asked_user',
         metadata: { chars: userContent.length, output_type: requestedOutputType },
       });
-      const ask = effectiveNextQuestion?.trim()
-        ? effectiveNextQuestion
-        : 'לא הבנתי מה להכין — הבקשה הגיעה בלי פרטים. אפשר לכתוב לי במשפט אחד מה התוצר, למי הוא מיועד ומה חשוב שיופיע בו?';
+      // The user has not described anything yet, so a targeted follow-up
+      // ("what's the event date?") is built on leftovers from earlier
+      // requests, not on this one. Ask what to make first; the gate re-runs
+      // once there is real content.
+      const ask =
+        'לא הבנתי מה להכין — הבקשה הגיעה בלי פרטים. אפשר לכתוב לי במשפט אחד מה התוצר, למי הוא מיועד ומה חשוב שיופיע בו?';
       await database
         .from('requests')
         .update({ structured_brief: b, output_type: (b.output_type as string) ?? null, customer_email: email })
@@ -901,8 +905,34 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   if (businessBrain.content) brief.business_content_context = businessBrain.content;
   if (businessBrain.visual) brief.brand_guidelines = businessBrain.visual;
 
+  // Site permissions are the single source of truth for every channel. The
+  // guided menu already filters, but the free-text path (and any admin retry)
+  // lands here too, so this is the check that actually holds.
+  if (!productionForm && request.created_by) {
+    try {
+      await assertCanProduce(database, request.created_by as string, outputType as 'text' | 'image' | 'pdf' | 'presentation');
+    } catch (e) {
+      if (!(e instanceof PermissionError)) throw e;
+      await logEvent(database, {
+        requestId, severity: 'warning', action: 'output_permission_denied',
+        message: e.message, metadata: { output_type: outputType, user_id: request.created_by },
+      });
+      await setStatus(database, requestId, 'rejected');
+      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, deniedOutputMessage(outputType), conversation.simulated);
+      await releaseConversationSlot(database, conversation.id);
+      return;
+    }
+  }
+
   await setStatus(database, requestId, 'processing');
   const version = (request.attempt_count ?? 0) + 1;
+
+  // One ack, and only now — when generation really starts. Earlier acks lied
+  // ("working on it") right before a clarifying question. Image has its own
+  // wording below; the guided flow already acked (ack_sent).
+  if (outputType !== 'image' && version === 1 && !productionForm && brief.ack_sent !== true) {
+    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.received, conversation.simulated);
+  }
 
   try {
     let textContent: string | null = null;

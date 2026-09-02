@@ -13,6 +13,7 @@ import { isGroupTarget, parseGroupTarget, sendGroupMedia } from './group.ts';
 import { generateSocialCaption, classifyPostDeliveryIntent, generateDeckSlides, rewriteDeckSlide, extractSlideCountFromPrompt, extractDeckEditSlideTarget } from './openai.ts';
 import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail, MAX_MEDIA_BYTES } from './util.ts';
 import { normalizeHe } from './brand.ts';
+import { allowedOutputTypes } from './output_permissions.ts';
 import { sendDeliverableCopy, loadPdfBrandSettings } from './deliverableEmail.ts';
 import { renderDocxBase64 } from './docx.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from './abuseGuard.ts';
@@ -171,7 +172,31 @@ async function userBrandId(database: DB, userId: string): Promise<string | null>
 }
 
 // ── menu texts ───────────────────────────────────────────────────────────────
-export function buildMainMenu(displayName: string, gender: AddressGender = null): string {
+export type MenuPermissions = {
+  image: boolean;
+  pdf: boolean;
+  presentation: boolean;
+};
+
+// Everything on, used where permissions are unknown (simulator sessions).
+export const ALL_MENU_PERMISSIONS: MenuPermissions = { image: true, pdf: true, presentation: true };
+
+// The bot must never offer a deliverable the site's permissions deny. Lines for
+// denied types are dropped, but the numbering of the surviving ones never
+// shifts — returning users keep typing the number they already know.
+export function buildMainMenu(
+  displayName: string,
+  gender: AddressGender = null,
+  perms: MenuPermissions = ALL_MENU_PERMISSIONS,
+): string {
+  const items = [
+    perms.image ? '1️⃣ תמונה / פוסט' : null,
+    perms.pdf ? '2️⃣ מסמך' : null,
+    perms.presentation ? '3️⃣ מצגת 📊' : null,
+    perms.image || perms.pdf ? '4️⃣ קבלו רעיון 💡' : null,
+    '5️⃣ תזמון פוסט לרשתות 📅',
+    '6️⃣ ניהול תזמונים 🗂️',
+  ].filter(Boolean) as string[];
   return [
     genderText(gender, {
       male: `היי${displayName ? ` ${displayName}` : ''}, מה תרצה להכין היום? 👋`,
@@ -179,34 +204,83 @@ export function buildMainMenu(displayName: string, gender: AddressGender = null)
       plural: `היי${displayName ? ` ${displayName}` : ''}, מה תרצו להכין היום? 👋`,
     }),
     '',
-    '1️⃣ תמונה / פוסט',
-    '2️⃣ מסמך',
-    '3️⃣ מצגת 📊',
-    '4️⃣ קבלו רעיון 💡',
-    '5️⃣ תזמון פוסט לרשתות 📅',
-    '6️⃣ ניהול תזמונים 🗂️',
+    ...items,
     '',
-    'אפשר להשיב במספר (1-6) או במילה.',
+    'אפשר להשיב במספר או במילה.',
     // Stated up front, once: nobody discovers a command they were never told
     // about, and "how do I undo that" is the most common dead end here.
     'בכל שלב: ״אחורה״ לחזרה שלב אחד · ״תפריט״ להתחלה מחדש.',
   ].join('\n');
 }
 
-export function buildMainMenuInteraction(): WhatsAppInteractive {
+export function buildMainMenuInteraction(
+  perms: MenuPermissions = ALL_MENU_PERMISSIONS,
+): WhatsAppInteractive {
+  const options = [
+    perms.image ? { id: '1', title: 'תמונה / פוסט', description: 'יצירת תמונה או פוסט חדש' } : null,
+    perms.pdf ? { id: '2', title: 'מסמך', description: 'יצירת מסמך חדש' } : null,
+    perms.presentation ? { id: '3', title: 'מצגת', description: 'יצירת מצגת חדשה' } : null,
+    perms.image || perms.pdf
+      ? { id: '4', title: 'קבלו רעיון', description: 'רעיון לתוכן לפי אירועים וחגים קרובים' }
+      : null,
+    { id: '5', title: 'תזמון פוסט', description: 'תזמון פרסום לרשתות' },
+    { id: '6', title: 'ניהול תזמונים', description: 'צפייה ועריכה של התזמונים הקרובים' },
+  ].filter(Boolean) as Array<{ id: string; title: string; description: string }>;
   return {
     kind: 'list_picker',
     body: 'היי! מה תרצה להכין היום? 👋',
     button: 'בחירת תוצר',
-    options: [
-      { id: '1', title: 'תמונה / פוסט', description: 'יצירת תמונה או פוסט חדש' },
-      { id: '2', title: 'מסמך', description: 'יצירת מסמך חדש' },
-      { id: '3', title: 'מצגת', description: 'יצירת מצגת חדשה' },
-      { id: '4', title: 'קבלו רעיון', description: 'רעיון לתוכן לפי אירועים וחגים קרובים' },
-      { id: '5', title: 'תזמון פוסט', description: 'תזמון פרסום לרשתות' },
-      { id: '6', title: 'ניהול תזמונים', description: 'צפייה ועריכה של התזמונים הקרובים' },
-    ],
+    options,
   };
+}
+
+// What this WhatsApp sender may create, straight from the site's permission
+// model (global setting + per-user override + can_create_outputs).
+export async function menuPermissions(
+  database: DB,
+  identity: Identity,
+): Promise<MenuPermissions> {
+  // A simulator session has no linked profile — it mirrors the admin console,
+  // which already gates itself, so nothing is hidden there.
+  if (!identity.userId) return ALL_MENU_PERMISSIONS;
+  const allowed = await allowedOutputTypes(database, identity.userId);
+  return {
+    image: allowed.has('image'),
+    pdf: allowed.has('pdf'),
+    presentation: allowed.has('presentation'),
+  };
+}
+
+const DENIED_TYPE_LABEL: Record<string, string> = {
+  image: 'תמונות ופוסטים',
+  pdf: 'מסמכים',
+  presentation: 'מצגות',
+};
+
+// Menu choice that would create a deliverable the user may not produce →
+// tell them why and re-show their (filtered) menu. Returns true when handled.
+async function denyIfNotPermitted(
+  database: DB,
+  conversation: FlowConversation,
+  identity: Identity,
+  choice: string | null,
+  text: string,
+  messageSid: string,
+  send: SendFn,
+): Promise<boolean> {
+  const outputType = choice === 'image' || choice === 'pdf' || choice === 'presentation' ? choice : null;
+  if (!outputType || !identity.userId) return false;
+  const perms = await menuPermissions(database, identity);
+  if (perms[outputType]) return false;
+  if (!(await claimMessage(database, conversation.id, text, messageSid))) return true;
+  await send(deniedOutputMessage(outputType));
+  await showMainMenu(database, conversation, identity, send);
+  return true;
+}
+
+export function deniedOutputMessage(outputType: string): string {
+  const label = DENIED_TYPE_LABEL[outputType] ?? 'תוצרים מסוג זה';
+  return `אין לחשבון שלך הרשאה ליצור ${label}. אפשר לפנות למנהל המערכת כדי לפתוח את ההרשאה.`;
 }
 
 // WhatsApp/Twilio silently drops inbound messages over ~1600 chars (warning
@@ -833,7 +907,8 @@ async function stepBack(
   if (previous.prompt) {
     await send(`⬅️ חזרנו שלב אחורה.\n\n${previous.prompt}`);
   } else {
-    await send(buildMainMenu(identity.displayName, identity.gender), buildMainMenuInteraction());
+    const perms = await menuPermissions(database, identity);
+    await send(buildMainMenu(identity.displayName, identity.gender, perms), buildMainMenuInteraction(perms));
   }
   return { kind: 'handled' };
 }
@@ -2334,9 +2409,10 @@ export async function showMainMenu(
   identity: Identity,
   send: SendFn
 ): Promise<void> {
+  const perms = await menuPermissions(database, identity);
   const delivered = await send(
-    buildMainMenu(identity.displayName, identity.gender),
-    buildMainMenuInteraction(),
+    buildMainMenu(identity.displayName, identity.gender, perms),
+    buildMainMenuInteraction(perms),
   );
   if (delivered) {
     await setFlow(database, conversation.id, {
@@ -2387,6 +2463,9 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
     // ── main menu: pick deliverable type ────────────────────────────────────
     case 'main_menu': {
       const choice = numMedia === 0 ? parseMainMenuChoice(text) : null;
+      if (await denyIfNotPermitted(database, conversation, identity, choice, text, messageSid, send)) {
+        return { kind: 'handled' };
+      }
       if (choice === 'schedule_post') {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
         const delivered = await send(SCHEDULE_SOURCE_MENU, SCHEDULE_SOURCE_INTERACTION);
@@ -2442,7 +2521,8 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
       }
       // Short unrecognized reply → re-show the menu.
       if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
-      await send(buildMainMenu(opts.identity.displayName, opts.identity.gender), buildMainMenuInteraction());
+      const perms = await menuPermissions(database, opts.identity);
+      await send(buildMainMenu(opts.identity.displayName, opts.identity.gender, perms), buildMainMenuInteraction(perms));
       return { kind: 'handled' };
     }
 
@@ -2456,6 +2536,9 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       const choice = numMedia === 0 ? parseMainMenuChoice(text) : null;
+      if (await denyIfNotPermitted(database, conversation, identity, choice, text, messageSid, send)) {
+        return { kind: 'handled' };
+      }
       // Changed their mind — they want to schedule a post, not write a brief.
       if (choice === 'schedule_post') {
         if (!(await claimMessage(database, conversation.id, text, messageSid))) return { kind: 'handled' };
@@ -3484,6 +3567,11 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         return { kind: 'handled' };
       }
       if (choice === 'image' || choice === 'pdf' || choice === 'presentation') {
+        if (identity.userId && !(await menuPermissions(database, identity))[choice]) {
+          await send(deniedOutputMessage(choice));
+          await send(buildEventTypeMessage(event), buildEventTypeInteraction(event));
+          return { kind: 'handled' };
+        }
         const delivered = await send(buildEventDetailsPrompt(event, choice), EVENT_DETAILS_INTERACTION);
         if (delivered) {
           await setFlow(database, conversation.id, {
