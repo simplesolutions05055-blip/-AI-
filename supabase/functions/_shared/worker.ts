@@ -467,6 +467,35 @@ export async function sendOut(
 const IN_FLIGHT = ['processing', 'quality_check', 'sending'];
 const SETTLED = ['approved', 'sent', 'rejected', 'closed', 'needs_attention', 'failed'];
 
+// A guard that stops the work must always say so. Silence reads as a hang: on
+// 2026-09-02 the daily generation cap hit right after "קיבלתי את התמונה", the
+// request went to needs_attention, and the user was left watching an empty
+// chat with no idea anything had happened.
+async function reportBlockedRequest(
+  database: DB,
+  requestId: string,
+  error: AbuseGuardError,
+): Promise<void> {
+  await logEvent(database, {
+    requestId, severity: 'warning', action: 'process_blocked_by_abuse_guard',
+    message: error.message, metadata: { code: error.code },
+  });
+  await database.from('requests').update({ status: 'needs_attention' }).eq('id', requestId);
+  const { data: req } = await database
+    .from('requests')
+    .select('created_by, conversations!requests_conversation_id_fkey(id, whatsapp_from, simulated)')
+    .eq('id', requestId)
+    .maybeSingle();
+  const conv = req?.conversations as unknown as Conv | null;
+  if (!conv) return;
+  const gender = await requestGender(database, (req?.created_by as string | null) ?? null);
+  await sendOut(
+    database, conv.id, requestId, conv.whatsapp_from,
+    addressUser(`${error.message} 🙏`, gender), conv.simulated,
+  );
+  await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conv.id);
+}
+
 export async function processRequest(
   requestId: string,
   opts: { trigger?: 'message' | 'admin' } = {}
@@ -514,8 +543,7 @@ export async function processRequest(
     await enforceAiLimit(database, actor, { kind: 'generation' });
   } catch (e) {
     if (e instanceof AbuseGuardError) {
-      await logEvent(database, { requestId, severity: 'warning', action: 'process_blocked_by_abuse_guard', message: e.message, metadata: { code: e.code } });
-      await database.from('requests').update({ status: 'needs_attention' }).eq('id', requestId);
+      await reportBlockedRequest(database, requestId, e);
       return;
     }
     throw e;
@@ -531,8 +559,7 @@ export async function processRequest(
       await runRequestPipeline(database, requestId, trigger);
     } catch (e) {
       if (e instanceof AbuseGuardError) {
-        await logEvent(database, { requestId, severity: 'warning', action: 'process_blocked_by_abuse_guard', message: e.message, metadata: { code: e.code } });
-        await database.from('requests').update({ status: 'needs_attention' }).eq('id', requestId);
+        await reportBlockedRequest(database, requestId, e);
         return;
       }
       throw e;
