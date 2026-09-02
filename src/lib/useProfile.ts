@@ -23,6 +23,10 @@ export interface Profile {
   gender: ProfileGender | null;
   avatar_path: string | null;
   onboarding: OnboardingState;
+  /** Per-user override of the global output_permissions setting; null = inherit. */
+  output_permissions: unknown;
+  /** Per-user calendar-month production caps by group; {} = none. */
+  monthly_limits: unknown;
 }
 
 export interface ProfileState {
@@ -35,7 +39,7 @@ export interface ProfileState {
 }
 
 const PROFILE_COLUMNS =
-  'id, email, role, can_create_outputs, full_name, phone, job_title, gender, avatar_path, onboarding';
+  'id, email, role, can_create_outputs, full_name, phone, job_title, gender, avatar_path, onboarding, output_permissions, monthly_limits';
 
 /** Loads the signed-in user's profile, brand membership, and the onboarding policy. */
 export function useProfile(): ProfileState {
@@ -78,6 +82,8 @@ export function useProfile(): ProfileState {
             gender: null,
             avatar_path: null,
             onboarding: {},
+            output_permissions: null,
+            monthly_limits: {},
           };
 
       setState({

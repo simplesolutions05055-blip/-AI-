@@ -8,7 +8,7 @@ import { useProfile } from '@/lib/useProfile';
 import { Tooltip } from '@/components/ui/Tooltip';
 import type { OutputType } from '@/types/db';
 import { parseRichText, exportRichTextPdf, exportRichTextDocx, RichTextPreview } from '@/lib/richText';
-import { canProduceType, normalizeOutputPermissions, type OutputPermissions } from '@/lib/outputPermissions';
+import { canProduceType, mergeUserPermissions, normalizeOutputPermissions, type OutputPermissions } from '@/lib/outputPermissions';
 import { Spinner } from '@/components/ui/Spinner';
 import { alertDialog, confirmDialog } from '@/lib/dialog';
 
@@ -579,7 +579,8 @@ export default function FilesPage() {
       let requiredType = file.output_type as any;
       if (file.request_source === 'quote') requiredType = 'quote';
 
-      if (permissions && !canProduceType(permissions, requiredType, role, canCreateOutputs)) {
+      const effPerms = permissions ? mergeUserPermissions(permissions, profile?.output_permissions) : null;
+      if (effPerms && !canProduceType(effPerms, requiredType, role, canCreateOutputs)) {
         return false;
       }
     }
@@ -676,10 +677,11 @@ export default function FilesPage() {
             if (!permissions) return true;
             const role = profile?.role ?? 'user';
             const canCreateOutputs = profile?.can_create_outputs ?? false;
+            const effPerms = mergeUserPermissions(permissions, profile?.output_permissions);
             if (item.key === 'document') {
-              return canProduceType(permissions, 'pdf', role, canCreateOutputs);
+              return canProduceType(effPerms, 'pdf', role, canCreateOutputs);
             }
-            return canProduceType(permissions, item.key as any, role, canCreateOutputs);
+            return canProduceType(effPerms, item.key as any, role, canCreateOutputs);
           }).map((item) => {
             const active =
               sourceFilter === item.source &&

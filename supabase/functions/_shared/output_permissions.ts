@@ -22,7 +22,7 @@ export async function assertCanProduce(
 
   const { data: profile, error: profileError } = await database
     .from('profiles')
-    .select('role, can_create_outputs')
+    .select('role, can_create_outputs, output_permissions')
     .eq('id', userId)
     .maybeSingle();
   if (profileError) throw profileError;
@@ -40,8 +40,18 @@ export async function assertCanProduce(
     .maybeSingle();
   if (settingError) throw settingError;
 
-  const permissions = normalizeOutputPermissions(setting?.value_json);
-  if (permissions[type]?.[role] === false) {
+  // Global setting is the baseline; the user's own override (if any) wins per
+  // type. Only the user's own role slot is consulted.
+  const globalPerms = normalizeOutputPermissions(setting?.value_json);
+  const override = profile.output_permissions;
+  const overrideRow =
+    override && typeof override === 'object' && (override as Record<string, unknown>)[type];
+  const userSlot =
+    overrideRow && typeof overrideRow === 'object'
+      ? (overrideRow as Record<string, unknown>)[role]
+      : undefined;
+  const allowed = typeof userSlot === 'boolean' ? userSlot : globalPerms[type]?.[role] !== false;
+  if (!allowed) {
     throw new PermissionError('output_type_disabled');
   }
 }

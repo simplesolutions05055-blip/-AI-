@@ -6,7 +6,11 @@ import { PageSkeleton } from '@/components/ui/Skeleton';
 import { confirmDialog } from '@/lib/dialog';
 import {
   PRODUCTION_PERMISSION_TYPES,
+  MONTHLY_LIMIT_GROUPS,
+  mergeUserPermissions,
+  normalizeMonthlyLimits,
   normalizeOutputPermissions,
+  type MonthlyLimitGroup,
   type OutputPermissions,
   type OutputPermissionsRole,
   type ProductionPermissionType,
@@ -18,6 +22,10 @@ interface ProfileRow {
   role: 'admin' | 'user';
   can_create_outputs: boolean;
   created_at: string;
+  phone?: string | null;
+  job_title?: string | null;
+  output_permissions?: unknown;
+  monthly_limits?: unknown;
 }
 
 interface BrandRow {
@@ -63,7 +71,7 @@ export default function PermissionsPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [tab, setTab] = useState<'admins' | 'users' | 'permissions'>('admins');
+  const [tab, setTab] = useState<'admins' | 'users' | 'brands' | 'permissions'>('admins');
   const [outputPermissions, setOutputPermissions] = useState<OutputPermissions>(() => normalizeOutputPermissions(null));
   const [creatingUser, setCreatingUser] = useState(false);
   const [selectedUser, setSelectedUser] = useState<ProfileRow | null>(null);
@@ -101,7 +109,7 @@ export default function PermissionsPage() {
   useEffect(() => {
     (async () => {
       const [{ data: profs }, { data: brs }, { data: ub }, { data: permissionRow }] = await Promise.all([
-        db.from('profiles').select('id, email, role, can_create_outputs, created_at').order('created_at'),
+        db.from('profiles').select('id, email, role, can_create_outputs, created_at, phone, job_title, output_permissions, monthly_limits').order('created_at'),
         db.from('brands').select('id, name, is_active, logo_path').order('name'),
         db.from('user_brands').select('user_id, brand_id'),
         db.from('settings').select('value_json').eq('key', 'output_permissions').maybeSingle(),
@@ -349,6 +357,16 @@ export default function PermissionsPage() {
           משתמשים ({users.length})
         </button>
         <button
+          onClick={() => setTab('brands')}
+          className={`shrink-0 whitespace-nowrap px-3 py-3 text-sm font-semibold border-b-2 transition sm:px-4 ${
+            tab === 'brands'
+              ? 'border-brand text-brand'
+              : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          מותגים ({brands.length})
+        </button>
+        <button
           onClick={() => setTab('permissions')}
           className={`shrink-0 whitespace-nowrap px-3 py-3 text-sm font-semibold border-b-2 transition sm:px-4 ${
             tab === 'permissions'
@@ -356,7 +374,7 @@ export default function PermissionsPage() {
               : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
           }`}
         >
-          הרשאות
+          הרשאות ברירת מחדל
         </button>
       </div>
 
@@ -365,6 +383,16 @@ export default function PermissionsPage() {
           permissions={outputPermissions}
           savingId={savingId}
           onToggle={toggleOutputPermission}
+        />
+      ) : tab === 'brands' ? (
+        <BrandsTab
+          brands={brands}
+          brandLogoUrls={brandLogoUrls}
+          users={users}
+          grants={grants}
+          savingId={savingId}
+          onAssign={toggleBrand}
+          onCreateNew={() => navigate('/admin/branding')}
         />
       ) : (
 
@@ -576,15 +604,103 @@ export default function PermissionsPage() {
       )}
 
       {selectedUser && (
-        <UserDetailsModal
+        <UserCard
+          key={selectedUser.id}
+          db={db}
           user={selectedUser}
           brands={brands}
           userBrandIds={grants[selectedUser.id] ?? new Set<string>()}
+          globalPermissions={outputPermissions}
           activity={activity}
           loading={activityLoading}
+          onFlash={flash}
+          onSaved={(patch) => setProfiles((prev) => prev.map((x) => (x.id === selectedUser.id ? { ...x, ...patch } : x)))}
           onClose={() => setSelectedUser(null)}
         />
       )}
+    </div>
+  );
+}
+
+function BrandsTab({
+  brands, brandLogoUrls, users, grants, savingId, onAssign, onCreateNew,
+}: {
+  brands: BrandRow[];
+  brandLogoUrls: Record<string, string>;
+  users: ProfileRow[];
+  grants: Record<string, Set<string>>;
+  savingId: string | null;
+  onAssign: (user: ProfileRow, brandId: string) => void;
+  onCreateNew: () => void;
+}) {
+  const [addingTo, setAddingTo] = useState<string | null>(null);
+  const membersOf = (brandId: string) => users.filter((u) => (grants[u.id] ?? new Set()).has(brandId));
+  const unassignedElsewhere = users.filter((u) => (grants[u.id] ?? new Set()).size === 0);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[var(--muted)]">מותג אחד לכל משתמש רגיל; למותג אפשר לשייך כמה משתמשים.</p>
+        <button type="button" onClick={onCreateNew} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-semibold hover:bg-gray-50">+ מותג חדש</button>
+      </div>
+      {brands.length === 0 && <p className="text-sm text-[var(--muted)]">אין מותגים.</p>}
+      {brands.map((b) => {
+        const members = membersOf(b.id);
+        const logo = brandLogoUrls[b.id];
+        return (
+          <div key={b.id} className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-white">
+                {logo ? <img src={logo} alt="" className="h-full w-full object-contain p-0.5" /> : <span className="text-[10px] font-bold text-brand">{b.name.slice(0, 2)}</span>}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold">{b.name}</div>
+                <div className="text-xs text-[var(--muted)]">{members.length} משתמשים משויכים{b.is_active ? '' : ' · לא פעיל'}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddingTo(addingTo === b.id ? null : b.id)}
+                className="shrink-0 rounded-lg border border-brand/30 bg-brand/5 px-2.5 py-1 text-xs font-semibold text-brand hover:bg-brand/10"
+              >
+                שייך משתמש
+              </button>
+            </div>
+
+            {members.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {members.map((m) => (
+                  <span key={m.id} className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs">
+                    <bdi>{m.email}</bdi>
+                    <button type="button" onClick={() => onAssign(m, b.id)} disabled={savingId === m.id} aria-label="הסרה" className="text-[var(--muted)] hover:text-red-600">×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {addingTo === b.id && (
+              <div className="mt-3 border-t border-[var(--border)] pt-3">
+                {unassignedElsewhere.length === 0 ? (
+                  <p className="text-xs text-[var(--muted)]">כל המשתמשים הרגילים כבר משויכים למותג. משתמש רגיל יכול להיות במותג אחד בלבד.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {unassignedElsewhere.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => { onAssign(u, b.id); setAddingTo(null); }}
+                        disabled={savingId === u.id}
+                        className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        <bdi>{u.email}</bdi>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -638,17 +754,101 @@ function OutputPermissionsTab({
   );
 }
 
-function UserDetailsModal({
-  user, brands, userBrandIds, activity, loading, onClose,
+function UserCard({
+  db, user, brands, userBrandIds, globalPermissions, activity, loading, onFlash, onSaved, onClose,
 }: {
+  db: ReturnType<typeof createSupabaseBrowserClient>;
   user: ProfileRow;
   brands: BrandRow[];
   userBrandIds: Set<string>;
+  globalPermissions: OutputPermissions;
   activity: ActivityRow[];
   loading: boolean;
+  onFlash: (msg: string) => void;
+  onSaved: (patch: Partial<ProfileRow>) => void;
   onClose: () => void;
 }) {
+  const isAdmin = user.role === 'admin';
   const userBrands = brands.filter((brand) => userBrandIds.has(brand.id));
+
+  const [perms, setPerms] = useState<OutputPermissions>(() =>
+    mergeUserPermissions(globalPermissions, user.output_permissions));
+  const [limits, setLimits] = useState<Record<MonthlyLimitGroup, number>>(() =>
+    normalizeMonthlyLimits(user.monthly_limits));
+  const [canCreate, setCanCreate] = useState(user.can_create_outputs);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState<string | null>(null);
+  const [usage, setUsage] = useState<Record<string, number> | null>(null);
+  const [monthCost, setMonthCost] = useState<number | null>(null);
+
+  useEffect(() => {
+    db.functions.invoke('admin-user-admin', { body: { user_id: user.id, action: 'snapshot' } })
+      .then(({ data }) => {
+        const d = data as { monthly_usage?: Record<string, number>; month_cost_usd?: number } | null;
+        if (d?.monthly_usage) setUsage(d.monthly_usage);
+        if (typeof d?.month_cost_usd === 'number') setMonthCost(d.month_cost_usd);
+      });
+  }, [db, user.id]);
+
+  async function saveField(patch: Partial<ProfileRow>) {
+    setBusy('save');
+    const { error } = await db.from('profiles').update(patch as never).eq('id', user.id);
+    setBusy(null);
+    if (error) return onFlash('שמירה נכשלה');
+    onSaved(patch);
+    onFlash('נשמר');
+  }
+
+  function togglePerm(type: ProductionPermissionType) {
+    const next: OutputPermissions = { ...perms, [type]: { ...perms[type], user: !perms[type].user } };
+    setPerms(next);
+    // Store the full per-type 'user' slot as the override; the admin slot stays
+    // whatever the global setting says.
+    const override = PRODUCTION_PERMISSION_TYPES.reduce((acc, item) => {
+      acc[item.type] = { user: next[item.type].user };
+      return acc;
+    }, {} as Record<string, { user: boolean }>);
+    void saveField({ output_permissions: override });
+  }
+
+  async function toggleCanCreate() {
+    const nextVal = !canCreate;
+    setCanCreate(nextVal);
+    await saveField({ can_create_outputs: nextVal });
+  }
+
+  function commitLimit(group: MonthlyLimitGroup, raw: string) {
+    const n = Math.max(0, Math.floor(Number(raw) || 0));
+    const next = { ...limits, [group]: n };
+    setLimits(next);
+    void saveField({ monthly_limits: next });
+  }
+
+  async function runAdminAction(action: 'reset_password' | 'login_link', purpose?: 'assist' | 'handoff') {
+    setBusy(action + (purpose ?? ''));
+    const { data } = await db.functions.invoke('admin-user-admin', { body: { user_id: user.id, action, purpose } });
+    setBusy(null);
+    const res = data as { error?: string; password?: string; link?: string } | null;
+    if (res?.error) return onFlash('הפעולה נכשלה');
+    if (action === 'reset_password' && res?.password) {
+      setNewPassword(res.password);
+      onFlash('נוצרה סיסמה חדשה');
+    }
+    if (action === 'login_link' && res?.link) {
+      if (purpose === 'assist') {
+        window.open(res.link, '_blank', 'noopener,noreferrer');
+        onFlash('נפתחת כניסה כמשתמש בכרטיסייה חדשה');
+      } else {
+        try {
+          await navigator.clipboard.writeText(res.link);
+          onFlash('קישור הכניסה הועתק — שלחו למשתמש');
+        } catch {
+          onFlash(res.link);
+        }
+      }
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4"
@@ -657,25 +857,87 @@ function UserDetailsModal({
       <div dir="rtl" role="dialog" aria-modal="true" aria-labelledby="user-details-title" className="max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--border)] bg-white px-5 py-4">
           <div>
-            <h2 id="user-details-title" className="text-lg font-bold">פרטי משתמש ופעילות</h2>
+            <h2 id="user-details-title" className="text-lg font-bold">כרטיס משתמש</h2>
             <p className="mt-0.5 text-sm text-[var(--muted)]"><bdi>{user.email}</bdi></p>
           </div>
-          <button type="button" onClick={onClose} aria-label="סגירת פרטי המשתמש" className="rounded-lg p-2 text-xl text-[var(--muted)] hover:bg-gray-100">×</button>
+          <button type="button" onClick={onClose} aria-label="סגירת הכרטיס" className="rounded-lg p-2 text-xl text-[var(--muted)] hover:bg-gray-100">×</button>
         </div>
 
         <div className="space-y-5 p-5">
           <section aria-labelledby="user-info-heading">
-            <h3 id="user-info-heading" className="mb-3 font-semibold">פרטים אישיים והרשאות</h3>
+            <h3 id="user-info-heading" className="mb-3 font-semibold">פרטים</h3>
             <div className="grid gap-3 sm:grid-cols-2">
               <Detail label="כתובת מייל"><bdi>{user.email}</bdi></Detail>
-              <Detail label="תפקיד">{user.role === 'admin' ? 'אדמין' : 'משתמש רגיל'}</Detail>
+              <Detail label="תפקיד">{isAdmin ? 'אדמין' : (user.job_title?.trim() || 'לא צוין')}</Detail>
+              <Detail label="טלפון"><bdi>{user.phone?.trim() || '—'}</bdi></Detail>
               <Detail label="תאריך הצטרפות">{new Date(user.created_at).toLocaleDateString('he-IL')}</Detail>
-              <Detail label="הרשאת יצירה">{user.can_create_outputs ? 'מאושרת' : 'חסומה'}</Detail>
+              <Detail label="עלות החודש">{monthCost == null ? '…' : `$${monthCost.toFixed(2)}`}</Detail>
+              <Detail label="מותג משויך">{userBrands.map((b) => b.name).join(' · ') || 'אין'}</Detail>
             </div>
-            <div className="mt-3 rounded-lg border border-[var(--border)] bg-gray-50 p-3 text-sm">
-              <span className="font-semibold">מותגים משויכים: </span>
-              {userBrands.length ? userBrands.map((brand) => brand.name).join(' · ') : 'אין שיוך למותג'}
+          </section>
+
+          {!isAdmin && (
+          <section aria-labelledby="perms-heading">
+            <h3 id="perms-heading" className="mb-3 font-semibold">הרשאות יצירה</h3>
+            <label className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-gray-50 px-3 py-2 text-sm">
+              <span className="font-semibold">רשאי להפיק תוצרים</span>
+              <input type="checkbox" checked={canCreate} onChange={toggleCanCreate} disabled={busy !== null} className="h-5 w-5 accent-brand" />
+            </label>
+            <div className={`space-y-1.5 ${canCreate ? '' : 'pointer-events-none opacity-40'}`}>
+              {PRODUCTION_PERMISSION_TYPES.map((item) => (
+                <label key={item.type} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
+                  <span>{item.label}</span>
+                  <input type="checkbox" checked={perms[item.type].user} onChange={() => togglePerm(item.type)} disabled={busy !== null} className="h-5 w-5 accent-brand" />
+                </label>
+              ))}
             </div>
+            <p className="mt-2 text-xs text-[var(--muted)]">ברירת המחדל מגיעה מהגדרות המערכת; כאן מכוונן לאדם הזה בלבד. נשמר מיד.</p>
+          </section>
+          )}
+
+          {!isAdmin && (
+          <section aria-labelledby="limits-heading">
+            <h3 id="limits-heading" className="mb-1 font-semibold">מכסות חודשיות</h3>
+            <p className="mb-3 text-xs text-[var(--muted)]">חודש קלנדרי. 0 = ללא הגבלה. בהגעה למכסה — הבקשה עוברת לטיפול. אלה המספרים שנכנסים להצעת המחיר.</p>
+            <div className="space-y-2">
+              {MONTHLY_LIMIT_GROUPS.map(({ group, label, hint }) => (
+                <div key={group} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
+                  <span className="min-w-0">
+                    <span className="block">{label}</span>
+                    <span className="block text-xs text-[var(--muted)]">
+                      {usage ? `נוצלו ${usage[group] ?? 0}${limits[group] ? ` / ${limits[group]}` : ''}` : hint}
+                    </span>
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    defaultValue={limits[group] || ''}
+                    placeholder="0"
+                    onBlur={(e) => commitLimit(group, e.target.value)}
+                    className="w-20 shrink-0 rounded-lg border border-[var(--border)] px-2 py-1.5 text-center text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+          </section>
+          )}
+
+          <section aria-labelledby="pw-heading">
+            <h3 id="pw-heading" className="mb-3 font-semibold">סיסמה וכניסה</h3>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => runAdminAction('reset_password')} disabled={busy !== null} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50">אפס סיסמה</button>
+              <button type="button" onClick={() => runAdminAction('login_link', 'handoff')} disabled={busy !== null} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50">קישור כניסה חד-פעמי למשתמש</button>
+              {!isAdmin && (
+                <button type="button" onClick={() => runAdminAction('login_link', 'assist')} disabled={busy !== null} className="rounded-lg border border-brand/40 bg-brand/5 px-3 py-2 text-sm font-semibold text-brand hover:bg-brand/10 disabled:opacity-50">כניסה כמשתמש</button>
+              )}
+            </div>
+            {newPassword && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+                סיסמה חדשה (מוצגת פעם אחת): <code dir="ltr" className="font-bold">{newPassword}</code>
+              </div>
+            )}
+            <p className="mt-2 text-xs text-[var(--muted)]">הסיסמה הקיימת לא נשמרת ולא ניתנת לצפייה — אפשר רק לאפס.</p>
           </section>
 
           <section aria-labelledby="activity-heading">

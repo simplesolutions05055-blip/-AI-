@@ -42,6 +42,7 @@ import {
   enforceRequestCost,
   loadRequestActor,
 } from './abuseGuard.ts';
+import { assertMonthlyOutputLimit } from './monthlyLimits.ts';
 
 type Conv = { id: string; whatsapp_from: string; simulated: boolean };
 
@@ -875,6 +876,24 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
     await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.needs_attention, conversation.simulated);
     await releaseConversationSlot(database, conversation.id);
     return;
+  }
+
+  // Per-user calendar-month cap on finished outputs (the client's price-quote
+  // quotas, set on the user card). Same soft handling: hand off to the admin.
+  try {
+    await assertMonthlyOutputLimit(database, {
+      requestId,
+      userId: (request.created_by as string | null) ?? null,
+      brandId: (request.brand_id as string | null) ?? null,
+    }, outputType);
+  } catch (e) {
+    if (e instanceof AbuseGuardError) {
+      await setStatus(database, requestId, 'needs_attention');
+      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, e.message, conversation.simulated);
+      await releaseConversationSlot(database, conversation.id);
+      return;
+    }
+    throw e;
   }
 
   // ── Business Brain (optional): content-only sources are kept separate from visual rules.

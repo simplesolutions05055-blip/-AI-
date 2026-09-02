@@ -23,6 +23,7 @@ import { useProfile } from '@/lib/useProfile';
 import { genderCopy, worksWithBrandCopy } from '@/lib/genderCopy';
 import {
   canProduceType,
+  mergeUserPermissions,
   normalizeOutputPermissions,
   type OutputPermissions,
   type ProductionPermissionType,
@@ -179,8 +180,10 @@ export default function ProductionPage() {
   }, []);
 
   const role = profile?.role ?? 'user';
+  // The global setting is the baseline; the signed-in user's own override wins.
+  const effective = mergeUserPermissions(permissions, profile?.output_permissions);
   const allowed = (productionType: ProductionPermissionType) =>
-    canProduceType(permissions, productionType, role, profile?.can_create_outputs ?? false);
+    canProduceType(effective, productionType, role, profile?.can_create_outputs ?? false);
 
   if (loading || !permissionsLoaded) return <p className="p-4 text-[var(--muted)]"><Spinner /></p>;
   if (permissionsError && role !== 'admin') return <ProductionPermissionsError />;
@@ -633,7 +636,10 @@ function ProductionPicker({
   // create attempt without a chosen type.
   const [glowTypeChips, setGlowTypeChips] = useState(false);
   const role = profile?.role ?? 'user';
-  const effectivePermissions = permissions ?? normalizeOutputPermissions(null);
+  const effectivePermissions = mergeUserPermissions(
+    permissions ?? normalizeOutputPermissions(null),
+    profile?.output_permissions,
+  );
   const allowedTypes = useMemo(
     () => (['image', 'text', 'presentation', 'pdf', 'quote'] as const).filter((item) =>
       canProduceType(effectivePermissions, item, role, profile?.can_create_outputs ?? false),
