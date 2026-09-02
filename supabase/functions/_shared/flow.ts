@@ -18,7 +18,7 @@ import { sendDeliverableCopy, loadPdfBrandSettings } from './deliverableEmail.ts
 import { renderDocxBase64 } from './docx.ts';
 import { AbuseGuardError, enforceAiLimit, enforceRequestCost, loadRequestActor } from './abuseGuard.ts';
 import { resolveMetaConnection } from './meta.ts';
-import { genderText, normalizeAddressGender, type AddressGender } from './whatsappCopy.ts';
+import { addressUser, genderText, normalizeAddressGender, type AddressGender } from './whatsappCopy.ts';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const APP_BASE_URL = (
@@ -76,6 +76,40 @@ export type Identity = {
 };
 
 export type SendFn = (text: string, interactive?: WhatsAppInteractive) => Promise<boolean>;
+
+// Rewrite the bot's own copy into the recipient's gender on the way out. Wrap
+// once at the entry point and every helper further down inherits it; the few
+// sends that carry generated content (deck slides, a post caption, a saved
+// schedule) keep using the raw sender, where "כתבו" is the client's word and
+// not ours.
+const RAW_SENDERS = new WeakMap<SendFn, SendFn>();
+
+// The un-gendered sender behind a wrapped one — for generated content.
+function raw(send: SendFn): SendFn {
+  return RAW_SENDERS.get(send) ?? send;
+}
+
+export function genderedSend(send: SendFn, gender: AddressGender): SendFn {
+  if (gender !== 'male' && gender !== 'female') return send;
+  const wrapped: SendFn = (text, interactive) =>
+    send(
+      addressUser(text, gender),
+      interactive
+        ? {
+            ...interactive,
+            body: addressUser(interactive.body, gender),
+            button: interactive.button ? addressUser(interactive.button, gender) : interactive.button,
+            options: interactive.options.map((o) => ({
+              ...o,
+              title: addressUser(o.title, gender),
+              description: o.description ? addressUser(o.description, gender) : o.description,
+            })),
+          }
+        : undefined,
+    );
+  RAW_SENDERS.set(wrapped, send);
+  return wrapped;
+}
 
 export type FlowResult =
   | { kind: 'not_handled' }
@@ -315,6 +349,10 @@ export function canScheduleOutput(outputType: string | null | undefined): boolea
 // One flat actions message after delivery — image outputs expose both fix
 // paths directly; the user can also just write what to change (AI-classified).
 export function buildPostDeliveryMenu(outputType: string | null | undefined, gender: AddressGender = null): string {
+  return addressUser(postDeliveryMenuText(outputType, gender), gender);
+}
+
+function postDeliveryMenuText(outputType: string | null | undefined, gender: AddressGender): string {
   const question = genderText(gender, {
     male: 'מה תרצה לעשות עכשיו?',
     female: 'מה תרצי לעשות עכשיו?',
@@ -382,8 +420,8 @@ export function buildPostDeliveryInteraction(outputType: string | null | undefin
       { id: '4', title: 'תוצר חדש', description: 'חזרה לתפריט הראשי' },
     ];
   }
-  return {
-    kind: 'list_picker',
+  const opts = {
+    kind: 'list_picker' as const,
     body: genderText(gender, {
       male: 'מה תרצה לעשות עכשיו?',
       female: 'מה תרצי לעשות עכשיו?',
@@ -391,6 +429,15 @@ export function buildPostDeliveryInteraction(outputType: string | null | undefin
     }),
     button: 'בחירת פעולה',
     options,
+  };
+  return {
+    ...opts,
+    body: addressUser(opts.body, gender),
+    options: opts.options.map((o) => ({
+      ...o,
+      title: addressUser(o.title, gender),
+      description: o.description ? addressUser(o.description, gender) : o.description,
+    })),
   };
 }
 
@@ -1281,7 +1328,7 @@ async function startCaptionFix(
       if (output) {
         await database.from('outputs').update({ text_content: newCaption }).eq('id', output.id);
       }
-      await send(`טקסט מעודכן לפוסט:\n\n${newCaption}`);
+      await raw(send)(`טקסט מעודכן לפוסט:\n\n${newCaption}`);
       await sendPostDeliveryMenu(database, conversation, send, requestId);
     } catch (e) {
       if (e instanceof AbuseGuardError) {
@@ -1660,7 +1707,7 @@ async function generateDeckAndPresent(
 
     await send(`הנה תוכן המצגת שהכנתי — ${slides.length} שקפים 👇`);
     for (let i = 0; i < slides.length; i++) {
-      await send(formatDeckSlideMessage(slides[i], i, slides.length));
+      await raw(send)(formatDeckSlideMessage(slides[i], i, slides.length));
     }
     // Move to review BEFORE the pause so a fast reply lands in the right state.
     await setFlow(database, conversation.id, {
@@ -1739,7 +1786,7 @@ async function startDeckSlideRewrite(
           .update({ structured_brief: { ...((reqRow?.structured_brief ?? {}) as Record<string, unknown>), deck_slides: updated } })
           .eq('id', deck.request_id);
       }
-      await send(formatDeckSlideMessage(slide, slideNumber - 1, updated.length));
+      await raw(send)(formatDeckSlideMessage(slide, slideNumber - 1, updated.length));
       await send('עדכנתי את השקף ✅\nרוצים לשנות עוד משהו? כתבו מה. אם הכול טוב — השיבו "מאשר".');
       await logEvent(database, {
         requestId: deck.request_id ?? null,
@@ -2372,7 +2419,7 @@ async function showSchedulesList(
     await showMainMenu(database, conversation, identity, send);
     return { kind: 'handled' };
   }
-  const delivered = await send(buildSchedulesListMessage(posts), buildSchedulesListInteraction(posts));
+  const delivered = await raw(send)(buildSchedulesListMessage(posts), buildSchedulesListInteraction(posts));
   if (delivered) {
     await setFlow(database, conversation.id, {
       flow_state: 'schedules_list',
@@ -2391,7 +2438,7 @@ async function showScheduleManage(
   post: FlowScheduleItem
 ): Promise<void> {
   const dueShown = scheduleIsDue(post);
-  const delivered = await send(
+  const delivered = await raw(send)(
     buildScheduleManageMessage(post, dueShown),
     buildScheduleManageInteraction(post, dueShown)
   );
@@ -2410,7 +2457,7 @@ export async function showMainMenu(
   send: SendFn
 ): Promise<void> {
   const perms = await menuPermissions(database, identity);
-  const delivered = await send(
+  const delivered = await genderedSend(send, identity.gender)(
     buildMainMenu(identity.displayName, identity.gender, perms),
     buildMainMenuInteraction(perms),
   );
@@ -2439,7 +2486,10 @@ export type FlowOpts = {
 };
 
 export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<FlowResult> {
-  const { conversation, identity, body, messageSid, numMedia, send } = opts;
+  const { conversation, identity, body, messageSid, numMedia } = opts;
+  // Everything below (and every helper it hands `send` to) speaks in the
+  // profile's gender; raw(send) stays available for generated content.
+  const send = genderedSend(opts.send, identity.gender);
   const state = conversation.flow_state ?? null;
   const ctx = (conversation.flow_context ?? {}) as Record<string, unknown>;
   const text = (body ?? '').trim();

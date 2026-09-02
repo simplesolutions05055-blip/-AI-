@@ -35,7 +35,7 @@ import {
 } from './learning.ts';
 import { buildPostDeliveryInteraction, buildPostDeliveryMenu, deniedOutputMessage } from './flow.ts';
 import { assertCanProduce, PermissionError } from './output_permissions.ts';
-import { genderText, normalizeAddressGender } from './whatsappCopy.ts';
+import { addressUser, genderText, normalizeAddressGender } from './whatsappCopy.ts';
 import {
   AbuseGuardError,
   enforceAiLimit,
@@ -193,6 +193,7 @@ async function handleBrandConfirmation(
   templates: Record<string, string>
 ): Promise<BrandStep> {
   const ownerId = (request.created_by as string | null) ?? null;
+  const gender = await requestGender(database, ownerId);
   const brief = (request.structured_brief ?? {}) as Record<string, unknown>;
   const pendingId = brief.pending_brand_id as string | undefined;
 
@@ -220,7 +221,7 @@ async function handleBrandConfirmation(
       await saveBrief({ pending_brand_id: null });
       await logEvent(database, { requestId: request.id, action: 'brand_confirmed', metadata: { brand_id: pendingId } });
       await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-        `מעולה, אתאים את התוצר למיתוג של ${brand?.name ?? ''} ✨`, conversation.simulated);
+        addressUser(`מעולה, אתאים את התוצר למיתוג של ${brand?.name ?? ''} ✨`, gender), conversation.simulated);
       return 'continue';
     }
     if (isNo(lastInbound)) {
@@ -244,7 +245,7 @@ async function handleBrandConfirmation(
         // actually delivered — otherwise leave state as-is so the next inbound
         // re-matches and re-asks instead of stranding an unseen pending_brand_id.
         const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-          `זה בשביל ${alt.name}? 🙂 (כן / לא)`, conversation.simulated);
+          addressUser(`זה בשביל ${alt.name}? 🙂 (כן / לא)`, gender), conversation.simulated);
         if (delivered) {
           await saveBrief({ pending_brand_id: alt.id, brand_unclear_count: 0 });
           await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -254,7 +255,7 @@ async function handleBrandConfirmation(
       }
       await saveBrief({ pending_brand_id: null, brand_declined: true });
       await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-        'סגור, ממשיך בלי מיתוג ספציפי 👍', conversation.simulated);
+        addressUser('סגור, ממשיך בלי מיתוג ספציפי 👍', gender), conversation.simulated);
       return 'continue';
     }
     // unclear → re-ask, but cap retries so we never loop forever on "אולי".
@@ -262,14 +263,14 @@ async function handleBrandConfirmation(
     if (unclearCount >= 2) {
       await saveBrief({ pending_brand_id: null, brand_declined: true, brand_unclear_count: unclearCount });
       await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-        'אין בעיה, ממשיך בלי מיתוג ספציפי בינתיים 👍', conversation.simulated);
+        addressUser('אין בעיה, ממשיך בלי מיתוג ספציפי בינתיים 👍', gender), conversation.simulated);
       return 'continue';
     }
     // Only count this retry if the user actually saw the re-ask; a failed send
     // must not march brand_unclear_count toward the give-up cap on its own.
     const { data: pendingBrand } = await database.from('brands').select('name').eq('id', pendingId).maybeSingle();
     const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-      `רק מוודא 🙂 להכין את זה למיתוג של ${pendingBrand?.name ?? 'הלקוח שזיהיתי'}? (כן / לא)`, conversation.simulated);
+      addressUser(`רק מוודא 🙂 להכין את זה למיתוג של ${pendingBrand?.name ?? 'הלקוח שזיהיתי'}? (כן / לא)`, gender), conversation.simulated);
     if (delivered) {
       await saveBrief({ brand_unclear_count: unclearCount });
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -291,7 +292,7 @@ async function handleBrandConfirmation(
   // Record the pending guess only on delivery, so an undelivered prompt doesn't
   // strand a pending_brand_id the user never saw (the next inbound re-matches).
   const delivered = await sendOut(database, conversation.id, request.id, conversation.whatsapp_from,
-    `זה בשביל ${match.name}? 🙂 (כן / לא)`, conversation.simulated);
+    addressUser(`זה בשביל ${match.name}? 🙂 (כן / לא)`, gender), conversation.simulated);
   if (delivered) {
     await saveBrief({ pending_brand_id: match.id });
     await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -466,7 +467,7 @@ export async function processRequest(
   if (trigger === 'message') {
     const { data: cur } = await database
       .from('requests')
-      .select('status, conversation_id, conversations!requests_conversation_id_fkey(id, whatsapp_from, simulated)')
+      .select('status, created_by, conversation_id, conversations!requests_conversation_id_fkey(id, whatsapp_from, simulated)')
       .eq('id', requestId)
       .single();
     const status = cur?.status as string | undefined;
@@ -474,6 +475,7 @@ export async function processRequest(
       if (IN_FLIGHT.includes(status) || status === 'waiting_for_approval') {
         const conv = cur!.conversations as unknown as Conv;
         const tpls = await getTemplates(database);
+        const ack = addressUser(tpls.in_progress, await requestGender(database, cur!.created_by as string | null));
         // Message economy: a burst of messages during generation must not
         // produce a stack of identical "כבר בטיפול" acks — one per 3 minutes.
         const threeMinAgo = new Date(Date.now() - 3 * 60_000).toISOString();
@@ -482,12 +484,12 @@ export async function processRequest(
           .select('id')
           .eq('conversation_id', conv.id)
           .eq('direction', 'outbound')
-          .eq('body', tpls.in_progress)
+          .eq('body', ack)
           .gte('created_at', threeMinAgo)
           .limit(1)
           .maybeSingle();
         if (!recentAck) {
-          await sendOut(database, conv.id, requestId, conv.whatsapp_from, tpls.in_progress, conv.simulated);
+          await sendOut(database, conv.id, requestId, conv.whatsapp_from, ack, conv.simulated);
         }
       }
       return;
@@ -573,6 +575,8 @@ async function runRequestPipeline(
     phone: conversation.whatsapp_from,
   }, JSON.stringify(request.structured_brief ?? {}).length);
   const waFrom = conversation.whatsapp_from;
+  // Every message this pipeline sends addresses the user in their own gender.
+  const gender = await requestGender(database, request.created_by as string | null);
   const systemPrompt = await getActiveSystemPrompt(database);
   const templates = await getTemplates(database);
   const directBriefReady =
@@ -651,7 +655,7 @@ async function runRequestPipeline(
         });
         await setStatus(database, requestId, 'needs_attention');
         await sendOut(database, conversation.id, requestId, waFrom,
-          'התוצר עבר כמה סבבי תיקון. הבקשה הועברה לבדיקת מנהל כדי לוודא שאנחנו פותרים את השורש.',
+          addressUser('התוצר עבר כמה סבבי תיקון. הבקשה הועברה לבדיקת מנהל כדי לוודא שאנחנו פותרים את השורש.', gender),
           conversation.simulated);
         await releaseConversationSlot(database, conversation.id);
         return;
@@ -672,7 +676,7 @@ async function runRequestPipeline(
       request.status = 'collecting_details';
     } else {
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
-      await sendOut(database, conversation.id, requestId, waFrom, 'הבריף מוכן ✅ אם הכול טוב — כתבו ״מאשר״. רוצים לשנות משהו? פשוט כתבו מה.', conversation.simulated);
+      await sendOut(database, conversation.id, requestId, waFrom, addressUser('הבריף מוכן ✅ אם הכול טוב — כתבו ״מאשר״. רוצים לשנות משהו? פשוט כתבו מה.', gender), conversation.simulated);
       return;
     }
   }
@@ -781,7 +785,7 @@ async function runRequestPipeline(
         .update({ structured_brief: b, output_type: (b.output_type as string) ?? null, customer_email: email })
         .eq('id', requestId);
       await setStatus(database, requestId, 'collecting_details');
-      await sendOut(database, conversation.id, requestId, waFrom, ask, conversation.simulated);
+      await sendOut(database, conversation.id, requestId, waFrom, addressUser(ask, gender), conversation.simulated);
       await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
       return;
     }
@@ -815,7 +819,7 @@ async function runRequestPipeline(
       // we leave question_rounds and status untouched, so the next inbound message
       // re-asks the same round instead of silently burning the budget toward
       // needs_attention — keeping WhatsApp behaviour identical to the simulator.
-      const delivered = await sendOut(database, conversation.id, requestId, waFrom, effectiveNextQuestion, conversation.simulated);
+      const delivered = await sendOut(database, conversation.id, requestId, waFrom, addressUser(effectiveNextQuestion, gender), conversation.simulated);
       if (delivered) {
         await database.from('requests').update({ question_rounds: request.question_rounds + 1 }).eq('id', requestId);
         await database.from('conversations').update({ status: 'waiting_for_user' }).eq('id', conversation.id);
@@ -831,7 +835,7 @@ async function runRequestPipeline(
     // (for an optional copy by mail) but never block the output on it.
     if (effectiveNextQuestion && roundsRemaining <= 0 && b.ready !== true) {
       await setStatus(database, requestId, 'needs_attention');
-      await sendOut(database, conversation.id, requestId, waFrom, templates.needs_attention, conversation.simulated);
+      await sendOut(database, conversation.id, requestId, waFrom, addressUser(templates.needs_attention, gender), conversation.simulated);
       await releaseConversationSlot(database, conversation.id);
       return;
     }
@@ -851,6 +855,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   if (!request) return;
   const conversation = request.conversations as Conv;
   const productionForm = isProductionFormConversation(conversation);
+  const gender = await requestGender(database, request.created_by as string | null);
   const systemPrompt = await getActiveSystemPrompt(database);
   let genClientType: string | null = null;
   if (request.brand_id) {
@@ -878,7 +883,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       message: `Estimated cost ${request.estimated_cost} reached cap ${budget.max}`,
     });
     await setStatus(database, requestId, 'needs_attention');
-    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.needs_attention, conversation.simulated);
+    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, addressUser(templates.needs_attention, gender), conversation.simulated);
     await releaseConversationSlot(database, conversation.id);
     return;
   }
@@ -894,7 +899,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   } catch (e) {
     if (e instanceof AbuseGuardError) {
       await setStatus(database, requestId, 'needs_attention');
-      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, e.message, conversation.simulated);
+      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, addressUser(e.message, gender), conversation.simulated);
       await releaseConversationSlot(database, conversation.id);
       return;
     }
@@ -919,7 +924,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         message: e.message, metadata: { output_type: outputType, user_id: request.created_by },
       });
       await setStatus(database, requestId, 'rejected');
-      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, deniedOutputMessage(outputType), conversation.simulated);
+      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, addressUser(deniedOutputMessage(outputType), gender), conversation.simulated);
       await releaseConversationSlot(database, conversation.id);
       return;
     }
@@ -932,7 +937,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
   // only ever says "got it, checking"; the honest "working on it" belongs here.
   // Image has its own wording below; a revision already acked (ack_sent).
   if (outputType !== 'image' && version === 1 && !productionForm && brief.ack_sent !== true) {
-    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.received, conversation.simulated);
+    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, addressUser(templates.received, gender), conversation.simulated);
   }
 
   try {
@@ -984,7 +989,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       // Skipped entirely when the flow already acked ("קיבלתי! מכין את...").
       if (version === 1 && !productionForm && brief.ack_sent !== true) {
         const delivered = await sendOut(database, conversation.id, requestId, conversation.whatsapp_from,
-          'יוצא לדרך 🎨 מכין את התמונה והפוסט — בערך דקה ⏳', conversation.simulated);
+          addressUser('יוצא לדרך 🎨 מכין את התמונה והפוסט — בערך דקה ⏳', gender), conversation.simulated);
         if (!delivered && !conversation.simulated) {
           await logEvent(database, {
             requestId,
@@ -1111,7 +1116,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
       await logEvent(database, { requestId, severity: 'warning', action: 'qa_failed', message: qa.issues.join('; ') });
       if (version >= maxAttempts) {
         await setStatus(database, requestId, 'needs_attention');
-        await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.needs_attention, conversation.simulated);
+        await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, addressUser(templates.needs_attention, gender), conversation.simulated);
         await releaseConversationSlot(database, conversation.id);
         return;
       }
@@ -1147,7 +1152,7 @@ async function generateAndQa(database: DB, requestId: string): Promise<void> {
         conversation.id,
         requestId,
         conversation.whatsapp_from,
-        `${failureMessage}\n\nאפשר לכתוב "נסה שוב" או ללחוץ על הכפתור.`,
+        addressUser(`${failureMessage}\n\nאפשר לכתוב "נסה שוב" או ללחוץ על הכפתור.`, gender),
         conversation.simulated,
         {
           kind: 'quick_reply',
@@ -1371,7 +1376,7 @@ export async function sendOutput(requestId: string): Promise<void> {
     if (conversation.simulated && !productionForm) {
       await database.from('requests').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', requestId);
       await logEvent(database, { requestId, action: 'email_sent', message: 'simulated (skipped Resend)' });
-      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, true);
+      await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, addressUser(templates.sent, gender), true);
       await sleep(POST_DELIVERY_MENU_DELAY_MS);
       await sendOut(
         database, conversation.id, requestId, conversation.whatsapp_from,
@@ -1393,7 +1398,7 @@ export async function sendOutput(requestId: string): Promise<void> {
       await database.from('conversations').update({ status: 'active', current_request_id: null }).eq('id', conversation.id);
       return;
     }
-    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, templates.sent, conversation.simulated);
+    await sendOut(database, conversation.id, requestId, conversation.whatsapp_from, addressUser(templates.sent, gender), conversation.simulated);
     await sleep(POST_DELIVERY_MENU_DELAY_MS);
     await sendOut(
       database, conversation.id, requestId, conversation.whatsapp_from,

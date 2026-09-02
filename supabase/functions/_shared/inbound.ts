@@ -30,12 +30,13 @@ import {
   showMainMenu,
   buildSignupMessage,
   deniedOutputMessage,
+  genderedSend,
   type FlowConversation,
   type Identity,
   type SendFn,
 } from './flow.ts';
 import { canProduce } from './output_permissions.ts';
-import { genderText } from './whatsappCopy.ts';
+import { addressUser, genderText, type AddressGender } from './whatsappCopy.ts';
 
 type Conversation = FlowConversation;
 
@@ -166,9 +167,9 @@ async function resumeSoftClosedConversation(
 
 async function resetConversation(
   database: DB,
-  opts: { conversation: Conversation; body: string; messageSid: string; from: string; phone: string; templates: Record<string, string>; reason: 'deterministic' | 'semantic'; simulated: boolean; metadata?: Record<string, unknown> }
+  opts: { conversation: Conversation; body: string; messageSid: string; from: string; phone: string; templates: Record<string, string>; reason: 'deterministic' | 'semantic'; simulated: boolean; gender: AddressGender; metadata?: Record<string, unknown> }
 ): Promise<boolean> {
-  const { conversation, body, messageSid, from, phone, templates, reason, simulated, metadata } = opts;
+  const { conversation, body, messageSid, from, phone, templates, reason, simulated, gender, metadata } = opts;
   if (conversation.current_request_id) {
     await database.from('requests')
       .update({ status: 'closed', closed_at: new Date().toISOString(), processing_locked_at: null })
@@ -184,7 +185,7 @@ async function resetConversation(
     flow_state: null, flow_context: {}, selected_output_type: null,
   }).eq('id', conversation.id);
   await logEvent(database, { action: 'conversation_reset', metadata: { phone, reason, ...(metadata ?? {}) } });
-  await sendOut(database, conversation.id, null, from, templates.reset, simulated);
+  await sendOut(database, conversation.id, null, from, addressUser(templates.reset, gender), simulated);
   return true;
 }
 
@@ -198,11 +199,13 @@ export async function handleInbound(
   const { conversation, from, phone, body, messageSid, numMedia, templates, simulated, resolveMedia } = opts;
 
   // Flow messages are conversation-level (no request yet).
-  const send: SendFn = (text, interactive) =>
+  const rawSend: SendFn = (text, interactive) =>
     sendOut(database, conversation.id, null, from, text, simulated, interactive);
 
   // ── who is this? phone → site profile (+ their single brand) ─────────────
   const identity = await resolveIdentity(database, conversation, phone, simulated);
+  // Everything from here on addresses the user in their profile's gender.
+  const send = genderedSend(rawSend, identity.gender);
 
   // ── unknown number → invite to sign up, nothing else runs ────────────────
   if (!identity.known) {
@@ -282,7 +285,7 @@ export async function handleInbound(
   }
 
   if (isResetCommand(body)) {
-    const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated });
+    const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated, gender: identity.gender });
     if (didReset) await showMainMenu(database, conversation, identity, send);
     return { requestIdToProcess: null };
   }
@@ -294,7 +297,7 @@ export async function handleInbound(
       return { requestIdToProcess: null };
     }
     if (/^(2|2\.)$/.test(body.trim())) {
-      const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated });
+      const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated, gender: identity.gender });
       if (didReset) await showMainMenu(database, conversation, identity, send);
       return { requestIdToProcess: null };
     }
@@ -313,7 +316,7 @@ export async function handleInbound(
     return { requestIdToProcess: null };
   }
   if (resumeChoicePending && conversation.status === 'waiting_for_user' && /^(2|2\.)$/.test(body.trim())) {
-    const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated });
+    const didReset = await resetConversation(database, { conversation, body, messageSid, from, phone, templates, reason: 'deterministic', simulated, gender: identity.gender });
     if (didReset) await showMainMenu(database, conversation, identity, send);
     return { requestIdToProcess: null };
   }
@@ -379,7 +382,7 @@ export async function handleInbound(
       });
       if (intent.reset && intent.confidence >= 0.8) {
         const didReset = await resetConversation(database, {
-          conversation, body, messageSid, from, phone, templates, reason: 'semantic', simulated,
+          conversation, body, messageSid, from, phone, templates, reason: 'semantic', simulated, gender: identity.gender,
           metadata: { confidence: intent.confidence, classifier_reason: intent.reason },
         });
         if (didReset) await showMainMenu(database, conversation, identity, send);
@@ -451,18 +454,18 @@ export async function handleInbound(
   // lie at this point — the worker may still come back with a question — so
   // that message is sent only when generation actually starts.
   if (isNewRequest) {
-    await sendOut(database, conversation.id, requestId, from, CHECKING_ACK, simulated);
+    await send(CHECKING_ACK);
   }
 
   // ── media (channel-specific) → effective body + first stored file ─────────
   const media = await resolveMedia(requestId);
   if (media.anyRejected) {
-    await sendOut(database, conversation.id, requestId, from, templates.rejected_media, simulated);
+    await send(templates.rejected_media);
   }
   let effectiveBody = media.effectiveBody;
   if (!effectiveBody.trim() && numMedia > 0 && !media.anyRejected) {
     effectiveBody = '';
-    await sendOut(database, conversation.id, requestId, from, 'קיבלתי את הקובץ ששלחת 📎 מה תרצה שאעשה איתו?', simulated);
+    await send('קיבלתי את הקובץ 📎 מה תרצו שאעשה איתו?');
   }
 
   await database.from('messages').update({
@@ -505,7 +508,7 @@ async function createFlowRequest(
         });
         if (claimErr) return { requestIdToProcess: null };
         await logEvent(database, { action: 'whatsapp_output_denied', metadata: { output_type: type, user_id: userId } });
-        await sendOut(database, conversation.id, null, from, deniedOutputMessage(type), simulated);
+        await send(deniedOutputMessage(type));
         await showMainMenu(database, conversation, identity, send);
         return { requestIdToProcess: null };
       }
@@ -569,16 +572,12 @@ async function createFlowRequest(
   // Instant reply, always. A revision is already a complete brief, so it can
   // promise work; a new brief gets the neutral "checking" ack and the worker
   // says "working on it" only once it really is.
-  await sendOut(
-    database, conversation.id, requestId, from,
-    isRevision ? 'קיבלתי ✏️ מכין גרסה מתוקנת — רגע.' : CHECKING_ACK,
-    simulated
-  );
+  await send(isRevision ? 'קיבלתי ✏️ מכין גרסה מתוקנת — רגע.' : CHECKING_ACK);
 
   // Attachments (brief materials) — same handling as the legacy path.
   const media = await resolveMedia(requestId);
   if (media.anyRejected) {
-    await sendOut(database, conversation.id, requestId, from, templates.rejected_media, simulated);
+    await send(templates.rejected_media);
   }
   // Events flow: the synthesized event-idea brief IS the request brief (the raw
   // user text — "הכן" or their notes — is already folded into it).
