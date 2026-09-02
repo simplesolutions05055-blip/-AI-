@@ -381,16 +381,21 @@ export function deniedOutputMessage(outputType: string): string {
 // WhatsApp/Twilio silently drops inbound messages over ~1600 chars (warning
 // 21617 — the webhook is never even called, so we can't react after the fact).
 // The only defense is warning up front: long material must arrive as a file.
+// A file is raw material, never the brief on its own: ownBriefContent (worker)
+// counts only what the user typed, so a document arriving with "תכיני מזה
+// פוסט" (14 chars) lands under MIN_BRIEF_CONTENT_CHARS and gets asked again.
+// The tip therefore asks for the sentence alongside the file, instead of
+// implying the file is enough.
 const LONG_TEXT_WARNING =
-  'טיפ: חומר ארוך? עדיף כ־PDF או Word, ככה כלום לא הולך לאיבוד 📎';
+  'טיפ: חומר ארוך? שלחו אותו כ־PDF או Word, וכתבו לצידו משפט קצר - מה מכינים ולמי 📎';
 
 export const BRIEF_PROMPTS: Record<string, string> = {
   image:
-    `תמונה או פוסט, הולך 🖼️\nבמשפט-שניים: מה מכינים, למי, ומה חייב להופיע. אפשר גם לצרף קובץ.\n\n${LONG_TEXT_WARNING}`,
+    `תמונה או פוסט, הולך 🖼️\nבמשפט-שניים: מה מכינים, למי, ומה חייב להופיע. אפשר לצרף קובץ לצד המשפט.\n\n${LONG_TEXT_WARNING}`,
   presentation:
-    `מצגת, הולך 📊\nמה הנושא, למי, ומה חייב להופיע? אפשר גם לצרף קובץ עם התוכן.\n\n${LONG_TEXT_WARNING}`,
+    `מצגת, הולך 📊\nמה הנושא, למי, ומה חייב להופיע? אפשר לצרף קובץ עם התוכן לצד התשובה.\n\n${LONG_TEXT_WARNING}`,
   pdf:
-    `מסמך, הולך 📄\nמה הנושא, למי, ומה חייב להופיע? אפשר גם לצרף קובץ עם חומרי הגלם.\n\n${LONG_TEXT_WARNING}`,
+    `מסמך, הולך 📄\nמה הנושא, למי, ומה חייב להופיע? אפשר לצרף קובץ עם חומרי הגלם לצד התשובה.\n\n${LONG_TEXT_WARNING}`,
 };
 
 function backToStartInteraction(body: string): WhatsAppInteractive {
