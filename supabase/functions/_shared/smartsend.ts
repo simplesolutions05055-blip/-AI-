@@ -7,13 +7,13 @@
 //
 //   POST /integrations/make/messages/send-template-base64
 //   x-organization-id: <organization id>
-//   { phoneNumber, templateName, fileData, fileName }
+//   { phoneNumber, templateName, languageCode, parameters[], fileData, fileName }
 //
-// Probing the Make host on 2026-08-31 returned "route not found" for every
-// other messages/* path, so these two are the whole surface: send-text is the
-// only free-form route and send-template-base64 is the only one that carries a
-// file. Media therefore requires an approved WhatsApp template with a media
-// header; its name comes from SMARTSEND_MEDIA_TEMPLATE.
+// send-text is the only free-form route. Media rides an approved WhatsApp
+// template that has a media header (name from SMARTSEND_MEDIA_TEMPLATE), and
+// send-template-base64 uploads the file bytes with the template's body
+// parameters. The approved template primeos_deliverable_image takes two
+// parameters in order: client name, request number.
 //
 // Secrets (Supabase -> Edge Functions -> Secrets):
 //   SMARTSEND_ORGANIZATION_ID - workspace id supplied by Smart Send
@@ -100,7 +100,16 @@ export async function sendText(to: string, body: string): Promise<string> {
   return lastId;
 }
 
-export async function sendFile(to: string, mediaUrl: string, caption?: string): Promise<string> {
+// Body parameters for the media template, in the order WhatsApp approved them.
+// primeos_deliverable_image: [client name, request number].
+export type TemplateContext = { clientName: string; requestNumber: string };
+
+export async function sendFile(
+  to: string,
+  mediaUrl: string,
+  caption?: string,
+  ctx?: TemplateContext,
+): Promise<string> {
   const template = mediaTemplate();
   if (!template) {
     // Never silently send only the caption: the caller logs this and falls back
@@ -126,6 +135,11 @@ export async function sendFile(to: string, mediaUrl: string, caption?: string): 
     body: JSON.stringify({
       phoneNumber: phone,
       templateName: template,
+      // Omitted when the caller has no context so document sends (which reuse
+      // this route) keep the exact payload they had before.
+      ...(ctx
+        ? { languageCode: 'he', parameters: [ctx.clientName, ctx.requestNumber] }
+        : {}),
       fileData: toBase64(bytes),
       fileName: fileNameFor(mediaUrl, contentType),
     }),

@@ -43,7 +43,10 @@ Deno.test('uploads the bytes as base64 to the template endpoint', async () => {
       SMARTSEND_API_URL: 'https://smartsend-server.otherwise.co.il',
       SMARTSEND_MEDIA_TEMPLATE: 'output_image',
     }, async () => {
-      const sid = await sendFile('whatsapp:+972501234567', MEDIA_URL, 'הנה התוצר');
+      const sid = await sendFile('whatsapp:+972501234567', MEDIA_URL, 'הנה התוצר', {
+        clientName: 'דנה',
+        requestNumber: '#4821',
+      });
       assertStringIncludes(sid, 'smartsend-');
     });
   } finally { restore(); }
@@ -52,6 +55,8 @@ Deno.test('uploads the bytes as base64 to the template endpoint', async () => {
   assertStringIncludes(calls[0].url, '/integrations/make/messages/send-template-base64');
   assertEquals(calls[0].body.phoneNumber, '972501234567');
   assertEquals(calls[0].body.templateName, 'output_image');
+  assertEquals(calls[0].body.languageCode, 'he');
+  assertEquals(calls[0].body.parameters, ['דנה', '#4821']);
   assertEquals(calls[0].body.fileName, 'v1.png');
   // The signed URL never reaches Smart Send, so it cannot expire on them.
   assertEquals(calls[0].body.fileData, btoa(String.fromCharCode(...png)));
@@ -60,6 +65,22 @@ Deno.test('uploads the bytes as base64 to the template endpoint', async () => {
   // The template body is fixed by approval, so the caption follows separately.
   assertStringIncludes(calls[1].url, '/integrations/make/messages/send-text');
   assertEquals(calls[1].body.message, 'הנה התוצר');
+});
+
+Deno.test('omits body parameters when no template context is given (document sends)', async () => {
+  const png = new Uint8Array([137, 80, 78, 71]);
+  const { calls, restore } = stubFetch(png);
+  try {
+    await withEnv({
+      SMARTSEND_ORGANIZATION_ID: 'org-test',
+      SMARTSEND_API_URL: 'https://smartsend-server.otherwise.co.il',
+      SMARTSEND_MEDIA_TEMPLATE: 'output_image',
+    }, async () => {
+      await sendFile('whatsapp:+972501234567', MEDIA_URL, 'המסמך שלך');
+    });
+  } finally { restore(); }
+  assertEquals('parameters' in calls[0].body, false);
+  assertEquals('languageCode' in calls[0].body, false);
 });
 
 Deno.test('refuses to send without a configured template instead of dropping the file', async () => {

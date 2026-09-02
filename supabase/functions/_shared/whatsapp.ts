@@ -75,10 +75,49 @@ export async function sendText(to: string, body: string): Promise<string> {
   return await smartsend.sendText(to, body);
 }
 
-export async function sendFile(to: string, mediaUrl: string, caption?: string): Promise<string> {
+export async function sendFile(
+  to: string,
+  mediaUrl: string,
+  caption?: string,
+  ctx?: smartsend.TemplateContext,
+): Promise<string> {
   assertNotGroup(to, 'send media');
   await assertRecentInbound(to);
-  return await smartsend.sendFile(to, mediaUrl, caption);
+  return await smartsend.sendFile(to, mediaUrl, caption, ctx);
+}
+
+/**
+ * Build the media-template parameters (client name, request number) for a
+ * request. Falls back to the phone digits when no profile name is on file.
+ * Returns undefined only when the request row is gone.
+ */
+export async function templateContextFor(
+  to: string,
+  requestId: string | null,
+): Promise<smartsend.TemplateContext | undefined> {
+  if (!requestId) return undefined;
+  const database = db();
+  const { data: request } = await database
+    .from('requests')
+    .select('request_number, created_by')
+    .eq('id', requestId)
+    .maybeSingle();
+  if (!request) return undefined;
+
+  let clientName = smartsend.toPhone(to);
+  if (request.created_by) {
+    const { data: profile } = await database
+      .from('profiles')
+      .select('full_name')
+      .eq('id', request.created_by)
+      .maybeSingle();
+    const first = (profile?.full_name as string | null ?? '').trim().split(/\s+/)[0];
+    if (first) clientName = first;
+  }
+  return {
+    clientName,
+    requestNumber: request.request_number ? `#${request.request_number}` : '—',
+  };
 }
 
 // Inbound media. Smart Send hands us a downloadable URL on the webhook.

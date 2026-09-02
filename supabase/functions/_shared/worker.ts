@@ -18,7 +18,7 @@ import { analyzeBrief, generateText, generateDocumentText, generatePresentationO
 // whatsappText.ts holds the shared message shapes (the interactive types the
 // simulator still renders).
 import { type WhatsAppInteractive } from './whatsappText.ts';
-import { sendFile, sendText } from './whatsapp.ts';
+import { sendFile, sendText, templateContextFor } from './whatsapp.ts';
 import { isGroupTarget, parseGroupTarget, sendGroupText, sendGroupMedia } from './group.ts';
 import { buildPdfHtml, renderPdfBase64 } from './pdf.ts';
 import { loadPdfBrandSettings, sendDeliverableCopy } from './deliverableEmail.ts';
@@ -1280,7 +1280,14 @@ async function deliverContentToWhatsApp(
     const groupTarget = isGroupTarget(to) ? parseGroupTarget(to) : null;
     const sid = groupTarget
       ? await sendGroupMedia(groupTarget.groupId, url, mediaCaption.slice(0, 1000))
-      : await sendFile(to, url, mediaCaption.slice(0, 1000));
+      : await sendFile(
+        to,
+        url,
+        mediaCaption.slice(0, 1000),
+        // Only the image template carries body parameters; PDF reuses the same
+        // route with the pre-existing param-free payload.
+        type === 'image' ? await templateContextFor(to, request.id) : undefined,
+      );
     await database.from('messages').insert({
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
       body: mediaCaption, media_type: contentType, storage_path: path, twilio_message_sid: sid,

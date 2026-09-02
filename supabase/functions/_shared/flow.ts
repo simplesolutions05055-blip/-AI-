@@ -8,7 +8,7 @@
 // `send` callback the caller supplies (inbound.ts passes worker.sendOut).
 import { type DB } from './db.ts';
 import { type WhatsAppInteractive } from './whatsappText.ts';
-import { sendFile } from './whatsapp.ts';
+import { sendFile, templateContextFor } from './whatsapp.ts';
 import { isGroupTarget, parseGroupTarget, sendGroupMedia } from './group.ts';
 import { generateSocialCaption, classifyPostDeliveryIntent, generateDeckSlides, rewriteDeckSlide, extractSlideCountFromPrompt, extractDeckEditSlideTarget } from './openai.ts';
 import { logEvent, getSettingOr, recordUsageAndCost, estimateTextCost, isGreetingOnly, extractEmail, isValidEmail, MAX_MEDIA_BYTES } from './util.ts';
@@ -913,7 +913,16 @@ async function sendMediaOut(
   const group = isGroupTarget(conversation.whatsapp_from) ? parseGroupTarget(conversation.whatsapp_from) : null;
   const sid = group
     ? await sendGroupMedia(group.groupId, signed.signedUrl, caption)
-    : await sendFile(conversation.whatsapp_from, signed.signedUrl, caption);
+    : await sendFile(
+      conversation.whatsapp_from,
+      signed.signedUrl,
+      caption,
+      // Only the image template takes body parameters; document sends reuse the
+      // same route with the pre-existing param-free payload.
+      mime.startsWith('image/')
+        ? await templateContextFor(conversation.whatsapp_from, requestId)
+        : undefined,
+    );
   await database.from('messages').insert({
     conversation_id: conversation.id,
     request_id: requestId,
