@@ -74,6 +74,34 @@ export function toPhone(to: string): string {
   return digits;
 }
 
+// Smart Send answers with a JSON envelope carrying `success`. An HTTP 200 is
+// therefore not by itself proof the message was accepted: a rejected send can
+// arrive as 200 with `{"success": false}`. Recording that as delivered is
+// precisely the failure the delivery-status migration was written about
+// ("the row exists" meaning only that the API returned), so it throws like any
+// other send failure and sendOut writes the undelivered row.
+//
+// Deliberately narrow: ONLY an explicit `success === false` fails. A body that
+// is not JSON, is not an object, or simply has no `success` field keeps the
+// previous behaviour, because the provider's contract does not promise this
+// envelope on every route and a stricter check would reject live sends.
+function assertAccepted(responseText: string, what: string): void {
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(responseText);
+  } catch {
+    return;
+  }
+  if (typeof envelope !== 'object' || envelope === null) return;
+  const record = envelope as Record<string, unknown>;
+  if (record.success !== false) return;
+  const detail = typeof record.message === 'string' && record.message.trim()
+    ? record.message.trim()
+    : responseText;
+  // The provider's own response only - never the request body or the API key.
+  throw new Error(`Smart Send ${what} rejected: ${detail.slice(0, 300)}`);
+}
+
 async function post(payload: { phoneNumber: string; message: string }): Promise<string> {
   const res = await fetch(endpoint(), {
     method: 'POST',
@@ -88,6 +116,7 @@ async function post(payload: { phoneNumber: string; message: string }): Promise<
     // Never include request data or the API key in errors/logs.
     throw new Error(`Smart Send send failed (${res.status}): ${responseText.slice(0, 300)}`);
   }
+  assertAccepted(responseText, 'send');
   return `smartsend-${crypto.randomUUID()}`;
 }
 
@@ -149,6 +178,7 @@ export async function sendFile(
     // Never include request data or the API key in errors/logs.
     throw new Error(`Smart Send media send failed (${res.status}): ${responseText.slice(0, 300)}`);
   }
+  assertAccepted(responseText, 'media send');
   const sid = `smartsend-${crypto.randomUUID()}`;
   // The template body is fixed by WhatsApp approval, so the caption cannot ride
   // along with the file. Send it as its own message right after.

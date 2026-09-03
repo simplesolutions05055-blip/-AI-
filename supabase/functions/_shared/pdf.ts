@@ -35,7 +35,8 @@ export interface PdfBrandSettings {
 
 export function buildPdfHtml(p: { title: string; body: string; dateLabel: string; brand?: PdfBrandSettings | null }): string {
   const esc = (s: string) => escapeHtml(s);   // shared, escapes quotes too — see _shared/escape.ts
-  if (p.brand) return buildOfficialPdfHtml(p, esc);
+  // Narrowing p.brand does not narrow p, so hand the callee the checked value.
+  if (p.brand) return buildOfficialPdfHtml({ ...p, brand: p.brand }, esc);
 
   const bodyHtml = esc(p.body)
     .split(/\n{2,}/)

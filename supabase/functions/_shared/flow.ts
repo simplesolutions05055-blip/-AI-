@@ -1146,6 +1146,10 @@ async function sendMediaOut(
     media_type: mime,
     storage_path: storagePath,
     twilio_message_sid: sid,
+      // Gateway accepted the media. Smart Send issues no delivery receipt, so
+      // this never advances to 'delivered'.
+    delivery_status: 'sent',
+    delivery_updated_at: new Date().toISOString(),
   });
 }
 
@@ -3236,7 +3240,7 @@ export async function handleFlowMessage(database: DB, opts: FlowOpts): Promise<F
         await sendPostDeliveryMenu(database, conversation, send, requestId ?? undefined);
         return { kind: 'handled' };
       }
-      const schedulePrompt = await buildScheduleDateTimePrompt(database, requestId);
+      const schedulePrompt = await buildScheduleDateTimePrompt(database, requestId ?? null);
       const delivered = await send(schedulePrompt.prompt);
       if (delivered) {
         await setFlow(database, conversation.id, {

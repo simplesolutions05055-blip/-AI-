@@ -22,7 +22,8 @@
     "verify": "npm run typecheck && npm run typecheck:api && npm run guards && npm run test:hardening && npm run test:rls",
     "typecheck:api": "tsc -p tsconfig.api.json --noEmit",
     "lint:functions": "deno lint --rules-tags= --rules-include=no-dupe-args,no-dupe-keys,no-dupe-class-members supabase/functions",
-    "check:functions": "deno check supabase/functions/_shared/cors.ts supabase/functions/_shared/secrets.ts supabase/functions/_shared/safeFetch.ts supabase/functions/_shared/escape.ts supabase/functions/_shared/sessionBinding.ts supabase/functions/client-error/index.ts"
+    "check:functions": "find supabase/functions -name '*.ts' ! -path '*/deck-email/*' ! -path '*/generate-pptx-claude/*' ! -path '*/build-brief/*' ! -path '*/meta-oauth-callback/*' ! -path '*/onboarding-brand/*' ! -path '*/onboarding-ingest/*' ! -path '*/publish-scheduled-posts/*' -print0 | xargs -0 deno check",
+    "test:functions": "deno test --allow-env --allow-net supabase/functions/"
   },
   "dependencies": {
     "@radix-ui/react-tooltip": "^1.2.10",

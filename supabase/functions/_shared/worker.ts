@@ -417,6 +417,9 @@ export async function sendOut(
   try {
     let sid: string;
     let sentInteractive = false;
+    // Whether this actually crossed the WhatsApp gateway. Simulated turns and
+    // the production form never do, so they must not claim a delivery state.
+    let viaGateway = false;
     const interactiveSetting = interactive
       ? await getSettingOr<{ enabled: boolean }>(database, 'whatsapp_interactive_messages', { enabled: false })
       : { enabled: false };
@@ -430,12 +433,14 @@ export async function sendOut(
       const target = parseGroupTarget(to);
       if (!target) throw new Error(`bad group target: ${to}`);
       sid = await sendGroupText(target.groupId, body);
+      viaGateway = true;
     } else {
       // Real 1:1 chat. Smart Send has no interactive-message type, so `body` —
       // which the engine already builds with the numbered-menu fallback text —
       // is what goes out. `interactive` still reaches the simulator above,
       // which renders real buttons.
       sid = await sendText(to, body);
+      viaGateway = true;
     }
     await database.from('messages').insert({
       conversation_id: conversationId,
@@ -444,6 +449,12 @@ export async function sendOut(
       body: sentInteractive && interactive ? interactive.body : body,
       twilio_message_sid: sid,
       interactive_json: sentInteractive ? interactive : null,
+      // 'sent' is the strongest claim Smart Send supports: the gateway accepted
+      // the message. It issues no delivery receipts and returns no message id we
+      // could correlate one to, so 'delivered' and 'read' are unreachable and
+      // never appear. Left NULL when nothing crossed a gateway.
+      delivery_status: viaGateway ? 'sent' : null,
+      delivery_updated_at: viaGateway ? new Date().toISOString() : null,
     });
     return true;
   } catch (e) {
@@ -457,6 +468,11 @@ export async function sendOut(
       direction: 'outbound',
       body: `[לא נשלח - שגיאת ספק WhatsApp] ${body}`,
       twilio_message_sid: `undelivered-${crypto.randomUUID()}`,
+      // Populates messages_delivery_failed_idx, so "which replies never reached
+      // anyone" is one indexed query instead of a manual hunt through the logs.
+      delivery_status: 'failed',
+      delivery_error_code: null,
+      delivery_updated_at: new Date().toISOString(),
     });
     return false;
   }
@@ -1396,6 +1412,9 @@ async function deliverContentToWhatsApp(
     await database.from('messages').insert({
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
       body: mediaCaption, media_type: contentType, storage_path: path, twilio_message_sid: sid,
+      // Gateway accepted the media. Smart Send issues no delivery receipt, so
+      // this never advances to 'delivered'.
+      delivery_status: 'sent', delivery_updated_at: new Date().toISOString(),
     });
     // The gateway delivers media slower than plain texts, so texts sent
     // immediately after tend to arrive BEFORE the image. Give the

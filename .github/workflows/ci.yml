@@ -49,6 +49,12 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      # The check/test commands live in package.json so the exclusion list has a
+      # single home. That makes `npm run` a real dependency of this job rather
+      # than something borrowed from whatever the runner image happens to ship.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       # The Edge Functions are Deno, so `tsc` never looks at them — and Supabase
       # deploys them WITHOUT typechecking, so a bad function deploys "successfully"
       # and then returns BOOT_ERROR to every caller. That already happened once:
@@ -60,12 +66,21 @@ jobs:
       #     are what turn into a runtime SyntaxError.
       - run: deno lint --rules-tags= --rules-include=no-dupe-args,no-dupe-keys,no-dupe-class-members supabase/functions
 
-      #  2. full typecheck — only on the modules kept green. The rest carry
-      #     pre-existing type debt (Supabase client generics, nullable brand
-      #     fields); adding them here would make the job permanently red, and a
-      #     permanently red job is the same as no job at all. Move a function up
-      #     into this list as its errors get fixed.
-      - run: deno check supabase/functions/_shared/cors.ts supabase/functions/_shared/secrets.ts supabase/functions/_shared/safeFetch.ts supabase/functions/_shared/escape.ts supabase/functions/_shared/sessionBinding.ts supabase/functions/client-error/index.ts
+      #  2. full typecheck — now an EXCLUDE list rather than an include list, so
+      #     a newly added function is covered by default instead of silently
+      #     escaping. 78 of 85 files are checked. Exclusions, and only these:
+      #       deck-email, generate-pptx-claude — import npm: packages that do not
+      #         resolve in this job (it installs no node_modules).
+      #       build-brief, meta-oauth-callback, onboarding-brand,
+      #         onboarding-ingest, publish-scheduled-posts — 10 remaining
+      #         pre-existing type errors (Supabase client generics, GenericStringError
+      #         vs BrandRow). A permanently red job is the same as no job at all;
+      #         delete a path from the list in package.json as its errors get fixed.
+      - run: npm run check:functions
+
+      #  3. the unit tests. They existed and passed for months without ever
+      #     running here, which meant nothing would have told us if one broke.
+      - run: npm run test:functions
 
   secrets:
     name: secret scan

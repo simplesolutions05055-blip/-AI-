@@ -62,7 +62,7 @@ export async function loadPdfBrandSettings(database: DB, brandId?: string | null
     const { data: signed } = await database.storage.from('branding').createSignedUrl(logoPath, 3600);
     logoUrl = signed?.signedUrl ?? null;
   }
-  const { logo_path: _logoPath, ...rest } = brand as Record<string, unknown>;
+  const { logo_path: _logoPath, ...rest } = brand as unknown as Record<string, unknown>;
   return { ...(rest as unknown as PdfBrandSettings), logo_url: logoUrl };
 }
 
