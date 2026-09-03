@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile } from '@/lib/useProfile';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import { confirmDialog } from '@/lib/dialog';
+import { purgeBrandStorage, activeRequestCount } from '@/lib/brandLifecycle';
 import {
   PRODUCTION_PERMISSION_TYPES,
   MONTHLY_LIMIT_GROUPS,
@@ -72,6 +73,11 @@ export default function PermissionsPage() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [tab, setTab] = useState<'admins' | 'users' | 'brands' | 'permissions'>('admins');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const wantNewUser = searchParams.get('new') === '1';
+  useEffect(() => {
+    if (wantNewUser) setTab('users');
+  }, [wantNewUser]);
   const [outputPermissions, setOutputPermissions] = useState<OutputPermissions>(() => normalizeOutputPermissions(null));
   const [creatingUser, setCreatingUser] = useState(false);
   const [selectedUser, setSelectedUser] = useState<ProfileRow | null>(null);
@@ -220,7 +226,10 @@ export default function PermissionsPage() {
   }
 
   async function deleteUser(p: ProfileRow) {
-    if (!(await confirmDialog({ message: `למחוק את המשתמש ${p.email}? פעולה זו אינה הפיכה.`, danger: true, confirmText: 'מחיקה' }))) return;
+    const active = await activeRequestCount(db, p.id);
+    const warn = active > 0 ? `\n\nלמשתמש יש ${active} בקשות בטיפול כרגע — הן ינותקו.` : '';
+    if (!(await confirmDialog({ message: `למחוק את המשתמש ${p.email}? פעולה זו אינה הפיכה.${warn}`, danger: true, confirmText: 'מחיקה' }))) return;
+    const userBrandIds = [...(grants[p.id] ?? new Set<string>())];
     setSavingId(p.id);
     const { data, error } = await db.functions.invoke('delete-user', { body: { user_id: p.id } });
     setSavingId(null);
@@ -230,11 +239,44 @@ export default function PermissionsPage() {
     }
     setProfiles((prev) => prev.filter((x) => x.id !== p.id));
     flash('המשתמש נמחק');
+
+    // A brand with no members left is dead weight: it holds a name, blocks the
+    // duplicate-name check, and no regular user can reach it. Offer to remove it.
+    for (const brandId of userBrandIds) {
+      const { count } = await db
+        .from('user_brands')
+        .select('user_id', { count: 'exact', head: true })
+        .eq('brand_id', brandId);
+      if ((count ?? 0) > 0) continue;
+      const name = brands.find((b) => b.id === brandId)?.name ?? 'ללא שם';
+      const ok = await confirmDialog({
+        message: `המותג "${name}" נשאר בלי משתמשים. למחוק גם אותו? כל התוצרים וההיסטוריה שלו יימחקו לצמיתות.`,
+        danger: true,
+        confirmText: 'מחיקת המותג',
+      });
+      if (!ok) continue;
+      await purgeBrandStorage(db, brandId);
+      await db.from('brands').delete().eq('id', brandId);
+      setBrands((prev) => prev.filter((b) => b.id !== brandId));
+    }
   }
 
   async function toggleBrand(p: ProfileRow, brandId: string) {
     const current = grants[p.id] ?? new Set<string>();
     const has = current.has(brandId);
+    // Switching a user to a different brand mid-generation: the in-flight
+    // request keeps the old brand and the user, now off that brand, won't be
+    // able to see the result. Warn before doing it.
+    if (!has && current.size > 0) {
+      const active = await activeRequestCount(db, p.id);
+      if (active > 0) {
+        const ok = await confirmDialog({
+          message: `למשתמש יש ${active} בקשות בטיפול. החלפת המותג עכשיו עלולה למנוע ממנו לראות את התוצרים שלהן. להחליף בכל זאת?`,
+          confirmText: 'החלפה',
+        });
+        if (!ok) return;
+      }
+    }
     setSavingId(p.id);
     let error: { message: string } | null = null;
     if (has) {
@@ -399,7 +441,13 @@ export default function PermissionsPage() {
       <>
       {tab === 'users' && (
         <div className="mb-4">
-          <CreateUserModal brands={brands} creating={creatingUser} onCreate={createUser} />
+          <CreateUserModal
+            brands={brands}
+            creating={creatingUser}
+            onCreate={createUser}
+            autoOpen={wantNewUser}
+            onAutoOpenConsumed={() => setSearchParams({}, { replace: true })}
+          />
         </div>
       )}
       <div className="space-y-3 lg:hidden">
@@ -654,8 +702,18 @@ function BrandsTab({
                 {logo ? <img src={logo} alt="" className="h-full w-full object-contain p-0.5" /> : <span className="text-[10px] font-bold text-brand">{b.name.slice(0, 2)}</span>}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold">{b.name}</div>
-                <div className="text-xs text-[var(--muted)]">{members.length} משתמשים משויכים{b.is_active ? '' : ' · לא פעיל'}</div>
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-semibold">{b.name}</span>
+                  {!b.logo_path && (
+                    <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                      לא הושלם
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-[var(--muted)]">
+                  {members.length} משתמשים משויכים{b.is_active ? '' : ' · לא פעיל'}
+                  {!b.logo_path && members.length > 0 ? ' · המשתמשים חסומים עד השלמת המותג' : ''}
+                </div>
               </div>
               <button
                 type="button"
@@ -975,6 +1033,8 @@ function CreateUserModal({
   brands,
   creating,
   onCreate,
+  autoOpen = false,
+  onAutoOpenConsumed,
 }: {
   brands: BrandRow[];
   creating: boolean;
@@ -985,6 +1045,8 @@ function CreateUserModal({
     brandId: string;
     brandName: string;
   }) => Promise<boolean>;
+  autoOpen?: boolean;
+  onAutoOpenConsumed?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState('');
@@ -994,6 +1056,14 @@ function CreateUserModal({
   const [brandId, setBrandId] = useState('');
   const [brandName, setBrandName] = useState('');
   useEscapeClose(open, () => setOpen(false));
+
+  useEffect(() => {
+    if (!autoOpen) return;
+    reset();
+    setOpen(true);
+    onAutoOpenConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen]);
 
   function reset() {
     setEmail('');

@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { matchBrandInText, type BrandRow } from '../_shared/brand.ts';
 import { assertCanProduce, PermissionError } from '../_shared/output_permissions.ts';
+import { assertMonthlyOutputLimit } from '../_shared/monthlyLimits.ts';
 import { cors } from '../_shared/cors.ts';
 import {
   AbuseGuardError,
@@ -49,6 +50,13 @@ Deno.serve(async (req) => {
     // attribute the request on the dashboard's per-user breakdown. The form is
     // admin-gated, so a token is normally present.
     await assertCanProduce(database, createdBy, body.output_type);
+    // Reject an over-cap request up front instead of queueing it just for the
+    // worker to bounce it to needs_attention.
+    await assertMonthlyOutputLimit(
+      database,
+      { userId: createdBy, brandId: body.brand_id ?? null },
+      body.output_type,
+    );
     await enforcePromptLength(database, { userId: createdBy, brandId: body.brand_id ?? null }, JSON.stringify(body.brief ?? {}).length);
     await enforceParallelRequestLimit(database, { userId: createdBy, brandId: body.brand_id ?? null });
 

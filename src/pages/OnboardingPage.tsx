@@ -292,6 +292,14 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
       setGender(p?.gender ?? '');
       progress.current = p?.onboarding ?? {};
       setBrandDone(p?.onboarding?.brand_done === true);
+      const brandCount = ((brands as unknown[] | null) ?? []).length;
+      // Details done but no brand: the brand is admin-assigned and none exists
+      // (or it was deleted). Don't offer brand setup — let AdminLayout show the
+      // "account not ready" block.
+      if ((p?.role ?? 'user') !== 'admin' && p?.onboarding?.details_done && brandCount === 0) {
+        navigate('/admin', { replace: true });
+        return;
+      }
       if (p?.onboarding?.details_done && p?.onboarding?.brand_done) {
         setStepIndex(steps.indexOf('hub'));
       } else if (p?.onboarding?.details_done) {

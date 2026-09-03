@@ -19,7 +19,7 @@ import { PageSkeleton, Skeleton } from '@/components/ui/Skeleton';
 const USER_ALLOWED_PREFIXES = ['/admin/production', '/admin/quote', '/admin/files', '/admin/schedule', '/admin/holidays', '/admin/annual-planner', '/admin/branding', '/admin/user-settings', '/admin/password', '/admin/meta-connection'];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { loading, profile, hasBrand, requireUploads } = useProfile();
+  const { loading, profile, hasBrand, brandReady, requireUploads } = useProfile();
   const [navOpen, setNavOpen] = useState(false);
   const [navMounted, setNavMounted] = useState(false);
   const [navVisible, setNavVisible] = useState(false);
@@ -133,6 +133,37 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
   const isAdmin = profile.role === 'admin';
 
+  // A regular user cannot do anything until an admin has a usable brand ready
+  // for them: none assigned (never assigned, or it was deleted), or assigned but
+  // still an empty shell (no logo / no content). Block the whole app with a
+  // "talk to the admin" message instead of dropping them into brand setup or
+  // letting them generate against an empty brand.
+  if (!isAdmin && (!hasBrand || !brandReady)) {
+    return (
+      <main className="grid min-h-[100dvh] place-items-center p-6 text-center">
+        <div className="max-w-sm">
+          <h1 className="mb-2 text-xl font-semibold tracking-normal">החשבון עדיין לא מוכן</h1>
+          <p className="text-[var(--muted)]">
+            {genderCopy(profile.gender, {
+              male: 'צור קשר עם מנהל המערכת כדי להתחיל לעבוד.',
+              female: 'צרי קשר עם מנהל המערכת כדי להתחיל לעבוד.',
+              neutral: 'יש ליצור קשר עם מנהל המערכת כדי להתחיל לעבוד.',
+            })}
+          </p>
+          <div className="mt-5 flex flex-col items-center gap-3">
+            <div className="text-xs text-[var(--muted)] ltr">{profile.email}</div>
+            <button
+              onClick={logout}
+              className="rounded-lg border border-[#d7e3e0] bg-white px-5 py-2 text-sm font-semibold text-[#526372] hover:bg-[#fdebec] hover:text-[#9f2840]"
+            >
+              התנתקות
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   // Content-production screens belong to regular users; the admin works through
   // a dedicated user account, so these are hidden from the admin nav and blocked
   // by direct URL too.
@@ -143,7 +174,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const email = profile.email;
   const isProductionLanding = pathname === '/admin/production';
-  const showCreateFab = profile.can_create_outputs && !pathname.startsWith('/admin/production');
+  const showCreateFab = isAdmin
+    ? pathname === '/admin/permissions'
+    : profile.can_create_outputs && !pathname.startsWith('/admin/production');
+  const createFabTo = isAdmin ? '/admin/permissions?new=1' : '/admin/production';
+  const createFabLabel = isAdmin ? 'הקמת משתמש חדש' : 'צור חדש';
 
   // Route gating for regular users: only the production screen, and only when
   // output creation is enabled for them.
@@ -240,8 +275,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <SocialConnectPrompt userId={profile.id} />
       {showCreateFab && (
         <Link
-          to="/admin/production"
-          aria-label="צור חדש"
+          to={createFabTo}
+          aria-label={createFabLabel}
           className="group fixed bottom-[calc(var(--safe-bottom)+5.75rem)] left-7 z-20 flex h-[60px] w-[60px] items-center justify-center rounded-[20px] bg-gradient-to-br from-[#1e88e5] via-[#00acc1] to-[#43c463] text-white shadow-[0_12px_32px_rgba(30,136,229,0.4),inset_0_1px_0_rgba(255,255,255,0.3)] transition-transform duration-200 hover:scale-105 hover:rotate-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand/30 lg:bottom-7"
         >
           <Plus className="h-7 w-7" strokeWidth={2.25} aria-hidden="true" />

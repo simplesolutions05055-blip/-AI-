@@ -34,6 +34,13 @@ export interface ProfileState {
   profile: Profile | null;
   /** Whether the user has at least one assigned brand (gates onboarding steps 2–3). */
   hasBrand: boolean;
+  /**
+   * Whether the assigned brand is usable: it has a logo and at least one
+   * Business Brain content source. An admin can provision a user + empty brand
+   * shell in one step, so `onboarding.brand_done` is not proof of this.
+   * Always true for admins (they are not gated on it).
+   */
+  brandReady: boolean;
   /** Global admin setting: are the document/file upload steps mandatory? */
   requireUploads: boolean;
 }
@@ -47,6 +54,7 @@ export function useProfile(): ProfileState {
     loading: true,
     profile: null,
     hasBrand: false,
+    brandReady: false,
     requireUploads: false,
   });
 
@@ -58,16 +66,34 @@ export function useProfile(): ProfileState {
       const { data: auth } = await db.auth.getUser();
       const user = auth.user;
       if (!user) {
-        if (active) setState({ loading: false, profile: null, hasBrand: false, requireUploads: false });
+        if (active) setState({ loading: false, profile: null, hasBrand: false, brandReady: false, requireUploads: false });
         return;
       }
 
-      const [{ data }, { count }, { data: setting }] = await Promise.all([
+      const [{ data }, { data: brandRows }, { data: setting }] = await Promise.all([
         db.from('profiles').select(PROFILE_COLUMNS).eq('id', user.id).maybeSingle(),
-        db.from('user_brands').select('brand_id', { count: 'exact', head: true }).eq('user_id', user.id),
+        db.from('user_brands').select('brand_id').eq('user_id', user.id),
         db.from('settings').select('value_json').eq('key', 'onboarding_require_uploads').maybeSingle(),
       ]);
 
+      if (!active) return;
+
+      const brandIds = ((brandRows as { brand_id: string }[] | null) ?? []).map((r) => r.brand_id);
+      const hasBrand = brandIds.length > 0;
+      const isAdmin = (data as { role?: string } | null)?.role === 'admin';
+      let brandReady = isAdmin;
+      if (hasBrand && !isAdmin) {
+        // An admin-provisioned brand shell carries only a name. A brand someone
+        // actually set up — through onboarding or the branding screen — has a
+        // logo. That is the readiness signal.
+        const { data: brand } = await db
+          .from('brands')
+          .select('logo_path')
+          .in('id', brandIds)
+          .limit(1)
+          .maybeSingle();
+        brandReady = !!(brand as { logo_path?: string | null } | null)?.logo_path;
+      }
       if (!active) return;
       const profile: Profile = data
         ? ({ ...(data as unknown as Profile), onboarding: (data as { onboarding?: OnboardingState }).onboarding ?? {} })
@@ -89,7 +115,8 @@ export function useProfile(): ProfileState {
       setState({
         loading: false,
         profile,
-        hasBrand: (count ?? 0) > 0,
+        hasBrand,
+        brandReady,
         requireUploads: ((setting as { value_json?: unknown } | null)?.value_json as boolean | undefined) === true,
       });
     })();

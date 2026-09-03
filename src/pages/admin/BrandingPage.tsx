@@ -16,6 +16,7 @@ import { useProfile } from '@/lib/useProfile';
 import { alertDialog, confirmDialog } from '@/lib/dialog';
 import { aiErrorLabel, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
 import BrandAutofillPanel from '@/components/BrandAutofillPanel';
+import { brandDeleteImpact, brandDeleteImpactMessage, purgeBrandStorage } from '@/lib/brandLifecycle';
 
 const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 const MAX_LOGO_BYTES = 5 * 1024 * 1024;
@@ -584,7 +585,11 @@ export default function BrandingPage() {
   }
 
   async function removeBrand(b: Brand) {
-    if (!(await confirmDialog({ message: `למחוק את "${b.name}"? פעולה בלתי הפיכה.`, danger: true, confirmText: 'מחיקה' }))) return;
+    const impact = await brandDeleteImpact(db, [b.id]);
+    const extra = brandDeleteImpactMessage(impact);
+    const message = `למחוק את "${b.name}"? פעולה בלתי הפיכה.${extra ? `\n\n${extra}` : ''}`;
+    if (!(await confirmDialog({ message, danger: true, confirmText: 'מחיקה' }))) return;
+    await purgeBrandStorage(db, b.id);
     await db.from('brands').delete().eq('id', b.id);
     if (selected?.id === b.id) setSelected(null);
     setSelectedIds((s) => {
@@ -646,14 +651,12 @@ export default function BrandingPage() {
   async function bulkDelete() {
     const ids = [...selectedIds];
     if (!ids.length) return;
-    if (!(await confirmDialog({ message: `למחוק ${ids.length} מקומות? פעולה בלתי הפיכה.`, danger: true, confirmText: 'מחיקה' }))) return;
-    // best-effort: remove their storage folders too
-    for (const id of ids) {
-      const { data: files } = await db.storage.from('branding').list(id);
-      if (files?.length) await db.storage.from('branding').remove(files.map((f) => `${id}/${f.name}`));
-      const { data: assetFiles } = await db.storage.from('branding').list(`${id}/assets`);
-      if (assetFiles?.length) await db.storage.from('branding').remove(assetFiles.map((f) => `${id}/assets/${f.name}`));
-    }
+    const impact = await brandDeleteImpact(db, ids);
+    const extra = brandDeleteImpactMessage(impact);
+    const message = `למחוק ${ids.length} מקומות? פעולה בלתי הפיכה.${extra ? `\n\n${extra}` : ''}`;
+    if (!(await confirmDialog({ message, danger: true, confirmText: 'מחיקה' }))) return;
+    // best-effort: remove their storage blobs (outputs + branding folders) too
+    for (const id of ids) await purgeBrandStorage(db, id);
     await db.from('brands').delete().in('id', ids);
     if (selected?.id && ids.includes(selected.id)) setSelected(null);
     setSelectedIds(new Set());

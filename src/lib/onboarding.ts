@@ -12,7 +12,10 @@ export function needsOnboardingGate(
   if (profile.role === 'admin') return false;
   const ob = profile.onboarding ?? {};
   if (!ob.details_done) return true; // user details are always mandatory
-  if (!hasBrand || !ob.brand_done) return true; // brand assignment is now self-service but mandatory
+  // The brand is assigned by an admin. A user who has one still walks the brand
+  // step once; a user with none is handled by AdminLayout's "account not ready"
+  // block, not by sending them into brand setup.
+  if (hasBrand && !ob.brand_done) return true;
   return false;
 }
 
