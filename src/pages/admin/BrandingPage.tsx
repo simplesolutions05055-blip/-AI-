@@ -15,6 +15,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useProfile } from '@/lib/useProfile';
 import { alertDialog, confirmDialog } from '@/lib/dialog';
 import { aiErrorLabel, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
+import BrandAutofillPanel from '@/components/BrandAutofillPanel';
 
 const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
 const MAX_LOGO_BYTES = 5 * 1024 * 1024;
@@ -128,6 +129,7 @@ export default function BrandingPage() {
   const csvRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [csvModalOpen, setCsvModalOpen] = useState(false);
+  const [pendingWebsiteContent, setPendingWebsiteContent] = useState<Array<{ title: string; content: string; source_url: string }>>([]);
 
   const db = createSupabaseBrowserClient();
 
@@ -209,6 +211,7 @@ export default function BrandingPage() {
     setNewSourceContent('');
     setPreviews({});
     setLogoFile(null);
+    setPendingWebsiteContent([]);
 
     // Scroll to editor on mobile
     setTimeout(() => {
@@ -343,6 +346,21 @@ export default function BrandingPage() {
       }
       id = (data as { id: string }).id;
       patch({ id });
+    }
+    if (id && pendingWebsiteContent.length > 0) {
+      const { error: contentError } = await db.from('business_text_sources').insert(
+        pendingWebsiteContent.map((item) => ({
+          brand_id: id,
+          title: `אתר רשמי — ${item.title}`,
+          content: item.content,
+          source_kind: 'content_only',
+        })) as never,
+      );
+      if (contentError) {
+        await alertDialog('המותג נשמר, אך שמירת התוכן מהאתר נכשלה: ' + contentError.message);
+      } else {
+        setPendingWebsiteContent([]);
+      }
     }
     setSaving(false);
     setSaved(true);
@@ -908,6 +926,21 @@ export default function BrandingPage() {
                 </button>
               </div>
             </div>
+
+            {isAdmin && !selected.id && (
+              <BrandAutofillPanel
+                initialQuery={selected.website || selected.name || ''}
+                onApply={(autofill, websiteContent) => {
+                  patch({
+                    ...(autofill as Partial<Brand>),
+                    client_type: autofill.client_type === 'municipality' ? 'municipality' : 'business',
+                    color_palette: Array.isArray(autofill.color_palette) ? autofill.color_palette as BrandColor[] : selected.color_palette,
+                  });
+                  setAliasesText('');
+                  setPendingWebsiteContent(websiteContent);
+                }}
+              />
+            )}
 
             <label id="brand-details" className="block scroll-mt-24">
               <span className="block text-sm font-medium mb-1">שם המקום</span>

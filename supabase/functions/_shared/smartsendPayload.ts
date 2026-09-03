@@ -93,12 +93,20 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
     );
     return typeof value === 'string' ? value.trim() : null;
   };
+  const messageType = firstString(message.message_type)?.toLowerCase() ?? null;
+  const explicitText = messageType === 'text';
+  const explicitMedia = ['image', 'video', 'file', 'audio'].includes(messageType ?? '');
+  const providerMarker = explicitMedia ? `[${messageType}]` : null;
+  const textValue = (value: unknown): unknown =>
+    typeof value === 'string' && providerMarker && value.trim().toLowerCase() === providerMarker
+      ? null
+      : value;
   // A caption typed with a photo keeps going missing: the scenario renders
   // last_message empty (or as the literal "{{last_message}}") on media
   // messages, and the words the user actually wrote never reach the brief.
   // Every field the caption has been seen in is checked before giving up.
   const body = firstString(
-    message.last_message,
+    textValue(message.last_message),
     message.text,
     message.caption,
     message.media_caption,
@@ -129,11 +137,20 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
   // user actually typed, which turned menu replies like "5" into
   // "5\nהחשלים, מה קורה?" and dropped them out of the guided flow entirely.
   // The typed text is the real message, so the voice is discarded.
-  const mediaUrl = attachmentUrl ?? (body ? null : voiceUrl);
+  // message_type is authoritative in the current Smart Send contract. In
+  // particular, a text event may still contain URLs copied from the previous
+  // event; those fields must never turn the text into a media message.
+  const mediaUrl = explicitText
+    ? null
+    : messageType === 'audio'
+    ? (voiceUrl ?? attachmentUrl)
+    : explicitMedia
+    ? attachmentUrl
+    : attachmentUrl ?? (body ? null : voiceUrl);
   const mediaType = mediaUrl
     ? firstString(
-      message.media_type,
       message.message_type,
+      message.media_type,
       message.mimeType,
       media.mimeType,
       rawMessage.mimeType,
@@ -154,6 +171,6 @@ export async function normalizeSmartSendMessage(raw: unknown): Promise<Normalize
     body,
     mediaUrl,
     mediaType,
-    isVoice: Boolean(mediaUrl) && mediaUrl === voiceUrl,
+    isVoice: Boolean(mediaUrl) && (messageType === 'audio' || mediaUrl === voiceUrl),
   };
 }

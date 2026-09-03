@@ -113,6 +113,7 @@ Deno.test('surfaces a Smart Send rejection without leaking the payload', async (
     await withEnv({
       SMARTSEND_ORGANIZATION_ID: 'org-test',
       SMARTSEND_MEDIA_TEMPLATE: 'missing_template',
+      SMARTSEND_MEDIA_TEMPLATE_FALLBACK: null,
     }, async () => {
       const error = await assertRejects(
         () => sendFile('whatsapp:+972501234567', MEDIA_URL),
@@ -122,4 +123,55 @@ Deno.test('surfaces a Smart Send rejection without leaking the payload', async (
       assertEquals(String(error).includes('org-test'), false);
     });
   } finally { globalThis.fetch = original; }
+});
+
+Deno.test('v2 sends client name only', async () => {
+  const { calls, restore } = stubFetch(new Uint8Array([1]));
+  try {
+    await withEnv({
+      SMARTSEND_ORGANIZATION_ID: 'org-test',
+      SMARTSEND_MEDIA_TEMPLATE: 'primeos_deliverable_image_v2',
+      SMARTSEND_MEDIA_TEMPLATE_FALLBACK: null,
+    }, async () => {
+      await sendFile('972501234567', MEDIA_URL, undefined, {
+        clientName: 'דנה', requestNumber: '#4821',
+      });
+    });
+  } finally { restore(); }
+  assertEquals(calls[0].body.parameters, ['דנה']);
+});
+
+Deno.test('retries a rejected primary with no-variable fallback', async () => {
+  const calls: Call[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes('/storage/')) {
+      return Promise.resolve(new Response(new Uint8Array([1]).buffer as ArrayBuffer, {
+        headers: { 'content-type': 'image/png' },
+      }));
+    }
+    const body = JSON.parse(String(init?.body ?? '{}'));
+    calls.push({ url, body });
+    return Promise.resolve(new Response(
+      body.templateName === 'primeos_deliverable_image_v2'
+        ? '{"success":false,"message":"template not approved"}'
+        : '{"success":true}',
+      { status: 200 },
+    ));
+  }) as typeof fetch;
+  try {
+    await withEnv({
+      SMARTSEND_ORGANIZATION_ID: 'org-test',
+      SMARTSEND_MEDIA_TEMPLATE: 'primeos_deliverable_image_v2',
+      SMARTSEND_MEDIA_TEMPLATE_FALLBACK: 'primeos_deliverable_image_noname',
+    }, async () => {
+      await sendFile('972501234567', MEDIA_URL, undefined, {
+        clientName: 'דנה', requestNumber: '#4821',
+      });
+    });
+  } finally { globalThis.fetch = original; }
+  assertEquals(calls.length, 2);
+  assertEquals(calls[1].body.templateName, 'primeos_deliverable_image_noname');
+  assertEquals('parameters' in calls[1].body, false);
 });

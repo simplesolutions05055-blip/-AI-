@@ -12,13 +12,14 @@
 // send-text is the only free-form route. Media rides an approved WhatsApp
 // template that has a media header (name from SMARTSEND_MEDIA_TEMPLATE), and
 // send-template-base64 uploads the file bytes with the template's body
-// parameters. The approved template primeos_deliverable_image takes two
-// parameters in order: client name, request number.
+// parameters. New image templates can be rolled out with a no-variable
+// fallback while the currently approved template remains active.
 //
 // Secrets (Supabase -> Edge Functions -> Secrets):
 //   SMARTSEND_ORGANIZATION_ID - workspace id supplied by Smart Send
 //   SMARTSEND_API_URL         - optional API origin override
 //   SMARTSEND_MEDIA_TEMPLATE  - approved template name with a media header
+//   SMARTSEND_MEDIA_TEMPLATE_FALLBACK - optional no-variable fallback template
 import { splitForWhatsApp } from './whatsappText.ts';
 import { safeFetch } from './safeFetch.ts';
 
@@ -46,6 +47,10 @@ function mediaEndpoint(): string {
 
 function mediaTemplate(): string | null {
   return Deno.env.get('SMARTSEND_MEDIA_TEMPLATE')?.trim() || null;
+}
+
+function mediaFallbackTemplate(): string | null {
+  return Deno.env.get('SMARTSEND_MEDIA_TEMPLATE_FALLBACK')?.trim() || null;
 }
 
 // 10MB matches MAX_MEDIA_BYTES for inbound media and WhatsApp's own ceiling.
@@ -133,6 +138,43 @@ export async function sendText(to: string, body: string): Promise<string> {
 // primeos_deliverable_image: [client name, request number].
 export type TemplateContext = { clientName: string; requestNumber: string };
 
+class DefinitiveTemplateRejection extends Error {}
+
+async function postMediaTemplate(
+  phone: string,
+  templateName: string,
+  fileData: string,
+  fileName: string,
+  parameters?: string[],
+): Promise<void> {
+  const res = await fetch(mediaEndpoint(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-organization-id': apiKey(),
+    },
+    body: JSON.stringify({
+      phoneNumber: phone,
+      templateName,
+      ...(parameters ? { languageCode: 'he', parameters } : {}),
+      fileData,
+      fileName,
+    }),
+  });
+  const responseText = await res.text();
+  if (!res.ok) {
+    const ErrorType = res.status >= 400 && res.status < 500
+      ? DefinitiveTemplateRejection
+      : Error;
+    throw new ErrorType(`Smart Send media send failed (${res.status}): ${responseText.slice(0, 300)}`);
+  }
+  try {
+    assertAccepted(responseText, 'media send');
+  } catch (error) {
+    throw new DefinitiveTemplateRejection(error instanceof Error ? error.message : String(error));
+  }
+}
+
 export async function sendFile(
   to: string,
   mediaUrl: string,
@@ -155,30 +197,24 @@ export async function sendFile(
   if (bytes.byteLength > MAX_OUTBOUND_MEDIA_BYTES) {
     throw new Error(`Smart Send media too large (${bytes.byteLength} bytes)`);
   }
-  const res = await fetch(mediaEndpoint(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-organization-id': apiKey(),
-    },
-    body: JSON.stringify({
-      phoneNumber: phone,
-      templateName: template,
-      // Omitted when the caller has no context so document sends (which reuse
-      // this route) keep the exact payload they had before.
-      ...(ctx
-        ? { languageCode: 'he', parameters: [ctx.clientName, ctx.requestNumber] }
-        : {}),
-      fileData: toBase64(bytes),
-      fileName: fileNameFor(mediaUrl, contentType),
-    }),
-  });
-  const responseText = await res.text();
-  if (!res.ok) {
-    // Never include request data or the API key in errors/logs.
-    throw new Error(`Smart Send media send failed (${res.status}): ${responseText.slice(0, 300)}`);
+  const fileData = toBase64(bytes);
+  const fileName = fileNameFor(mediaUrl, contentType);
+  // v2 has one approved body variable: client name. Legacy template keeps its
+  // existing two-variable contract until the environment switches names.
+  const parameters = ctx
+    ? template === 'primeos_deliverable_image_v2'
+      ? [ctx.clientName]
+      : [ctx.clientName, ctx.requestNumber]
+    : undefined;
+  try {
+    await postMediaTemplate(phone, template, fileData, fileName, parameters);
+  } catch (error) {
+    const fallback = mediaFallbackTemplate();
+    // Retry only a definitive provider rejection. Network/5xx failures may
+    // have accepted the first send, so retrying could duplicate delivery.
+    if (!(error instanceof DefinitiveTemplateRejection) || !fallback || fallback === template) throw error;
+    await postMediaTemplate(phone, fallback, fileData, fileName);
   }
-  assertAccepted(responseText, 'media send');
   const sid = `smartsend-${crypto.randomUUID()}`;
   // The template body is fixed by WhatsApp approval, so the caption cannot ride
   // along with the file. Send it as its own message right after.

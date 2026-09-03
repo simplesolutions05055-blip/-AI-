@@ -21,6 +21,57 @@ Deno.test('normalizes documented Smart Send text payload', async () => {
   assertMatch(result?.id ?? '', /^smartsend-[a-f0-9]{40}$/);
 });
 
+Deno.test('message_type text discards stale media fields from the previous event', async () => {
+  const result = await normalizeSmartSendMessage({
+    phone: '972501234567',
+    last_message: 'טקסט חדש',
+    message_type: 'text',
+    media_url: 'https://cdn.example.com/stale.jpg',
+    file_url: 'https://cdn.example.com/stale.pdf',
+    voice_url: 'https://cdn.example.com/stale.mp4',
+  });
+  assertEquals(result?.body, 'טקסט חדש');
+  assertEquals(result?.mediaUrl, null);
+  assertEquals(result?.mediaType, null);
+  assertEquals(result?.isVoice, false);
+});
+
+Deno.test('provider image marker is metadata, not customer text', async () => {
+  const result = await normalizeSmartSendMessage({
+    phone: '972501234567',
+    last_message: '[image]',
+    message_type: 'image',
+    media_url: 'https://cdn.example.com/photo.jpg',
+  });
+  assertEquals(result?.body, '');
+  assertEquals(result?.mediaUrl, 'https://cdn.example.com/photo.jpg');
+  assertEquals(result?.mediaType, 'image');
+});
+
+Deno.test('caption survives when last_message contains provider image marker', async () => {
+  const result = await normalizeSmartSendMessage({
+    phone: '972501234567',
+    last_message: '[image]',
+    caption: 'כיתוב אמיתי',
+    message_type: 'image',
+    media_url: 'https://cdn.example.com/photo.jpg',
+  });
+  assertEquals(result?.body, 'כיתוב אמיתי');
+});
+
+Deno.test('message_type audio prefers voice_url and marks a voice note', async () => {
+  const result = await normalizeSmartSendMessage({
+    phone: '972501234567',
+    last_message: '[audio]',
+    message_type: 'audio',
+    voice_url: 'https://cdn.example.com/voice.mp4',
+  });
+  assertEquals(result?.body, '');
+  assertEquals(result?.mediaUrl, 'https://cdn.example.com/voice.mp4');
+  assertEquals(result?.mediaType, 'audio');
+  assertEquals(result?.isVoice, true);
+});
+
 Deno.test('normalizes an inbound media extension without text', async () => {
   const result = await normalizeSmartSendMessage({
     phone: 'whatsapp:+972501234567',
