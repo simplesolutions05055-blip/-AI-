@@ -973,12 +973,15 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                   }
                   patch(next);
                   setAliasesText('');
-                  setPendingWebsiteContent(websiteContent);
-                  setFlashFields(changed);
+                  if (websiteContent.length) setPendingWebsiteContent(websiteContent);
+                  // onApply fires once for the auto-applied verified fields and
+                  // again if the user approves review fields — accumulate.
+                  const merged = new Set([...flashFields, ...changed]);
+                  setFlashFields(merged);
                   setApplyNotice(
-                    changed.size
-                      ? `${changed.size} שדות עודכנו מהאינטרנט — מסומנים בירוק. עברו עליהם ולחצו שמירה.`
-                      : 'לא נמצאו שדות חדשים לעדכון.',
+                    merged.size
+                      ? `${merged.size} שדות עודכנו אוטומטית מהאינטרנט — מסומנים בירוק. לחצו שמירה כדי לשמור.`
+                      : null,
                   );
                   window.setTimeout(() => setFlashFields(new Set()), 12000);
                   window.setTimeout(() => {
@@ -1002,7 +1005,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
               <span className="mb-1 flex items-center gap-1.5 text-sm font-medium">
                 שם המקום
                 {flashFields.has('name') && (
-                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן</span>
+                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן אוטומטית</span>
                 )}
               </span>
               <input
@@ -1044,7 +1047,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
               <span className="mb-1 flex items-center gap-1.5 text-sm font-medium">
                 סוג לקוח
                 {flashFields.has('client_type') && (
-                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן</span>
+                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן אוטומטית</span>
                 )}
               </span>
               <select
@@ -1086,7 +1089,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                 <span className="flex items-center gap-1.5 text-sm font-medium">
                   פלטת צבעים
                   {flashFields.has('color_palette') && (
-                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן</span>
+                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן אוטומטית</span>
                   )}
                 </span>
                 <button onClick={addColor} className="text-xs text-brand">+ הוספת צבע</button>
@@ -1128,7 +1131,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
               <span className="block text-sm font-medium mb-1">הנחיות סגנון</span>
               <textarea
                 className={`${input} h-24`}
-                dir="auto"
+                dir="rtl"
                 placeholder="טון רשמי אך חמים, פנייה לתושבים..."
                 value={selected.style_notes ?? ''}
                 onChange={(e) => patch({ style_notes: e.target.value })}
@@ -1156,7 +1159,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                       <span className="mb-1 flex items-center gap-1.5 text-sm font-medium">
                         {field.label}
                         {flashFields.has(String(field.key)) && (
-                          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן</span>
+                          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן אוטומטית</span>
                         )}
                       </span>
                       {field.multiline ? (
@@ -1170,8 +1173,8 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                       ) : (
                         <input
                           className={className}
-                          dir={field.ltr ? 'ltr' : 'auto'}
-                          style={{ textAlign: 'right' }}
+                          dir={field.ltr ? 'ltr' : 'rtl'}
+                          style={{ textAlign: field.ltr ? 'right' : undefined }}
                           placeholder={field.placeholder}
                           value={value}
                           onChange={(e) => patchTextField(field.key, e.target.value)}
