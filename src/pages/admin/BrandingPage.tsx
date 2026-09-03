@@ -949,6 +949,10 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
             </div>
 
             {isAdmin && (!selected.id || showAutofill) && (
+              // -order-2 keeps the panel right under the sticky header (also
+              // -order-2, but earlier in the DOM), where the toggle button is —
+              // not pushed below the -order-1 document/content sections.
+              <div className="-order-2">
               <BrandAutofillPanel
                 initialQuery={selected.website || selected.name || ''}
                 onApply={(autofill, websiteContent) => {
@@ -976,7 +980,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                       ? `${changed.size} שדות עודכנו מהאינטרנט — מסומנים בירוק. עברו עליהם ולחצו שמירה.`
                       : 'לא נמצאו שדות חדשים לעדכון.',
                   );
-                  window.setTimeout(() => setFlashFields(new Set()), 6000);
+                  window.setTimeout(() => setFlashFields(new Set()), 12000);
                   window.setTimeout(() => {
                     const first = changed.values().next().value;
                     const anchor = first === 'name' ? 'brand-details' : `brand-field-${first}`;
@@ -984,10 +988,11 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                   }, 60);
                 }}
               />
+              </div>
             )}
 
             {applyNotice && (
-              <div className="-order-1 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+              <div className="-order-2 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
                 <span>{applyNotice}</span>
                 <button type="button" onClick={() => setApplyNotice(null)} aria-label="סגירה" className="ms-auto text-emerald-700 hover:text-emerald-950">×</button>
               </div>
