@@ -55,6 +55,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # Deno needs --node-modules-dir=auto (set on both scripts) because the
+      # functions import jsr:@supabase/supabase-js, which pulls npm dependencies
+      # such as @supabase/realtime-js. Without it Deno refuses to resolve them
+      # and never reaches typechecking. With it, Deno installs what it needs,
+      # so this job deliberately does NOT run `npm ci`.
       # The Edge Functions are Deno, so `tsc` never looks at them — and Supabase
       # deploys them WITHOUT typechecking, so a bad function deploys "successfully"
       # and then returns BOOT_ERROR to every caller. That already happened once:
