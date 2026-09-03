@@ -71,11 +71,16 @@ function json(payload: unknown, status = 200): Response {
 
 async function launchOptions(): Promise<Parameters<typeof puppeteer.launch>[0]> {
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    // @sparticuz/chromium v149 dropped the `defaultViewport` and `headless`
+    // getters this used to read; only args/graphics/executablePath remain. Both
+    // values are stated here instead, matching what the package used to return,
+    // so the rendered output does not shift. Pagination itself comes from
+    // preferCSSPageSize + @page, not the viewport.
     return {
       args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
+      defaultViewport: { width: 1920, height: 1080 },
       executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
+      headless: true,
     };
   }
 
