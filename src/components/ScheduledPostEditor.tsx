@@ -21,6 +21,7 @@ import {
   SCHEDULED_POST_COLUMNS,
   datetimeLocalFromIso,
   isDueForPublish,
+  isScheduledPostEditable,
   scheduleDisplayTitle,
   scheduleLabel,
   schedulePlatformLabel,
@@ -149,8 +150,11 @@ export default function ScheduledPostEditor({
   // paths) so folding upload paths back in after a save can't retrigger one.
   const formSignature = `${form.caption}|${form.scheduledAt}|${platform}|${targetId}|${media.map((item) => item.id).join(',')}`;
   const savedSignature = useRef<string | null>(null);
+  // Once a post has left the queue (publishing / published / cancelled) editing
+  // it here would only diverge our copy from what is already on Facebook.
+  const editable = post ? isScheduledPostEditable(post) : true;
   useEffect(() => {
-    if (!post || mediaLoading) return;
+    if (!post || mediaLoading || !editable) return;
     // Only autosave a state the server would accept; anything else is reported
     // by the readiness line and waits for the user to fix it.
     const scheduledAtTime = new Date(form.scheduledAt).getTime();
@@ -209,7 +213,7 @@ export default function ScheduledPostEditor({
   }
 
   async function save() {
-    if (!post || saving) return;
+    if (!post || saving || !editable) return;
     const cleanTitle = derivedTitle();
     const cleanCaption = form.caption.trim();
     const scheduledAtValue = dateRef.current?.value || form.scheduledAt;
@@ -249,7 +253,8 @@ export default function ScheduledPostEditor({
     const rearm = post.status === 'failed' && nextScheduledAt.getTime() > Date.now();
     const nextStatus = rearm ? 'scheduled' : post.status;
 
-    const { data: updated, error: updateError } = await createSupabaseBrowserClient()
+    const nowIso = new Date().toISOString();
+    let query = createSupabaseBrowserClient()
       .from('scheduled_social_posts')
       .update({
         title: cleanTitle,
@@ -261,11 +266,14 @@ export default function ScheduledPostEditor({
         target_platform_id: chosen.target_id,
         target_name: chosen.name,
         status: nextStatus,
+        updated_at: nowIso,
         error_message: rearm ? null : undefined,
       } as never)
-      .eq('id', post.id)
-      .select('id')
-      .maybeSingle();
+      .eq('id', post.id);
+    // Optimistic lock: refuse the write if the row moved since we loaded it
+    // (another tab or another user editing the same post).
+    if (post.updated_at) query = query.eq('updated_at', post.updated_at);
+    const { data: updated, error: updateError } = await query.select('id').maybeSingle();
 
     setSaving(false);
     if (updateError) {
@@ -273,7 +281,7 @@ export default function ScheduledPostEditor({
       return;
     }
     if (!updated) {
-      setError('השינוי לא נשמר במסד הנתונים. רעננו את העמוד ונסו שוב.');
+      setError('הפוסט עודכן בינתיים ממקום אחר. רעננו את העמוד כדי לראות את הגרסה העדכנית ולנסות שוב.');
       return;
     }
 
@@ -287,6 +295,7 @@ export default function ScheduledPostEditor({
       target_platform_id: chosen.target_id,
       target_name: chosen.name,
       status: nextStatus,
+      updated_at: nowIso,
     });
     // Uploads are now in storage; fold their paths back in without replacing
     // the items, so ids (and the autosave signature) stay stable.
@@ -406,6 +415,18 @@ export default function ScheduledPostEditor({
         </span>
       </div>
 
+      {!editable && (
+        <div className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--bg-muted,#f4f4f5)] p-3 text-sm text-[var(--muted)]">
+          {livePost.status === 'published'
+            ? 'הפוסט כבר פורסם. שינוי כאן לא ישפיע על מה שמופיע בפייסבוק או באינסטגרם.'
+            : livePost.status === 'publishing'
+              ? 'הפוסט נמצא בתהליך פרסום כרגע ולא ניתן לעריכה.'
+              : 'הפוסט בוטל ולא ניתן לעריכה.'}
+        </div>
+      )}
+
+      <fieldset disabled={!editable} className={!editable ? 'pointer-events-none opacity-60' : undefined}>
+
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)]">
         <div>
           {/* On a wide screen "when" and "where" read as one row: labels
@@ -484,6 +505,7 @@ export default function ScheduledPostEditor({
 
         <SchedulePreview post={livePost} caption={form.caption} media={media} />
       </div>
+      </fieldset>
 
       {error && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 

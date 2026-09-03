@@ -10,16 +10,17 @@ export type ScheduledSocialPost = {
   platform: 'facebook' | 'instagram';
   caption: string;
   scheduled_at: string;
-  status: 'draft' | 'scheduled' | 'published' | 'failed' | 'cancelled';
+  status: 'draft' | 'scheduled' | 'publishing' | 'published' | 'failed' | 'cancelled';
   media?: StoredMediaRecord[] | null;
   connection_id?: string | null;
   target_platform_id?: string | null;
   target_name?: string | null;
+  updated_at?: string | null;
   brands?: { name?: string | null } | null;
 };
 
 export const SCHEDULED_POST_COLUMNS =
-  'id, brand_id, request_id, title, platform, caption, scheduled_at, status, media, connection_id, target_platform_id, target_name, brands(name)';
+  'id, brand_id, request_id, title, platform, caption, scheduled_at, status, media, connection_id, target_platform_id, target_name, updated_at, brands(name)';
 
 // Publishing is manual for now (no Meta connection), so a scheduled post whose
 // time has passed needs a human: highlight it and offer copy/download/mark-done.
@@ -29,14 +30,23 @@ export function isDueForPublish(post: ScheduledSocialPost) {
 
 export function scheduleStatusLabel(post: ScheduledSocialPost) {
   if (post.status === 'draft') return 'טיוטה — לא מפורסם';
+  if (post.status === 'publishing') return 'בפרסום…';
   if (post.status === 'published') return 'פורסם';
   if (post.status === 'failed') return 'נכשל';
   if (post.status === 'cancelled') return 'בוטל';
   return isDueForPublish(post) ? 'ממתין לפרסום ידני' : 'מתוזמן';
 }
 
+// A post is locked from editing once it has left the queue: while it is being
+// published, after it published, or after it was cancelled. Editing then would
+// only change our copy while Facebook keeps the original.
+export function isScheduledPostEditable(post: Pick<ScheduledSocialPost, 'status'>) {
+  return post.status === 'draft' || post.status === 'scheduled' || post.status === 'failed';
+}
+
 export function scheduleTone(post: ScheduledSocialPost) {
   if (post.status === 'draft') return 'border-amber-300 bg-amber-50 text-amber-800';
+  if (post.status === 'publishing') return 'border-sky-300 bg-sky-50 text-sky-800';
   if (post.status === 'failed') return 'border-red-200 bg-red-50 text-red-700';
   if (post.status === 'published') return 'border-[#10b981] bg-[#ecfdf5] text-[#065f46]';
   if (post.platform === 'facebook') return 'border-[#60a5fa] bg-[#eff6ff] text-[#1d4ed8]';

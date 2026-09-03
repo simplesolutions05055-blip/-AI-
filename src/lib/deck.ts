@@ -574,6 +574,22 @@ export async function setPrimaryPresentationVersion(rootId: string, versionId: s
 export async function deletePresentationVersion(requestId: string): Promise<void> {
   const db = createSupabaseBrowserClient();
 
+  // Refuse if a scheduled/draft social post still points at this version (by the
+  // request itself or one of its outputs). Deleting it would leave the post
+  // pointing at a file that no longer exists — it would fail at publish time or
+  // go out without its image.
+  const { data: outIds } = await db.from('outputs').select('id').eq('request_id', requestId);
+  const outputIds = ((outIds as Array<{ id: string }>) ?? []).map((r) => r.id);
+  const orClause = [`request_id.eq.${requestId}`, ...(outputIds.length ? [`output_id.in.(${outputIds.join(',')})`] : [])].join(',');
+  const { count: linkedPosts } = await db
+    .from('scheduled_social_posts')
+    .select('id', { count: 'exact', head: true })
+    .in('status', ['draft', 'scheduled', 'publishing'])
+    .or(orClause);
+  if ((linkedPosts ?? 0) > 0) {
+    throw new Error('הגרסה משויכת לפוסט מתוזמן. יש לבטל את הפוסט לפני מחיקת הגרסה.');
+  }
+
   // Collect every storage file this version owns: generated slide images and any
   // output files (outline outputs are text-only, so usually none here).
   const [{ data: imgRows }, { data: outRows }] = await Promise.all([

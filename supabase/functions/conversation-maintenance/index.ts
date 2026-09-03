@@ -97,7 +97,38 @@ Deno.serve(async (req) => {
     }
   }
 
-  return new Response(JSON.stringify({ ok: true, softClosed, stuck, pruned }), {
+  // ── 4. Prune orphaned brand storage ───────────────────────────────────────
+  // An onboarding that was abandoned mid-way, or a brand delete whose client
+  // storage cleanup didn't finish, leaves folders under the `branding` bucket
+  // with no brand row. Sweep them hourly. Fail-safe: only act when the brand
+  // list loaded and is non-empty, and only touch UUID-named folders.
+  let orphanFolders = 0;
+  if (new Date().getMinutes() < 5) {
+    const { data: brandRows, error: brandErr } = await database.from('brands').select('id');
+    const brandIds = new Set(((brandRows as Array<{ id: string }> | null) ?? []).map((b) => b.id));
+    const { data: folders } = await database.storage.from('branding').list('', { limit: 1000 });
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!brandErr && brandIds.size > 0 && folders) {
+      for (const f of folders) {
+        if (!uuid.test(f.name) || brandIds.has(f.name)) continue;
+        const toRemove: string[] = [];
+        for (const sub of ['', 'assets']) {
+          const prefix = sub ? `${f.name}/${sub}` : f.name;
+          const { data: files } = await database.storage.from('branding').list(prefix, { limit: 1000 });
+          for (const file of files ?? []) {
+            if (file.id) toRemove.push(sub ? `${f.name}/${sub}/${file.name}` : `${f.name}/${file.name}`);
+          }
+        }
+        if (toRemove.length) {
+          await database.storage.from('branding').remove(toRemove);
+          orphanFolders++;
+        }
+      }
+      if (orphanFolders) await logEvent(database, { action: 'orphan_brand_storage_pruned', metadata: { folders: orphanFolders } });
+    }
+  }
+
+  return new Response(JSON.stringify({ ok: true, softClosed, stuck, pruned, orphanFolders }), {
     headers: { 'Content-Type': 'application/json' },
   });
 });

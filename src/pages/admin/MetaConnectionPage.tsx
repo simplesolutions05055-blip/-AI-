@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { Spinner } from '@/components/ui/Spinner';
 import { CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { confirmDialog } from '@/lib/dialog';
 
 interface MetaUser {
   id: string;
@@ -37,6 +38,7 @@ interface ConnectionData {
   status: string;
   provider?: 'meta' | 'autopost';
   last_verified_at: string;
+  token_expires_at: string | null;
   default_facebook_page_id: string | null;
   default_instagram_account_id: string | null;
   meta_facebook_pages: FacebookPage[];
@@ -140,6 +142,7 @@ export default function MetaConnectionPage() {
           meta_user_picture,
           status,
           last_verified_at,
+          token_expires_at,
           default_facebook_page_id,
           default_instagram_account_id,
           meta_facebook_pages!connection_id (
@@ -269,7 +272,27 @@ export default function MetaConnectionPage() {
   };
 
   const disconnectMeta = async () => {
-    if (!confirm('Are you sure you want to disconnect Meta? This will remove all Facebook and Instagram connections.')) {
+    const supabasePre = createSupabaseBrowserClient();
+    const authPre = await supabasePre.auth.getUser() as AuthUserResponse;
+    const uid = authPre.data.user?.id;
+    let scheduledNote = '';
+    if (uid) {
+      const { count } = await supabasePre
+        .from('scheduled_social_posts')
+        .select('id', { count: 'exact', head: true })
+        .eq('created_by', uid)
+        .in('status', ['scheduled', 'draft', 'publishing']);
+      if ((count ?? 0) > 0) {
+        scheduledNote = `\n\n${count} פוסטים שכבר תוזמנו יימחקו ולא יפורסמו.`;
+      }
+    }
+    if (
+      !(await confirmDialog({
+        message: `לנתק את החיבור לפייסבוק ולאינסטגרם? כל הדפים והחשבונות המחוברים יוסרו.${scheduledNote}`,
+        danger: true,
+        confirmText: 'ניתוק',
+      }))
+    ) {
       return;
     }
 
@@ -329,6 +352,24 @@ export default function MetaConnectionPage() {
           <span>{success}</span>
         </div>
       )}
+
+      {data && (() => {
+        const expMs = data.token_expires_at ? new Date(data.token_expires_at).getTime() : null;
+        const daysLeft = expMs != null ? Math.round((expMs - Date.now()) / 86_400_000) : null;
+        const dead = data.status !== 'active' || (daysLeft != null && daysLeft <= 0);
+        const soon = !dead && daysLeft != null && daysLeft <= 7;
+        if (!dead && !soon) return null;
+        return (
+          <div className={`mb-4 rounded-lg border p-3 text-sm flex items-center gap-2 ${dead ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            <span>
+              {dead
+                ? 'החיבור לפייסבוק פג תוקף. פוסטים מתוזמנים לא יפורסמו עד שתתחברו מחדש.'
+                : `החיבור לפייסבוק יפוג בעוד ${daysLeft} ימים. כדאי להתחבר מחדש כדי שהפרסום ימשיך לעבוד.`}
+            </span>
+          </div>
+        );
+      })()}
 
       {!data ? (
         <div className="overflow-hidden rounded-2xl border-[1.5px] border-emerald-500/40 bg-emerald-50/70 shadow-sm">

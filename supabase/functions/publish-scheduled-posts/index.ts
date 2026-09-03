@@ -54,6 +54,26 @@ Deno.serve(async (req) => {
     // Find all scheduled posts that are due (scheduled_at <= now)
     const now = new Date().toISOString();
 
+    // Proactively expire Meta connections whose token has lapsed. The per-post
+    // check below already refuses a non-active connection, but flipping the
+    // status here is what surfaces the problem in the UI (banner + errors page)
+    // before the client notices posts silently failing.
+    const { data: lapsed } = await supabase
+      .from('meta_connections')
+      .update({ status: 'expired', error_message: 'טוקן פייסבוק פג תוקף — יש להתחבר מחדש', updated_at: now })
+      .eq('status', 'active')
+      .not('token_expires_at', 'is', null)
+      .lt('token_expires_at', now)
+      .select('id, brand_id');
+    for (const c of lapsed ?? []) {
+      await supabase.from('logs').insert({
+        severity: 'warning',
+        action: 'meta_connection_expired',
+        message: 'חיבור פייסבוק פג תוקף — פוסטים מתוזמנים ייכשלו עד חיבור מחדש',
+        metadata: { connection_id: (c as { id: string }).id, brand_id: (c as { brand_id: string | null }).brand_id },
+      });
+    }
+
     const { data: duePosts, error: queryError } = await supabase
       .from('scheduled_social_posts')
       .select('id, connection_id, platform, target_platform_id, target_name, caption, image_url, media')
@@ -74,6 +94,17 @@ Deno.serve(async (req) => {
 
     // Process each post
     for (const post of duePosts as ScheduledPost[]) {
+      // Claim the post before doing any work: flip 'scheduled' -> 'publishing'
+      // conditionally. If another (overlapping or previous slow) run already
+      // took it, this update hits zero rows and we skip — no double publish.
+      const { data: claimed } = await supabase
+        .from('scheduled_social_posts')
+        .update({ status: 'publishing', updated_at: new Date().toISOString() })
+        .eq('id', post.id)
+        .eq('status', 'scheduled')
+        .select('id');
+      if (!claimed || claimed.length === 0) continue;
+
       try {
         // Verify connection is still active
         const { data: connection, error: connError } = await supabase

@@ -222,7 +222,29 @@ export async function enforceAiLimit(
           action: 'abuse_guard_rate_limited',
           metadata: { key, eventType: 'generation_day', current: used, max: genMax },
         });
-        throw new AbuseGuardError('generations_per_24h_exceeded', 'הגעת למכסת היצירות היומית. אפשר לנסות שוב מאוחר יותר.');
+        // The cap is a rolling 24h window, not a calendar day — say when the
+        // next slot frees (when the oldest counted event ages out) instead of
+        // implying a reset at midnight.
+        const since = new Date(Date.now() - 86400 * 1000).toISOString();
+        const { data: oldest } = await database
+          .from('rate_limit_events')
+          .select('created_at')
+          .eq('phone_number', key)
+          .eq('event_type', 'generation_day')
+          .gte('created_at', since)
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        const freesAt = (oldest as { created_at?: string } | null)?.created_at
+          ? new Date(new Date((oldest as { created_at: string }).created_at).getTime() + 86400 * 1000)
+          : null;
+        const hours = freesAt ? Math.max(1, Math.ceil((freesAt.getTime() - Date.now()) / 3_600_000)) : null;
+        throw new AbuseGuardError(
+          'generations_per_24h_exceeded',
+          hours
+            ? `הגעת למכסת היצירות ל-24 שעות. אפשר להמשיך בעוד כ-${hours} שעות.`
+            : 'הגעת למכסת היצירות ל-24 שעות. אפשר לנסות שוב מאוחר יותר.',
+        );
       }
     }
   }

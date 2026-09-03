@@ -965,6 +965,11 @@ function UserCard({
                     <span className="block text-xs text-[var(--muted)]">
                       {usage ? `נוצלו ${usage[group] ?? 0}${limits[group] ? ` / ${limits[group]}` : ''}` : hint}
                     </span>
+                    {usage && limits[group] > 0 && (usage[group] ?? 0) >= limits[group] && (
+                      <span className="block text-xs font-semibold text-red-600">
+                        המשתמש כבר מעל המכסה — חסום עד תחילת החודש
+                      </span>
+                    )}
                   </span>
                   <input
                     type="number"

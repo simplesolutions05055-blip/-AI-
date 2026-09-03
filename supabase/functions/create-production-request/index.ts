@@ -32,6 +32,9 @@ Deno.serve(async (req) => {
       if (!createdBy) return json(req, { error: 'login required' }, 401);
       const allowed = await canMutateRequest(database, body.request_id, createdBy);
       if (!allowed) return json(req, { error: 'forbidden' }, 403);
+      if (body.customer_email != null && body.customer_email.trim() !== '' && !isValidEmail(body.customer_email)) {
+        return json(req, { error: 'כתובת המייל של הלקוח לא תקינה' }, 400);
+      }
       const { error } = await database
         .from('requests')
         .update({ customer_email: cleanEmail(body.customer_email) })
@@ -40,6 +43,9 @@ Deno.serve(async (req) => {
       return json(req, { ok: true });
     }
 
+    if (body.customer_email != null && body.customer_email.trim() !== '' && !isValidEmail(body.customer_email)) {
+      return json(req, { error: 'כתובת המייל של הלקוח לא תקינה' }, 400);
+    }
     if (!body.output_type || !['text', 'image', 'pdf', 'presentation'].includes(body.output_type)) {
       return json(req, { error: 'invalid output_type' }, 400);
     }
@@ -172,6 +178,10 @@ async function detectBrand(database: ReturnType<typeof db>, brief: Record<string
 function cleanEmail(email: string | null | undefined): string | null {
   const trimmed = (email ?? '').trim();
   return trimmed || null;
+}
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
 function buildMessage(outputType: OutputType, brief: Record<string, unknown>): string {
