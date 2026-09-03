@@ -95,6 +95,10 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
   const [showAutofill, setShowAutofill] = useState(false);
+  const [flashFields, setFlashFields] = useState<Set<string>>(new Set());
+  const [applyNotice, setApplyNotice] = useState<string | null>(null);
+  const flashCls = (key: string) =>
+    flashFields.has(key) ? 'rounded-lg ring-2 ring-emerald-400 ring-offset-2 ring-offset-white transition-shadow' : '';
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Partial<Brand> | null>(null);
@@ -216,6 +220,8 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
     setLogoFile(null);
     setPendingWebsiteContent([]);
     setShowAutofill(false);
+    setFlashFields(new Set());
+    setApplyNotice(null);
 
     // Scroll to editor on mobile
     setTimeout(() => {
@@ -946,19 +952,54 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
               <BrandAutofillPanel
                 initialQuery={selected.website || selected.name || ''}
                 onApply={(autofill, websiteContent) => {
-                  patch({
+                  const next: Partial<Brand> = {
                     ...(autofill as Partial<Brand>),
                     client_type: autofill.client_type === 'municipality' ? 'municipality' : 'business',
                     color_palette: Array.isArray(autofill.color_palette) ? autofill.color_palette as BrandColor[] : selected.color_palette,
-                  });
+                  };
+                  // Which form fields this changed — so we can mark them green.
+                  const changed = new Set<string>();
+                  for (const [key, value] of Object.entries(next)) {
+                    if (value == null || value === '') continue;
+                    if (key === 'color_palette') {
+                      if (Array.isArray(value) && value.length) changed.add('color_palette');
+                      continue;
+                    }
+                    if (JSON.stringify(selected[key as keyof Brand] ?? null) !== JSON.stringify(value)) changed.add(key);
+                  }
+                  patch(next);
                   setAliasesText('');
                   setPendingWebsiteContent(websiteContent);
+                  setFlashFields(changed);
+                  setApplyNotice(
+                    changed.size
+                      ? `${changed.size} שדות עודכנו מהאינטרנט — מסומנים בירוק. עברו עליהם ולחצו שמירה.`
+                      : 'לא נמצאו שדות חדשים לעדכון.',
+                  );
+                  window.setTimeout(() => setFlashFields(new Set()), 6000);
+                  window.setTimeout(() => {
+                    const first = changed.values().next().value;
+                    const anchor = first === 'name' ? 'brand-details' : `brand-field-${first}`;
+                    if (first) document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }, 60);
                 }}
               />
             )}
 
-            <label id="brand-details" className="block scroll-mt-24">
-              <span className="block text-sm font-medium mb-1">שם המקום</span>
+            {applyNotice && (
+              <div className="-order-1 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                <span>{applyNotice}</span>
+                <button type="button" onClick={() => setApplyNotice(null)} aria-label="סגירה" className="ms-auto text-emerald-700 hover:text-emerald-950">×</button>
+              </div>
+            )}
+
+            <label id="brand-details" className={`block scroll-mt-24 ${flashCls('name')}`}>
+              <span className="mb-1 flex items-center gap-1.5 text-sm font-medium">
+                שם המקום
+                {flashFields.has('name') && (
+                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן</span>
+                )}
+              </span>
               <input
                 className={input}
                 dir="auto"
@@ -969,7 +1010,11 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
             </label>
 
             {isAdmin && selected.id && (
-              <BrandMembersSection brandId={selected.id} brandName={selected.name ?? ''} />
+              // -order-1 lifts it above the formal-documents and content-source
+              // sections (which carry -order-1 too, and come later in the DOM).
+              <div className="-order-1">
+                <BrandMembersSection brandId={selected.id} brandName={selected.name ?? ''} />
+              </div>
             )}
 
             {isAdmin && (
@@ -990,8 +1035,13 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
               מקום פעיל
             </label>
 
-            <label className="block">
-              <span className="block text-sm font-medium mb-1">סוג לקוח</span>
+            <label id="brand-field-client_type" className={`block scroll-mt-24 ${flashCls('client_type')}`}>
+              <span className="mb-1 flex items-center gap-1.5 text-sm font-medium">
+                סוג לקוח
+                {flashFields.has('client_type') && (
+                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן</span>
+                )}
+              </span>
               <select
                 className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
                 value={selected.client_type ?? 'business'}
@@ -1026,9 +1076,14 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
             </div>
 
             {/* palette */}
-            <div>
+            <div id="brand-field-color_palette" className={`scroll-mt-24 ${flashCls('color_palette')}`}>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium">פלטת צבעים</span>
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  פלטת צבעים
+                  {flashFields.has('color_palette') && (
+                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן</span>
+                  )}
+                </span>
                 <button onClick={addColor} className="text-xs text-brand">+ הוספת צבע</button>
               </div>
               <div className="space-y-2">
@@ -1088,8 +1143,17 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                   const value = typeof raw === 'string' ? raw : '';
                   const className = field.multiline ? `${input} h-24 text-right` : `${input} text-right`;
                   return (
-                    <label key={String(field.key)} className={field.multiline ? 'block md:col-span-2' : 'block'}>
-                      <span className="mb-1 block text-sm font-medium">{field.label}</span>
+                    <label
+                      key={String(field.key)}
+                      id={`brand-field-${String(field.key)}`}
+                      className={`scroll-mt-24 ${field.multiline ? 'block md:col-span-2' : 'block'} ${flashCls(String(field.key))}`}
+                    >
+                      <span className="mb-1 flex items-center gap-1.5 text-sm font-medium">
+                        {field.label}
+                        {flashFields.has(String(field.key)) && (
+                          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">עודכן</span>
+                        )}
+                      </span>
                       {field.multiline ? (
                         <textarea
                           className={className}
