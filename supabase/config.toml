@@ -42,6 +42,9 @@ verify_jwt = false
 [functions.resolve-invite]
 verify_jwt = false
 
+[functions.brand-autofill]
+verify_jwt = false
+
 [functions.process-request]
 verify_jwt = false
 

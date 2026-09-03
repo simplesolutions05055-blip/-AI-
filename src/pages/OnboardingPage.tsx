@@ -11,6 +11,7 @@ import InstallPrompt from '@/components/pwa/InstallPrompt';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { FileText, Palette, ArrowLeft, ArrowRight } from 'lucide-react';
 import { AI_OUTAGE_USER_MESSAGE, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
+import BrandAutofillPanel from '@/components/BrandAutofillPanel';
 
 type StepKey = 'details' | 'company' | 'hub' | 'brand' | 'content';
 type BrandSectionKey = 'identity' | 'visual' | 'writing' | 'official' | 'documents';
@@ -1142,6 +1143,27 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                   שייכו את המשתמש לחברה או למותג הקיים במערכת.
                 </p>
 
+                <BrandAutofillPanel
+                  initialQuery={brand.website || brand.name}
+                  onApply={(autofill, websiteContent) => {
+                    setBrand((current) => ({
+                      ...current,
+                      ...autofill,
+                      client_type: autofill.client_type === 'municipality' ? 'municipality' : autofill.client_type === 'business' ? 'business' : current.client_type,
+                      color_palette: Array.isArray(autofill.color_palette) ? autofill.color_palette as BrandDetails['color_palette'] : current.color_palette,
+                    }));
+                    if (websiteContent.length > 0) {
+                      setContentSources((current) => [
+                        ...current,
+                        ...websiteContent.map((item) => ({ title: `אתר רשמי — ${item.title}`, content: item.content })),
+                      ]);
+                      setContentLoaded(true);
+                    }
+                    setBrandMode('new');
+                    setBrandLookupMessage('הפרטים הועתקו לטופס בלבד. עברו עליהם ושמרו כשמוכן.');
+                  }}
+                />
+
                 <Field label="שם מותג">
                   <div className="flex gap-2">
                     <input
@@ -1198,6 +1220,7 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
                     זה מותג חדש. מלאו את הפרטים הבסיסיים כדי ליצור אותו.
                   </div>
                 )}
+                {brandLookupMessage && <p className="mb-4 text-sm font-medium text-brand">{brandLookupMessage}</p>}
 
                 <div className="mb-6 flex flex-col items-center justify-center gap-3">
                   <button
