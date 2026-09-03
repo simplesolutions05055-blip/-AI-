@@ -391,7 +391,7 @@ async function setStatus(database: DB, requestId: string, status: string, extra:
 }
 
 // ── processing lock ──────────────────────────────────────────────────────────
-// Ensures only one worker runs on a request at a time (rapid messages / Twilio
+// Ensures only one worker runs on a request at a time (rapid messages / gateway
 // retries / admin actions). Backed by try_lock_request (see migration).
 async function acquireLock(database: DB, requestId: string): Promise<boolean> {
   const { data } = await database.rpc('try_lock_request', { p_request_id: requestId, p_ttl_seconds: 300 });
@@ -878,7 +878,7 @@ async function runRequestPipeline(
 
     if (effectiveNextQuestion && roundsRemaining > 0) {
       // Send FIRST, then advance the round only if the user actually received the
-      // question. If the send failed (Twilio down / daily limit / outside window)
+      // question. If the send failed (gateway down / daily limit / outside window)
       // we leave question_rounds and status untouched, so the next inbound message
       // re-asks the same round instead of silently burning the budget toward
       // needs_attention — keeping WhatsApp behaviour identical to the simulator.
@@ -1397,8 +1397,8 @@ async function deliverContentToWhatsApp(
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
       body: mediaCaption, media_type: contentType, storage_path: path, twilio_message_sid: sid,
     });
-    // Twilio delivers media slower than plain texts (it must fetch the file),
-    // so texts sent immediately after tend to arrive BEFORE the image. Give the
+    // The gateway delivers media slower than plain texts, so texts sent
+    // immediately after tend to arrive BEFORE the image. Give the
     // media a head start so the order on the phone is: image → actions menu.
     await new Promise((r) => setTimeout(r, 6000));
   } catch (e) {

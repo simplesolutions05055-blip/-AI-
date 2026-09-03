@@ -1,19 +1,13 @@
-// WhatsApp transport switch — the ONE module the engine imports.
+// WhatsApp transport — the ONE module the engine imports.
 //
-// Smart Send is the only live gateway. The old Twilio module stays in the
-// repository as dead historical code, but this switch deliberately has no route
-// to it. Changing an environment variable cannot reactivate it.
+// Smart Send is the only gateway. The former Twilio transport has been removed
+// from the repository entirely, so there is no provider switch and no
+// environment variable that can route sends anywhere else.
 //
 // Provider note: Smart Send cannot post into a WhatsApp group; group sends
 // throw rather than fail silently.
 import * as smartsend from './smartsend.ts';
 import { db } from './db.ts';
-
-export type WhatsAppProvider = 'smartsend';
-
-export function whatsappProvider(): WhatsAppProvider {
-  return 'smartsend';
-}
 
 function assertNotGroup(to: string, what: string) {
   if (to.endsWith('@g.us') || to.startsWith('group:')) {

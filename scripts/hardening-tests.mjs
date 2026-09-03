@@ -44,7 +44,7 @@ for (const h of ['cdn.supabase.co','8.8.8.8','172.32.0.1','192.169.1.1','99.1.1.
   t(h, isPrivateAddress(h) === false);
 
 // ── host allowlist ──────────────────────────────────────────────────────────
-const ALLOWED = ['.supabase.co', '.twilio.com'];
+const ALLOWED = ['.supabase.co', '.smartsend.co.il'];
 const hostAllowed = (h) => ALLOWED.some(e => e.startsWith('.') ? h === e.slice(1) || h.endsWith(e) : h === e);
 console.log('\nSSRF — host allowlist:');
 t('proj.supabase.co allowed', hostAllowed('proj.supabase.co'));

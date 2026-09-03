@@ -103,8 +103,8 @@ Deno.serve(async (req) => {
     if (background) await background();
 
     // Run the SAME pipeline WhatsApp runs — synchronously, so the HTTP response
-    // already carries every outbound message produced this turn. Match Twilio's
-    // burst behavior: wait for the configured debounce and let only the latest
+    // already carries every outbound message produced this turn. Match the
+    // gateway's burst behavior: wait for the configured debounce and let only the latest
     // inbound message on the request run the worker.
     if (requestIdToProcess) {
       const merge = await getSettingOr<{ debounce_seconds: number }>(database, 'message_merge', { debounce_seconds: 6 });

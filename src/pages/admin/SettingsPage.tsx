@@ -79,12 +79,6 @@ export default function SettingsPage() {
       .then(({ data }) => {
         const next: Settings = {};
         (data ?? []).forEach((row: any) => {
-          // Runtime-managed Twilio Content SIDs must not be copied into the
-          // editable form, otherwise a later admin save could overwrite a
-          // newer cache created by an Edge Function.
-          if (row.key === 'whatsapp_interactive_content_cache') return;
-          // Legacy runtime-written key — never edited here, keep it out of save().
-          if (row.key === 'greenapi_instance_state') return;
           next[row.key] = row.value_json;
         });
         setSettings(next);

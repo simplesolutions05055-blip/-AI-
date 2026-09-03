@@ -1,11 +1,11 @@
 // Shared inbound-message orchestration — the SINGLE entry point both channels
-// use so WhatsApp and the website simulator run identical logic. The Twilio
+// use so WhatsApp and the website simulator run identical logic. The Smart Send
 // webhook and the simulator endpoint are thin adapters that resolve transport
-// specifics (signature, media download, HTTP shape) and then hand off here.
+// specifics (auth, media download, HTTP shape) and then hand off here.
 //
 // Channel differences are isolated to two inputs: `simulated` (routes outbound
-// through sendOut's sim path instead of Twilio) and `resolveMedia` (the webhook
-// downloads from Twilio; the simulator already has extracted text inline).
+// through sendOut's sim path instead of the gateway) and `resolveMedia` (the
+// webhook downloads the media; the simulator already has extracted text inline).
 //
 // Flow layer (guided menu): the sender is identified by phone → site profile
 // (unknown numbers are sent to sign up), and a bot-style state machine drives
@@ -61,7 +61,7 @@ export type InboundOpts = {
   templates: Record<string, string>;
   simulated: boolean;
   // Resolve attachments into the effective body + first stored file. Runs after
-  // the inbound row is claimed. The webhook downloads Twilio media here; the
+  // the inbound row is claimed. The webhook downloads the gateway media here; the
   // simulator returns the body as-is (its file text is already folded in).
   resolveMedia: (requestId: string) => Promise<MediaResult>;
 };
@@ -69,7 +69,7 @@ export type InboundOpts = {
 export type InboundResult = {
   requestIdToProcess: string | null;
   // Long-running flow action (AI image edit, caption rewrite). The webhook runs
-  // it via EdgeRuntime.waitUntil so Twilio gets its fast 200; the simulator
+  // it via EdgeRuntime.waitUntil so the gateway gets its fast 200; the simulator
   // awaits it inline.
   background?: (() => Promise<void>) | null;
 };
@@ -563,7 +563,7 @@ async function createFlowRequest(
   }
   const requestId = newReq.id as string;
 
-  // Claim the message onto the new request (idempotency vs Twilio retries).
+  // Claim the message onto the new request (idempotency vs gateway retries).
   const { error: claimErr } = await database.from('messages').insert({
     conversation_id: conversation.id, request_id: requestId, direction: 'inbound', body, twilio_message_sid: messageSid,
   });

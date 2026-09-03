@@ -3,8 +3,9 @@
 // The server sits inside a private network the internet cannot reach. Any place
 // it fetches a URL that came from a *request body* turns it into a proxy into
 // that network — cloud metadata (169.254.169.254), internal admin panels, the
-// database's own port. Twilio's media download is worse than a plain read: it
-// attaches Basic auth, so an attacker-chosen host receives live credentials.
+// database's own port. The WhatsApp gateway's media download is the sharpest
+// case: that URL arrives on an untrusted webhook payload, so without this guard
+// an attacker picks the host our server connects to from inside the network.
 //
 // Rules enforced here:
 //   1. https only (http allowed only for explicit localhost dev allowlisting)
@@ -21,7 +22,6 @@
 const DEFAULT_SUFFIXES = [
   '.supabase.co',
   '.supabase.in',
-  '.twilio.com',
   '.smartsend.co.il',
   '.fbcdn.net',
   '.cdninstagram.com',

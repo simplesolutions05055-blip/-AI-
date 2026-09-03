@@ -378,8 +378,8 @@ export function deniedOutputMessage(outputType: string): string {
   return `אין לחשבון שלך הרשאה ליצור ${label}. אפשר לפנות למנהל המערכת כדי לפתוח את ההרשאה.`;
 }
 
-// WhatsApp/Twilio silently drops inbound messages over ~1600 chars (warning
-// 21617 — the webhook is never even called, so we can't react after the fact).
+// WhatsApp silently drops inbound messages over ~1600 chars — the webhook is
+// never even called, so we cannot react to it after the fact.
 // The only defense is warning up front: long material must arrive as a file.
 // A file is raw material, never the brief on its own: ownBriefContent (worker)
 // counts only what the user typed, so a document arriving with "תכיני מזה
@@ -1065,7 +1065,7 @@ async function lastOutboundBody(database: DB, conversationId: string): Promise<s
   return (data?.body as string | null) ?? null;
 }
 
-// Claim the inbound message row (idempotency vs Twilio retries). Returns false
+// Claim the inbound message row (idempotency vs gateway retries). Returns false
 // when this SID was already handled.
 async function claimMessage(
   database: DB,
@@ -2611,7 +2611,7 @@ export type FlowOpts = {
   messageSid: string;
   numMedia: number;
   send: SendFn;
-  // Download the raw attachments of THIS message (channel-specific: Twilio
+  // Download the raw attachments of THIS message (channel-specific: Smart Send
   // fetch / simulator base64). Used by the standalone schedule-post flow, which
   // stores the file as-is instead of running the brief media pipeline.
   fetchRawMedia?: () => Promise<RawInboundMedia[]>;

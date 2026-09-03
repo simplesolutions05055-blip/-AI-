@@ -65,12 +65,6 @@ verify_jwt = false
 [functions.publish-scheduled-posts]
 verify_jwt = false
 
-# Twilio signs its webhooks with X-Twilio-Signature, not a Supabase JWT — the
-# platform gate would reject every inbound message before the function ran. The
-# function validates the signature itself (validateSignature in _shared/twilio.ts).
-[functions.twilio-webhook]
-verify_jwt = false
-
 # Smart Send posts its own JSON payload, not a Supabase JWT. The function
 # validates SMARTSEND_WEBHOOK_SECRET from the Authorization header or the
 # `secret` query parameter included in the registered hook URL.

@@ -42,7 +42,7 @@ export default function PrivacyPolicyPage() {
         <LegalList
           items={[
             'Supabase לצורך אימות, מסד נתונים, Edge Functions ואחסון קבצים.',
-            'Twilio לצורך קבלת ושליחת הודעות WhatsApp ומדיה.',
+            'Smart Send (smartsend.co.il) לצורך קבלת ושליחת הודעות WhatsApp ומדיה.',
             'Resend לצורך שליחת מיילים, אימותים ותוצרים.',
             'OpenAI ו-Anthropic Claude לצורך יצירה, ניתוח, עריכה או הפקת תוצרים.',
             'מנהלי מערכת מטעם הלקוח או הארגון, לפי הרשאות שהוגדרו במערכת.',

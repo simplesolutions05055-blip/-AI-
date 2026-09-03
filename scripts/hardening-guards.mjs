@@ -87,8 +87,7 @@ for (const f of files.filter((f) => f.endsWith('.tsx'))) {
 
 // ── 6. body-supplied URLs go through the SSRF guard ─────────────────────────
 const SSRF_SINKS = [
-  ['supabase/functions/_shared/greenapi.ts', 'downloadUrl'],
-  ['supabase/functions/_shared/twilio.ts', 'mediaUrl'],
+  ['supabase/functions/_shared/smartsend.ts', 'mediaUrl'],
   ['api/internal/render-docx.ts', 'block.src'],
   ['api/internal/render-docx.ts', 'logoUrl'],
 ];

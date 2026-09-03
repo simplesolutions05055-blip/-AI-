@@ -3,9 +3,8 @@
 // 2. Keeps the current request attached so the next user message can continue
 //    or explicitly start a new artifact.
 // 3. Flags requests stuck mid-processing so the admin can retry.
-// Protected by x-cron-secret (CRON_SECRET); never exposes Twilio creds publicly.
+// Protected by x-cron-secret (CRON_SECRET); never exposes gateway creds publicly.
 import { db } from '../_shared/db.ts';
-import { sendText, whatsappProvider } from '../_shared/whatsapp.ts';
 import { getTemplates, getSettingOr, logEvent } from '../_shared/util.ts';
 
 Deno.serve(async (req) => {
@@ -37,20 +36,17 @@ Deno.serve(async (req) => {
     .is('timeout_warned_at', null);
   for (const c of toClose ?? []) {
     const text = templates.closed_idle;
-    if (!isProductionFormConversation(c.whatsapp_from as string)) {
-      if (c.simulated) {
-        await database.from('messages').insert({
-          conversation_id: c.id,
-          request_id: c.current_request_id ?? null,
-          direction: 'outbound',
-          body: text,
-        });
-      } else if (whatsappProvider() !== 'smartsend') {
-        // Smart Send uses Meta's official WhatsApp API. A free-form idle notice
-        // can be rejected outside the 24-hour customer-service window. Soft-
-        // close the conversation silently; the next inbound message reopens it.
-        try { await sendText(c.whatsapp_from as string, text); } catch { /* ignore */ }
-      }
+    // Only the simulator gets the idle notice on the transcript. Smart Send uses
+    // Meta's official WhatsApp API, where a free-form notice is rejected outside
+    // the 24-hour customer-service window — so a real conversation soft-closes
+    // silently and the next inbound message reopens it.
+    if (c.simulated && !isProductionFormConversation(c.whatsapp_from as string)) {
+      await database.from('messages').insert({
+        conversation_id: c.id,
+        request_id: c.current_request_id ?? null,
+        direction: 'outbound',
+        body: text,
+      });
     }
     await database.from('conversations')
       .update({ status: 'soft_closed', closed_at: new Date().toISOString(), timeout_warned_at: new Date().toISOString() })
