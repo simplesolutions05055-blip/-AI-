@@ -54,7 +54,7 @@ export default function App() {
     <TooltipProvider delayDuration={200}>
       <AnimatedBackground />
       <div className="app-content">
-        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <BrowserRouter>
           <TitleManager />
           <RouteBoundary>
           <Routes>

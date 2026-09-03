@@ -219,7 +219,7 @@ export function AdminBottomNav({
   isAdmin: boolean;
   canCreateOutputs: boolean;
   onOpenMenu: () => void;
-  menuButtonRef?: RefObject<HTMLButtonElement>;
+  menuButtonRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const { pathname } = useLocation();
   const allLinks = visibleSections(isAdmin, canCreateOutputs).flatMap((sec) => sec.links);
