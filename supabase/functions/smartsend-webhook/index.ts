@@ -40,13 +40,13 @@ async function scheduleProcessing(database: DB, requestId: string, messageSid: s
     if (debounceMs) await new Promise((resolve) => setTimeout(resolve, debounceMs));
     const { data: latest } = await database
       .from('messages')
-      .select('twilio_message_sid')
+      .select('message_key')
       .eq('request_id', requestId)
       .eq('direction', 'inbound')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (latest && latest.twilio_message_sid !== messageSid) return;
+    if (latest && latest.message_key !== messageSid) return;
     await processRequest(requestId, { trigger: 'message' });
   })());
 }
@@ -93,7 +93,7 @@ async function processAcceptedWebhook(raw: unknown, ip: string | null): Promise<
   const { data: duplicate } = await database
     .from('messages')
     .select('id')
-    .eq('twilio_message_sid', message.id)
+    .eq('message_key', message.id)
     .maybeSingle();
   if (duplicate) return;
 

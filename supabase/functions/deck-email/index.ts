@@ -22,7 +22,20 @@
 // regenerated or re-billed here. PPTX is assembled with pptxgenjs (Node build,
 // no DOM needed); the PDF is rendered from RTL HTML by the Vercel chromium
 // endpoint (renderPdfBase64), same as the WhatsApp deliverables.
-import PptxGenJS from 'npm:pptxgenjs@4.0.1';
+import PptxGenJSValue from 'npm:pptxgenjs@4.0.1';
+
+// pptxgenjs declares `class PptxGenJS` merged with `namespace PptxGenJS` and
+// exports it as default. Deno resolves the package through its CJS entry, so
+// TypeScript sees the module object here rather than the class - `new` on it is
+// "not constructable" and `PptxGenJS.Slide` is "not an exported member", even
+// though at runtime the imported value is the constructor (verified: typeof is
+// "function"; this function has been generating decks in production).
+// Reach into the package's own declarations for the instance type instead of
+// reaching for `any`, so every method and Slide member stays typed.
+type PptxModule = typeof import('npm:pptxgenjs@4.0.1');
+type PptxInstance = PptxModule extends { default: new () => infer I } ? I : never;
+type PptxSlide = ReturnType<PptxInstance['addSlide']>;
+const PptxGenJS = PptxGenJSValue as unknown as new () => PptxInstance;
 import { PDFDocument } from 'npm:pdf-lib@1.17.1';
 import { db } from '../_shared/db.ts';
 import { getSetting, imageUnitCost, logEvent, recordUsageAndCost } from '../_shared/util.ts';
@@ -143,6 +156,7 @@ Deno.serve(async (req) => {
       if (!state?.params || state.buildToken !== token) return json(req, { error: 'unknown_job' }, 404);
       if (state.status !== 'running') return json(req, { ok: true, status: state.status });
       const requestId = state.params.requestId;
+      // @ts-ignore EdgeRuntime is provided by the Supabase runtime
       EdgeRuntime.waitUntil(
         runBuildStep(database, jobId, step).catch(async (e) => {
           await writeJob(database, jobId, { status: 'error', error: String(e) });
@@ -154,7 +168,7 @@ Deno.serve(async (req) => {
 
     // action 'start'
     const emails: string[] = Array.isArray(payload?.emails)
-      ? [...new Set(payload.emails.map((e: unknown) => String(e || '').trim().toLowerCase()).filter(Boolean))]
+      ? [...new Set(payload.emails.map((e: unknown) => String(e || '').trim().toLowerCase()).filter((e: string) => Boolean(e)))] as string[]
       : [];
     const validEmails = emails.filter((e) => EMAIL_RE.test(e));
     if (!validEmails.length) return json(req, { error: 'no_valid_emails' }, 400);
@@ -217,6 +231,7 @@ Deno.serve(async (req) => {
 
     // Fire-and-forget: the job continues after we return, even if the browser
     // that started it is closed.
+    // @ts-ignore EdgeRuntime is provided by the Supabase runtime
     EdgeRuntime.waitUntil(
       runGenerateStage(database, jobId).catch(async (e) => {
         await writeJob(database, jobId, { status: 'error', error: String(e) });
@@ -854,7 +869,7 @@ async function buildPptxBase64(
   const coverTitle = cover?.title || String(brief.topic || brief.goal || 'מצגת');
   const coverSubtitle = cover?.subtitle ?? cover?.body ?? cover?.bullets?.[0] ?? (brief.goal as string) ?? null;
 
-  const addLogoContain = (s: PptxGenJS.Slide, x: number, y: number, w: number, h: number) => {
+  const addLogoContain = (s: PptxSlide, x: number, y: number, w: number, h: number) => {
     if (brand?.logoDataUrl) s.addImage({ data: brand.logoDataUrl, x, y, w, h, sizing: { type: 'contain', w, h } });
   };
 

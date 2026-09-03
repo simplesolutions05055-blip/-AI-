@@ -447,7 +447,7 @@ export async function sendOut(
       request_id: requestId,
       direction: 'outbound',
       body: sentInteractive && interactive ? interactive.body : body,
-      twilio_message_sid: sid,
+      message_key: sid,
       interactive_json: sentInteractive ? interactive : null,
       // 'sent' is the strongest claim Smart Send supports: the gateway accepted
       // the message. It issues no delivery receipts and returns no message id we
@@ -467,7 +467,7 @@ export async function sendOut(
       request_id: requestId,
       direction: 'outbound',
       body: `[לא נשלח - שגיאת ספק WhatsApp] ${body}`,
-      twilio_message_sid: `undelivered-${crypto.randomUUID()}`,
+      message_key: `undelivered-${crypto.randomUUID()}`,
       // Populates messages_delivery_failed_idx, so "which replies never reached
       // anyone" is one indexed query instead of a manual hunt through the logs.
       delivery_status: 'failed',
@@ -1379,7 +1379,7 @@ async function deliverContentToWhatsApp(
     await database.from('messages').insert({
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
       body: mediaCaption, media_type: contentType, storage_path: path,
-      twilio_message_sid: `sim-${crypto.randomUUID()}`,
+      message_key: `sim-${crypto.randomUUID()}`,
     });
     await sendOverflowPostText();
     return;
@@ -1411,7 +1411,7 @@ async function deliverContentToWhatsApp(
       );
     await database.from('messages').insert({
       conversation_id: conversation.id, request_id: request.id, direction: 'outbound',
-      body: mediaCaption, media_type: contentType, storage_path: path, twilio_message_sid: sid,
+      body: mediaCaption, media_type: contentType, storage_path: path, message_key: sid,
       // Gateway accepted the media. Smart Send issues no delivery receipt, so
       // this never advances to 'delivered'.
       delivery_status: 'sent', delivery_updated_at: new Date().toISOString(),

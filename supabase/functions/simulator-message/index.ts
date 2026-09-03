@@ -112,13 +112,13 @@ Deno.serve(async (req) => {
       if (debounceMs) await new Promise((resolve) => setTimeout(resolve, debounceMs));
       const { data: latest } = await database
         .from('messages')
-        .select('twilio_message_sid')
+        .select('message_key')
         .eq('request_id', requestIdToProcess)
         .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (latest && latest.twilio_message_sid !== messageSid) {
+      if (latest && latest.message_key !== messageSid) {
         return json(req, {
           ok: true,
           conversationId: conversation.id,

@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
           request_id: null,
           direction: 'inbound',
           body: text,
-          twilio_message_sid: messageSid,
+          message_key: messageSid,
           sender_id: callerId,
         });
         await database.from('conversations').update({ last_message_at: new Date().toISOString() }).eq('id', conversation.id);
@@ -217,7 +217,7 @@ Deno.serve(async (req) => {
       // the message. The engine already consumed the stripped text.
       await database.from('messages')
         .update({ body: text, sender_id: callerId })
-        .eq('twilio_message_sid', messageSid);
+        .eq('message_key', messageSid);
 
       // Fast 200 — the client polls history and sees replies as they land,
       // exactly like a real group would behave.
@@ -235,13 +235,13 @@ Deno.serve(async (req) => {
           if (debounceMs) await new Promise((r) => setTimeout(r, debounceMs));
           const { data: latest } = await database
             .from('messages')
-            .select('twilio_message_sid')
+            .select('message_key')
             .eq('request_id', requestId)
             .eq('direction', 'inbound')
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
-          if (latest && latest.twilio_message_sid !== messageSid) return; // superseded
+          if (latest && latest.message_key !== messageSid) return; // superseded
           await processRequest(requestId, { trigger: 'message' });
         })());
       }

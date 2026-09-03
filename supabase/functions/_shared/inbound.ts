@@ -110,7 +110,7 @@ async function askContinueOrNew(
     request_id: conversation.current_request_id ?? null,
     direction: 'inbound',
     body,
-    twilio_message_sid: messageSid,
+    message_key: messageSid,
   });
   if (claimErr) return false;
   await database.from('conversations').update({
@@ -146,7 +146,7 @@ async function resumeSoftClosedConversation(
     request_id: conversation.current_request_id ?? null,
     direction: 'inbound',
     body,
-    twilio_message_sid: messageSid,
+    message_key: messageSid,
   });
   if (claimErr) return false;
   await database.from('conversations').update({
@@ -178,7 +178,7 @@ async function resetConversation(
       .not('status', 'in', '(sent,approved,sending)');
   }
   const { error: resetClaim } = await database.from('messages').insert({
-    conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
+    conversation_id: conversation.id, request_id: null, direction: 'inbound', body, message_key: messageSid,
   });
   if (resetClaim) return false;
   await database.from('conversations').update({
@@ -211,7 +211,7 @@ export async function handleInbound(
   // ── unknown number → invite to sign up, nothing else runs ────────────────
   if (!identity.known) {
     const { error: claimErr } = await database.from('messages').insert({
-      conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
+      conversation_id: conversation.id, request_id: null, direction: 'inbound', body, message_key: messageSid,
     });
     if (claimErr) return { requestIdToProcess: null };
     // Throttle: don't repeat the signup pitch on every message (spam + cost).
@@ -252,7 +252,7 @@ export async function handleInbound(
       request_id: failedRequest.id,
       direction: 'inbound',
       body,
-      twilio_message_sid: messageSid,
+      message_key: messageSid,
     });
     if (claimErr) return { requestIdToProcess: null };
 
@@ -349,7 +349,7 @@ export async function handleInbound(
   }
   if (numMedia === 0 && greetingNoContext && isGreetingOnly(body)) {
     const { error: claimErr } = await database.from('messages').insert({
-      conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
+      conversation_id: conversation.id, request_id: null, direction: 'inbound', body, message_key: messageSid,
     });
     if (claimErr) return { requestIdToProcess: null };
     await database.from('conversations').update({
@@ -415,7 +415,7 @@ export async function handleInbound(
       const { data: out } = await database.from('outputs').select('id').eq('request_id', lastSent.id).limit(1).maybeSingle();
       if (out) {
         const { error: mailClaim } = await database.from('messages').insert({
-          conversation_id: conversation.id, request_id: lastSent.id, direction: 'inbound', body, twilio_message_sid: messageSid,
+          conversation_id: conversation.id, request_id: lastSent.id, direction: 'inbound', body, message_key: messageSid,
         });
         if (mailClaim) return { requestIdToProcess: null };
         await database.from('requests').update({ customer_email: replyEmail }).eq('id', lastSent.id);
@@ -432,7 +432,7 @@ export async function handleInbound(
   // opening a request and generating an artifact out of "1".
   if (/^[1-9]\.?$/.test(body.trim()) && !conversation.current_request_id) {
     const { error: digitClaim } = await database.from('messages').insert({
-      conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
+      conversation_id: conversation.id, request_id: null, direction: 'inbound', body, message_key: messageSid,
     });
     if (digitClaim) return { requestIdToProcess: null };
     await logEvent(database, { action: 'menu_digit_without_state', metadata: { phone, body: body.trim() } });
@@ -458,7 +458,7 @@ export async function handleInbound(
   // Claim the message SID up front — the unique constraint guards against
   // duplicate retries racing each other.
   const { error: claimErr } = await database.from('messages').insert({
-    conversation_id: conversation.id, request_id: requestId, direction: 'inbound', body, twilio_message_sid: messageSid,
+    conversation_id: conversation.id, request_id: requestId, direction: 'inbound', body, message_key: messageSid,
   });
   if (claimErr) {
     await logEvent(database, { requestId, action: 'duplicate_message_ignored', metadata: { messageSid } });
@@ -485,7 +485,7 @@ export async function handleInbound(
 
   await database.from('messages').update({
     body: effectiveBody, media_type: media.firstMediaType, storage_path: media.firstStoragePath,
-  }).eq('twilio_message_sid', messageSid);
+  }).eq('message_key', messageSid);
   await database.from('conversations').update({
     last_message_at: new Date().toISOString(), timeout_warned_at: null,
   }).eq('id', conversation.id);
@@ -519,7 +519,7 @@ async function createFlowRequest(
     if (type === 'image' || type === 'pdf' || type === 'presentation' || type === 'text') {
       if (!(await canProduce(database, userId, type))) {
         const { error: claimErr } = await database.from('messages').insert({
-          conversation_id: conversation.id, request_id: null, direction: 'inbound', body, twilio_message_sid: messageSid,
+          conversation_id: conversation.id, request_id: null, direction: 'inbound', body, message_key: messageSid,
         });
         if (claimErr) return { requestIdToProcess: null };
         await logEvent(database, { action: 'whatsapp_output_denied', metadata: { output_type: type, user_id: userId } });
@@ -565,7 +565,7 @@ async function createFlowRequest(
 
   // Claim the message onto the new request (idempotency vs gateway retries).
   const { error: claimErr } = await database.from('messages').insert({
-    conversation_id: conversation.id, request_id: requestId, direction: 'inbound', body, twilio_message_sid: messageSid,
+    conversation_id: conversation.id, request_id: requestId, direction: 'inbound', body, message_key: messageSid,
   });
   if (claimErr) {
     // Duplicate delivery — drop the request we just opened.
@@ -599,7 +599,7 @@ async function createFlowRequest(
   const briefText = !isRevision && flow.kind === 'new_request' ? flow.briefText ?? null : null;
   await database.from('messages').update({
     body: briefText ?? media.effectiveBody, media_type: media.firstMediaType, storage_path: media.firstStoragePath,
-  }).eq('twilio_message_sid', messageSid);
+  }).eq('message_key', messageSid);
 
   // A file with no words is material, not a brief. Smart Send drops the
   // caption on media messages (last_message arrives as the literal

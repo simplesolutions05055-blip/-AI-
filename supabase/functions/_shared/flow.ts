@@ -1079,7 +1079,7 @@ async function claimMessage(
     request_id: requestId,
     direction: 'inbound',
     body,
-    twilio_message_sid: messageSid,
+    message_key: messageSid,
   });
   return !error;
 }
@@ -1119,7 +1119,7 @@ async function sendMediaOut(
       body: caption,
       media_type: mime,
       storage_path: storagePath,
-      twilio_message_sid: `sim-${crypto.randomUUID()}`,
+      message_key: `sim-${crypto.randomUUID()}`,
     });
     return;
   }
@@ -1145,7 +1145,7 @@ async function sendMediaOut(
     body: caption,
     media_type: mime,
     storage_path: storagePath,
-    twilio_message_sid: sid,
+    message_key: sid,
       // Gateway accepted the media. Smart Send issues no delivery receipt, so
       // this never advances to 'delivered'.
     delivery_status: 'sent',

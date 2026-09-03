@@ -71,14 +71,9 @@ jobs:
       #     are what turn into a runtime SyntaxError.
       - run: deno lint --rules-tags= --rules-include=no-dupe-args,no-dupe-keys,no-dupe-class-members supabase/functions
 
-      #  2. full typecheck — an EXCLUDE list, not an include list, so a newly
-      #     added function is covered by default instead of silently escaping.
-      #     84 of 85 files are checked. One exclusion remains:
-      #       deck-email — 6 errors, four of them pptxgenjs interop under Deno
-      #         ("not constructable", no exported member 'Slide'). Silencing
-      #         those with casts would make this job assert something untrue
-      #         about working deck generation, so it stays out until the typing
-      #         is done properly. Drop the path from package.json when it is.
+      #  2. full typecheck — EVERY file under supabase/functions, no exclusions.
+      #     It began as an include list of six, which meant every other function
+      #     (and every function added later) was never typechecked at all.
       - run: npm run check:functions
 
       #  3. the unit tests. They existed and passed for months without ever
