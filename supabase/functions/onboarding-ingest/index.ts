@@ -31,8 +31,12 @@ Deno.serve(async (req) => {
     }
     const providedText = typeof text === 'string' ? text.trim() : '';
     // Documents arrive as pre-extracted text; assets upload raw bytes.
-    if (kind === 'asset' && (!base64 || typeof base64 !== 'string')) {
-      return json(req, { error: 'base64 required' }, 400);
+    let assetBase64 = '';
+    if (kind === 'asset') {
+      if (!base64 || typeof base64 !== 'string') {
+        return json(req, { error: 'base64 required' }, 400);
+      }
+      assetBase64 = base64;
     }
     if (kind === 'document' && !providedText) {
       return json(req, { error: 'empty_document' }, 422);
@@ -89,7 +93,7 @@ Deno.serve(async (req) => {
     const storagePath = `${brandId}/onboarding/${crypto.randomUUID()}${ext}`;
     const { error: uploadError } = await database.storage
       .from('branding')
-      .upload(storagePath, decodeBase64(base64), { contentType: mime || 'application/octet-stream', upsert: false });
+      .upload(storagePath, decodeBase64(assetBase64), { contentType: mime || 'application/octet-stream', upsert: false });
     if (uploadError) throw uploadError;
 
     const { error: assetError } = await database.from('brand_assets').insert({

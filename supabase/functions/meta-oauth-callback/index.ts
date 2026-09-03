@@ -21,6 +21,8 @@ interface MetaPageResponse {
 interface MetaInstagramResponse {
   id: string;
   username: string;
+  // Requested in the graph call's `fields` list, so it can come back.
+  name?: string;
   profile_picture_url?: string;
 }
 
@@ -332,7 +334,8 @@ Deno.serve(async (req) => {
 
     return json(req, { error: 'method_not_allowed' }, 405);
   } catch (error) {
-    return json(req, { error: 'server_error', details: error.message }, 500);
+    const details = error instanceof Error ? error.message : String(error);
+    return json(req, { error: 'server_error', details }, 500);
   }
 });
 

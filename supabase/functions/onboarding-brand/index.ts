@@ -146,7 +146,7 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (selectedError) throw selectedError;
       if (!selected) return json(req, { error: 'brand_not_found' }, 404);
-      const brand = selected as BrandRow;
+      const brand = selected as unknown as BrandRow;
       await attachUserToBrand(database, userId, brand.id);
       await markBrandDone(database, userId);
       await logEvent(database, {
@@ -172,7 +172,7 @@ Deno.serve(async (req) => {
         .select(BRAND_COLUMNS)
         .single();
       if (updateError) throw updateError;
-      const brand = updated as BrandRow;
+      const brand = updated as unknown as BrandRow;
       await syncContentSources(database, brand.id, body.content_sources);
       await markBrandDone(database, userId);
       await logEvent(database, {
@@ -221,7 +221,7 @@ Deno.serve(async (req) => {
       throw insertError;
     }
 
-    let brand = inserted as BrandRow;
+    let brand = inserted as unknown as BrandRow;
     const logoPath = await uploadLogo(database, brand.id, body);
     if (logoPath) {
       const { data: updated, error: updateError } = await database
@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
         .select(BRAND_COLUMNS)
         .single();
       if (updateError) throw updateError;
-      brand = updated as BrandRow;
+      brand = updated as unknown as BrandRow;
     }
 
     await attachUserToBrand(database, userId, brand.id);
@@ -256,7 +256,7 @@ async function findBrandMatches(database: ReturnType<typeof db>, name: string): 
   const { data, error } = await database.from('brands').select(BRAND_COLUMNS).eq('is_active', true);
   if (error) throw error;
   const normalized = normalizeForMatch(name);
-  return ((data as BrandRow[] | null) ?? [])
+  return ((data as unknown as BrandRow[] | null) ?? [])
     .map((brand) => ({ ...brand, match_score: bestBrandScore(normalized, brand) }))
     .filter((brand) => brand.match_score >= 0.68)
     .sort((a, b) => b.match_score - a.match_score || a.name.localeCompare(b.name))

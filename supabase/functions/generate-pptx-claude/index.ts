@@ -115,7 +115,10 @@ async function runJob(database: Database, apiKey: string, jobId: string, payload
       try {
         const { bytes, mime } = bytesFromDataUrl(images[i].dataUrl);
         const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png';
-        const file = new File([bytes], `brand-${i}.${ext}`, { type: mime });
+        // A Uint8Array is generic over its backing buffer, which may be a
+        // SharedArrayBuffer and so is not a BlobPart. slice() gives a copy that
+        // is definitely ArrayBuffer-backed.
+        const file = new File([bytes.slice().buffer as ArrayBuffer], `brand-${i}.${ext}`, { type: mime });
         const uploaded = await client.beta.files.upload({ file, betas: ['files-api-2025-04-14'] });
         if (uploaded?.id) fileIds.push(uploaded.id);
       } catch (_e) {

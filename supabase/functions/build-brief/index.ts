@@ -8,7 +8,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { db } from '../_shared/db.ts';
 import { getActiveSystemPrompt } from '../_shared/util.ts';
 import { buildSkillInstructions } from '../_shared/skills.ts';
-import { buildBusinessBrainContext } from '../_shared/brand.ts';
+import { buildBusinessBrainContext, type BrandKit } from '../_shared/brand.ts';
 import { analyzeBrief } from '../_shared/openai.ts';
 import { isProviderQuotaError, PROVIDER_QUOTA_ERROR } from '../_shared/providerOutage.ts';
 import { AbuseGuardError, enforceAiLimit, rejectClientOpenAiKeyIfDisabled } from '../_shared/abuseGuard.ts';
@@ -126,14 +126,6 @@ Deno.serve(async (req) => {
     return json(req, { error: msg }, 500);
   }
 });
-
-interface BrandKit {
-  name: string;
-  color_palette: Array<{ hex?: string; role?: string }> | null;
-  style_notes: string | null;
-  is_active?: boolean;
-  client_type?: 'business' | 'municipality' | null;
-}
 
 const OUTPUT_LABEL: Record<string, string> = {
   image: 'תמונה',

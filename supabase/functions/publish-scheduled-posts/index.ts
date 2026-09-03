@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { cors } from '../_shared/cors.ts';
 import { checkCanary, matchesEnvSecret } from '../_shared/secrets.ts';
 import { db } from '../_shared/db.ts';
@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
 // Video is not supported by the auto-publisher yet — better to fail loudly
 // than to silently publish a partial post.
 async function resolveImageUrls(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<any, 'public', any>,
   post: ScheduledPost,
 ): Promise<string[]> {
   const media = Array.isArray(post.media) ? post.media : [];
