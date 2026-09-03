@@ -53,7 +53,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/admin/permissions', label: 'משתמשים והרשאות', adminOnly: true, icon: 'users' },
       { href: '/admin/holidays', label: 'גאנט', userOnly: true, icon: 'calendar' },
       { href: '/admin/annual-planner', label: 'תכנון שנתי', userOnly: true, icon: 'annualPlanner' },
-      { href: '/admin/branding', label: 'מיתוג', icon: 'palette' },
     ],
   },
   {
@@ -227,7 +226,7 @@ export function AdminBottomNav({
   // destinations remain available in the full menu so compact phones retain
   // comfortable 48px+ touch targets.
   const mobileHrefs = isAdmin
-    ? ['/admin', '/admin/permissions', '/admin/requests', '/admin/branding']
+    ? ['/admin', '/admin/permissions', '/admin/requests', '/admin/errors']
     : ['/admin/files', '/admin/holidays', '/admin/user-settings'];
 
   const items = mobileHrefs

@@ -17,7 +17,6 @@ import PasswordPage from '@/pages/admin/PasswordPage';
 import FilesPage from '@/pages/admin/FilesPage';
 import ModelsPage from '@/pages/admin/ModelsPage';
 import SkillsPage from '@/pages/admin/SkillsPage';
-import BrandingPage from '@/pages/admin/BrandingPage';
 import ProductionPage from '@/pages/admin/ProductionPage';
 import QuotePage from '@/pages/admin/QuotePage';
 import RevisePage from '@/pages/admin/RevisePage';
@@ -78,7 +77,7 @@ export default function App() {
           <Route path="files" element={<FilesPage />} />
           <Route path="files/:requestId/revise" element={<RevisePage />} />
           <Route path="schedule/:postId" element={<RevisePage />} />
-          <Route path="branding" element={<BrandingPage />} />
+          <Route path="branding" element={<Navigate to="/admin/permissions?tab=brands" replace />} />
           <Route path="models" element={<ModelsPage />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="permissions" element={<PermissionsPage />} />

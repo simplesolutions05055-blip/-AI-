@@ -5,6 +5,7 @@ import { useProfile } from '@/lib/useProfile';
 import { PageSkeleton } from '@/components/ui/Skeleton';
 import { confirmDialog } from '@/lib/dialog';
 import { purgeBrandStorage, activeRequestCount } from '@/lib/brandLifecycle';
+import BrandingPage from '@/pages/admin/BrandingPage';
 import {
   PRODUCTION_PERMISSION_TYPES,
   MONTHLY_LIMIT_GROUPS,
@@ -75,9 +76,13 @@ export default function PermissionsPage() {
   const [tab, setTab] = useState<'admins' | 'users' | 'brands' | 'permissions'>('admins');
   const [searchParams, setSearchParams] = useSearchParams();
   const wantNewUser = searchParams.get('new') === '1';
+  const wantTab = searchParams.get('tab');
   useEffect(() => {
     if (wantNewUser) setTab('users');
-  }, [wantNewUser]);
+    else if (wantTab && ['admins', 'users', 'brands', 'permissions'].includes(wantTab)) {
+      setTab(wantTab as 'admins' | 'users' | 'brands' | 'permissions');
+    }
+  }, [wantNewUser, wantTab]);
   const [outputPermissions, setOutputPermissions] = useState<OutputPermissions>(() => normalizeOutputPermissions(null));
   const [creatingUser, setCreatingUser] = useState(false);
   const [selectedUser, setSelectedUser] = useState<ProfileRow | null>(null);
@@ -354,8 +359,8 @@ export default function PermissionsPage() {
     ]);
     setGrants((prev) => ({ ...prev, [result.user_id]: new Set([result.brand_id]) }));
     if (result.brand_created) {
-      flash('המשתמש נוצר. השלימו את פרטי המותג במסך המיתוג');
-      navigate('/admin/branding');
+      flash('המשתמש נוצר. השלימו את פרטי המותג בלשונית מותגים');
+      navigate('/admin/permissions?tab=brands');
     } else {
       flash('המשתמש נוצר');
     }
@@ -427,15 +432,7 @@ export default function PermissionsPage() {
           onToggle={toggleOutputPermission}
         />
       ) : tab === 'brands' ? (
-        <BrandsTab
-          brands={brands}
-          brandLogoUrls={brandLogoUrls}
-          users={users}
-          grants={grants}
-          savingId={savingId}
-          onAssign={toggleBrand}
-          onCreateNew={() => navigate('/admin/branding')}
-        />
+        <BrandingPage embedded />
       ) : (
 
       <>
@@ -666,99 +663,6 @@ export default function PermissionsPage() {
           onClose={() => setSelectedUser(null)}
         />
       )}
-    </div>
-  );
-}
-
-function BrandsTab({
-  brands, brandLogoUrls, users, grants, savingId, onAssign, onCreateNew,
-}: {
-  brands: BrandRow[];
-  brandLogoUrls: Record<string, string>;
-  users: ProfileRow[];
-  grants: Record<string, Set<string>>;
-  savingId: string | null;
-  onAssign: (user: ProfileRow, brandId: string) => void;
-  onCreateNew: () => void;
-}) {
-  const [addingTo, setAddingTo] = useState<string | null>(null);
-  const membersOf = (brandId: string) => users.filter((u) => (grants[u.id] ?? new Set()).has(brandId));
-  const unassignedElsewhere = users.filter((u) => (grants[u.id] ?? new Set()).size === 0);
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[var(--muted)]">מותג אחד לכל משתמש רגיל; למותג אפשר לשייך כמה משתמשים.</p>
-        <button type="button" onClick={onCreateNew} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-semibold hover:bg-gray-50">+ מותג חדש</button>
-      </div>
-      {brands.length === 0 && <p className="text-sm text-[var(--muted)]">אין מותגים.</p>}
-      {brands.map((b) => {
-        const members = membersOf(b.id);
-        const logo = brandLogoUrls[b.id];
-        return (
-          <div key={b.id} className="rounded-xl border border-[var(--border)] bg-white p-4 shadow-sm">
-            <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border)] bg-white">
-                {logo ? <img src={logo} alt="" className="h-full w-full object-contain p-0.5" /> : <span className="text-[10px] font-bold text-brand">{b.name.slice(0, 2)}</span>}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold">{b.name}</span>
-                  {!b.logo_path && (
-                    <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
-                      לא הושלם
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-[var(--muted)]">
-                  {members.length} משתמשים משויכים{b.is_active ? '' : ' · לא פעיל'}
-                  {!b.logo_path && members.length > 0 ? ' · המשתמשים חסומים עד השלמת המותג' : ''}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAddingTo(addingTo === b.id ? null : b.id)}
-                className="shrink-0 rounded-lg border border-brand/30 bg-brand/5 px-2.5 py-1 text-xs font-semibold text-brand hover:bg-brand/10"
-              >
-                שייך משתמש
-              </button>
-            </div>
-
-            {members.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {members.map((m) => (
-                  <span key={m.id} className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs">
-                    <bdi>{m.email}</bdi>
-                    <button type="button" onClick={() => onAssign(m, b.id)} disabled={savingId === m.id} aria-label="הסרה" className="text-[var(--muted)] hover:text-red-600">×</button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {addingTo === b.id && (
-              <div className="mt-3 border-t border-[var(--border)] pt-3">
-                {unassignedElsewhere.length === 0 ? (
-                  <p className="text-xs text-[var(--muted)]">כל המשתמשים הרגילים כבר משויכים למותג. משתמש רגיל יכול להיות במותג אחד בלבד.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {unassignedElsewhere.map((u) => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => { onAssign(u, b.id); setAddingTo(null); }}
-                        disabled={savingId === u.id}
-                        className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-xs font-medium hover:bg-gray-50 disabled:opacity-50"
-                      >
-                        <bdi>{u.email}</bdi>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }

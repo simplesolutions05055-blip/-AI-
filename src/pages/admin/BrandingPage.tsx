@@ -16,6 +16,7 @@ import { useProfile } from '@/lib/useProfile';
 import { alertDialog, confirmDialog } from '@/lib/dialog';
 import { aiErrorLabel, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
 import BrandAutofillPanel from '@/components/BrandAutofillPanel';
+import BrandMembersSection from '@/components/brand/BrandMembersSection';
 import { brandDeleteImpact, brandDeleteImpactMessage, purgeBrandStorage } from '@/lib/brandLifecycle';
 
 const input = 'w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm';
@@ -90,9 +91,10 @@ const emptyBrand = (): Partial<Brand> => ({
   document_style: 'official',
 });
 
-export default function BrandingPage() {
+export default function BrandingPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { profile } = useProfile();
   const isAdmin = profile?.role === 'admin';
+  const [showAutofill, setShowAutofill] = useState(false);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Partial<Brand> | null>(null);
@@ -213,6 +215,7 @@ export default function BrandingPage() {
     setPreviews({});
     setLogoFile(null);
     setPendingWebsiteContent([]);
+    setShowAutofill(false);
 
     // Scroll to editor on mobile
     setTimeout(() => {
@@ -762,7 +765,7 @@ export default function BrandingPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold leading-tight tracking-normal">ניהול מותג</h1>
+          {!embedded && <h1 className="text-xl font-semibold leading-tight tracking-normal">ניהול מותג</h1>}
         </div>
         {isAdmin && (
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
@@ -904,6 +907,15 @@ export default function BrandingPage() {
             <div className="sticky top-0 z-20 -order-2 -mx-4 -mt-4 flex flex-col gap-2 border-b border-[var(--border)] bg-white p-4 before:absolute before:inset-x-0 before:-top-3 before:h-3 before:bg-white before:content-[''] sm:static sm:mx-0 sm:mt-0 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:bg-transparent sm:p-0 sm:before:hidden">
               <h2 className="relative z-10 font-semibold">{selected.id ? 'עריכת מקום' : 'מקום חדש'}</h2>
               <div className="relative z-10 flex flex-wrap gap-2">
+                {isAdmin && selected.id && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAutofill((v) => !v)}
+                    className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-xs font-semibold text-brand hover:bg-brand/10"
+                  >
+                    {showAutofill ? 'סגור עדכון אוטומטי' : 'עדכן אוטומטית מהאינטרנט'}
+                  </button>
+                )}
                 {selected.id && (
                   isAdmin && (
                   <button
@@ -930,7 +942,7 @@ export default function BrandingPage() {
               </div>
             </div>
 
-            {isAdmin && !selected.id && (
+            {isAdmin && (!selected.id || showAutofill) && (
               <BrandAutofillPanel
                 initialQuery={selected.website || selected.name || ''}
                 onApply={(autofill, websiteContent) => {
@@ -955,6 +967,10 @@ export default function BrandingPage() {
                 disabled={!isAdmin}
               />
             </label>
+
+            {isAdmin && selected.id && (
+              <BrandMembersSection brandId={selected.id} brandName={selected.name ?? ''} />
+            )}
 
             {isAdmin && (
             <>
