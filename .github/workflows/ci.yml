@@ -15,8 +15,8 @@ jobs:
     name: typecheck + build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -34,8 +34,8 @@ jobs:
     name: hardening guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: node scripts/hardening-guards.mjs
@@ -45,14 +45,14 @@ jobs:
     name: edge functions typecheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
       # The check/test commands live in package.json so the exclusion list has a
       # single home. That makes `npm run` a real dependency of this job rather
       # than something borrowed from whatever the runner image happens to ship.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       # Deno needs --node-modules-dir=auto (set on both scripts) because the
@@ -84,12 +84,12 @@ jobs:
     name: secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: a secret committed and later "removed" is still in the
           # objects, and still valid. Scanning only the tip finds nothing.
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -98,8 +98,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
 
@@ -107,8 +107,8 @@ jobs:
     name: cross-tenant isolation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       # 32 RLS policies decide which tenant sees which row. This job builds two

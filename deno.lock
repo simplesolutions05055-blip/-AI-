@@ -6,29 +6,29 @@
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@supabase/supabase-js@2": "2.112.3",
     "npm:@anthropic-ai/sdk@0.65.0": "0.65.0_zod@3.23.8",
-    "npm:@radix-ui/react-tooltip@^1.2.10": "1.2.16_@types+react@18.3.31_@types+react-dom@18.3.7__@types+react@18.3.31_react@18.3.1_react-dom@18.3.1__react@18.3.1",
+    "npm:@radix-ui/react-tooltip@^1.2.16": "1.2.16_@types+react@18.3.31_@types+react-dom@18.3.7__@types+react@18.3.31_react@18.3.1_react-dom@18.3.1__react@18.3.1",
     "npm:@sparticuz/chromium@131": "131.0.1",
     "npm:@supabase/auth-js@2.112.3": "2.112.3",
     "npm:@supabase/functions-js@2.112.3": "2.112.3",
     "npm:@supabase/postgrest-js@2.112.3": "2.112.3",
     "npm:@supabase/realtime-js@2.112.3": "2.112.3",
     "npm:@supabase/storage-js@2.112.3": "2.112.3",
-    "npm:@supabase/supabase-js@^2.45.4": "2.112.4",
+    "npm:@supabase/supabase-js@^2.112.4": "2.112.4",
     "npm:@types/node@^22.7.4": "22.20.1",
     "npm:@types/react-dom@^18.3.0": "18.3.7_@types+react@18.3.31",
     "npm:@types/react@^18.3.11": "18.3.31",
     "npm:@vitejs/plugin-react-swc@^3.11.0": "3.11.0_vite@5.4.21__@types+node@22.20.1_@types+node@22.20.1",
-    "npm:autoprefixer@^10.4.20": "10.5.4_postcss@8.5.26",
+    "npm:autoprefixer@^10.5.4": "10.5.4_postcss@8.5.26",
     "npm:docx@^9.7.1": "9.7.1",
     "npm:exceljs@^4.4.0": "4.4.0",
-    "npm:html2canvas-pro@^2.2.0": "2.4.0",
+    "npm:html2canvas-pro@^2.4.1": "2.4.1",
     "npm:html2canvas@^1.4.1": "1.4.1",
     "npm:jspdf@^4.2.1": "4.2.1",
-    "npm:lucide-react@^1.21.0": "1.34.0_react@18.3.1",
-    "npm:mammoth@^1.12.0": "1.12.1",
+    "npm:lucide-react@^1.39.0": "1.39.0_react@18.3.1",
+    "npm:mammoth@^1.12.2": "1.12.2",
     "npm:pdf-lib@1.17.1": "1.17.1",
     "npm:pdfjs-dist@^4.10.38": "4.10.38",
-    "npm:postcss@^8.4.47": "8.5.26",
+    "npm:postcss@^8.5.26": "8.5.26",
     "npm:pptxgenjs@4.0.1": "4.0.1",
     "npm:pptxgenjs@^4.0.1": "4.0.1",
     "npm:puppeteer-core@^23.5.0": "23.11.1",
@@ -2995,8 +2995,8 @@
         "selderee"
       ]
     },
-    "html2canvas-pro@2.4.0": {
-      "integrity": "sha512-ERxMm/ZGRatO9g0mAM2EBlWFgCXDjma7RZFLCHm71gM6q/WqQRYaqB0MIGjjYKEHF8rKvXIeshrrJ8ovImd9aw==",
+    "html2canvas-pro@2.4.1": {
+      "integrity": "sha512-yjArt1NPIduV9aN6oK+FOQHb7INT46XMOu7Ue5YcKvlxpkEwmg+QpkCV3Bmfb+LzdltLy45kSYjHM/xyS3ukqw==",
       "dependencies": [
         "css-line-break",
         "text-segmentation"
@@ -3438,8 +3438,8 @@
     "lru-cache@7.18.3": {
       "integrity": "sha512-jumlc0BIUrS3qJGgIkWZsyfAM7NCWiBcCDhnd+3NNM5KbBmLTgHVfWBcg6W+rLUsIpzpERPsvwUP7CckAQSOoA=="
     },
-    "lucide-react@1.34.0_react@18.3.1": {
-      "integrity": "sha512-vnjGJNI7Htk5+oWW8gXGuaLgwgAb0T6/iZbBrp9JCfRFwdNWZ0YTm3eyxjOLgwN6r8iyAf3UA70zNmBRBNv7yg==",
+    "lucide-react@1.39.0_react@18.3.1": {
+      "integrity": "sha512-y8nXoEwvqqIsF927NBWXODa4bfMrcUeEb/9sgpwFqg0gUjgn3j5Hznk+v7STmPgZ2iQ11JKlbQGdFRuTOwvYkA==",
       "dependencies": [
         "react"
       ]
@@ -3450,8 +3450,8 @@
         "@jridgewell/sourcemap-codec"
       ]
     },
-    "mammoth@1.12.1": {
-      "integrity": "sha512-nCH9KKjWi3jQ+i8bUKs7k1yrXtSEGpWgF8IYkzsFMcbn+5S6l4bZEBbyx2hOQErFiXPuAs9RPa6qjXVxhyx/8g==",
+    "mammoth@1.12.2": {
+      "integrity": "sha512-MH2vkgafD/2MYUaEOtoXLKrHQZ7yLYTHGQgyLNtYZHiUxU1K1QQ+8qMFquDAfhBm06wSGSws3J+Q9QTsKtR44g==",
       "dependencies": [
         "@xmldom/xmldom",
         "argparse",
@@ -4991,23 +4991,23 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
-        "npm:@radix-ui/react-tooltip@^1.2.10",
+        "npm:@radix-ui/react-tooltip@^1.2.16",
         "npm:@sparticuz/chromium@131",
-        "npm:@supabase/supabase-js@^2.45.4",
+        "npm:@supabase/supabase-js@^2.112.4",
         "npm:@types/node@^22.7.4",
         "npm:@types/react-dom@^18.3.0",
         "npm:@types/react@^18.3.11",
         "npm:@vitejs/plugin-react-swc@^3.11.0",
-        "npm:autoprefixer@^10.4.20",
+        "npm:autoprefixer@^10.5.4",
         "npm:docx@^9.7.1",
         "npm:exceljs@^4.4.0",
-        "npm:html2canvas-pro@^2.2.0",
+        "npm:html2canvas-pro@^2.4.1",
         "npm:html2canvas@^1.4.1",
         "npm:jspdf@^4.2.1",
-        "npm:lucide-react@^1.21.0",
-        "npm:mammoth@^1.12.0",
+        "npm:lucide-react@^1.39.0",
+        "npm:mammoth@^1.12.2",
         "npm:pdfjs-dist@^4.10.38",
-        "npm:postcss@^8.4.47",
+        "npm:postcss@^8.5.26",
         "npm:pptxgenjs@^4.0.1",
         "npm:puppeteer-core@^23.5.0",
         "npm:qrcode.react@^4.2.0",
