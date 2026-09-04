@@ -732,6 +732,9 @@ function UserCard({
 }) {
   const isAdmin = user.role === 'admin';
   const userBrands = brands.filter((brand) => userBrandIds.has(brand.id));
+  // A regular user can only be narrowed below the role default, never widened:
+  // permission types the role default has closed are not offered at all.
+  const roleDefaultTypes = PRODUCTION_PERMISSION_TYPES.filter((item) => globalPermissions[item.type].user);
 
   const [perms, setPerms] = useState<OutputPermissions>(() =>
     mergeUserPermissions(globalPermissions, user.output_permissions));
@@ -764,13 +767,14 @@ function UserCard({
   function togglePerm(type: ProductionPermissionType) {
     const next: OutputPermissions = { ...perms, [type]: { ...perms[type], user: !perms[type].user } };
     setPerms(next);
-    // Store the full per-type 'user' slot as the override; the admin slot stays
-    // whatever the global setting says.
-    const override = PRODUCTION_PERMISSION_TYPES.reduce((acc, item) => {
-      acc[item.type] = { user: next[item.type].user };
+    // The override only ever *removes* a permission the role default grants. Any
+    // type the admin left on — or one the role default already closed — is not
+    // written, so a stale widening override heals itself on the next toggle.
+    const override = roleDefaultTypes.reduce((acc, item) => {
+      if (next[item.type].user === false) acc[item.type] = { user: false };
       return acc;
     }, {} as Record<string, { user: boolean }>);
-    void saveField({ output_permissions: override });
+    void saveField({ output_permissions: Object.keys(override).length ? override : null });
   }
 
   async function toggleCanCreate() {
@@ -846,14 +850,18 @@ function UserCard({
               <input type="checkbox" checked={canCreate} onChange={toggleCanCreate} disabled={busy !== null} className="h-5 w-5 accent-brand" />
             </label>
             <div className={`space-y-1.5 ${canCreate ? '' : 'pointer-events-none opacity-40'}`}>
-              {PRODUCTION_PERMISSION_TYPES.map((item) => (
+              {roleDefaultTypes.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-[var(--border)] p-3 text-sm text-[var(--muted)]">
+                  ברירת המחדל למשתמש רגיל לא כוללת אף סוג תוצר. אפשר לפתוח סוגים בלשונית "הרשאות ברירת מחדל".
+                </p>
+              ) : roleDefaultTypes.map((item) => (
                 <label key={item.type} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
                   <span>{item.label}</span>
                   <input type="checkbox" checked={perms[item.type].user} onChange={() => togglePerm(item.type)} disabled={busy !== null} className="h-5 w-5 accent-brand" />
                 </label>
               ))}
             </div>
-            <p className="mt-2 text-xs text-[var(--muted)]">ברירת המחדל מגיעה מהגדרות המערכת; כאן מכוונן לאדם הזה בלבד. נשמר מיד.</p>
+            <p className="mt-2 text-xs text-[var(--muted)]">מוצגות רק ההרשאות שברירת המחדל למשתמש רגיל פותחת, מסומנות לפי ברירת המחדל. הורדת סימון מצמצמת לאדם הזה בלבד — אי אפשר להוסיף מעבר לברירת המחדל. נשמר מיד.</p>
           </section>
           )}
 
