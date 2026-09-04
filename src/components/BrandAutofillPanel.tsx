@@ -125,7 +125,7 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
 
   return <div className="mb-6 rounded-2xl border border-brand/25 bg-brand/5 p-4">
     <h2 className="font-bold text-[var(--text)]">מילוי אוטומטי מהאתר הרשמי</h2>
-    <p className="mt-1 text-sm text-[var(--muted)]">שדות מאומתים נכנסים לטופס אוטומטית ומסומנים בירוק. שדות אחרים ממתינים לאישור. שום דבר לא נשמר עד שתלחצו שמירה.</p>
+    <p className="mt-1 text-sm text-[var(--muted)]">שדות מאומתים נכנסים לטופס אוטומטית. רק שדות שדורשים אישור מוצגים כאן. שום דבר לא נשמר עד שתלחצו שמירה.</p>
     <div className="mt-3 flex flex-col gap-2 sm:flex-row">
       <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void run(); } }} className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm" dir="auto" placeholder="https://www.example.co.il או שם הארגון" />
       <button type="button" onClick={() => void run()} disabled={loading || !query.trim()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Search size={16} />{loading ? 'קורא ומצליב...' : 'מלאו בשבילי'}</button>
@@ -141,12 +141,12 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
       {!result.website_found && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">לא נמצא אתר רשמי. לא נאסף מידע מאתרי אינדקס. המשיכו ידנית.</div>}
       {autoApplied.size > 0 && (
         <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">
-          {autoApplied.size} שדות מאומתים הוחלו על הטופס אוטומטית ומסומנים בירוק.
+          {autoApplied.size} שדות שבטוחים בהם כבר הוחלו על הטופס. גללו למטה כדי לראות מה נכנס. כאן מוצגים רק שדות שדורשים אישור.
         </p>
       )}
       <div className="space-y-2">
-        {result.fields.map((field) => {
-          const auto = autoApplied.has(field.key);
+        {result.fields.filter((field) => !autoApplied.has(field.key)).map((field) => {
+          const auto = false;
           return (
             <label key={field.key} className={`flex items-start gap-3 rounded-lg border p-3 ${auto ? 'border-emerald-300 bg-emerald-50' : field.state === 'review' ? 'cursor-pointer border-amber-300 bg-amber-50' : 'cursor-pointer border-emerald-200 bg-emerald-50'}`}>
               {auto
@@ -158,7 +158,6 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
           );
         })}
         {showColorRow && <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3"><input type="checkbox" checked={selected.has('color_palette')} onChange={() => toggle('color_palette')} /><span><strong className="block text-sm">צבעים מהאתר</strong>{result.color_source_url && <a href={result.color_source_url} target="_blank" rel="noreferrer" className="text-xs text-brand underline">מקור: האתר הרשמי</a>}</span><span className="flex flex-wrap gap-1">{result.colors.slice(0, 5).map((color) => <span key={color} title={color} className="h-6 w-6 rounded border border-black/10" style={{ backgroundColor: color }} />)}</span></label>}
-        {autoApplied.has('color_palette') && <div className="flex items-center gap-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3"><Check size={16} className="shrink-0 text-emerald-600" /><span className="flex-1"><strong className="block text-sm">צבעים מהאתר</strong></span><span className="flex flex-wrap gap-1">{result.colors.slice(0, 5).map((color) => <span key={color} title={color} className="h-6 w-6 rounded border border-black/10" style={{ backgroundColor: color }} />)}</span><span className="shrink-0 rounded-full bg-emerald-600 px-2 py-1 text-[11px] font-bold text-white">עודכן אוטומטית</span></div>}
       </div>
       {result.locations.length > 1 && <fieldset className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3"><legend className="px-1 text-sm font-bold">נמצאו כמה סניפים. חובה לבחור:</legend>{result.locations.map((location, index) => <label key={index} className="mt-2 flex items-start gap-2 text-sm"><input type="radio" name="brand-location" checked={locationIndex === index} onChange={() => setLocationIndex(index)} className="mt-1" /><span>{location.address || 'ללא כתובת'} · {location.phone || 'ללא טלפון'} {location.source_url && <a href={location.source_url} target="_blank" rel="noreferrer" className="text-brand underline">מקור</a>}</span></label>)}</fieldset>}
       {result.parent_brand?.name && <fieldset className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm"><legend className="px-1 font-bold">ייתכן שזה אתר של מותג אם: {result.parent_brand.name}. חובה לבחור:</legend><label className="mt-2 flex gap-2"><input type="radio" name="parent-brand" checked={parentDecision === 'same'} onChange={() => setParentDecision('same')} />האתר והפרטים שייכים למותג שחיפשתי</label><label className="mt-2 flex gap-2"><input type="radio" name="parent-brand" checked={parentDecision === 'parent'} onChange={() => setParentDecision('parent')} />זה מותג אם; לא להחיל פרטי קשר אוטומטיים</label></fieldset>}

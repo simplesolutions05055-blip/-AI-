@@ -336,7 +336,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
       return null;
     }
     if (id) {
-      const { data, error } = await db.from('brands').update(row as never).eq('id', id).select('id');
+      const { data, error } = await db.from('brands').update(row as never).eq('id', id).select('*');
       if (error) {
         await alertDialog('שמירה נכשלה: ' + error.message);
         setSaving(false);
@@ -347,15 +347,22 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
         setSaving(false);
         return null;
       }
+      // Push the saved row straight into the list + editor so the name and
+      // status update on click — a refetch can lag behind on a read replica.
+      const savedRow = data[0] as Brand;
+      setBrands((prev) => prev.map((x) => (x.id === id ? { ...x, ...savedRow } : x)));
+      patch(savedRow);
     } else {
-      const { data, error } = await db.from('brands').insert(row as never).select('id').single();
+      const { data, error } = await db.from('brands').insert(row as never).select('*').single();
       if (error || !data) {
         await alertDialog('שמירה נכשלה: ' + (error?.message ?? ''));
         setSaving(false);
         return null;
       }
-      id = (data as { id: string }).id;
-      patch({ id });
+      const savedRow = data as Brand;
+      id = savedRow.id;
+      setBrands((prev) => [savedRow, ...prev]);
+      patch(savedRow);
     }
     if (id && pendingWebsiteContent.length > 0) {
       const { error: contentError } = await db.from('business_text_sources').insert(
