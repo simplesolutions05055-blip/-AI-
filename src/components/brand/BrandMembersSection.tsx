@@ -25,15 +25,18 @@ export default function BrandMembersSection({ brandId, brandName }: { brandId: s
   const [adding, setAdding] = useState(false);
 
   async function load() {
-    const [{ data: profs }, { data: ub }] = await Promise.all([
-      db.from('profiles').select('id, email, can_create_outputs').eq('role', 'user').order('email'),
-      db.from('user_brands').select('user_id, brand_id'),
-    ]);
-    setUsers((profs as unknown as UserRow[]) ?? []);
-    const map: Record<string, string> = {};
-    ((ub as { user_id: string; brand_id: string }[]) ?? []).forEach((r) => { map[r.user_id] = r.brand_id; });
-    setGrants(map);
-    setLoading(false);
+    try {
+      const [{ data: profs }, { data: ub }] = await Promise.all([
+        db.from('profiles').select('id, email, can_create_outputs').eq('role', 'user').order('email'),
+        db.from('user_brands').select('user_id, brand_id'),
+      ]);
+      setUsers((profs as unknown as UserRow[]) ?? []);
+      const map: Record<string, string> = {};
+      ((ub as { user_id: string; brand_id: string }[]) ?? []).forEach((r) => { map[r.user_id] = r.brand_id; });
+      setGrants(map);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {

@@ -2,6 +2,7 @@ import { denyUnauthenticated } from '../_shared/auth.ts';
 import { cors } from '../_shared/cors.ts';
 import { db } from '../_shared/db.ts';
 import { estimateTextCost, logEvent, round4 } from '../_shared/util.ts';
+import { isPrivateAddress } from '../_shared/safeFetch.ts';
 import {
   cleanField,
   detectClientType,
@@ -24,7 +25,15 @@ interface SearchResult {
   legal_id?: string;
   contact_person_name?: string;
   contact_person_title?: string;
+  logo_url?: string;
   sources?: Record<string, string>;
+}
+
+interface LogoResult {
+  url: string;
+  source_url: string;
+  base64: string;
+  mime: string;
 }
 
 interface CrawlResult {
@@ -77,6 +86,25 @@ Deno.serve(async (req) => {
     const estimatedCost = round4(estimateTextCost(usage.input_tokens, usage.output_tokens) + 0.01);
     if (estimatedCost > MAX_COST_USD) throw new Error('brand_autofill_cost_cap_exceeded');
 
+    // Logo + Wikipedia are free (no tokens): a plain image download and a public
+    // API. Both are best-effort — a failure never sinks the autofill response.
+    const brandLabelForSearch = cleanField(search?.short_name) ?? officialName;
+    const [logoSettled, wikiSettled] = await Promise.allSettled([
+      resolveLogo(search?.logo_url, safeSourceUrl(search?.sources?.logo_url), brandLabelForSearch),
+      wikipediaContent(brandLabelForSearch),
+    ]);
+    const logo = logoSettled.status === 'fulfilled' ? logoSettled.value : null;
+    const wikiContent = wikiSettled.status === 'fulfilled' ? wikiSettled.value : null;
+    if (logoSettled.status === 'rejected') {
+      await logEvent(database, { severity: 'warning', action: 'brand_autofill_logo_failed', message: message(logoSettled.reason) });
+    }
+    if (wikiSettled.status === 'rejected') {
+      await logEvent(database, { severity: 'warning', action: 'brand_autofill_wikipedia_failed', message: message(wikiSettled.reason) });
+    }
+    const contentWithWiki = wikiContent
+      ? [wikiContent, ...(crawl?.content ?? [])]
+      : crawl?.content;
+
     await database.from('usage_events').insert({
       request_id: null,
       provider: 'openai',
@@ -96,7 +124,8 @@ Deno.serve(async (req) => {
       fields,
       colors: sanitizeColors(crawl?.colors),
       color_source_url: crawl?.ok ? officialWebsite : null,
-      content: sanitizeContent(crawl?.content),
+      logo,
+      content: sanitizeContent(contentWithWiki),
       locations: sanitizeLocations(crawl?.locations),
       parent_brand: parentBrand,
       website_found: Boolean(officialWebsite),
@@ -136,7 +165,7 @@ async function searchIdentity(query: string, website: string | null) {
           task: 'Identify the organization and exact contact details. Every non-empty value needs its own source URL. If sources disagree or confidence is low, return null.',
           query,
           known_website: website,
-          schema: { official_name: 'string|null', short_name: 'string|null', website: 'string|null', address: 'string|null', postal_code: 'string|null', phone: 'string|null', fax: 'string|null', email: 'string|null', legal_id: 'string|null', contact_person_name: 'string|null', contact_person_title: 'string|null', sources: '{field: url}' },
+          schema: { official_name: 'string|null', short_name: 'string|null', website: 'string|null', address: 'string|null', postal_code: 'string|null', phone: 'string|null', fax: 'string|null', email: 'string|null', legal_id: 'string|null', contact_person_name: 'string|null', contact_person_title: 'string|null', logo_url: 'direct https link to an image file of the official logo (prefer Wikimedia or the official site), or null', sources: '{field: url}' },
         }) },
       ],
     }),
@@ -180,6 +209,120 @@ async function crawlWebsite(website: string, includeContent: boolean): Promise<C
     if (!response.ok) throw new Error(`crawler_${response.status}`);
     return await response.json() as CrawlResult;
   } finally { clearTimeout(timeout); }
+}
+
+const MAX_LOGO_BYTES = 5 * 1024 * 1024;
+
+// Best-effort logo: whatever the search model named, falling back to a Google
+// image search only when the operator has configured keys for it.
+async function resolveLogo(
+  modelUrl: string | undefined,
+  modelSourceUrl: string | null,
+  brandName: string,
+): Promise<LogoResult | null> {
+  const fromModel = safeSourceUrl(modelUrl);
+  if (fromModel) {
+    const bytes = await fetchLogo(fromModel);
+    if (bytes) return { url: fromModel, source_url: modelSourceUrl ?? fromModel, base64: bytes.base64, mime: bytes.mime };
+  }
+  const googleUrl = await googleImageSearch(brandName);
+  if (googleUrl) {
+    const bytes = await fetchLogo(googleUrl);
+    if (bytes) return { url: googleUrl, source_url: googleUrl, base64: bytes.base64, mime: bytes.mime };
+  }
+  return null;
+}
+
+async function fetchLogo(rawUrl: string): Promise<{ base64: string; mime: string } | null> {
+  let url: URL;
+  try { url = new URL(rawUrl); } catch { return null; }
+  if (url.protocol !== 'https:') return null;
+  if (isPrivateAddress(url.hostname)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(url, { redirect: 'manual', signal: controller.signal, headers: { 'User-Agent': 'PrimeOSBrandReader/1.0 (+https://app.primeos.co.il)' } });
+    if (response.status >= 300 && response.status < 400) return null; // a redirect can walk past the private-address check
+    if (!response.ok) return null;
+    const mime = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+    if (!mime.startsWith('image/')) return null;
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength === 0 || buffer.byteLength > MAX_LOGO_BYTES) return null;
+    return { base64: encodeBase64(new Uint8Array(buffer)), mime };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function googleImageSearch(brandName: string): Promise<string | null> {
+  const key = Deno.env.get('GOOGLE_API_KEY');
+  const cx = Deno.env.get('GOOGLE_CSE_ID');
+  if (!key || !cx || !brandName) return null;
+  const endpoint = new URL('https://customsearch.googleapis.com/customsearch/v1');
+  endpoint.searchParams.set('key', key);
+  endpoint.searchParams.set('cx', cx);
+  endpoint.searchParams.set('searchType', 'image');
+  endpoint.searchParams.set('num', '3');
+  endpoint.searchParams.set('q', `${brandName} logo`);
+  try {
+    const response = await fetch(endpoint, { signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) return null;
+    const payload = await response.json() as { items?: Array<{ link?: string }> };
+    for (const item of payload.items ?? []) {
+      const link = safeSourceUrl(item.link);
+      if (link) return link;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// The Wikipedia article for the brand, plain text, capped. Feeds the same
+// content-consent list as the crawler's pages.
+async function wikipediaContent(name: string): Promise<{ title: string; content: string; source_url: string } | null> {
+  if (!name) return null;
+  for (const lang of ['he', 'en']) {
+    try {
+      const found = await wikipediaLookup(lang, name);
+      if (found) return found;
+    } catch { /* try the next language */ }
+  }
+  return null;
+}
+
+async function wikipediaLookup(lang: string, name: string): Promise<{ title: string; content: string; source_url: string } | null> {
+  const headers = { 'User-Agent': 'PrimeOSBrandReader/1.0 (+https://app.primeos.co.il; brand knowledge autofill)' };
+  const searchUrl = new URL(`https://${lang}.wikipedia.org/w/api.php`);
+  searchUrl.search = new URLSearchParams({ action: 'query', format: 'json', list: 'search', srsearch: name, srlimit: '1', srprop: '' }).toString();
+  const searchResponse = await fetch(searchUrl, { headers, signal: AbortSignal.timeout(10_000) });
+  if (!searchResponse.ok) return null;
+  const searchPayload = await searchResponse.json() as { query?: { search?: Array<{ title?: string }> } };
+  const title = cleanField(searchPayload.query?.search?.[0]?.title, 200);
+  if (!title) return null;
+
+  const extractUrl = new URL(`https://${lang}.wikipedia.org/w/api.php`);
+  extractUrl.search = new URLSearchParams({ action: 'query', format: 'json', prop: 'extracts', explaintext: '1', redirects: '1', titles: title }).toString();
+  const extractResponse = await fetch(extractUrl, { headers, signal: AbortSignal.timeout(10_000) });
+  if (!extractResponse.ok) return null;
+  const extractPayload = await extractResponse.json() as { query?: { pages?: Record<string, { title?: string; extract?: string }> } };
+  const page = Object.values(extractPayload.query?.pages ?? {})[0];
+  const body = cleanField(page?.extract, 6000);
+  if (!body || body.length < 80) return null;
+  const resolvedTitle = cleanField(page?.title, 200) ?? title;
+  return {
+    title: `ויקיפדיה — ${resolvedTitle}`,
+    content: body,
+    source_url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(resolvedTitle.replace(/ /g, '_'))}`,
+  };
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
 }
 
 function buildFields(search: SearchResult | null, crawl: CrawlResult | null, clientType: ClientType, website: string | null): CandidateField[] {

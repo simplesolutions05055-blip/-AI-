@@ -6,9 +6,11 @@ type BrandPatch = Record<string, string | { role: string; hex: string }[]>;
 interface CandidateField { key: string; value: string; state: 'trusted' | 'review'; source_url: string; source_label: string }
 interface ContentCandidate { title: string; content: string; source_url: string }
 interface LocationCandidate { address: string | null; phone: string | null; source_url: string | null }
+interface LogoCandidate { url: string; source_url: string; base64: string; mime: string }
 interface Result {
   client_type: 'business' | 'municipality';
   fields: CandidateField[];
+  logo?: LogoCandidate | null;
   colors: string[];
   palette?: Array<{ role: string; hex: string }>;
   color_source_url?: string | null;
@@ -27,9 +29,17 @@ const LABELS: Record<string, string> = {
   contact_person_title: 'תפקיד איש קשר', client_type: 'סוג לקוח', color_palette: 'צבעי מותג',
 };
 
+function base64ToFile(logo: LogoCandidate): File {
+  const binary = atob(logo.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const ext = logo.mime.split('/')[1]?.split('+')[0] || 'png';
+  return new File([bytes], `logo.${ext}`, { type: logo.mime });
+}
+
 export default function BrandAutofillPanel({ initialQuery, onApply }: {
   initialQuery: string;
-  onApply: (patch: BrandPatch, content: ContentCandidate[]) => void;
+  onApply: (patch: BrandPatch, content: ContentCandidate[], logoFile?: File | null) => void;
 }) {
   const db = useMemo(() => createSupabaseBrowserClient(), []);
   const [query, setQuery] = useState(initialQuery);
@@ -84,10 +94,14 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
         if (payload.colors.length) patch.color_palette = payload.palette?.length ? payload.palette : paletteFromColors(payload.colors);
         onApply(patch, []);
         setAutoApplied(new Set([...trusted.map((f) => f.key), ...(payload.colors.length ? ['color_palette'] : [])]));
-        setSelected(new Set()); // review fields start unchecked
+        setSelected(new Set(payload.logo ? ['logo'] : [])); // review fields start unchecked; a found logo is pre-ticked
       } else {
         setAutoApplied(new Set());
-        setSelected(new Set(trusted.map((field) => field.key).concat(payload.colors.length ? ['color_palette'] : [])));
+        setSelected(new Set([
+          ...trusted.map((field) => field.key),
+          ...(payload.colors.length ? ['color_palette'] : []),
+          ...(payload.logo ? ['logo'] : []),
+        ]));
       }
     } catch (cause) {
       setError(cause instanceof Error && cause.message === 'robots_disallowed'
@@ -111,13 +125,15 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
       for (const key of ['address', 'phone', 'fax', 'email', 'legal_id', 'contact_person_name', 'contact_person_title']) delete patch[key];
     }
     const content = contentConsent ? result.content.filter((_, index) => selectedContent.has(index)) : [];
-    onApply(patch, content);
+    const logoFile = result.logo && selected.has('logo') ? base64ToFile(result.logo) : null;
+    onApply(patch, content, logoFile);
   }
 
   const reviewFields = result?.fields.filter((field) => !autoApplied.has(field.key)) ?? [];
   const showColorRow = (result?.colors.length ?? 0) > 0 && !autoApplied.has('color_palette');
   const hasManualWork =
     reviewFields.length > 0 ||
+    Boolean(result?.logo) ||
     showColorRow ||
     (result?.locations.length ?? 0) > 1 ||
     Boolean(result?.parent_brand?.name) ||
@@ -157,6 +173,19 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
             </label>
           );
         })}
+        {result.logo && (
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+            <input type="checkbox" checked={selected.has('logo')} onChange={() => toggle('logo')} className="mt-1" />
+            <span className="flex min-w-0 flex-1 items-center gap-3">
+              <img src={result.logo.url} alt="" className="h-12 w-12 shrink-0 rounded border border-black/10 bg-white object-contain p-1" />
+              <span className="min-w-0">
+                <strong className="block text-sm">לוגו מהאינטרנט</strong>
+                <a href={result.logo.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">מקור<ExternalLink size={11} /></a>
+              </span>
+            </span>
+            <span className="shrink-0 rounded-full bg-amber-200 px-2 py-1 text-[11px] font-bold text-amber-950">דורש אישור</span>
+          </label>
+        )}
         {showColorRow && <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3"><input type="checkbox" checked={selected.has('color_palette')} onChange={() => toggle('color_palette')} /><span><strong className="block text-sm">צבעים מהאתר</strong>{result.color_source_url && <a href={result.color_source_url} target="_blank" rel="noreferrer" className="text-xs text-brand underline">מקור: האתר הרשמי</a>}</span><span className="flex flex-wrap gap-1">{result.colors.slice(0, 5).map((color) => <span key={color} title={color} className="h-6 w-6 rounded border border-black/10" style={{ backgroundColor: color }} />)}</span></label>}
       </div>
       {result.locations.length > 1 && <fieldset className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3"><legend className="px-1 text-sm font-bold">נמצאו כמה סניפים. חובה לבחור:</legend>{result.locations.map((location, index) => <label key={index} className="mt-2 flex items-start gap-2 text-sm"><input type="radio" name="brand-location" checked={locationIndex === index} onChange={() => setLocationIndex(index)} className="mt-1" /><span>{location.address || 'ללא כתובת'} · {location.phone || 'ללא טלפון'} {location.source_url && <a href={location.source_url} target="_blank" rel="noreferrer" className="text-brand underline">מקור</a>}</span></label>)}</fieldset>}

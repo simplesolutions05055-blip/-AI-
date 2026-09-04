@@ -137,6 +137,9 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
   const [importing, setImporting] = useState(false);
   const [csvModalOpen, setCsvModalOpen] = useState(false);
   const [pendingWebsiteContent, setPendingWebsiteContent] = useState<Array<{ title: string; content: string; source_url: string }>>([]);
+  // A logo the autofill panel found — previewed now, uploaded only on שמירה.
+  const [pendingLogoFile, setPendingLogoFile] = useState<File | null>(null);
+  const [pendingLogoUrl, setPendingLogoUrl] = useState<string | null>(null);
 
   const db = createSupabaseBrowserClient();
 
@@ -219,6 +222,8 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
     setPreviews({});
     setLogoFile(null);
     setPendingWebsiteContent([]);
+    setPendingLogoFile(null);
+    setPendingLogoUrl(null);
     setShowAutofill(false);
     setFlashFields(new Set());
     setApplyNotice(null);
@@ -379,6 +384,14 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
         setPendingWebsiteContent([]);
       }
     }
+    if (id && pendingLogoFile) {
+      const hadPalette = (selected.color_palette ?? []).length > 0;
+      await storeLogo(id, pendingLogoFile);
+      // Only fall back to logo-derived colours when the site gave us none.
+      if (!hadPalette) void analyzeLogoColors(pendingLogoFile);
+      setPendingLogoFile(null);
+      setPendingLogoUrl(null);
+    }
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -471,6 +484,10 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
     setLogoFile(file);
     const id = selected?.id ?? (await save());
     if (!id) return;
+    await storeLogo(id, file);
+  }
+
+  async function storeLogo(id: string, file: File) {
     const ext = file.name.split('.').pop() || 'png';
     const path = `${id}/logo.${ext}`;
     const { error } = await db.storage.from('branding').upload(path, file, { upsert: true, contentType: file.type });
@@ -962,7 +979,13 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
               <div className="-order-2">
               <BrandAutofillPanel
                 initialQuery={selected.website || selected.name || ''}
-                onApply={(autofill, websiteContent) => {
+                onApply={(autofill, websiteContent, logoFile) => {
+                  if (logoFile) {
+                    setPendingLogoFile(logoFile);
+                    const url = URL.createObjectURL(logoFile);
+                    setPendingLogoUrl(url);
+                    setPreviews((p) => ({ ...p, __logo: url }));
+                  }
                   const next: Partial<Brand> = {
                     ...(autofill as Partial<Brand>),
                     client_type: autofill.client_type === 'municipality' ? 'municipality' : 'business',
@@ -1005,6 +1028,19 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
               <div className="-order-2 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
                 <span>{applyNotice}</span>
                 <button type="button" onClick={() => setApplyNotice(null)} aria-label="סגירה" className="ms-auto text-emerald-700 hover:text-emerald-950">×</button>
+              </div>
+            )}
+
+            {pendingLogoUrl && (
+              <div className="-order-2 flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <img src={pendingLogoUrl} alt="" className="h-9 w-9 shrink-0 rounded border border-black/10 bg-white object-contain p-0.5" />
+                <span>לוגו מהאינטרנט ממתין — ייכנס בלחיצת שמירה.</span>
+                <button
+                  type="button"
+                  onClick={() => { setPendingLogoFile(null); setPendingLogoUrl(null); }}
+                  aria-label="ביטול הלוגו"
+                  className="ms-auto text-amber-700 hover:text-amber-950"
+                >×</button>
               </div>
             )}
 
