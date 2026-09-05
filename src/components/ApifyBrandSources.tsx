@@ -15,7 +15,8 @@ export default function ApifyBrandSources({ website, socialLinks, onApply, trigg
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
   const [showPosts, setShowPosts] = useState(false);
-  const applied = useRef(new Set<string>());
+  const digested = useRef(false);
+  const [digesting, setDigesting] = useState(false);
   const active = jobs.some(job => !job.terminal);
   const [polling, setPolling] = useState(false);
   const jobsRef = useRef(jobs);
@@ -54,30 +55,39 @@ export default function ApifyBrandSources({ website, socialLinks, onApply, trigg
     return () => { cancelled = true; clearTimeout(timer); };
   }, [polling, db]);
 
-  // Every terminal job's content is pushed onto the form the moment it lands —
-  // no per-post confirmation. The admin reviews everything, still unsaved, on
-  // the form itself (and can look back at raw posts in the modal below).
+  // Once every source has finished, the raw posts (often 20+, repetitive)
+  // are handed to a cheap AI model that condenses them into 5-10 distinct,
+  // reusable content pieces — that's what lands on the form, not each raw
+  // post. The originals stay viewable in the "posts scanned" modal below.
   useEffect(() => {
-    const fresh: Content[] = [];
-    for (const job of jobs) {
-      if (!job.terminal) continue;
-      for (const item of job.content) {
-        const key = `${item.source_url}\n${item.content}`;
-        if (applied.current.has(key)) continue;
-        applied.current.add(key);
-        fresh.push(item);
+    if (!jobs.length || active || starting || digested.current) return;
+    const rawItems = [...new Map(jobs.flatMap(job => job.content).map(item => [`${item.source_url}\n${item.content}`, item])).values()];
+    if (!rawItems.length) return;
+    digested.current = true;
+    setDigesting(true);
+    void (async () => {
+      const representativeUrl = urls.website.trim() || urls.facebook.trim() || urls.instagram.trim() || rawItems[0].source_url;
+      const { data, error } = await db.functions.invoke('brand-apify', { body: { action: 'digest', items: rawItems } }).catch(() => ({ data: null, error: true }));
+      const digestItems: Array<{ title: string; content: string }> = !error && Array.isArray(data?.items) ? data.items : [];
+      if (digestItems.length) {
+        onApply(digestItems.map(item => ({ title: item.title, content: item.content, source_url: representativeUrl })));
+      } else {
+        // AI digest failed — fall back to the raw posts rather than losing
+        // everything that was scraped.
+        setError('סיכום התוכן עם AI נכשל; הועברו הפוסטים הגולמיים לטופס במקום.');
+        onApply(rawItems);
       }
-    }
-    if (fresh.length) onApply(fresh);
-  }, [jobs, onApply]);
+      setDigesting(false);
+    })();
+  }, [jobs, active, starting, urls, onApply, db]);
 
   // Lets the parent fold this component's progress into one unified
   // loading indicator instead of showing a separate, easy-to-miss spinner.
   useEffect(() => {
     const items = new Set(jobs.flatMap(job => job.content.map(item => `${item.source_url}\n${item.content}`))).size;
-    onProgress?.({ active: starting || active, items });
+    onProgress?.({ active: starting || active || digesting, items });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [starting, active, jobs]);
+  }, [starting, active, digesting, jobs]);
 
   const lastTrigger = useRef(0);
   useEffect(() => {
@@ -91,7 +101,7 @@ export default function ApifyBrandSources({ website, socialLinks, onApply, trigg
 
   async function start() {
     setError(''); setStarting(true); setJobs([]);
-    applied.current = new Set();
+    digested.current = false;
     const sources = (Object.keys(LABELS) as Kind[]).filter(kind => urls[kind].trim());
     const launched = await Promise.all(sources.map(async kind => {
       const { data, error } = await db.functions.invoke('brand-apify', { body: { action: 'start', kind, url: urls[kind].trim() } }).catch(() => ({ data: null, error: true }));
@@ -114,14 +124,14 @@ export default function ApifyBrandSources({ website, socialLinks, onApply, trigg
   const failedEmpty = jobs.filter(job => job.terminal && !job.content.length);
   return <section dir="rtl" className="mt-5 rounded-xl border border-[var(--border)] bg-white p-4">
     <h3 className="font-bold">השלמת תוכן מהאתר ומהרשתות</h3>
-    <p className="mt-1 text-sm text-[var(--muted)]">עד 8 עמודי אתר ו־20 פוסטים מכל רשת. אשרו שהקישורים שייכים למותג. הסריקה רצה ברקע והתוכן שנמצא נכנס לטופס אוטומטית — כלום לא נשמר עד לחיצה על שמירה.</p>
+    <p className="mt-1 text-sm text-[var(--muted)]">עד 8 עמודי אתר ו־20 פוסטים מכל רשת. אשרו שהקישורים שייכים למותג. הסריקה רצה ברקע; בסיומה AI מכין מהפוסטים 5-10 פיסות תוכן מרוכזות שנכנסות לטופס אוטומטית — כלום לא נשמר עד לחיצה על שמירה.</p>
     {enabled === false && <p role="status" className="mt-2 text-sm text-amber-800">שירות הסריקה טרם הופעל. המילוי הרגיל נשאר זמין.</p>}
     <div className="mt-3 grid gap-3 sm:grid-cols-3">{(Object.keys(LABELS) as Kind[]).map(kind => <label key={kind} className="text-sm">{LABELS[kind]}<input type="url" dir="ltr" value={urls[kind]} disabled={active || starting} onChange={e => setUrls(current => ({ ...current, [kind]: e.target.value }))} placeholder={kind === 'website' ? 'https://example.com' : `https://www.${kind}.com/brand`} className="mt-1 w-full rounded-lg border p-2 text-left" /></label>)}</div>
-    {(starting || active) && <p className="mt-3 flex items-center gap-2 text-sm text-brand"><Spinner small />{starting ? 'מתחיל סריקה…' : 'סורק ברקע… אפשר להמשיך למלא את הטופס בינתיים'}</p>}
+    {(starting || active || digesting) && <p className="mt-3 flex items-center gap-2 text-sm text-brand"><Spinner small />{starting ? 'מתחיל סריקה…' : active ? 'סורק ברקע… אפשר להמשיך למלא את הטופס בינתיים' : 'מכין פיסות תוכן עם AI מתוך הפוסטים שנסרקו…'}</p>}
     <div className="mt-3 flex flex-wrap items-center gap-2">
       {active && <button type="button" onClick={() => void abort()} className="rounded-lg border px-3 py-2 text-sm">עצירת סריקות</button>}
       {active && !polling && <button type="button" onClick={() => { setError(''); setPolling(true); }} className="rounded-lg border px-3 py-2 text-sm">חידוש מעקב</button>}
-      {!active && !starting && jobs.length > 0 && <button type="button" disabled={!enabled || !Object.values(urls).some(url => url.trim())} onClick={() => void start()} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50">סריקה מחדש</button>}
+      {!active && !starting && !digesting && jobs.length > 0 && <button type="button" disabled={!enabled || !Object.values(urls).some(url => url.trim())} onClick={() => void start()} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50">סריקה מחדש</button>}
       {unique.size > 0 && <button type="button" onClick={() => setShowPosts(true)} className="rounded-lg border px-3 py-2 text-sm">צפייה בפוסטים שנסרקו ({unique.size})</button>}
     </div>
     {error && <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>}
@@ -131,7 +141,7 @@ export default function ApifyBrandSources({ website, socialLinks, onApply, trigg
       {job.status_message && <span className="block text-xs text-red-700" dir="ltr">{job.status_message}</span>}
     </li>)}</ul>}
     {failedEmpty.length > 0 && <p className="mt-2 text-xs text-[var(--muted)]">מקור שהסתיים בלי תוכן: ייתכן שהחיפוש חרג מזמן הסריקה, שהעמוד חסום לרובוטים, או שהחשבון בפרופיל פרטי. אפשר לנסות שוב או להמשיך בהזנה ידנית.</p>}
-    {unique.size > 0 && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{unique.size} פריטי תוכן נכנסו לטופס אוטומטית מהסריקה.</p>}
+    {digested.current && !digesting && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">פיסות התוכן שה-AI הכין מתוך {unique.size} הפוסטים נכנסו לטופס אוטומטית.</p>}
     {showPosts && <PostsModal items={[...unique.values()]} onClose={() => setShowPosts(false)} />}
   </section>;
 }

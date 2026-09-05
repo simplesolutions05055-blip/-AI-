@@ -1,7 +1,7 @@
 import { requireAdmin, AuthError } from '../_shared/auth.ts';
 import { db } from '../_shared/db.ts';
 import { cors } from '../_shared/cors.ts';
-import { ApifyClient, signTicket, verifyTicket, sourceUrl, type SourceKind } from '../_shared/apifyBrand.ts';
+import { ApifyClient, signTicket, verifyTicket, sourceUrl, digestContent, type SourceKind } from '../_shared/apifyBrand.ts';
 
 Deno.serve(async req => {
   const headers = { ...cors(req, 'POST'), 'Content-Type': 'application/json' };
@@ -15,6 +15,10 @@ Deno.serve(async req => {
     const secret = Deno.env.get('APIFY_TICKET_SECRET');
     const body = await req.json();
     if (body.action === 'config') return json({ enabled: Boolean(token && secret && secret.length >= 32 && Deno.env.get('APIFY_ENABLED') === 'true') });
+    // Digest doesn't touch Apify at all — it just asks a cheap OpenAI model to
+    // turn raw scraped posts into a handful of reusable content pieces — so it
+    // has no business behind the Apify-configuration gate below.
+    if (body.action === 'digest') return json({ items: await digestContent(body.items, Deno.env.get('OPENAI_API_KEY')) });
     if (!token || !secret || secret.length < 32 || Deno.env.get('APIFY_ENABLED') !== 'true') return json({ error: 'apify_not_configured' }, 503);
     const client = new ApifyClient(token);
     if (body.action === 'start') {

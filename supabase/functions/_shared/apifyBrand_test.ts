@@ -1,4 +1,4 @@
-import { ApifyClient, actorInput, formatIsraeliDateTime, normalizeItems, signTicket, sourceUrl, verifyTicket } from './apifyBrand.ts';
+import { ApifyClient, actorInput, digestContent, formatIsraeliDateTime, normalizeItems, signTicket, sourceUrl, verifyTicket } from './apifyBrand.ts';
 function assert(value: unknown, message = 'assertion failed'): asserts value { if (!value) throw new Error(message); }
 Deno.test('Apify rejects private addresses, credentials and foreign social hosts', () => {
   for (const url of ['http://example.com', 'https://127.0.0.1', 'https://user:pass@example.com', 'https://localhost', 'https://example.com:8080']) {
@@ -57,4 +57,29 @@ Deno.test('Apify errors never include provider response secrets', async () => {
   const client = new ApifyClient('secret', (() => Promise.resolve(new Response('secret details', { status: 401 }))) as typeof fetch);
   try { await client.start('website', 'https://example.com'); throw new Error('expected failure'); }
   catch (e) { assert(e instanceof Error && e.message === 'apify_http_401'); }
+});
+Deno.test('digestContent condenses raw posts via the model and sanitizes its reply', async () => {
+  const mock = (() => Promise.resolve(new Response(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify({ items: [
+      { title: 'שירותי המסעדה', content: 'תפריט עשיר ומשלוחים באזור.' },
+      { title: '  ', content: 'חסר כותרת — יידחה' },
+      { title: 'שעות פתיחה', content: 'פתוח כל יום מ-9 עד 22.'.repeat(200) },
+    ] }) } }],
+  })))) as typeof fetch;
+  const items = await digestContent([
+    { title: 'פוסט 1', content: 'תפריט חדש הושק היום', source_url: 'https://facebook.com/brand/posts/1' },
+    { title: 'פוסט 2', content: 'משלוחים זמינים כעת בכל העיר', source_url: 'https://facebook.com/brand/posts/2' },
+  ], 'fake-key', mock);
+  assert(items.length === 2); // the blank-title row is dropped
+  assert(items[0].title === 'שירותי המסעדה');
+  assert(items[1].content.length <= 700); // the oversized reply is truncated, not rejected
+});
+Deno.test('digestContent needs no OpenAI key when there is nothing to summarize', async () => {
+  assert((await digestContent([], undefined)).length === 0);
+});
+Deno.test('digestContent throws (not silently empties) when the key is missing but posts exist', async () => {
+  let threw = false;
+  try { await digestContent([{ content: 'x', source_url: 'https://facebook.com/a' }], undefined); }
+  catch { threw = true; }
+  assert(threw);
 });
