@@ -63,7 +63,7 @@ export class ApifyClient {
     return payload.data.id;
   }
   async status(ticket: RunTicket) {
-    const payload = await this.api(`actor-runs/${ticket.runId}`) as { data?: { status?: string; defaultDatasetId?: string; usageTotalUsd?: number } };
+    const payload = await this.api(`actor-runs/${ticket.runId}`) as { data?: { status?: string; statusMessage?: string; defaultDatasetId?: string; usageTotalUsd?: number } };
     const run = payload.data;
     if (!run?.status) throw new Error('invalid_apify_run');
     const terminal = ['SUCCEEDED', 'FAILED', 'TIMED-OUT', 'ABORTED'].includes(run.status);
@@ -72,7 +72,13 @@ export class ApifyClient {
       const items = await this.api(`datasets/${run.defaultDatasetId}/items?clean=true&limit=20&fields=url,title,markdown,text,caption,timestamp,time,biography,fullName,username,externalUrl`);
       content = normalizeItems(items, ticket.kind, ticket.url);
     }
-    return { status: run.status, terminal, content, usage_usd: typeof run.usageTotalUsd === 'number' ? run.usageTotalUsd : null };
+    return {
+      status: run.status,
+      terminal,
+      content,
+      usage_usd: typeof run.usageTotalUsd === 'number' ? run.usageTotalUsd : null,
+      status_message: run.status === 'FAILED' && typeof run.statusMessage === 'string' ? run.statusMessage.slice(0, 300) : null,
+    };
   }
   async abort(runId: string) { await this.api(`actor-runs/${runId}/abort`, { method: 'POST' }); }
 }

@@ -3,11 +3,11 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 type Kind = 'website' | 'facebook' | 'instagram';
 interface Content { title: string; content: string; source_url: string }
-interface Job { kind: Kind; ticket: string; status: string; terminal: boolean; content: Content[]; usage_usd: number | null }
+interface Job { kind: Kind; ticket: string; status: string; terminal: boolean; content: Content[]; usage_usd: number | null; status_message?: string | null }
 const LABELS: Record<Kind, string> = { website: 'אתר רשמי', facebook: 'Facebook', instagram: 'Instagram' };
 const STATUS: Record<string, string> = { READY: 'ממתין', RUNNING: 'סורק', SUCCEEDED: 'הושלם', FAILED: 'נכשל', 'TIMED-OUT': 'תם זמן הסריקה', ABORTED: 'נעצר', ERROR: 'בדיקת הסטטוס נכשלה' };
 
-export default function ApifyBrandSources({ website, socialLinks, onApply }: { website?: string; socialLinks?: { facebook: string | null; instagram: string | null }; onApply: (content: Content[]) => void }) {
+export default function ApifyBrandSources({ website, socialLinks, onApply, triggerToken }: { website?: string; socialLinks?: { facebook: string | null; instagram: string | null }; onApply: (content: Content[]) => void; triggerToken?: number }) {
   const db = useMemo(() => createSupabaseBrowserClient(), []);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [urls, setUrls] = useState<Record<Kind, string>>({ website: '', facebook: '', instagram: '' });
@@ -71,6 +71,16 @@ export default function ApifyBrandSources({ website, socialLinks, onApply }: { w
     if (fresh.length) onApply(fresh);
   }, [jobs, onApply]);
 
+  const lastTrigger = useRef(0);
+  useEffect(() => {
+    if (!triggerToken || triggerToken === lastTrigger.current) return;
+    if (!enabled || active || starting) return;
+    if (!Object.values(urls).some(url => url.trim())) return;
+    lastTrigger.current = triggerToken;
+    void start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [triggerToken, enabled, urls, active, starting]);
+
   async function start() {
     setError(''); setStarting(true); setJobs([]);
     applied.current = new Set();
@@ -99,19 +109,18 @@ export default function ApifyBrandSources({ website, socialLinks, onApply }: { w
     <p className="mt-1 text-sm text-[var(--muted)]">עד 8 עמודי אתר ו־20 פוסטים מכל רשת. אשרו שהקישורים שייכים למותג. הסריקה רצה ברקע והתוכן שנמצא נכנס לטופס אוטומטית — כלום לא נשמר עד לחיצה על שמירה.</p>
     {enabled === false && <p role="status" className="mt-2 text-sm text-amber-800">שירות הסריקה טרם הופעל. המילוי הרגיל נשאר זמין.</p>}
     <div className="mt-3 grid gap-3 sm:grid-cols-3">{(Object.keys(LABELS) as Kind[]).map(kind => <label key={kind} className="text-sm">{LABELS[kind]}<input type="url" dir="ltr" value={urls[kind]} disabled={active || starting} onChange={e => setUrls(current => ({ ...current, [kind]: e.target.value }))} placeholder={kind === 'website' ? 'https://example.com' : `https://www.${kind}.com/brand`} className="mt-1 w-full rounded-lg border p-2 text-left" /></label>)}</div>
+    {(starting || active) && <p className="mt-3 flex items-center gap-2 text-sm text-brand"><Spinner small />{starting ? 'מתחיל סריקה…' : 'סורק ברקע… אפשר להמשיך למלא את הטופס בינתיים'}</p>}
     <div className="mt-3 flex flex-wrap items-center gap-2">
-      <button type="button" disabled={!enabled || active || starting || !Object.values(urls).some(url => url.trim())} onClick={() => void start()} className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-        {(starting || active) && <Spinner />}
-        {starting ? 'מתחיל סריקה…' : active ? 'סורק ברקע…' : 'סריקת המקורות שסומנו'}
-      </button>
       {active && <button type="button" onClick={() => void abort()} className="rounded-lg border px-3 py-2 text-sm">עצירת סריקות</button>}
       {active && !polling && <button type="button" onClick={() => { setError(''); setPolling(true); }} className="rounded-lg border px-3 py-2 text-sm">חידוש מעקב</button>}
+      {!active && !starting && jobs.length > 0 && <button type="button" disabled={!enabled || !Object.values(urls).some(url => url.trim())} onClick={() => void start()} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50">סריקה מחדש</button>}
       {unique.size > 0 && <button type="button" onClick={() => setShowPosts(true)} className="rounded-lg border px-3 py-2 text-sm">צפייה בפוסטים שנסרקו ({unique.size})</button>}
     </div>
     {error && <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>}
     {jobs.length > 0 && <ul aria-live="polite" className="mt-3 space-y-1 text-sm">{jobs.map(job => <li key={job.ticket} className="flex items-center gap-2">
       {!job.terminal && <Spinner small />}
       {LABELS[job.kind]}: {STATUS[job.status] ?? 'בתהליך'} · {job.content.length} פריטים {job.usage_usd !== null && <bdi>(${job.usage_usd.toFixed(4)})</bdi>}{job.terminal && !job.content.length ? ' — לא התקבל תוכן לקריאה' : ''}
+      {job.status_message && <span className="block text-xs text-red-700" dir="ltr">{job.status_message}</span>}
     </li>)}</ul>}
     {failedEmpty.length > 0 && <p className="mt-2 text-xs text-[var(--muted)]">מקור שהסתיים בלי תוכן: ייתכן שהחיפוש חרג מזמן הסריקה, שהעמוד חסום לרובוטים, או שהחשבון בפרופיל פרטי. אפשר לנסות שוב או להמשיך בהזנה ידנית.</p>}
     {unique.size > 0 && <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{unique.size} פריטי תוכן נכנסו לטופס אוטומטית מהסריקה.</p>}

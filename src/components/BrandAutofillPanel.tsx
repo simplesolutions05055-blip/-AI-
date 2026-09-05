@@ -56,6 +56,7 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
   const [locationIndex, setLocationIndex] = useState<number | null>(null);
   const [parentDecision, setParentDecision] = useState<'same' | 'parent' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scanToken, setScanToken] = useState(0);
 
   useEffect(() => { if (!query) setQuery(initialQuery); }, [initialQuery]);
   useEffect(() => {
@@ -109,7 +110,14 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
       setError(cause instanceof Error && cause.message === 'robots_disallowed'
         ? 'האתר אינו מאפשר סריקה. אפשר להמשיך בהזנה ידנית.'
         : 'לא הצלחנו להשלים את הבדיקה. אפשר לנסות שוב או להמשיך בהזנה ידנית.');
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+      // One button runs the whole pipeline: as soon as the GPT search step is
+      // done (found something or not), kick off the Apify scan with whatever
+      // website/social links are now known — the admin never sees a second
+      // "start scanning" button.
+      setScanToken((value) => value + 1);
+    }
   }
 
   function toggle(key: string) { setSelected((current) => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; }); }
@@ -143,7 +151,7 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
 
   return <div className="mb-6 rounded-2xl border border-brand/25 bg-brand/5 p-4">
     <h2 className="font-bold text-[var(--text)]">מילוי אוטומטי מהאתר הרשמי</h2>
-    <p className="mt-1 text-sm text-[var(--muted)]">שדות מאומתים נכנסים לטופס אוטומטית. רק שדות שדורשים אישור מוצגים כאן. שום דבר לא נשמר עד שתלחצו שמירה.</p>
+    <p className="mt-1 text-sm text-[var(--muted)]">לחיצה אחת מריצה הכל: חיפוש באינטרנט, קריאת האתר הרשמי, וסריקת פייסבוק/אינסטגרם ברקע. שדות מאומתים נכנסים לטופס אוטומטית. שום דבר לא נשמר עד שתלחצו שמירה.</p>
     <div className="mt-3 flex flex-col gap-2 sm:flex-row">
       <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void run(); } }} className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm" dir="auto" placeholder="https://www.example.co.il או שם הארגון" />
       <button type="button" onClick={() => void run()} disabled={loading || !query.trim()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Search size={16} />{loading ? 'קורא ומצליב...' : 'מלאו בשבילי'}</button>
@@ -200,7 +208,7 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
         <button type="button" onClick={apply} disabled={(result.locations.length > 1 && locationIndex === null) || (Boolean(result.parent_brand?.name) && parentDecision === null)} className="mt-4 w-full rounded-lg bg-brand py-2.5 font-semibold text-white disabled:opacity-50">החלת השדות שסומנו על הטופס</button>
       )}
     </div>}
-    <ApifyBrandSources website={result?.fields.find(field => field.key === 'website')?.value} socialLinks={result?.social_links} onApply={content => onApply({}, content)} />
+    <ApifyBrandSources website={result?.fields.find(field => field.key === 'website')?.value || (/^(?:https?:\/\/)?[^\s]+\.[^\s]+/i.test(query.trim()) ? query.trim() : undefined)} socialLinks={result?.social_links} triggerToken={scanToken} onApply={content => onApply({}, content)} />
   </div>;
 }
 
