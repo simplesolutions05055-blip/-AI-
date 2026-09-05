@@ -86,26 +86,29 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
       setLocationIndex(null);
       setParentDecision(null);
 
-      // Verified fields go straight onto the form — no checkbox, no confirm.
-      // The only exception is when the answer is genuinely ambiguous: several
-      // branches, or a possible parent brand. There we keep the manual flow so
-      // the user picks first.
-      const trusted = payload.fields.filter((field) => field.state === 'trusted');
+      // Everything found goes straight onto the form — no checkbox, no
+      // confirm click. This is a form the admin reviews and edits before
+      // saving anyway, so a separate approval step for "review" fields (fax,
+      // email, contact person — still real data pulled from the official
+      // site) was pure friction, not real safety. The only real fork left is
+      // when the answer is genuinely ambiguous: several branches, or a
+      // possible parent brand — those still need a human pick.
       const ambiguous = payload.locations.length > 1 || Boolean(payload.parent_brand?.name);
-      if (!ambiguous && (trusted.length || payload.colors.length)) {
+      const allKeys = [
+        ...payload.fields.map((field) => field.key),
+        ...(payload.colors.length ? ['color_palette'] : []),
+        ...(payload.logo ? ['logo'] : []),
+      ];
+      if (!ambiguous && allKeys.length) {
         const patch: BrandPatch = {};
-        for (const field of trusted) patch[field.key] = field.value;
+        for (const field of payload.fields) patch[field.key] = field.value;
         if (payload.colors.length) patch.color_palette = payload.palette?.length ? payload.palette : paletteFromColors(payload.colors);
-        onApply(patch, []);
-        setAutoApplied(new Set([...trusted.map((f) => f.key), ...(payload.colors.length ? ['color_palette'] : [])]));
-        setSelected(new Set(payload.logo ? ['logo'] : [])); // review fields start unchecked; a found logo is pre-ticked
+        onApply(patch, [], payload.logo ? base64ToFile(payload.logo) : null);
+        setAutoApplied(new Set(allKeys));
+        setSelected(new Set());
       } else {
         setAutoApplied(new Set());
-        setSelected(new Set([
-          ...trusted.map((field) => field.key),
-          ...(payload.colors.length ? ['color_palette'] : []),
-          ...(payload.logo ? ['logo'] : []),
-        ]));
+        setSelected(new Set(allKeys)); // pre-checked — one click on "אישור הכל" approves everything
       }
     } catch (cause) {
       setError(cause instanceof Error && cause.message === 'robots_disallowed'
@@ -169,45 +172,59 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
       {!result.website_found && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">לא נמצא אתר רשמי. לא נאסף מידע מאתרי אינדקס. המשיכו ידנית.</div>}
       {autoApplied.size > 0 && (
         <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">
-          {autoApplied.size} שדות שבטוחים בהם כבר הוחלו על הטופס. גללו למטה כדי לראות מה נכנס. כאן מוצגים רק שדות שדורשים אישור.
+          {autoApplied.size} שדות כבר הוחלו אוטומטית על הטופס — גללו למטה לראות מה נכנס ותקנו שם אם צריך.
         </p>
       )}
-      <div className="space-y-2">
-        {result.fields.filter((field) => !autoApplied.has(field.key)).map((field) => {
-          const auto = false;
-          return (
-            <label key={field.key} className={`flex items-start gap-3 rounded-lg border p-3 ${auto ? 'border-emerald-300 bg-emerald-50' : field.state === 'review' ? 'cursor-pointer border-amber-300 bg-amber-50' : 'cursor-pointer border-emerald-200 bg-emerald-50'}`}>
-              {auto
-                ? <Check size={16} className="mt-0.5 shrink-0 text-emerald-600" />
-                : <input type="checkbox" checked={selected.has(field.key)} onChange={() => toggle(field.key)} className="mt-1" />}
-              <span className="min-w-0 flex-1"><strong className="block text-sm">{LABELS[field.key] ?? field.key}</strong><span className="block break-words text-sm" dir="auto">{field.key === 'client_type' ? (field.value === 'municipality' ? 'רשות / גוף ציבורי' : 'עסק') : field.value}</span><a href={field.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-xs text-brand hover:underline">מקור: {field.source_label}<ExternalLink size={11} /></a></span>
-              <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-bold ${auto ? 'bg-emerald-600 text-white' : field.state === 'review' ? 'bg-amber-200 text-amber-950' : 'bg-emerald-200 text-emerald-950'}`}>{auto ? 'עודכן אוטומטית' : field.state === 'review' ? 'דורש אישור' : 'מאומת'}</span>
-            </label>
-          );
-        })}
-        {result.logo && (
-          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
-            <input type="checkbox" checked={selected.has('logo')} onChange={() => toggle('logo')} className="mt-1" />
-            <span className="flex min-w-0 flex-1 items-center gap-3">
-              <img src={result.logo.url} alt="" className="h-12 w-12 shrink-0 rounded border border-black/10 bg-white object-contain p-1" />
+      <div className="space-y-1.5">
+        {result.fields.filter((field) => !autoApplied.has(field.key)).map((field) => (
+          <label key={field.key} className={`flex items-start gap-2 rounded-lg border p-2 text-xs ${field.state === 'review' ? 'cursor-pointer border-amber-300 bg-amber-50' : 'cursor-pointer border-emerald-200 bg-emerald-50'}`}>
+            <input type="checkbox" checked={selected.has(field.key)} onChange={() => toggle(field.key)} className="mt-0.5" />
+            <span className="min-w-0 flex-1"><strong className="block">{LABELS[field.key] ?? field.key}</strong><span className="block break-words" dir="auto">{field.key === 'client_type' ? (field.value === 'municipality' ? 'רשות / גוף ציבורי' : 'עסק') : field.value}</span><a href={field.source_url} target="_blank" rel="noreferrer" className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-brand hover:underline">מקור: {field.source_label}<ExternalLink size={10} /></a></span>
+            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${field.state === 'review' ? 'bg-amber-200 text-amber-950' : 'bg-emerald-200 text-emerald-950'}`}>{field.state === 'review' ? 'דורש אישור' : 'מאומת'}</span>
+          </label>
+        ))}
+        {result.logo && !autoApplied.has('logo') && (
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs">
+            <input type="checkbox" checked={selected.has('logo')} onChange={() => toggle('logo')} className="mt-0.5" />
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              <img src={result.logo.url} alt="" className="h-9 w-9 shrink-0 rounded border border-black/10 bg-white object-contain p-0.5" />
               <span className="min-w-0">
-                <strong className="block text-sm">לוגו מהאינטרנט</strong>
-                <a href={result.logo.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">מקור<ExternalLink size={11} /></a>
+                <strong className="block">לוגו מהאינטרנט</strong>
+                <a href={result.logo.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] text-brand hover:underline">מקור<ExternalLink size={10} /></a>
               </span>
             </span>
-            <span className="shrink-0 rounded-full bg-amber-200 px-2 py-1 text-[11px] font-bold text-amber-950">דורש אישור</span>
+            <span className="shrink-0 rounded-full bg-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-950">דורש אישור</span>
           </label>
         )}
-        {showColorRow && <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3"><input type="checkbox" checked={selected.has('color_palette')} onChange={() => toggle('color_palette')} /><span><strong className="block text-sm">צבעים מהאתר</strong>{result.color_source_url && <a href={result.color_source_url} target="_blank" rel="noreferrer" className="text-xs text-brand underline">מקור: האתר הרשמי</a>}</span><span className="flex flex-wrap gap-1">{result.colors.slice(0, 5).map((color) => <span key={color} title={color} className="h-6 w-6 rounded border border-black/10" style={{ backgroundColor: color }} />)}</span></label>}
+        {showColorRow && <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs"><input type="checkbox" checked={selected.has('color_palette')} onChange={() => toggle('color_palette')} /><span><strong className="block">צבעים מהאתר</strong>{result.color_source_url && <a href={result.color_source_url} target="_blank" rel="noreferrer" className="text-[11px] text-brand underline">מקור: האתר הרשמי</a>}</span><span className="flex flex-wrap gap-1">{result.colors.slice(0, 5).map((color) => <span key={color} title={color} className="h-5 w-5 rounded border border-black/10" style={{ backgroundColor: color }} />)}</span></label>}
       </div>
+      {hasManualWork && (result.fields.some((f) => !autoApplied.has(f.key)) || (result.logo && !autoApplied.has('logo')) || showColorRow) && (
+        <button type="button" onClick={() => setSelected((current) => current.size ? new Set() : new Set([
+          ...result.fields.filter((f) => !autoApplied.has(f.key)).map((f) => f.key),
+          ...(result.logo && !autoApplied.has('logo') ? ['logo'] : []),
+          ...(showColorRow ? ['color_palette'] : []),
+        ]))} className="mt-2 text-xs text-brand underline">
+          {selected.size ? 'נקה הכל' : 'בחר הכל'}
+        </button>
+      )}
       {result.locations.length > 1 && <fieldset className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3"><legend className="px-1 text-sm font-bold">נמצאו כמה סניפים. חובה לבחור:</legend>{result.locations.map((location, index) => <label key={index} className="mt-2 flex items-start gap-2 text-sm"><input type="radio" name="brand-location" checked={locationIndex === index} onChange={() => setLocationIndex(index)} className="mt-1" /><span>{location.address || 'ללא כתובת'} · {location.phone || 'ללא טלפון'} {location.source_url && <a href={location.source_url} target="_blank" rel="noreferrer" className="text-brand underline">מקור</a>}</span></label>)}</fieldset>}
       {result.parent_brand?.name && <fieldset className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm"><legend className="px-1 font-bold">ייתכן שזה אתר של מותג אם: {result.parent_brand.name}. חובה לבחור:</legend><label className="mt-2 flex gap-2"><input type="radio" name="parent-brand" checked={parentDecision === 'same'} onChange={() => setParentDecision('same')} />האתר והפרטים שייכים למותג שחיפשתי</label><label className="mt-2 flex gap-2"><input type="radio" name="parent-brand" checked={parentDecision === 'parent'} onChange={() => setParentDecision('parent')} />זה מותג אם; לא להחיל פרטי קשר אוטומטיים</label></fieldset>}
-      {result.content.length > 0 && <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3">
-        <label className="flex items-start gap-2 text-sm font-semibold"><input type="checkbox" checked={contentConsent} onChange={(event) => { setContentConsent(event.target.checked); if (!event.target.checked) setSelectedContent(new Set()); }} className="mt-1" />אני מאשר/ת לשמור תוכן מהאתר הרשמי במוח העסקי לשימוש פנימי עבור המותג.</label>
-        {contentConsent && result.content.map((item, index) => <label key={`${item.source_url}-${index}`} className="mt-2 flex items-start gap-2 rounded-lg bg-white p-2 text-sm"><input type="checkbox" checked={selectedContent.has(index)} onChange={() => setSelectedContent((current) => { const next = new Set(current); next.has(index) ? next.delete(index) : next.add(index); return next; })} className="mt-1" /><span><strong>{item.title}</strong><span className="mt-1 line-clamp-3 block text-[var(--muted)]">{item.content}</span><a href={item.source_url} target="_blank" rel="noreferrer" className="text-xs text-brand underline">מקור</a></span></label>)}
+      {result.content.length > 0 && <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-2">
+        <label className="flex items-start gap-2 text-xs font-semibold">
+          <input type="checkbox" checked={contentConsent} onChange={(event) => {
+            const checked = event.target.checked;
+            setContentConsent(checked);
+            // Consenting approves the whole batch at once — content pulled
+            // from the brand's own official site doesn't need a second,
+            // per-paragraph checkbox on top of that one consent.
+            setSelectedContent(checked ? new Set(result.content.map((_, index) => index)) : new Set());
+          }} className="mt-0.5" />
+          אני מאשר/ת לשמור תוכן מהאתר הרשמי במוח העסקי ({result.content.length} פיסות תוכן).
+        </label>
+        {contentConsent && result.content.map((item, index) => <label key={`${item.source_url}-${index}`} className="mt-1.5 flex items-start gap-2 rounded-lg bg-white p-1.5 text-xs"><input type="checkbox" checked={selectedContent.has(index)} onChange={() => setSelectedContent((current) => { const next = new Set(current); next.has(index) ? next.delete(index) : next.add(index); return next; })} className="mt-0.5" /><span><strong>{item.title}</strong><span className="mt-0.5 line-clamp-2 block text-[var(--muted)]">{item.content}</span><a href={item.source_url} target="_blank" rel="noreferrer" className="text-[11px] text-brand underline">מקור</a></span></label>)}
       </div>}
       {hasManualWork && (
-        <button type="button" onClick={apply} disabled={(result.locations.length > 1 && locationIndex === null) || (Boolean(result.parent_brand?.name) && parentDecision === null)} className="mt-4 w-full rounded-lg bg-brand py-2.5 font-semibold text-white disabled:opacity-50">החלת השדות שסומנו על הטופס</button>
+        <button type="button" onClick={apply} disabled={(result.locations.length > 1 && locationIndex === null) || (Boolean(result.parent_brand?.name) && parentDecision === null)} className="mt-4 w-full rounded-lg bg-brand py-2.5 font-semibold text-white disabled:opacity-50">אישור הכל והחלה על הטופס</button>
       )}
     </div>}
     <ApifyBrandSources website={result?.fields.find(field => field.key === 'website')?.value || (/^(?:https?:\/\/)?[^\s]+\.[^\s]+/i.test(query.trim()) ? query.trim() : undefined)} socialLinks={result?.social_links} triggerToken={scanToken} onProgress={setApifyStatus} onApply={content => onApply({}, content)} />

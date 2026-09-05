@@ -418,7 +418,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
     void pickLogo(event.dataTransfer.files?.[0] ?? null);
   }
 
-  async function analyzeLogoColors(file: File) {
+  async function analyzeLogoColors(file: File, auto = false) {
     setExtracting(true);
     setColorSummary(null);
     setPendingColors(null);
@@ -444,8 +444,16 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
         const currentColor = current.find((color) => color.role === role) ?? current[index];
         return { role, hex: found?.hex ?? currentColor?.hex ?? '#1A4D9C' };
       });
-      setPendingColors(next);
-      setColorSummary(payload?.summary ?? 'זוהו צבעי מותג מרכזיים.');
+      if (auto) {
+        // A logo found automatically from the official site is already a
+        // trusted source — apply its colors straight to the form like every
+        // other verified autofill field, no separate confirm click.
+        patch({ color_palette: next });
+        setColorSummary(payload?.summary ? `${payload.summary} (מהלוגו הרשמי, הוחל אוטומטית)` : 'צבעי מותג הוחלו אוטומטית מהלוגו הרשמי.');
+      } else {
+        setPendingColors(next);
+        setColorSummary(payload?.summary ?? 'זוהו צבעי מותג מרכזיים.');
+      }
     } catch (e) {
       console.error(e);
       // A provider outage is not a "bad logo" — say what actually happened, at
@@ -986,6 +994,10 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                     const url = URL.createObjectURL(logoFile);
                     setPendingLogoUrl(url);
                     setPreviews((p) => ({ ...p, __logo: url }));
+                    // A logo found on the web skipped the same color-extraction
+                    // step a manually-uploaded logo gets — colors from the site
+                    // never appeared because of it.
+                    void analyzeLogoColors(logoFile, true);
                   }
                   const next: Partial<Brand> = {
                     ...(autofill as Partial<Brand>),
