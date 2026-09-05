@@ -127,7 +127,7 @@ async function processAcceptedWebhook(raw: unknown, ip: string | null): Promise<
   const limits = await getSettingOr<{ messages_per_24h: number }>(
     database,
     'rate_limits',
-    { messages_per_24h: 80 },
+    { messages_per_24h: 50 },
   );
   // The exemption list applies to this legacy ceiling too, otherwise an exempt
   // account is still silently cut off after N messages a day.
