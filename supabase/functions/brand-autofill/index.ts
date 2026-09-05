@@ -3,6 +3,7 @@ import { cors } from '../_shared/cors.ts';
 import { db } from '../_shared/db.ts';
 import { estimateTextCost, logEvent, round4 } from '../_shared/util.ts';
 import { isPrivateAddress } from '../_shared/safeFetch.ts';
+import { ApifyClient, sourceUrl as apifySourceUrl } from '../_shared/apifyBrand.ts';
 import {
   cleanField,
   detectClientType,
@@ -197,7 +198,20 @@ async function searchIdentity(query: string, website: string | null) {
   return { data: parsed, usage: payload.usage ?? { input_tokens: 0, output_tokens: 0 } };
 }
 
+// Two independent ways to read the official website, tried in order. The
+// Cloud Run service (services/brand-crawler) does the richest job — it also
+// derives colors and locations — but needs its own deployment and secrets.
+// Until/unless that's set up, the Apify website-content-crawler (same actor
+// the admin's manual source scan uses) reads the page text so autofill still
+// works end to end without it. Neither path is removed when the other is
+// available; the Cloud Run infra stays intact for whenever it's configured.
 async function crawlWebsite(website: string, includeContent: boolean): Promise<CrawlResult | null> {
+  const viaService = await crawlWebsiteViaService(website, includeContent);
+  if (viaService) return viaService;
+  return await crawlWebsiteViaApify(website);
+}
+
+async function crawlWebsiteViaService(website: string, includeContent: boolean): Promise<CrawlResult | null> {
   const endpoint = Deno.env.get('BRAND_CRAWLER_URL');
   const secret = Deno.env.get('BRAND_CRAWLER_SECRET');
   if (!endpoint || !secret) return null;
@@ -213,6 +227,42 @@ async function crawlWebsite(website: string, includeContent: boolean): Promise<C
     if (!response.ok) throw new Error(`crawler_${response.status}`);
     return await response.json() as CrawlResult;
   } finally { clearTimeout(timeout); }
+}
+
+// Runs the same Apify actor as the manual source scan, but synchronously:
+// starts the run and polls until it finishes or a 100s budget runs out (kept
+// under the platform's request timeout). No colors/locations/parent-brand —
+// only page text, which is enough to keep the pipeline going without the
+// Cloud Run crawler.
+async function crawlWebsiteViaApify(website: string): Promise<CrawlResult | null> {
+  const token = Deno.env.get('APIFY_TOKEN');
+  if (!token || Deno.env.get('APIFY_ENABLED') !== 'true') return null;
+  let url: string;
+  try { url = apifySourceUrl(website, 'website'); } catch { return null; }
+  const client = new ApifyClient(token);
+  let runId: string;
+  try { runId = await client.start('website', url); } catch { return null; }
+  const deadline = Date.now() + 100_000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    let status: Awaited<ReturnType<ApifyClient['status']>>;
+    try { status = await client.status({ runId, userId: '', kind: 'website', url, expires: Date.now() + 60_000 }); } catch { return null; }
+    if (!status.terminal) continue;
+    if (status.status !== 'SUCCEEDED' || !status.content.length) {
+      return { ok: false, website, colors: [], content: [], locations: [], parent_brand: null, warnings: ['apify_website_scan_' + status.status.toLowerCase()] };
+    }
+    return {
+      ok: true,
+      website,
+      colors: [],
+      content: status.content.map((item) => ({ title: item.title, content: item.content, source_url: item.source_url })),
+      locations: [],
+      parent_brand: null,
+      warnings: [],
+    };
+  }
+  await client.abort(runId).catch(() => {});
+  return { ok: false, website, colors: [], content: [], locations: [], parent_brand: null, warnings: ['apify_website_scan_timeout'] };
 }
 
 const MAX_LOGO_BYTES = 5 * 1024 * 1024;
