@@ -26,6 +26,8 @@ interface SearchResult {
   contact_person_name?: string;
   contact_person_title?: string;
   logo_url?: string;
+  facebook_url?: string;
+  instagram_url?: string;
   sources?: Record<string, string>;
 }
 
@@ -125,6 +127,7 @@ Deno.serve(async (req) => {
       colors: sanitizeColors(crawl?.colors),
       color_source_url: crawl?.ok ? officialWebsite : null,
       logo,
+      social_links: { facebook: safeSourceUrl(search?.facebook_url), instagram: safeSourceUrl(search?.instagram_url) },
       content: sanitizeContent(contentWithWiki),
       locations: sanitizeLocations(crawl?.locations),
       parent_brand: parentBrand,
@@ -165,6 +168,7 @@ async function searchIdentity(query: string, website: string | null) {
           task: 'Identify the organization and exact contact details. Every non-empty value needs its own source URL. If sources disagree or confidence is low, return null.',
           query,
           known_website: website,
+          social_schema: { facebook_url: 'Official Facebook page URL or null; never infer from the name', instagram_url: 'Official Instagram profile URL or null; never infer from the name' },
           schema: { official_name: 'string|null', short_name: 'string|null', website: 'string|null', address: 'string|null', postal_code: 'string|null', phone: 'string|null', fax: 'string|null', email: 'string|null', legal_id: 'string|null', contact_person_name: 'string|null', contact_person_title: 'string|null', logo_url: 'direct https link to an image file of the official logo (prefer Wikimedia or the official site), or null', sources: '{field: url}' },
         }) },
       ],

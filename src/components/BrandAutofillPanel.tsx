@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, ExternalLink, Search, TriangleAlert } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import ApifyBrandSources from './ApifyBrandSources';
 
 type BrandPatch = Record<string, string | { role: string; hex: string }[]>;
 interface CandidateField { key: string; value: string; state: 'trusted' | 'review'; source_url: string; source_label: string }
@@ -11,6 +12,7 @@ interface Result {
   client_type: 'business' | 'municipality';
   fields: CandidateField[];
   logo?: LogoCandidate | null;
+  social_links?: { facebook: string | null; instagram: string | null };
   colors: string[];
   palette?: Array<{ role: string; hex: string }>;
   color_source_url?: string | null;
@@ -198,6 +200,7 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
         <button type="button" onClick={apply} disabled={(result.locations.length > 1 && locationIndex === null) || (Boolean(result.parent_brand?.name) && parentDecision === null)} className="mt-4 w-full rounded-lg bg-brand py-2.5 font-semibold text-white disabled:opacity-50">החלת השדות שסומנו על הטופס</button>
       )}
     </div>}
+    <ApifyBrandSources website={result?.fields.find(field => field.key === 'website')?.value} socialLinks={result?.social_links} onApply={content => onApply({}, content)} />
   </div>;
 }
 

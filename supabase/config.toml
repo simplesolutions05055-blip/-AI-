@@ -73,3 +73,7 @@ verify_jwt = false
 # `secret` query parameter included in the registered hook URL.
 [functions.smartsend-webhook]
 verify_jwt = false
+
+# The handler validates the user JWT and requires an admin profile.
+[functions.brand-apify]
+verify_jwt = false

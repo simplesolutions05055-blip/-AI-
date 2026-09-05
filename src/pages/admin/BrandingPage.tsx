@@ -373,8 +373,8 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
       const { error: contentError } = await db.from('business_text_sources').insert(
         pendingWebsiteContent.map((item) => ({
           brand_id: id,
-          title: `אתר רשמי — ${item.title}`,
-          content: item.content,
+          title: `מקור מותג — ${item.title}`,
+          content: `מקור: ${item.source_url}\nנאסף: ${new Date().toISOString()}\n\n${item.content}`,
           source_kind: 'content_only',
         })) as never,
       );
@@ -978,6 +978,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
               // not pushed below the -order-1 document/content sections.
               <div className="-order-2">
               <BrandAutofillPanel
+                key={selected.id || 'new-brand'}
                 initialQuery={selected.website || selected.name || ''}
                 onApply={(autofill, websiteContent, logoFile) => {
                   if (logoFile) {
@@ -988,7 +989,7 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                   }
                   const next: Partial<Brand> = {
                     ...(autofill as Partial<Brand>),
-                    client_type: autofill.client_type === 'municipality' ? 'municipality' : 'business',
+                    client_type: autofill.client_type === 'municipality' ? 'municipality' : autofill.client_type === 'business' ? 'business' : selected.client_type,
                     color_palette: Array.isArray(autofill.color_palette) ? autofill.color_palette as BrandColor[] : selected.color_palette,
                   };
                   // Which form fields this changed — so we can mark them green.
@@ -1002,8 +1003,8 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                     if (JSON.stringify(selected[key as keyof Brand] ?? null) !== JSON.stringify(value)) changed.add(key);
                   }
                   patch(next);
-                  setAliasesText('');
-                  if (websiteContent.length) setPendingWebsiteContent(websiteContent);
+                  if (Object.keys(autofill).length) setAliasesText('');
+                  if (websiteContent.length) setPendingWebsiteContent(current => [...new Map([...current, ...websiteContent].map(item => [`${item.source_url}\n${item.content}`, item])).values()]);
                   // onApply fires once for the auto-applied verified fields and
                   // again if the user approves review fields — accumulate.
                   const merged = new Set([...flashFields, ...changed]);
