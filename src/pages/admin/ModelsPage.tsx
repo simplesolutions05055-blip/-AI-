@@ -77,54 +77,58 @@ export default function ModelsPage() {
           />
         </label>
 
-        <label className="block">
-          <span className="block text-sm font-medium mb-1">מודל תמונות</span>
-          <select className={input} value={models.image_model} onChange={(e) => setModels((m) => ({ ...m, image_model: e.target.value }))}>
-            <option value="gpt-image-2">gpt-image-2 - המתקדם ביותר</option>
-            <option value="gpt-image-1.5">gpt-image-1.5</option>
-            <option value="gpt-image-1">gpt-image-1</option>
-            <option value="gpt-image-1-mini">gpt-image-1-mini</option>
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="block text-sm font-medium mb-1">גודל תמונה</span>
-          <select className={input} value={models.image_size} onChange={(e) => setModels((m) => ({ ...m, image_size: e.target.value }))}>
-            <option value="1024x1024">1024x1024</option>
-            <option value="1536x1024">1536x1024</option>
-            <option value="1024x1536">1024x1536</option>
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="block text-sm font-medium mb-1">איכות</span>
-          <select className={input} value={models.image_quality} onChange={(e) => setModels((m) => ({ ...m, image_quality: e.target.value }))}>
-            <option value="auto">auto</option>
-            <option value="high">high</option>
-            <option value="medium">medium</option>
-            <option value="low">low</option>
-          </select>
-        </label>
-
-        <div className="border-t border-[var(--border)] pt-4 space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <label className="block">
-            <span className="block text-sm font-medium mb-1">מודל תמלול אודיו</span>
-            <select className={input} value={models.transcribe_model} onChange={(e) => setModels((m) => ({ ...m, transcribe_model: e.target.value }))}>
-              <option value="gpt-4o-transcribe">gpt-4o-transcribe - המדויק ביותר</option>
-              <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe - מהיר וחסכוני</option>
-              <option value="whisper-1">whisper-1</option>
+            <span className="block text-sm font-medium mb-1">מודל תמונות</span>
+            <select className={input} value={models.image_model} onChange={(e) => setModels((m) => ({ ...m, image_model: e.target.value }))}>
+              <option value="gpt-image-2">gpt-image-2 - המתקדם ביותר</option>
+              <option value="gpt-image-1.5">gpt-image-1.5</option>
+              <option value="gpt-image-1">gpt-image-1</option>
+              <option value="gpt-image-1-mini">gpt-image-1-mini</option>
             </select>
-            <span className="block text-xs text-[var(--muted)] mt-1">ממיר קבצי אודיו שמועלים בסימולטור לטקסט.</span>
           </label>
 
           <label className="block">
-            <span className="block text-sm font-medium mb-1">מודל הבנת תמונות (Vision)</span>
-            <select className={input} value={models.vision_model} onChange={(e) => setModels((m) => ({ ...m, vision_model: e.target.value }))}>
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="gpt-4o-mini">gpt-4o-mini</option>
+            <span className="block text-sm font-medium mb-1">גודל תמונה</span>
+            <select className={input} value={models.image_size} onChange={(e) => setModels((m) => ({ ...m, image_size: e.target.value }))}>
+              <option value="1024x1024">1024x1024</option>
+              <option value="1536x1024">1536x1024</option>
+              <option value="1024x1536">1024x1536</option>
             </select>
-            <span className="block text-xs text-[var(--muted)] mt-1">מנתח תמונות שמועלות כדי שהסוכן יבין את תוכנן.</span>
           </label>
+
+          <label className="block">
+            <span className="block text-sm font-medium mb-1">איכות</span>
+            <select className={input} value={models.image_quality} onChange={(e) => setModels((m) => ({ ...m, image_quality: e.target.value }))}>
+              <option value="auto">auto</option>
+              <option value="high">high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="border-t border-[var(--border)] pt-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <label className="block">
+              <span className="block text-sm font-medium mb-1">מודל תמלול אודיו</span>
+              <select className={input} value={models.transcribe_model} onChange={(e) => setModels((m) => ({ ...m, transcribe_model: e.target.value }))}>
+                <option value="gpt-4o-transcribe">gpt-4o-transcribe - המדויק ביותר</option>
+                <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe - מהיר וחסכוני</option>
+                <option value="whisper-1">whisper-1</option>
+              </select>
+              <span className="block text-xs text-[var(--muted)] mt-1">ממיר קבצי אודיו שמועלים בסימולטור לטקסט.</span>
+            </label>
+
+            <label className="block">
+              <span className="block text-sm font-medium mb-1">מודל הבנת תמונות (Vision)</span>
+              <select className={input} value={models.vision_model} onChange={(e) => setModels((m) => ({ ...m, vision_model: e.target.value }))}>
+                <option value="gpt-4o">gpt-4o</option>
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+              </select>
+              <span className="block text-xs text-[var(--muted)] mt-1">מנתח תמונות שמועלות כדי שהסוכן יבין את תוכנן.</span>
+            </label>
+          </div>
         </div>
       </section>
     </div>
