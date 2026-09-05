@@ -21,7 +21,7 @@ export function sourceUrl(value: unknown, kind: SourceKind): string {
 export function actorInput(kind: SourceKind, url: string): Record<string, unknown> {
   sourceUrl(url, kind);
   if (kind === 'website') return {
-    startUrls: [{ url }], maxCrawlPages: 8, maxCrawlDepth: 2,
+    startUrls: [{ url }], maxCrawlPages: 6, maxCrawlDepth: 2,
     crawlerType: 'playwright:adaptive', respectRobotsTxtFile: true,
     saveMarkdown: true, saveHtml: false, maxConcurrency: 2,
     useSitemaps: false, proxyConfiguration: { useApifyProxy: true },
@@ -57,7 +57,8 @@ export class ApifyClient {
     return JSON.parse(new TextDecoder().decode(bytes));
   }
   async start(kind: SourceKind, url: string): Promise<string> {
-    const payload = await this.api(`acts/${ACTORS[kind]}/runs?timeout=180&memory=1024&maxTotalChargeUsd=0.25`, { method: 'POST', body: JSON.stringify(actorInput(kind, url)) }) as { data?: { id?: string } };
+    const timeout = kind === 'website' ? 300 : 180;
+    const payload = await this.api(`acts/${ACTORS[kind]}/runs?timeout=${timeout}&memory=1024&maxTotalChargeUsd=0.25`, { method: 'POST', body: JSON.stringify(actorInput(kind, url)) }) as { data?: { id?: string } };
     if (!payload.data?.id || !/^[A-Za-z0-9]+$/.test(payload.data.id)) throw new Error('invalid_apify_run');
     return payload.data.id;
   }
@@ -75,6 +76,15 @@ export class ApifyClient {
   }
   async abort(runId: string) { await this.api(`actor-runs/${runId}/abort`, { method: 'POST' }); }
 }
+export function formatIsraeliDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find(part => part.type === type)?.value ?? '';
+  return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}`;
+}
 export function normalizeItems(items: unknown, kind: SourceKind, fallback: string): ContentCandidate[] {
   if (!Array.isArray(items)) return [];
   const seen = new Set<string>();
@@ -89,7 +99,8 @@ export function normalizeItems(items: unknown, kind: SourceKind, fallback: strin
     const key = `${url}:${text}`;
     if (seen.has(key)) return [];
     seen.add(key);
-    const date = typeof item.timestamp === 'string' ? item.timestamp : typeof item.time === 'string' ? item.time : '';
+    const rawDate = typeof item.timestamp === 'string' ? item.timestamp : typeof item.time === 'string' ? item.time : '';
+    const date = rawDate ? formatIsraeliDateTime(rawDate) : '';
     return [{ title: String(item.title || `${kind} — ${date || new URL(fallback).pathname || new URL(fallback).hostname}`).slice(0, 120), content: date ? `תאריך פרסום: ${date}\n${text}` : text, source_url: url }];
   });
 }

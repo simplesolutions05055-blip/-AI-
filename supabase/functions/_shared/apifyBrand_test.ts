@@ -1,4 +1,4 @@
-import { ApifyClient, actorInput, normalizeItems, signTicket, sourceUrl, verifyTicket } from './apifyBrand.ts';
+import { ApifyClient, actorInput, formatIsraeliDateTime, normalizeItems, signTicket, sourceUrl, verifyTicket } from './apifyBrand.ts';
 function assert(value: unknown, message = 'assertion failed'): asserts value { if (!value) throw new Error(message); }
 Deno.test('Apify rejects private addresses, credentials and foreign social hosts', () => {
   for (const url of ['http://example.com', 'https://127.0.0.1', 'https://user:pass@example.com', 'https://localhost', 'https://example.com:8080']) {
@@ -27,7 +27,10 @@ Deno.test('Apify normalization drops errors, unrelated domains and duplicates; p
     { url: 'https://www.facebook.com/brand/posts/1', text: 'hello', time: '2026-09-01' },
     { url: 'https://evil.com', text: 'wrong' }, { error: 'private' }, null,
   ], 'facebook', 'https://facebook.com/brand');
-  assert(content.length === 1 && content[0].content.includes('2026-09-01'));
+  assert(content.length === 1 && content[0].content.includes(formatIsraeliDateTime('2026-09-01')));
+});
+Deno.test('Apify dates render in dd/mm/yyyy HH:mm Israel time', () => {
+  assert(formatIsraeliDateTime('2026-08-12T17:13:40.000Z') === '12/08/2026 20:13');
 });
 Deno.test('Apify start -> pending -> successful dataset; no repeated paid start on polling', async () => {
   const calls: string[] = [];
