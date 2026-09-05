@@ -419,6 +419,13 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
   }
 
   async function analyzeLogoColors(file: File, auto = false) {
+    // GPT-4o's vision input only accepts png/jpeg/gif/webp — an SVG logo
+    // (common for official emblems pulled from Wikidata) is a perfectly
+    // valid logo to keep, just not one this step can read colors from.
+    if (file.type === 'image/svg+xml') {
+      setColorSummary(auto ? 'לוגו SVG הוחל; חילוץ צבעים אוטומטי לא נתמך לפורמט הזה — אפשר להוסיף צבעים ידנית.' : null);
+      return;
+    }
     setExtracting(true);
     setColorSummary(null);
     setPendingColors(null);

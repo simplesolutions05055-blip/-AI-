@@ -171,6 +171,7 @@ async function searchIdentity(query: string, website: string | null) {
         { role: 'user', content: JSON.stringify({
           task: 'Identify the organization and exact contact details. Every non-empty value needs its own source URL. If sources disagree or confidence is low, return null.',
           grounding_rule: 'When known_website is given, it is authoritative: browse it and identify the organization that ACTUALLY operates that exact domain. The query text is a hint from a human and may be wrong — a similar-sounding name, or the wrong administrative type (e.g. "regional council" when the site is actually a city/municipal government, or vice versa). Never let a superficially similar name (e.g. two Israeli localities whose Hebrew names differ by one letter) override what the website itself says about who runs it.',
+          language_rule: 'Every string value must be written in whatever language and script the organization itself actually uses on its official materials — for an Israeli/Hebrew-speaking organization that means Hebrew script (e.g. "גדרה", not "Gedera"; "רחוב הפיקוס 4, גדרה", not "Pines 4, Gedera"). Never transliterate a Hebrew (or other non-Latin) name or address into Latin letters, even if a source page happens to show it in English — translate/transliterate the OTHER WAY, into the organization\'s own language, unless the org\'s registered legal name is genuinely Latin-script.',
           query,
           known_website: website,
           social_schema: { facebook_url: 'Official Facebook page URL or null; never infer from the name', instagram_url: 'Official Instagram profile URL or null; never infer from the name' },
@@ -278,20 +279,37 @@ async function resolveLogo(
   modelSourceUrl: string | null,
   brandName: string,
 ): Promise<{ logo: LogoResult | null; note: string | null }> {
+  const attempts: string[] = [];
   const fromModel = safeSourceUrl(modelUrl);
-  if (fromModel) {
+  if (!modelUrl) attempts.push('model:none');
+  else if (!fromModel) attempts.push('model:rejected');
+  else {
     const bytes = await fetchLogo(fromModel);
     if (bytes) return { logo: { url: fromModel, source_url: modelSourceUrl ?? fromModel, base64: bytes.base64, mime: bytes.mime }, note: null };
+    attempts.push('model:fetch_failed'); // model named a file, but it 404'd, wasn't an image, or was too big
+  }
+  // The search model is asked to name a Commons file but sometimes hallucinates
+  // a plausible-looking path that doesn't actually exist (a guessed hash
+  // prefix, a made-up filename). Wikidata's structured logo/coat-of-arms
+  // properties (P154 / P94) sidestep that entirely — no guessing, no lead-photo
+  // ambiguity like Wikipedia's own pageimages would have for a large article.
+  const wikiLogoUrl = await wikipediaPageImage(brandName);
+  if (!wikiLogoUrl) attempts.push('wikidata:none');
+  else {
+    const bytes = await fetchLogo(wikiLogoUrl);
+    if (bytes) return { logo: { url: wikiLogoUrl, source_url: wikiLogoUrl, base64: bytes.base64, mime: bytes.mime }, note: null };
+    attempts.push('wikidata:fetch_failed');
   }
   const googleUrl = await googleImageSearch(brandName);
-  if (googleUrl) {
+  if (!googleUrl) attempts.push('google:none');
+  else {
     const bytes = await fetchLogo(googleUrl);
     if (bytes) return { logo: { url: googleUrl, source_url: googleUrl, base64: bytes.base64, mime: bytes.mime }, note: null };
+    attempts.push('google:fetch_failed');
   }
-  // Nothing downloadable: either the model gave nothing, or every candidate
-  // URL failed the fetch (dead link, not an image, too large, too many
-  // redirects). Worth a breadcrumb — this used to fail completely silently.
-  const note = !modelUrl ? 'no_logo_url_from_model' : !fromModel ? 'model_logo_url_rejected' : !googleUrl ? 'model_logo_fetch_failed_no_fallback' : 'model_and_google_logo_fetch_failed';
+  // Nothing downloadable from any source — worth a breadcrumb with exactly
+  // what was tried, since this used to fail completely silently.
+  const note = attempts.join(',');
   return { logo: null, note };
 }
 
@@ -367,6 +385,50 @@ async function wikipediaContent(name: string): Promise<{ title: string; content:
     try {
       const found = await wikipediaLookup(lang, name);
       if (found) return found;
+    } catch { /* try the next language */ }
+  }
+  return null;
+}
+
+// Wikipedia's own "page image" is whatever lead photo an editor picked — for
+// a small settlement that's often the emblem (that's how this was first
+// found for Gedera), but for a major city it's a building or landscape
+// photo, which would get uploaded as the "official logo" by mistake. Wikidata
+// has structured, purpose-built properties for exactly this: P154 (logo
+// image) and P94 (coat of arms image). Reading those instead of guessing
+// from the lead photo is reliable regardless of article size.
+async function wikipediaPageImage(name: string): Promise<string | null> {
+  if (!name) return null;
+  const headers = { 'User-Agent': 'PrimeOSBrandReader/1.0 (+https://app.primeos.co.il; brand knowledge autofill)' };
+  for (const lang of ['he', 'en']) {
+    try {
+      const searchUrl = new URL(`https://${lang}.wikipedia.org/w/api.php`);
+      searchUrl.search = new URLSearchParams({ action: 'query', format: 'json', list: 'search', srsearch: name, srlimit: '1', srprop: '' }).toString();
+      const searchResponse = await fetch(searchUrl, { headers, signal: AbortSignal.timeout(10_000) });
+      if (!searchResponse.ok) continue;
+      const searchPayload = await searchResponse.json() as { query?: { search?: Array<{ title?: string }> } };
+      const title = cleanField(searchPayload.query?.search?.[0]?.title, 200);
+      if (!title) continue;
+
+      const propsUrl = new URL(`https://${lang}.wikipedia.org/w/api.php`);
+      propsUrl.search = new URLSearchParams({ action: 'query', format: 'json', prop: 'pageprops', ppprop: 'wikibase_item', titles: title }).toString();
+      const propsResponse = await fetch(propsUrl, { headers, signal: AbortSignal.timeout(10_000) });
+      if (!propsResponse.ok) continue;
+      const propsPayload = await propsResponse.json() as { query?: { pages?: Record<string, { pageprops?: { wikibase_item?: string } }> } };
+      const qid = Object.values(propsPayload.query?.pages ?? {})[0]?.pageprops?.wikibase_item;
+      if (!qid) continue;
+
+      for (const property of ['P154', 'P94']) { // logo image, then coat of arms
+        const claimUrl = new URL('https://www.wikidata.org/w/api.php');
+        claimUrl.search = new URLSearchParams({ action: 'wbgetclaims', format: 'json', entity: qid, property }).toString();
+        const claimResponse = await fetch(claimUrl, { headers, signal: AbortSignal.timeout(10_000) });
+        if (!claimResponse.ok) continue;
+        const claimPayload = await claimResponse.json() as { claims?: Record<string, Array<{ mainsnak?: { datavalue?: { value?: unknown } } }>> };
+        const filename = claimPayload.claims?.[property]?.[0]?.mainsnak?.datavalue?.value;
+        if (typeof filename === 'string' && filename.trim()) {
+          return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(filename.trim())}`;
+        }
+      }
     } catch { /* try the next language */ }
   }
   return null;

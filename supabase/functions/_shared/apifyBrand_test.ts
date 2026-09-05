@@ -8,7 +8,7 @@ Deno.test('Apify rejects private addresses, credentials and foreign social hosts
 });
 Deno.test('Apify actor inputs bound scope and avoid paid video enrichment', () => {
   const website = actorInput('website', 'https://example.com/');
-  assert(website.maxCrawlPages === 6 && website.respectRobotsTxtFile === true);
+  assert(website.maxCrawlPages === 6 && website.crawlerType === 'playwright:firefox' && website.respectRobotsTxtFile === true);
   assert(actorInput('facebook', 'https://facebook.com/brand').captionText === false);
   const instagram = actorInput('instagram', 'https://instagram.com/brand');
   assert(instagram.resultsLimit === 20 && instagram.dataDetailLevel === 'basicData');

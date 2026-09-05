@@ -23,7 +23,26 @@ export function actorInput(kind: SourceKind, url: string): Record<string, unknow
   sourceUrl(url, kind);
   if (kind === 'website') return {
     startUrls: [{ url }], maxCrawlPages: 6, maxCrawlDepth: 2,
-    crawlerType: 'playwright:adaptive', respectRobotsTxtFile: true,
+    // 'adaptive' tries a plain HTTP request first and only falls back to a
+    // real browser when its own heuristics decide the page needs it — a
+    // basic bot-check (a flat 403, no JS challenge) doesn't trip that
+    // heuristic, so it was recording the block page as "success" or failing
+    // outright. Municipal sites in particular tend to run this kind of
+    // check. Forcing a real browser every time costs more time per page but
+    // is what actually gets past it.
+    crawlerType: 'playwright:firefox',
+    // gedera.muni.il consistently fails with "Starting the crawler." as the
+    // run's last status message and zero requests made — an actor crash
+    // during its own startup, before it even reaches robots.txt or the
+    // first page. That happened identically whether robots.txt checking was
+    // on or off, so it isn't that. It also happened with apifyProxyGroups:
+    // ['RESIDENTIAL'] — which needs a paid Residential Proxy entitlement on
+    // the Apify account; without it, the actor fails at exactly this point.
+    // Defaulting to the plan's normal proxy avoids crashing runs for anyone
+    // without that add-on. If this site specifically still needs residential
+    // IPs, that's an Apify account upgrade decision, not something to force
+    // silently in code for every scan.
+    respectRobotsTxtFile: true,
     saveMarkdown: true, saveHtml: false, maxConcurrency: 2,
     useSitemaps: false, proxyConfiguration: { useApifyProxy: true },
   };
