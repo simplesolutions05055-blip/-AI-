@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Share2 } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useProfile, type ProfileGender } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
@@ -17,12 +16,11 @@ import {
 
 type Settings = Record<string, any>;
 
-type SettingsTab = 'whatsapp' | 'signup' | 'permissions' | 'models' | 'limits' | 'models_page' | 'skills';
+type SettingsTab = 'whatsapp' | 'signup' | 'permissions' | 'limits' | 'models_page' | 'skills';
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'permissions', label: 'הרשאות תוצרים' },
-  { id: 'models', label: 'מודלי AI' },
-  { id: 'models_page', label: 'מודלים' },
+  { id: 'models_page', label: 'מודלי AI' },
   { id: 'skills', label: 'סקילים' },
   { id: 'limits', label: 'מגבלות' },
   { id: 'whatsapp', label: 'WhatsApp' },
@@ -32,15 +30,6 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
 // These tabs embed self-contained pages that own their save/state, so the
 // shared "שמירת הגדרות" button doesn't apply to them.
 const SELF_SAVING_TABS: SettingsTab[] = ['models_page', 'skills'];
-
-interface MetaConnection {
-  meta_user_id: string;
-  meta_user_name: string | null;
-  meta_user_picture: string | null;
-  status: string;
-  pages_count: number;
-  instagram_accounts_count: number;
-}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -64,9 +53,6 @@ export default function SettingsPage() {
   const [groupResetBrand, setGroupResetBrand] = useState('');
   const [groupResetting, setGroupResetting] = useState(false);
   const [groupResetMsg, setGroupResetMsg] = useState<string | null>(null);
-  const [metaConnection, setMetaConnection] = useState<MetaConnection | null>(null);
-  const [metaLoading, setMetaLoading] = useState(true);
-  const [metaError, setMetaError] = useState<string | null>(null);
 
   useEffect(() => {
     setProfileGender(profile?.gender ?? '');
@@ -90,57 +76,6 @@ export default function SettingsPage() {
       .eq('is_active', true)
       .order('name')
       .then(({ data }) => setBrands((data ?? []) as Array<{ id: string; name: string }>));
-  }, []);
-
-  useEffect(() => {
-    async function fetchMetaConnection() {
-      try {
-        const supabase = createSupabaseBrowserClient();
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          setMetaLoading(false);
-          return;
-        }
-
-        console.log('Fetching Meta connection...');
-        const response = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-meta-connections`,
-          {
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-            },
-          }
-        );
-
-        console.log('Response status:', response.status);
-        
-        if (response.ok) {
-          const data = await response.json();
-          console.log('Meta connection data:', data);
-          if (data.connection) {
-            setMetaConnection({
-              meta_user_id: data.connection.meta_user_id,
-              meta_user_name: data.connection.meta_user_name,
-              meta_user_picture: data.connection.meta_user_picture,
-              status: data.connection.status,
-              pages_count: data.pages?.length || 0,
-              instagram_accounts_count: data.instagram_accounts?.length || 0,
-            });
-          }
-        } else {
-          const errorData = await response.json().catch(() => ({ error: 'unknown' }));
-          console.error('Meta connection error:', errorData);
-          setMetaError(errorData.error || 'Failed to load connection');
-        }
-      } catch (error) {
-        console.error('Failed to fetch Meta connection:', error);
-        setMetaError(error instanceof Error ? error.message : 'Network error');
-      } finally {
-        setMetaLoading(false);
-      }
-    }
-
-    fetchMetaConnection();
   }, []);
 
   function update(key: string, value: any) {
@@ -209,11 +144,6 @@ export default function SettingsPage() {
   }
 
   const tpl = settings.whatsapp_templates ?? {};
-  const aiModels = settings.ai_models ?? {
-    image_model: 'gpt-image-2',
-    image_size: '1024x1024',
-    image_quality: 'auto',
-  };
   const limits = settings.rate_limits ?? {};
   const budget = settings.request_budget_usd ?? { max: 0.08 };
   const outputPermissions = normalizeOutputPermissions(settings.output_permissions);
@@ -259,127 +189,138 @@ export default function SettingsPage() {
       </div>
 
       {activeTab === 'whatsapp' && (
-        <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-          <h2 className="font-semibold mb-1">WhatsApp</h2>
-          <p className="mb-4 text-xs text-[var(--muted)]">הגדירו את חוויית השיחה ואת נוסחי ההודעות של הבוט.</p>
+        <div className="space-y-4">
+          <section className="bg-white rounded-xl border border-[var(--border)] p-4">
+            <h2 className="font-semibold mb-1">WhatsApp</h2>
+            <p className="mb-4 text-xs text-[var(--muted)]">הגדירו את חוויית השיחה ואת נוסחי ההודעות של הבוט.</p>
 
-          <label className="mb-5 flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
-            <span>
-              <span className="block text-sm font-semibold">כפתורים אינטראקטיביים</span>
-              <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
-                כשהמתג פעיל, בחירות מוצגות ככפתורים או כרשימה. במקרה תקלה המערכת חוזרת אוטומטית לטקסט.
+            <label className="flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
+              <span>
+                <span className="block text-sm font-semibold">כפתורים אינטראקטיביים</span>
+                <span className="mt-1 block text-xs leading-5 text-[var(--muted)]">
+                  כשהמתג פעיל, בחירות מוצגות ככפתורים או כרשימה. במקרה תקלה המערכת חוזרת אוטומטית לטקסט.
+                </span>
               </span>
-            </span>
-            <span className="relative inline-flex shrink-0 items-center">
-              <input
-                type="checkbox"
-                role="switch"
-                className="peer sr-only"
-                checked={interactiveWhatsAppEnabled}
-                aria-label="כפתורים אינטראקטיביים ב-WhatsApp"
-                onChange={(e) => update('whatsapp_interactive_messages', { enabled: e.target.checked })}
-              />
-              <span className="h-7 w-12 rounded-full bg-gray-300 transition peer-checked:bg-brand peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" />
-              <span className="pointer-events-none absolute start-1 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5 rtl:peer-checked:-translate-x-5" />
-            </span>
-          </label>
+              <span className="relative inline-flex shrink-0 items-center">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  className="peer sr-only"
+                  checked={interactiveWhatsAppEnabled}
+                  aria-label="כפתורים אינטראקטיביים ב-WhatsApp"
+                  onChange={(e) => update('whatsapp_interactive_messages', { enabled: e.target.checked })}
+                />
+                <span className="h-7 w-12 rounded-full bg-gray-300 transition peer-checked:bg-brand peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" />
+                <span className="pointer-events-none absolute start-1 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5 rtl:peer-checked:-translate-x-5" />
+              </span>
+            </label>
+          </section>
 
-          <h3 className="mb-3 text-sm font-semibold">נוסחי הודעות</h3>
-          <Field label="קבלת בקשה">
-            <input className={input} dir="auto" value={tpl.received ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, received: e.target.value })} />
-          </Field>
-          <Field label="בקשת מייל">
-            <input className={input} dir="auto" value={tpl.ask_email ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, ask_email: e.target.value })} />
-          </Field>
-          <Field label="השלמת שליחה">
-            <input className={input} dir="auto" value={tpl.sent ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, sent: e.target.value })} />
-          </Field>
-          <Field label="דחיית מדיה">
-            <input className={input} dir="auto" value={tpl.rejected_media ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, rejected_media: e.target.value })} />
-          </Field>
-
-        <div className="mt-5 border-t border-[var(--border)] pt-4">
-          <h3 className="mb-1 text-sm font-semibold">בוט בקבוצות</h3>
-          <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
-            כשהמתג פעיל, הבוט מגיב בקבוצות WhatsApp — אבל רק להודעות שמתחילות במילת ההפעלה
-            (למשל "{groupSettings.trigger_word || 'גרפיקה'} תכין לי פוסט"). שאר השיחה בקבוצה לא מפעילה אותו.
-            דורש חיבור מספר ייעודי דרך שער קבוצות (ראו תוכנית-בוט-בקבוצת-וואטסאפ).
-          </p>
-          <label className="mb-3 flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
-            <span className="text-sm font-semibold">הפעלת הבוט בקבוצות</span>
-            <span className="relative inline-flex shrink-0 items-center">
-              <input
-                type="checkbox"
-                role="switch"
-                className="peer sr-only"
-                checked={groupSettings.enabled === true}
-                aria-label="הפעלת הבוט בקבוצות WhatsApp"
-                onChange={(e) => update('whatsapp_group_settings', { ...groupSettings, enabled: e.target.checked })}
-              />
-              <span className="h-7 w-12 rounded-full bg-gray-300 transition peer-checked:bg-brand peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" />
-              <span className="pointer-events-none absolute start-1 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5 rtl:peer-checked:-translate-x-5" />
-            </span>
-          </label>
-          <Field label="מילת הפעלה">
-            <input
-              className={input}
-              dir="auto"
-              value={groupSettings.trigger_word ?? ''}
-              placeholder="גרפיקה"
-              onChange={(e) => update('whatsapp_group_settings', { ...groupSettings, trigger_word: e.target.value })}
-            />
-          </Field>
-
-          <div className="mt-4 rounded-xl border border-[var(--border)] bg-gray-50 p-3">
-            <div className="mb-1 text-sm font-semibold">איפוס צ'אט קבוצה</div>
-            <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
-              מנקה את היסטוריית הקבוצה לכל המשתתפים וסוגר בקשות פתוחות בה (תוצרים שכבר נשלחו לא נפגעים).
-              ההודעה הבאה בקבוצה מתחילה שיחה נקייה.
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                className="rounded-lg border border-[var(--border)] bg-white px-2 py-2 text-sm"
-                value={groupResetBrand}
-                onChange={(e) => setGroupResetBrand(e.target.value)}
-                aria-label="בחירת קבוצה לאיפוס"
-              >
-                <option value="">כל הקבוצות</option>
-                {brands.map((brand) => (
-                  <option key={brand.id} value={brand.id}>{brand.name}</option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={resetGroupChat}
-                disabled={groupResetting}
-                className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
-              >
-                {groupResetting ? 'מאפס…' : 'אפס צ׳אט קבוצה'}
-              </button>
-              {groupResetMsg && <span className="text-sm text-[var(--muted)]">{groupResetMsg}</span>}
+          <section className="bg-white rounded-xl border border-[var(--border)] p-4">
+            <h3 className="mb-3 text-sm font-semibold">נוסחי הודעות</h3>
+            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+              <Field label="קבלת בקשה">
+                <input className={input} dir="auto" value={tpl.received ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, received: e.target.value })} />
+              </Field>
+              <Field label="בקשת מייל">
+                <input className={input} dir="auto" value={tpl.ask_email ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, ask_email: e.target.value })} />
+              </Field>
+              <Field label="השלמת שליחה">
+                <input className={input} dir="auto" value={tpl.sent ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, sent: e.target.value })} />
+              </Field>
+              <Field label="דחיית מדיה">
+                <input className={input} dir="auto" value={tpl.rejected_media ?? ''} onChange={(e) => update('whatsapp_templates', { ...tpl, rejected_media: e.target.value })} />
+              </Field>
             </div>
-          </div>
-        </div>
+          </section>
 
-        <div className="mt-5 border-t border-[var(--border)] pt-4">
-          <h3 className="mb-1 text-sm font-semibold">איפוס שיחה</h3>
-          <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
-            מאפס את השיחות החיות ב-WhatsApp — סוגר בקשה פתוחה, מנקה את מצב התפריט ומחזיר לתפריט הראשי.
-            ההודעה הבאה של הלקוח תתחיל מחדש. לא משפיע על תוצרים שכבר נשלחו.
-          </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={resetLiveConversation}
-              disabled={resetting}
-              className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
-            >
-              {resetting ? 'מאפס…' : 'אפס שיחה חיה'}
-            </button>
-            {resetMsg && <span className="text-sm text-[var(--muted)]">{resetMsg}</span>}
-          </div>
+          <section className="bg-white rounded-xl border border-[var(--border)] p-4">
+            <h3 className="mb-1 text-sm font-semibold">בוט בקבוצות</h3>
+            <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
+              כשהמתג פעיל, הבוט מגיב בקבוצות WhatsApp — אבל רק להודעות שמתחילות במילת ההפעלה
+              (למשל "{groupSettings.trigger_word || 'גרפיקה'} תכין לי פוסט"). שאר השיחה בקבוצה לא מפעילה אותו.
+              דורש חיבור מספר ייעודי דרך שער קבוצות (ראו תוכנית-בוט-בקבוצת-וואטסאפ).
+            </p>
+            <label className="mb-3 flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-gray-50 px-4 py-3">
+              <span className="text-sm font-semibold">הפעלת הבוט בקבוצות</span>
+              <span className="relative inline-flex shrink-0 items-center">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  className="peer sr-only"
+                  checked={groupSettings.enabled === true}
+                  aria-label="הפעלת הבוט בקבוצות WhatsApp"
+                  onChange={(e) => update('whatsapp_group_settings', { ...groupSettings, enabled: e.target.checked })}
+                />
+                <span className="h-7 w-12 rounded-full bg-gray-300 transition peer-checked:bg-brand peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" />
+                <span className="pointer-events-none absolute start-1 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5 rtl:peer-checked:-translate-x-5" />
+              </span>
+            </label>
+            <Field label="מילת הפעלה">
+              <input
+                className={input}
+                dir="auto"
+                value={groupSettings.trigger_word ?? ''}
+                placeholder="גרפיקה"
+                onChange={(e) => update('whatsapp_group_settings', { ...groupSettings, trigger_word: e.target.value })}
+              />
+            </Field>
+          </section>
+
+          <section className="bg-white rounded-xl border border-red-200 p-4">
+            <h3 className="mb-1 text-sm font-semibold text-red-700">אזור מסוכן — איפוס שיחות</h3>
+            <p className="mb-4 text-xs leading-5 text-[var(--muted)]">
+              פעולות איפוס מנקות מצב שיחה קיים. תוצרים שכבר נשלחו לא נפגעים.
+            </p>
+
+            <div className="mb-4 rounded-xl border border-[var(--border)] bg-gray-50 p-3">
+              <div className="mb-1 text-sm font-semibold">איפוס צ'אט קבוצה</div>
+              <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
+                מנקה את היסטוריית הקבוצה לכל המשתתפים וסוגר בקשות פתוחות בה. ההודעה הבאה בקבוצה מתחילה שיחה נקייה.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="rounded-lg border border-[var(--border)] bg-white px-2 py-2 text-sm"
+                  value={groupResetBrand}
+                  onChange={(e) => setGroupResetBrand(e.target.value)}
+                  aria-label="בחירת קבוצה לאיפוס"
+                >
+                  <option value="">כל הקבוצות</option>
+                  {brands.map((brand) => (
+                    <option key={brand.id} value={brand.id}>{brand.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={resetGroupChat}
+                  disabled={groupResetting}
+                  className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+                >
+                  {groupResetting ? 'מאפס…' : 'אפס צ׳אט קבוצה'}
+                </button>
+                {groupResetMsg && <span className="text-sm text-[var(--muted)]">{groupResetMsg}</span>}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-[var(--border)] bg-gray-50 p-3">
+              <div className="mb-1 text-sm font-semibold">איפוס שיחה חיה</div>
+              <p className="mb-3 text-xs leading-5 text-[var(--muted)]">
+                מאפס שיחות פרטיות פעילות ב-WhatsApp — סוגר בקשה פתוחה ומחזיר לתפריט הראשי. ההודעה הבאה של הלקוח תתחיל מחדש.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={resetLiveConversation}
+                  disabled={resetting}
+                  className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+                >
+                  {resetting ? 'מאפס…' : 'אפס שיחה חיה'}
+                </button>
+                {resetMsg && <span className="text-sm text-[var(--muted)]">{resetMsg}</span>}
+              </div>
+            </div>
+          </section>
         </div>
-      </section>
       )}
 
       {activeTab === 'signup' && (
@@ -404,14 +345,6 @@ export default function SettingsPage() {
               label="נקבה"
             />
           </div>
-        </div>
-
-        <div className="mt-4">
-          <div className="mb-1 text-sm font-medium">התקנת האפליקציה</div>
-          <div className="mb-1 text-sm font-medium">התקנת האפליקציה</div>
-          <p className="text-xs text-[var(--muted)]">
-            כדי להתקין את האפליקציה, פתחו את תפריט הדפדפן ובחרו התקנה או הוספה למסך הבית.
-          </p>
         </div>
       </section>
       )}
@@ -489,106 +422,6 @@ export default function SettingsPage() {
           </table>
         </div>
       </section>
-      )}
-
-      {activeTab === 'models' && (
-        <>
-          <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <Share2 className="h-5 w-5" />
-              <h2 className="font-semibold">רשתות חברתיות (Facebook & Instagram)</h2>
-            </div>
-
-            {metaLoading ? (
-              <div className="py-4">
-                <Spinner />
-              </div>
-            ) : metaConnection ? (
-              <div>
-                <div className="mb-4 flex items-center gap-3">
-                  {metaConnection.meta_user_picture && (
-                    <img
-                      src={metaConnection.meta_user_picture}
-                      alt={metaConnection.meta_user_name || 'משתמש'}
-                      className="h-12 w-12 rounded-full border-2 border-[var(--border)]"
-                    />
-                  )}
-                  <div className="text-sm">
-                    <div className="font-medium text-[#071a33]">
-                      {metaConnection.meta_user_name || 'משתמש'}
-                    </div>
-                    <div className="mt-0.5 text-[var(--muted)]">
-                      {metaConnection.pages_count} דפי פייסבוק
-                      {metaConnection.instagram_accounts_count > 0
-                        ? ` • ${metaConnection.instagram_accounts_count} חשבונות אינסטגרם`
-                        : ''}
-                    </div>
-                  </div>
-                </div>
-                <Link to="/admin/meta-connection" className="inline-block text-sm text-brand hover:underline">
-                  נהל חיבור ←
-                </Link>
-              </div>
-            ) : (
-              <div>
-                <p className="mb-4 text-sm text-[var(--muted)]">
-                  חבר את חשבון הרשתות החברתיות שלך כדי לפרסם באופן אוטומטי לפייסבוק ואינסטגרם
-                </p>
-                {metaError ? <p className="mb-3 text-xs text-red-600">{metaError}</p> : null}
-                <Link
-                  to="/admin/meta-connection"
-                  className="inline-block rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90"
-                >
-                  חבר עכשיו
-                </Link>
-              </div>
-            )}
-          </section>
-
-          <section className="bg-white rounded-xl border border-[var(--border)] p-4">
-            <h2 className="font-semibold mb-3">מודלי AI</h2>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <Field label="מודל תמונות">
-            <select
-              className={input}
-              value={aiModels.image_model ?? 'gpt-image-2'}
-              onChange={(e) => update('ai_models', { ...aiModels, image_model: e.target.value })}
-            >
-              <option value="gpt-image-2">gpt-image-2 - המתקדם ביותר</option>
-              <option value="gpt-image-1.5">gpt-image-1.5</option>
-              <option value="gpt-image-1">gpt-image-1</option>
-              <option value="gpt-image-1-mini">gpt-image-1-mini</option>
-            </select>
-          </Field>
-          <Field label="גודל תמונה">
-            <select
-              className={input}
-              value={aiModels.image_size ?? '1024x1024'}
-              onChange={(e) => update('ai_models', { ...aiModels, image_size: e.target.value })}
-            >
-              <option value="1024x1024">1024x1024</option>
-              <option value="1536x1024">1536x1024</option>
-              <option value="1024x1536">1024x1536</option>
-            </select>
-          </Field>
-          <Field label="איכות">
-            <select
-              className={input}
-              value={aiModels.image_quality ?? 'auto'}
-              onChange={(e) => update('ai_models', { ...aiModels, image_quality: e.target.value })}
-            >
-              <option value="auto">auto</option>
-              <option value="high">high</option>
-              <option value="medium">medium</option>
-              <option value="low">low</option>
-            </select>
-          </Field>
-            </div>
-            <p className="mt-2 text-xs text-[var(--muted)]">
-              ברירת המחדל היא gpt-image-2, המודל המתקדם הנוכחי של OpenAI לתמונות.
-            </p>
-          </section>
-        </>
       )}
 
       {activeTab === 'limits' && (
