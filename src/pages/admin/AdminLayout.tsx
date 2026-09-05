@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, Navigate, Link } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
-import InstallPrompt from '@/components/pwa/InstallPrompt';
 import SocialConnectPrompt from '@/components/social/SocialConnectPrompt';
 import { useProfile } from '@/lib/useProfile';
 import { useBrandTheme } from '@/lib/useBrandTheme';
@@ -271,7 +270,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         onOpenMenu={() => setNavOpen(true)}
         menuButtonRef={menuButtonRef}
       />
-      <InstallPrompt />
       <SocialConnectPrompt userId={profile.id} />
       {showCreateFab && (
         <Link

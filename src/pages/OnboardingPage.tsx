@@ -7,7 +7,6 @@ import { extractTextFromUploadedFile } from '@/lib/extractText';
 import type { OnboardingState, ProfileGender } from '@/lib/useProfile';
 import { Spinner } from '@/components/ui/Spinner';
 import AdminNav, { AdminBottomNav } from '@/components/AdminNav';
-import InstallPrompt from '@/components/pwa/InstallPrompt';
 import { useBrandTheme } from '@/lib/useBrandTheme';
 import { FileText, Palette, ArrowLeft, ArrowRight } from 'lucide-react';
 import { AI_OUTAGE_USER_MESSAGE, aiErrorText, isAiQuotaError } from '@/lib/aiErrors';
@@ -1705,7 +1704,6 @@ export default function OnboardingPage({ embedded = false }: { embedded?: boolea
         </div>
       </main>
       {!embedded && <AdminBottomNav isAdmin={isAdmin} canCreateOutputs={canCreateOutputs} onOpenMenu={() => setNavOpen(true)} />}
-      {!embedded && <InstallPrompt />}
       {brandCandidatesOpen && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-black/50 px-4 py-6"
