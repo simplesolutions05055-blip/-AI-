@@ -7,7 +7,7 @@ interface Job { kind: Kind; ticket: string; status: string; terminal: boolean; c
 const LABELS: Record<Kind, string> = { website: 'אתר רשמי', facebook: 'Facebook', instagram: 'Instagram' };
 const STATUS: Record<string, string> = { READY: 'ממתין', RUNNING: 'סורק', SUCCEEDED: 'הושלם', FAILED: 'נכשל', 'TIMED-OUT': 'תם זמן הסריקה', ABORTED: 'נעצר', ERROR: 'בדיקת הסטטוס נכשלה' };
 
-export default function ApifyBrandSources({ website, socialLinks, onApply, triggerToken }: { website?: string; socialLinks?: { facebook: string | null; instagram: string | null }; onApply: (content: Content[]) => void; triggerToken?: number }) {
+export default function ApifyBrandSources({ website, socialLinks, onApply, triggerToken, onProgress }: { website?: string; socialLinks?: { facebook: string | null; instagram: string | null }; onApply: (content: Content[]) => void; triggerToken?: number; onProgress?: (status: { active: boolean; items: number }) => void }) {
   const db = useMemo(() => createSupabaseBrowserClient(), []);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [urls, setUrls] = useState<Record<Kind, string>>({ website: '', facebook: '', instagram: '' });
@@ -70,6 +70,14 @@ export default function ApifyBrandSources({ website, socialLinks, onApply, trigg
     }
     if (fresh.length) onApply(fresh);
   }, [jobs, onApply]);
+
+  // Lets the parent fold this component's progress into one unified
+  // loading indicator instead of showing a separate, easy-to-miss spinner.
+  useEffect(() => {
+    const items = new Set(jobs.flatMap(job => job.content.map(item => `${item.source_url}\n${item.content}`))).size;
+    onProgress?.({ active: starting || active, items });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [starting, active, jobs]);
 
   const lastTrigger = useRef(0);
   useEffect(() => {

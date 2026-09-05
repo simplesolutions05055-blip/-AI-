@@ -57,6 +57,7 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
   const [parentDecision, setParentDecision] = useState<'same' | 'parent' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scanToken, setScanToken] = useState(0);
+  const [apifyStatus, setApifyStatus] = useState({ active: false, items: 0 });
 
   useEffect(() => { if (!query) setQuery(initialQuery); }, [initialQuery]);
   useEffect(() => {
@@ -156,10 +157,11 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
       <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void run(); } }} className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm" dir="auto" placeholder="https://www.example.co.il או שם הארגון" />
       <button type="button" onClick={() => void run()} disabled={loading || !query.trim()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Search size={16} />{loading ? 'קורא ומצליב...' : 'מלאו בשבילי'}</button>
     </div>
-    {loading && <div className="mt-4 space-y-2 text-sm" aria-live="polite">
-      <Progress done={elapsed >= 1} active={elapsed < 1} label="מאתר את הארגון והאתר הרשמי" />
-      <Progress done={elapsed >= 4} active={elapsed >= 1 && elapsed < 4} label="מצליב פרטי קשר עם מקורות" />
-      <Progress done={elapsed >= 8} active={elapsed >= 4} label="קורא צבעים ותוכן מהאתר" />
+    {(loading || apifyStatus.active) && <div className="mt-4 space-y-2 text-sm" aria-live="polite">
+      <Progress done={loading ? elapsed >= 1 : true} active={loading && elapsed < 1} label="מאתר את הארגון והאתר הרשמי" />
+      <Progress done={loading ? elapsed >= 4 : true} active={loading && elapsed >= 1 && elapsed < 4} label="מצליב פרטי קשר עם מקורות" />
+      <Progress done={loading ? elapsed >= 8 : true} active={loading && elapsed >= 4} label="קורא צבעים ותוכן מהאתר" />
+      <Progress done={!apifyStatus.active && apifyStatus.items > 0} active={apifyStatus.active} label={apifyStatus.active ? `סורק פייסבוק, אינסטגרם והאתר ברקע… ${apifyStatus.items} פריטים נמצאו עד כה` : 'סריקת פייסבוק ואינסטגרם'} />
     </div>}
     {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
     {result && <div className="mt-5">
@@ -208,9 +210,16 @@ export default function BrandAutofillPanel({ initialQuery, onApply }: {
         <button type="button" onClick={apply} disabled={(result.locations.length > 1 && locationIndex === null) || (Boolean(result.parent_brand?.name) && parentDecision === null)} className="mt-4 w-full rounded-lg bg-brand py-2.5 font-semibold text-white disabled:opacity-50">החלת השדות שסומנו על הטופס</button>
       )}
     </div>}
-    <ApifyBrandSources website={result?.fields.find(field => field.key === 'website')?.value || (/^(?:https?:\/\/)?[^\s]+\.[^\s]+/i.test(query.trim()) ? query.trim() : undefined)} socialLinks={result?.social_links} triggerToken={scanToken} onApply={content => onApply({}, content)} />
+    <ApifyBrandSources website={result?.fields.find(field => field.key === 'website')?.value || (/^(?:https?:\/\/)?[^\s]+\.[^\s]+/i.test(query.trim()) ? query.trim() : undefined)} socialLinks={result?.social_links} triggerToken={scanToken} onProgress={setApifyStatus} onApply={content => onApply({}, content)} />
   </div>;
 }
 
-function Progress({ done, active, label }: { done: boolean; active: boolean; label: string }) { return <div className={`flex items-center gap-2 ${done ? 'text-emerald-700' : active ? 'text-brand' : 'text-[var(--muted)]'}`}><span className={`grid h-5 w-5 place-items-center rounded-full border ${done ? 'border-emerald-600 bg-emerald-600 text-white' : active ? 'animate-pulse border-brand' : 'border-gray-300'}`}>{done && <Check size={13} />}</span>{label}</div>; }
+function Progress({ done, active, label }: { done: boolean; active: boolean; label: string }) {
+  return <div className={`flex items-center gap-2 ${done ? 'text-emerald-700' : active ? 'text-brand' : 'text-[var(--muted)]'}`}>
+    <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border ${done ? 'border-emerald-600 bg-emerald-600 text-white' : active ? 'border-brand/30' : 'border-gray-300'}`}>
+      {done ? <Check size={13} /> : active ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-brand/25 border-t-brand" /> : null}
+    </span>
+    {label}
+  </div>;
+}
 function paletteFromColors(colors: string[]) { const roles = ['primary', 'secondary', 'accent', 'background', 'text']; const defaults = ['#1A4D9C', '#0F766E', '#F59E0B', '#FFFFFF', '#111827']; return roles.map((role, index) => ({ role, hex: colors[index] ?? defaults[index] })); }

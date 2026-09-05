@@ -1,4 +1,4 @@
-import { detectClientType, normalizeWebsite, reviewStateFor, safeSourceUrl } from './brandAutofill.ts';
+import { detectClientType, normalizeWebsite, reviewStateFor, safeSourceUrl, socialSourceUrl } from './brandAutofill.ts';
 
 function assertEquals(actual: unknown, expected: unknown) {
   if (actual !== expected) throw new Error(`Expected ${String(expected)}, got ${String(actual)}`);
@@ -19,4 +19,11 @@ Deno.test('yellow fields remain review-only', () => {
 Deno.test('normalizes public website and rejects local source', () => {
   assertEquals(normalizeWebsite('example.com')?.startsWith('https://example.com/'), true);
   assertEquals(safeSourceUrl('http://localhost:3000'), null);
+});
+
+Deno.test('social source URLs must actually belong to that network', () => {
+  assertEquals(socialSourceUrl('https://www.facebook.com/brand', 'facebook')?.includes('facebook.com'), true);
+  assertEquals(socialSourceUrl('https://www.instagram.com/brand', 'facebook'), null);
+  assertEquals(socialSourceUrl('https://facebook.com/brand', 'instagram'), null);
+  assertEquals(socialSourceUrl('https://www.instagram.com/brand', 'instagram')?.includes('instagram.com'), true);
 });

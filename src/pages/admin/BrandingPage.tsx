@@ -1348,9 +1348,28 @@ export default function BrandingPage({ embedded = false }: { embedded?: boolean 
                 </button>
               </div>
 
-              {textSources.length === 0 ? (
+              {pendingWebsiteContent.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+                    {pendingWebsiteContent.length} פריטים מהחיפוש והסריקה האוטומטית — יישמרו כאן בלחיצה על שמירה.
+                  </p>
+                  {pendingWebsiteContent.map((item, index) => (
+                    <div key={`${item.source_url}\n${item.content}`} className="rounded-lg border border-amber-300 bg-amber-50 p-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <strong className="text-sm">{item.title}</strong>
+                        <button onClick={() => setPendingWebsiteContent((cur) => cur.filter((_, i) => i !== index))} className="shrink-0 text-xs text-red-600">
+                          הסרה
+                        </button>
+                      </div>
+                      <p className="mt-1 line-clamp-4 whitespace-pre-line text-xs text-[var(--muted)]" dir="auto">{item.content}</p>
+                      <a href={item.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-brand underline">מקור</a>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {textSources.length === 0 && pendingWebsiteContent.length === 0 ? (
                 <p className="mt-3 text-xs text-[var(--muted)]">אין עדיין מקורות תוכן.</p>
-              ) : (
+              ) : textSources.length > 0 && (
                 <div className="mt-3 space-y-2">
                   {textSources.map((source) => (
                     <div key={source.id} className="rounded-lg border border-[var(--border)] p-2">

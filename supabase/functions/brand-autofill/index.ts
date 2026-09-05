@@ -10,6 +10,7 @@ import {
   normalizeWebsite,
   reviewStateFor,
   safeSourceUrl,
+  socialSourceUrl,
   type CandidateField,
   type ClientType,
 } from '../_shared/brandAutofill.ts';
@@ -96,10 +97,12 @@ Deno.serve(async (req) => {
       resolveLogo(search?.logo_url, safeSourceUrl(search?.sources?.logo_url), brandLabelForSearch),
       wikipediaContent(brandLabelForSearch),
     ]);
-    const logo = logoSettled.status === 'fulfilled' ? logoSettled.value : null;
+    const logo = logoSettled.status === 'fulfilled' ? logoSettled.value.logo : null;
     const wikiContent = wikiSettled.status === 'fulfilled' ? wikiSettled.value : null;
     if (logoSettled.status === 'rejected') {
       await logEvent(database, { severity: 'warning', action: 'brand_autofill_logo_failed', message: message(logoSettled.reason) });
+    } else if (logoSettled.value.note) {
+      await logEvent(database, { severity: 'info', action: 'brand_autofill_logo_skipped', message: logoSettled.value.note, metadata: { model_logo_url: search?.logo_url ?? null } });
     }
     if (wikiSettled.status === 'rejected') {
       await logEvent(database, { severity: 'warning', action: 'brand_autofill_wikipedia_failed', message: message(wikiSettled.reason) });
@@ -128,7 +131,7 @@ Deno.serve(async (req) => {
       colors: sanitizeColors(crawl?.colors),
       color_source_url: crawl?.ok ? officialWebsite : null,
       logo,
-      social_links: { facebook: safeSourceUrl(search?.facebook_url), instagram: safeSourceUrl(search?.instagram_url) },
+      social_links: { facebook: socialSourceUrl(search?.facebook_url, 'facebook'), instagram: socialSourceUrl(search?.instagram_url, 'instagram') },
       content: sanitizeContent(contentWithWiki),
       locations: sanitizeLocations(crawl?.locations),
       parent_brand: parentBrand,
@@ -273,41 +276,62 @@ async function resolveLogo(
   modelUrl: string | undefined,
   modelSourceUrl: string | null,
   brandName: string,
-): Promise<LogoResult | null> {
+): Promise<{ logo: LogoResult | null; note: string | null }> {
   const fromModel = safeSourceUrl(modelUrl);
   if (fromModel) {
     const bytes = await fetchLogo(fromModel);
-    if (bytes) return { url: fromModel, source_url: modelSourceUrl ?? fromModel, base64: bytes.base64, mime: bytes.mime };
+    if (bytes) return { logo: { url: fromModel, source_url: modelSourceUrl ?? fromModel, base64: bytes.base64, mime: bytes.mime }, note: null };
   }
   const googleUrl = await googleImageSearch(brandName);
   if (googleUrl) {
     const bytes = await fetchLogo(googleUrl);
-    if (bytes) return { url: googleUrl, source_url: googleUrl, base64: bytes.base64, mime: bytes.mime };
+    if (bytes) return { logo: { url: googleUrl, source_url: googleUrl, base64: bytes.base64, mime: bytes.mime }, note: null };
   }
-  return null;
+  // Nothing downloadable: either the model gave nothing, or every candidate
+  // URL failed the fetch (dead link, not an image, too large, too many
+  // redirects). Worth a breadcrumb — this used to fail completely silently.
+  const note = !modelUrl ? 'no_logo_url_from_model' : !fromModel ? 'model_logo_url_rejected' : !googleUrl ? 'model_logo_fetch_failed_no_fallback' : 'model_and_google_logo_fetch_failed';
+  return { logo: null, note };
 }
 
+const MAX_LOGO_REDIRECTS = 3;
+
+// Logo URLs are very often one hop away from the real file — Wikimedia file
+// pages, CDN canonicalization, http→https upgrades. The previous version
+// treated every redirect as an SSRF risk and silently dropped the logo
+// instead of following it, which is why logos almost never came through.
+// Each hop is re-validated (https, not a private address) before following
+// it, so this stays exactly as safe as the single-request version.
 async function fetchLogo(rawUrl: string): Promise<{ base64: string; mime: string } | null> {
-  let url: URL;
-  try { url = new URL(rawUrl); } catch { return null; }
-  if (url.protocol !== 'https:') return null;
-  if (isPrivateAddress(url.hostname)) return null;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await fetch(url, { redirect: 'manual', signal: controller.signal, headers: { 'User-Agent': 'PrimeOSBrandReader/1.0 (+https://app.primeos.co.il)' } });
-    if (response.status >= 300 && response.status < 400) return null; // a redirect can walk past the private-address check
-    if (!response.ok) return null;
-    const mime = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
-    if (!mime.startsWith('image/')) return null;
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength === 0 || buffer.byteLength > MAX_LOGO_BYTES) return null;
-    return { base64: encodeBase64(new Uint8Array(buffer)), mime };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
+  let current = rawUrl;
+  for (let hop = 0; hop <= MAX_LOGO_REDIRECTS; hop++) {
+    let url: URL;
+    try { url = new URL(current); } catch { return null; }
+    if (url.protocol !== 'https:') return null;
+    if (isPrivateAddress(url.hostname)) return null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(url, { redirect: 'manual', signal: controller.signal, headers: { 'User-Agent': 'PrimeOSBrandReader/1.0 (+https://app.primeos.co.il)' } });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) return null;
+        current = new URL(location, url).href;
+        continue;
+      }
+      if (!response.ok) return null;
+      const mime = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+      if (!mime.startsWith('image/')) return null;
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength === 0 || buffer.byteLength > MAX_LOGO_BYTES) return null;
+      return { base64: encodeBase64(new Uint8Array(buffer)), mime };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  return null; // too many redirects
 }
 
 async function googleImageSearch(brandName: string): Promise<string | null> {

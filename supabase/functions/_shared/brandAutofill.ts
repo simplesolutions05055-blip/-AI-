@@ -60,3 +60,13 @@ export function safeSourceUrl(value: unknown): string | null {
     return null;
   }
 }
+
+// A search model occasionally returns the same link for facebook_url and
+// instagram_url (or a link to the wrong network). Reject anything that isn't
+// actually on that network's domain instead of trusting the field name.
+export function socialSourceUrl(value: unknown, network: 'facebook' | 'instagram'): string | null {
+  const url = safeSourceUrl(value);
+  if (!url) return null;
+  const hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  return hostname === `${network}.com` ? url : null;
+}
