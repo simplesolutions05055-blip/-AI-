@@ -10,16 +10,16 @@
 //   { phoneNumber, templateName, languageCode, parameters[], fileData, fileName }
 //
 // send-text is the only free-form route. Media rides an approved WhatsApp
-// template that has a media header (name from SMARTSEND_MEDIA_TEMPLATE), and
+// template that has a media header, and
 // send-template-base64 uploads the file bytes with the template's body
-// parameters. New image templates can be rolled out with a no-variable
-// fallback while the currently approved template remains active.
+// parameters. Named image deliveries and parameter-free media use separate
+// approved templates. The legacy env-configured template remains a fallback.
 //
 // Secrets (Supabase -> Edge Functions -> Secrets):
 //   SMARTSEND_ORGANIZATION_ID - workspace id supplied by Smart Send
 //   SMARTSEND_API_URL         - optional API origin override
-//   SMARTSEND_MEDIA_TEMPLATE  - approved template name with a media header
-//   SMARTSEND_MEDIA_TEMPLATE_FALLBACK - optional no-variable fallback template
+//   SMARTSEND_MEDIA_TEMPLATE  - optional legacy fallback template
+//   SMARTSEND_MEDIA_TEMPLATE_FALLBACK - optional extra fallback template
 import { splitForWhatsApp } from './whatsappText.ts';
 import { safeFetch } from './safeFetch.ts';
 
@@ -45,8 +45,11 @@ function mediaEndpoint(): string {
   return `${apiBase()}/integrations/make/messages/send-template-base64`;
 }
 
-function mediaTemplate(): string | null {
-  return Deno.env.get('SMARTSEND_MEDIA_TEMPLATE')?.trim() || null;
+const NAMED_MEDIA_TEMPLATE = 'primeos_deliverable_image_v2';
+const NONAME_MEDIA_TEMPLATE = 'primeos_deliverable_image_noname';
+
+function mediaTemplate(ctx?: TemplateContext): string {
+  return ctx ? NAMED_MEDIA_TEMPLATE : NONAME_MEDIA_TEMPLATE;
 }
 
 function mediaFallbackTemplate(): string | null {
@@ -134,9 +137,15 @@ export async function sendText(to: string, body: string): Promise<string> {
   return lastId;
 }
 
-// Body parameters for the media template, in the order WhatsApp approved them.
-// primeos_deliverable_image: [client name, request number].
+// Body parameters for the media templates, in the order WhatsApp approved them.
+// v2: [client name]. Legacy primeos_deliverable_image: [client name, request number].
 export type TemplateContext = { clientName: string; requestNumber: string };
+
+function templateParameters(template: string, ctx?: TemplateContext): string[] | undefined {
+  if (template === NAMED_MEDIA_TEMPLATE) return ctx ? [ctx.clientName] : undefined;
+  if (template === NONAME_MEDIA_TEMPLATE) return undefined;
+  return ctx ? [ctx.clientName, ctx.requestNumber] : undefined;
+}
 
 class DefinitiveTemplateRejection extends Error {}
 
@@ -181,14 +190,7 @@ export async function sendFile(
   caption?: string,
   ctx?: TemplateContext,
 ): Promise<string> {
-  const template = mediaTemplate();
-  if (!template) {
-    // Never silently send only the caption: the caller logs this and falls back
-    // to a text message, which is honest about the image not being attached.
-    throw new Error(
-      'Smart Send media send needs an approved template - set SMARTSEND_MEDIA_TEMPLATE',
-    );
-  }
+  const template = mediaTemplate(ctx);
   const phone = toPhone(to);
   // Upload the bytes rather than handing Smart Send a URL. A Supabase signed URL
   // expires (and WhatsApp re-fetches media later), which is what produced the
@@ -199,21 +201,15 @@ export async function sendFile(
   }
   const fileData = toBase64(bytes);
   const fileName = fileNameFor(mediaUrl, contentType);
-  // v2 has one approved body variable: client name. Legacy template keeps its
-  // existing two-variable contract until the environment switches names.
-  const parameters = ctx
-    ? template === 'primeos_deliverable_image_v2'
-      ? [ctx.clientName]
-      : [ctx.clientName, ctx.requestNumber]
-    : undefined;
+  const parameters = templateParameters(template, ctx);
   try {
     await postMediaTemplate(phone, template, fileData, fileName, parameters);
   } catch (error) {
-    const fallback = mediaFallbackTemplate();
+    const fallback = mediaFallbackTemplate() || Deno.env.get('SMARTSEND_MEDIA_TEMPLATE')?.trim();
     // Retry only a definitive provider rejection. Network/5xx failures may
     // have accepted the first send, so retrying could duplicate delivery.
     if (!(error instanceof DefinitiveTemplateRejection) || !fallback || fallback === template) throw error;
-    await postMediaTemplate(phone, fallback, fileData, fileName);
+    await postMediaTemplate(phone, fallback, fileData, fileName, templateParameters(fallback, ctx));
   }
   const sid = `smartsend-${crypto.randomUUID()}`;
   // The template body is fixed by WhatsApp approval, so the caption cannot ride

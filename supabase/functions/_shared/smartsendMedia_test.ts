@@ -34,14 +34,14 @@ function withEnv(vars: Record<string, string | null>, run: () => Promise<void>):
   });
 }
 
-Deno.test('uploads the bytes as base64 to the template endpoint', async () => {
+Deno.test('uploads named image bytes through v2 with client name only', async () => {
   const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
   const { calls, restore } = stubFetch(png);
   try {
     await withEnv({
       SMARTSEND_ORGANIZATION_ID: 'org-test',
       SMARTSEND_API_URL: 'https://smartsend-server.otherwise.co.il',
-      SMARTSEND_MEDIA_TEMPLATE: 'output_image',
+      SMARTSEND_MEDIA_TEMPLATE: 'primeos_deliverable_image',
     }, async () => {
       const sid = await sendFile('whatsapp:+972501234567', MEDIA_URL, 'הנה התוצר', {
         clientName: 'דנה',
@@ -54,9 +54,9 @@ Deno.test('uploads the bytes as base64 to the template endpoint', async () => {
   assertEquals(calls.length, 2);
   assertStringIncludes(calls[0].url, '/integrations/make/messages/send-template-base64');
   assertEquals(calls[0].body.phoneNumber, '972501234567');
-  assertEquals(calls[0].body.templateName, 'output_image');
+  assertEquals(calls[0].body.templateName, 'primeos_deliverable_image_v2');
   assertEquals(calls[0].body.languageCode, 'he');
-  assertEquals(calls[0].body.parameters, ['דנה', '#4821']);
+  assertEquals(calls[0].body.parameters, ['דנה']);
   assertEquals(calls[0].body.fileName, 'v1.png');
   // The signed URL never reaches Smart Send, so it cannot expire on them.
   assertEquals(calls[0].body.fileData, btoa(String.fromCharCode(...png)));
@@ -67,37 +67,34 @@ Deno.test('uploads the bytes as base64 to the template endpoint', async () => {
   assertEquals(calls[1].body.message, 'הנה התוצר');
 });
 
-Deno.test('omits body parameters when no template context is given (document sends)', async () => {
+Deno.test('uses noname and omits body parameters when no template context is given', async () => {
   const png = new Uint8Array([137, 80, 78, 71]);
   const { calls, restore } = stubFetch(png);
   try {
     await withEnv({
       SMARTSEND_ORGANIZATION_ID: 'org-test',
       SMARTSEND_API_URL: 'https://smartsend-server.otherwise.co.il',
-      SMARTSEND_MEDIA_TEMPLATE: 'output_image',
+      SMARTSEND_MEDIA_TEMPLATE: 'primeos_deliverable_image',
     }, async () => {
       await sendFile('whatsapp:+972501234567', MEDIA_URL, 'המסמך שלך');
     });
   } finally { restore(); }
+  assertEquals(calls[0].body.templateName, 'primeos_deliverable_image_noname');
   assertEquals('parameters' in calls[0].body, false);
   assertEquals('languageCode' in calls[0].body, false);
 });
 
-Deno.test('refuses to send without a configured template instead of dropping the file', async () => {
+Deno.test('new approved templates do not require env configuration', async () => {
   const { calls, restore } = stubFetch(new Uint8Array([1]));
   try {
     await withEnv({
       SMARTSEND_ORGANIZATION_ID: 'org-test',
       SMARTSEND_MEDIA_TEMPLATE: null,
     }, async () => {
-      await assertRejects(
-        () => sendFile('whatsapp:+972501234567', MEDIA_URL, 'caption'),
-        Error,
-        'SMARTSEND_MEDIA_TEMPLATE',
-      );
+      await sendFile('whatsapp:+972501234567', MEDIA_URL);
     });
   } finally { restore(); }
-  assertEquals(calls.length, 0);
+  assertEquals(calls[0].body.templateName, 'primeos_deliverable_image_noname');
 });
 
 Deno.test('surfaces a Smart Send rejection without leaking the payload', async () => {
@@ -112,7 +109,7 @@ Deno.test('surfaces a Smart Send rejection without leaking the payload', async (
   try {
     await withEnv({
       SMARTSEND_ORGANIZATION_ID: 'org-test',
-      SMARTSEND_MEDIA_TEMPLATE: 'missing_template',
+      SMARTSEND_MEDIA_TEMPLATE: null,
       SMARTSEND_MEDIA_TEMPLATE_FALLBACK: null,
     }, async () => {
       const error = await assertRejects(
@@ -125,12 +122,12 @@ Deno.test('surfaces a Smart Send rejection without leaking the payload', async (
   } finally { globalThis.fetch = original; }
 });
 
-Deno.test('v2 sends client name only', async () => {
+Deno.test('v2 ignores legacy template env and sends client name only', async () => {
   const { calls, restore } = stubFetch(new Uint8Array([1]));
   try {
     await withEnv({
       SMARTSEND_ORGANIZATION_ID: 'org-test',
-      SMARTSEND_MEDIA_TEMPLATE: 'primeos_deliverable_image_v2',
+      SMARTSEND_MEDIA_TEMPLATE: 'primeos_deliverable_image',
       SMARTSEND_MEDIA_TEMPLATE_FALLBACK: null,
     }, async () => {
       await sendFile('972501234567', MEDIA_URL, undefined, {
@@ -141,7 +138,7 @@ Deno.test('v2 sends client name only', async () => {
   assertEquals(calls[0].body.parameters, ['דנה']);
 });
 
-Deno.test('retries a rejected primary with no-variable fallback', async () => {
+Deno.test('retries rejected v2 through legacy template with legacy parameters', async () => {
   const calls: Call[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
@@ -163,8 +160,8 @@ Deno.test('retries a rejected primary with no-variable fallback', async () => {
   try {
     await withEnv({
       SMARTSEND_ORGANIZATION_ID: 'org-test',
-      SMARTSEND_MEDIA_TEMPLATE: 'primeos_deliverable_image_v2',
-      SMARTSEND_MEDIA_TEMPLATE_FALLBACK: 'primeos_deliverable_image_noname',
+      SMARTSEND_MEDIA_TEMPLATE: 'primeos_deliverable_image',
+      SMARTSEND_MEDIA_TEMPLATE_FALLBACK: null,
     }, async () => {
       await sendFile('972501234567', MEDIA_URL, undefined, {
         clientName: 'דנה', requestNumber: '#4821',
@@ -172,6 +169,6 @@ Deno.test('retries a rejected primary with no-variable fallback', async () => {
     });
   } finally { globalThis.fetch = original; }
   assertEquals(calls.length, 2);
-  assertEquals(calls[1].body.templateName, 'primeos_deliverable_image_noname');
-  assertEquals('parameters' in calls[1].body, false);
+  assertEquals(calls[1].body.templateName, 'primeos_deliverable_image');
+  assertEquals(calls[1].body.parameters, ['דנה', '#4821']);
 });
