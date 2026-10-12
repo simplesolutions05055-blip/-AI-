@@ -8,6 +8,8 @@ import Library from './screens/Library';
 import Approvals from './screens/Approvals';
 import ItemPage from './screens/ItemPage';
 import CalendarPage from './screens/CalendarPage';
+import Create from './screens/Create';
+import AdminApp from './screens/admin/AdminApp';
 import Placeholder from './screens/Placeholder';
 
 function Gate() {
@@ -29,7 +31,7 @@ function Gate() {
         <Route path="/approvals" element={<Approvals />} />
         <Route path="/item/:id" element={<ItemPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
-        <Route path="/create" element={<Placeholder title="יצירת תוכן" desc="אשף היצירה בארבעה שלבים, בחמש שיטות יצירה." icon="create" stage="שלב 3: מנוע התוכן" />} />
+        <Route path="/create" element={<Create />} />
         <Route path="/annual" element={<Placeholder title="תוכן שנתי" desc="בניית לוח שנה שלם של טיוטות עם תאריכים מדויקים." icon="year" stage="שלב 3: מנוע התוכן" />} />
         <Route path="/publications" element={<Placeholder title="פרסומים" desc="מתוזמנים, פורסמו ונכשלו, לפי ערוץ ומועד." icon="send" stage="שלב 5: שכבת הפרסום" />} />
         <Route path="/whatsapp" element={<Placeholder title="בקשות WhatsApp" desc="בקשות תוכן שמגיעות מהמחלקות בטקסט או בהקלטה." icon="msg" stage="שלב 5: חיבור הווטסאפ" />} />
@@ -46,6 +48,17 @@ function Gate() {
 }
 
 export default function App() {
+  // Admin interface: /admin/* routes (separate auth system)
+  if (window.location.pathname.startsWith('/admin')) {
+    return (
+      <BrowserRouter>
+        <Routes>
+          <Route path="/admin/*" element={<AdminApp />} />
+        </Routes>
+      </BrowserRouter>
+    );
+  }
+
   return (
     <BrowserRouter>
       <SessionProvider>
