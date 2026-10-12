@@ -11,6 +11,7 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 export function setToken(t: string | null) {
+  if (t) t = t.replace(/[\s\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '');
   if (t) localStorage.setItem(TOKEN_KEY, t);
   else localStorage.removeItem(TOKEN_KEY);
 }
@@ -26,7 +27,8 @@ export class ApiError extends Error {
 }
 
 export async function api<T = Record<string, unknown>>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
-  const r = await fetch(`${SUPA_URL}/functions/v1/v2-api`, {
+  const endpoint = import.meta.env.DEV ? `${SUPA_URL}/functions/v1/v2-api` : '/api/v2';
+  const r = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
