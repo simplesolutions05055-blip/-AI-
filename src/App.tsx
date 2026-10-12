@@ -1,103 +1,58 @@
-import React from 'react';
-import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
-import { TooltipProvider } from '@/components/ui/Tooltip';
-import LoginPage from '@/pages/LoginPage';
-import ResetPasswordPage from '@/pages/ResetPasswordPage';
-import OnboardingPage from '@/pages/OnboardingPage';
-import PrivacyPolicyPage from '@/pages/legal/PrivacyPolicyPage';
-import CookiePolicyPage from '@/pages/legal/CookiePolicyPage';
-import DataRequestsPage from '@/pages/legal/DataRequestsPage';
-import TermsPage from '@/pages/legal/TermsPage';
-import AdminLayout from '@/pages/admin/AdminLayout';
-import DashboardPage from '@/pages/admin/DashboardPage';
-import RequestsCostsPage from '@/pages/admin/RequestsCostsPage';
-import SettingsPage from '@/pages/admin/SettingsPage';
-import UserSettingsPage from '@/pages/admin/UserSettingsPage';
-import PasswordPage from '@/pages/admin/PasswordPage';
-import FilesPage from '@/pages/admin/FilesPage';
-import ModelsPage from '@/pages/admin/ModelsPage';
-import SkillsPage from '@/pages/admin/SkillsPage';
-import ProductionPage from '@/pages/admin/ProductionPage';
-import BrandingRoute from '@/pages/admin/BrandingRoute';
-import QuotePage from '@/pages/admin/QuotePage';
-import RevisePage from '@/pages/admin/RevisePage';
-import ErrorsPage from '@/pages/admin/ErrorsPage';
-import PermissionsPage from '@/pages/admin/PermissionsPage';
-import HolidaysCalendarPage from '@/pages/admin/HolidaysCalendarPage';
-import AnnualPlannerPage from '@/pages/admin/AnnualPlannerPage';
-import MetaConnectionPage from '@/pages/admin/MetaConnectionPage';
-import ErrorPage from '@/pages/ErrorPage';
-import ReloadPrompt from '@/components/pwa/ReloadPrompt';
-import TitleManager from '@/components/TitleManager';
-import DialogHost from '@/components/DialogHost';
-import AnimatedBackground from '@/components/AnimatedBackground';
-import ErrorBoundary from '@/components/ErrorBoundary';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { SessionProvider, useSession } from './session';
+import { ToastHost } from './ui/kit';
+import Shell from './shell';
+import Login from './screens/Login';
+import Dashboard from './screens/Dashboard';
+import Library from './screens/Library';
+import Approvals from './screens/Approvals';
+import ItemPage from './screens/ItemPage';
+import CalendarPage from './screens/CalendarPage';
+import Placeholder from './screens/Placeholder';
 
-/**
- * Page-level boundary. The `key` is load-bearing: without it React keeps the
- * failed boundary mounted after a route change, so the user stays stuck on the
- * fallback even once they navigate somewhere that works. Re-keying on the path
- * gives each route a fresh boundary instance.
- */
-function RouteBoundary({ children }: { children: React.ReactNode }) {
-  const location = useLocation();
+function Gate() {
+  const { boot, loading } = useSession();
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--ink-2)' }}>
+        טוען את PrimeOS...
+      </div>
+    );
+  }
+  if (!boot) return <Login />;
   return (
-    <ErrorBoundary boundaryName="page" key={location.pathname}>
-      {children}
-    </ErrorBoundary>
+    <Routes>
+      <Route element={<Shell />}>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/library" element={<Library />} />
+        <Route path="/approvals" element={<Approvals />} />
+        <Route path="/item/:id" element={<ItemPage />} />
+        <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/create" element={<Placeholder title="יצירת תוכן" desc="אשף היצירה בארבעה שלבים, בחמש שיטות יצירה." icon="create" stage="שלב 3: מנוע התוכן" />} />
+        <Route path="/annual" element={<Placeholder title="תוכן שנתי" desc="בניית לוח שנה שלם של טיוטות עם תאריכים מדויקים." icon="year" stage="שלב 3: מנוע התוכן" />} />
+        <Route path="/publications" element={<Placeholder title="פרסומים" desc="מתוזמנים, פורסמו ונכשלו, לפי ערוץ ומועד." icon="send" stage="שלב 5: שכבת הפרסום" />} />
+        <Route path="/whatsapp" element={<Placeholder title="בקשות WhatsApp" desc="בקשות תוכן שמגיעות מהמחלקות בטקסט או בהקלטה." icon="msg" stage="שלב 5: חיבור הווטסאפ" />} />
+        <Route path="/brand" element={<Placeholder title="נכסי מותג" desc="לוגואים, צבעים, תבניות וכללי כתיבה של הארגון." icon="palette" stage="שלב 4: מסכי הליבה" />} />
+        <Route path="/channels" element={<Placeholder title="ערוצים מחוברים" desc="החשבונות שהארגון מפרסם אליהם." icon="plug" stage="שלב 5: שכבת הפרסום" />} />
+        <Route path="/team" element={<Placeholder title="צוות והרשאות" desc="מחלקות, חברים, מאשרים ומסלולי אישור." icon="users" stage="שלב 4: מסכי הליבה" />} />
+        <Route path="/reports" element={<Placeholder title="פעילות ודוחות" desc="תמונת מצב תפעולית של הארגון." icon="chart" stage="שלב 6: ניהול ודוחות" />} />
+        <Route path="/settings" element={<Placeholder title="הגדרות" desc="פרטי הארגון, מחלקות, התראות וברירות מחדל." icon="gear" stage="שלב 6: ניהול ודוחות" />} />
+        <Route path="/support" element={<Placeholder title="מרכז תמיכה" desc="מאמרי עזרה ופתיחת פניות." icon="buoy" stage="שלב 6: ניהול ודוחות" />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Route>
+    </Routes>
   );
 }
 
 export default function App() {
   return (
-    <ErrorBoundary boundaryName="app">
-    <TooltipProvider delayDuration={200}>
-      <AnimatedBackground />
-      <div className="app-content">
-        <BrowserRouter>
-          <TitleManager />
-          <RouteBoundary>
-          <Routes>
-          <Route path="/" element={<Navigate to="/admin" replace />} />
-          <Route path="/app" element={<Navigate to="/admin" replace />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
-        <Route path="/onboarding" element={<OnboardingPage />} />
-        <Route path="/privacy" element={<PrivacyPolicyPage />} />
-        <Route path="/cookies" element={<CookiePolicyPage />} />
-        <Route path="/data-requests" element={<DataRequestsPage />} />
-        <Route path="/terms" element={<TermsPage />} />
-        <Route path="/admin" element={<AdminLayout><Outlet /></AdminLayout>}>
-          <Route index element={<DashboardPage />} />
-          <Route path="requests" element={<RequestsCostsPage />} />
-          <Route path="costs" element={<RequestsCostsPage />} />
-          <Route path="conversations" element={<Navigate to="/admin" replace />} />
-          <Route path="production" element={<ProductionPage />} />
-          <Route path="production/:type" element={<ProductionPage />} />
-          <Route path="quote" element={<QuotePage />} />
-          <Route path="files" element={<FilesPage />} />
-          <Route path="files/:requestId/revise" element={<RevisePage />} />
-          <Route path="schedule/:postId" element={<RevisePage />} />
-          <Route path="branding" element={<BrandingRoute />} />
-          <Route path="models" element={<ModelsPage />} />
-          <Route path="skills" element={<SkillsPage />} />
-          <Route path="permissions" element={<PermissionsPage />} />
-          <Route path="holidays" element={<HolidaysCalendarPage />} />
-          <Route path="annual-planner" element={<AnnualPlannerPage />} />
-          <Route path="errors" element={<ErrorsPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="user-settings" element={<UserSettingsPage />} />
-          <Route path="password" element={<PasswordPage />} />
-          <Route path="meta-connection" element={<MetaConnectionPage />} />
-        </Route>
-        <Route path="*" element={<ErrorPage />} />
-          </Routes>
-          </RouteBoundary>
-          <ReloadPrompt />
-          <DialogHost />
-        </BrowserRouter>
-      </div>
-    </TooltipProvider>
-    </ErrorBoundary>
+    <BrowserRouter>
+      <SessionProvider>
+        <ToastHost>
+          <Gate />
+        </ToastHost>
+      </SessionProvider>
+    </BrowserRouter>
   );
 }
