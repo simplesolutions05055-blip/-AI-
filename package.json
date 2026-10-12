@@ -4,25 +4,18 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node scripts/build-ui.mjs && vite",
+    "build": "node scripts/build-ui.mjs && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
     "typecheck:api": "tsc -p tsconfig.api.json --noEmit"
   },
   "dependencies": {
     "docx": "^9.7.1",
-    "jszip": "^3.10.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.30.0"
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@sparticuz/chromium": "^149.0.0",
     "@types/node": "^22.7.4",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react-swc": "^3.11.0",
     "puppeteer-core": "^25.9.0",
     "typescript": "^5.6.2",
     "vite": "^5.4.19"

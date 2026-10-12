@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react-swc';
 
+// The UI is a single static page (index.html, built from ui/primeos-mockup.html).
 export default defineConfig({
-  plugins: [react()],
   server: { port: 8080 },
+  build: { chunkSizeWarningLimit: 2000 },
 });

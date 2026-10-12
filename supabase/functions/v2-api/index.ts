@@ -1,316 +1,235 @@
-// PrimeOS v2-api - central API gateway (Deno edge function)
-import { db } from '../_shared/db.ts';
-import { cors, preflight } from '../_shared/cors.ts';
+// PrimeOS v2-api - data gateway for the live system (client + admin).
+// POST { action, payload }   header x-primeos-token
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
-const json = (req: Request, body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { ...cors(req, 'POST'), 'content-type': 'application/json; charset=utf-8' },
-  });
-
-// ---- auth -------------------------------------------------------------------
-async function resolveToken(req: Request) {
-  const raw = req.headers.get('x-primeos-token')?.trim();
-  if (!raw) return null;
-  const database = db();
-  const { data } = await database
-    .from('api_tokens')
-    .select('org_id, member_id')
-    .eq('token', raw)
-    .maybeSingle();
-  if (!data) return null;
-  return { orgId: data.org_id as string, memberId: data.member_id as string | null };
-}
-
-async function resolveAdminToken(req: Request) {
-  const raw = req.headers.get('x-primeos-token')?.trim();
-  if (!raw) return null;
-  const database = db();
-  const { data } = await database
-    .from('admin_tokens')
-    .select('admin_id')
-    .eq('token', raw)
-    .maybeSingle();
-  if (!data) return null;
-  return { adminId: data.admin_id as string };
-}
-
-// ---- handlers ---------------------------------------------------------------
-
-async function handleBootstrap(database: ReturnType<typeof db>, orgId: string, memberId: string | null) {
-  const [orgRes, memberRes, deptsRes, membersRes] = await Promise.all([
-    database.from('organizations').select('id,name,plan,org_type,status,contact_name,contact_email').eq('id', orgId).single(),
-    memberId ? database.from('org_members').select('id,org_id,name,email,role').eq('id', memberId).single() : Promise.resolve({ data: null, error: null }),
-    database.from('departments').select('id,org_id,name').eq('org_id', orgId).order('name'),
-    database.from('org_members').select('id,org_id,name,email,role').eq('org_id', orgId),
-  ]);
-
-  const org = orgRes.data;
-  if (!org) throw new Error('org_not_found');
-
-  const me = memberRes.data ?? { id: 'anon', org_id: orgId, name: 'אורח', email: null, role: 'member' };
-
+const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
+function cors(req: Request) {
+  const o = req.headers.get('origin') ?? '';
   return {
-    me,
-    org: {
-      id: org.id,
-      name: org.name,
-      plan: org.plan,
-      org_type: org.org_type,
-    },
-    departments: deptsRes.data ?? [],
-    members: membersRes.data ?? [],
-    channels: [],
+    'access-control-allow-origin': ORIGINS.includes(o) ? o : ORIGINS[0],
+    'access-control-allow-headers': 'content-type, x-primeos-token, apikey, authorization',
+    'access-control-allow-methods': 'POST, OPTIONS',
+    vary: 'origin',
   };
 }
+const json = (req: Request, body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...cors(req), 'content-type': 'application/json; charset=utf-8' } });
 
-async function handleLogin(database: ReturnType<typeof db>, payload: Record<string, unknown>) {
-  const { email, password } = payload as { email?: string; password?: string };
-  if (!email || !password) throw new Error('missing_fields');
-
-  const { data: member } = await database
-    .from('org_members')
-    .select('id, org_id, name, email')
-    .eq('email', email.toLowerCase().trim())
-    .maybeSingle();
-
-  if (!member) throw new Error('invalid_credentials');
-  if (password !== 'demo1234' && password !== 'primeos2026') throw new Error('invalid_credentials');
-
-  const token = Array.from(crypto.getRandomValues(new Uint8Array(20)))
-    .map((b) => b.toString(16).padStart(2, '0')).join('');
-
-  await database.from('api_tokens').insert({
-    token,
-    org_id: member.org_id,
-    member_id: member.id,
-  });
-
-  return { token, member_id: member.id };
+type DB = ReturnType<typeof createClient>;
+function db(): DB {
+  return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 }
 
-async function handleDashboard(database: ReturnType<typeof db>, orgId: string) {
-  const { data: items } = await database
-    .from('content_items')
-    .select('id,org_id,department_id,type,method,title,body,status,created_at')
-    .eq('org_id', orgId)
-    .order('created_at', { ascending: false })
-    .limit(50);
-  return { items: items ?? [] };
+const DEMO_ORG = '11111111-0000-0000-0000-000000000001';
+const ST_MAP: Record<string, string> = {
+  draft: 'draft', pending: 'pending_approval', fix: 'fix_required', rejected: 'rejected', approved: 'approved',
+  scheduled: 'scheduled', published: 'published', failed: 'publish_failed', archived: 'archived',
+};
+const TY_MAP: Record<string, string> = { graphic: 'graphic', doc: 'document', deck: 'deck', video: 'video' };
+
+function newToken() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(18))).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function handleItemsList(database: ReturnType<typeof db>, orgId: string, payload: Record<string, unknown>) {
-  const { status, department_id, type, limit = 50, offset = 0 } = payload as {
-    status?: string; department_id?: string; type?: string; limit?: number; offset?: number;
-  };
-  let q = database.from('content_items')
-    .select('id,org_id,department_id,type,method,title,body,cta,hashtags,html,status,created_at')
-    .eq('org_id', orgId);
-  if (status) q = q.eq('status', status);
-  if (department_id) q = q.eq('department_id', department_id);
-  if (type) q = q.eq('type', type);
-  q = q.order('created_at', { ascending: false }).range(offset as number, (offset as number) + (limit as number) - 1);
-  const { data, error } = await q;
-  if (error) throw error;
-  return { items: data ?? [] };
-}
-
-async function handleItemGet(database: ReturnType<typeof db>, orgId: string, payload: Record<string, unknown>) {
-  const { id } = payload as { id: string };
-  if (!id) throw new Error('missing_id');
-  const [itemRes, approvalsRes, commentsRes] = await Promise.all([
-    database.from('content_items').select('*').eq('id', id).eq('org_id', orgId).maybeSingle(),
-    database.from('item_approvals').select('*').eq('item_id', id).order('created_at'),
-    database.from('item_comments').select('*').eq('item_id', id).order('created_at'),
-  ]);
-  if (!itemRes.data) throw new Error('not_found');
-  return { item: itemRes.data, approvals: approvalsRes.data ?? [], comments: commentsRes.data ?? [] };
-}
-
-async function handleItemCreate(database: ReturnType<typeof db>, orgId: string, memberId: string | null, payload: Record<string, unknown>) {
-  const { type = 'graphic', title = '', body = '', cta = '', hashtags = [], html = '', status = 'draft', department_id = null } = payload;
-  const { data, error } = await database.from('content_items').insert({
+function itemRow(orgId: string, ui: Record<string, any>) {
+  const pub = typeof ui.pub === 'string' && /^\d{4}-\d{2}-\d{2}/.test(ui.pub) ? new Date(ui.pub.replace(' ', 'T') + ':00+03:00') : null;
+  return {
     org_id: orgId,
-    department_id,
-    created_by: memberId,
-    source: 'web',
-    type,
-    method: 'free_text',
-    title,
-    body,
-    cta,
-    hashtags,
-    html,
-    status,
-  }).select().single();
-  if (error) throw error;
-  return { item: data };
+    ui_id: ui.id,
+    source: ui.src === 'wa' ? 'whatsapp' : 'web',
+    type: TY_MAP[ui.ty] ?? 'graphic',
+    title: String(ui.t ?? '').slice(0, 500),
+    body: String(ui.body ?? ''),
+    cta: String(ui.cta ?? ''),
+    status: ST_MAP[ui.s] ?? 'draft',
+    status_note: ui.fixnote ?? ui.rej ?? ui.err ?? null,
+    hashtags: Array.isArray(ui.tags) ? ui.tags.map(String) : [],
+    scheduled_for: pub && !isNaN(+pub) ? pub.toISOString() : null,
+    meta: { ui },
+    updated_at: new Date().toISOString(),
+  };
 }
 
-async function handleItemUpdate(database: ReturnType<typeof db>, orgId: string, memberId: string | null, payload: Record<string, unknown>) {
-  const { id, ...fields } = payload as { id: string; [k: string]: unknown };
-  if (!id) throw new Error('missing_id');
+// ---------------- client ----------------
+async function liveLoad(d: DB, orgId: string, memberId: string | null) {
+  const [org, me, its, st] = await Promise.all([
+    d.from('organizations').select('id,name,plan,org_type,status').eq('id', orgId).single(),
+    memberId ? d.from('org_members').select('id,name,email,role,dept,view').eq('id', memberId).maybeSingle() : Promise.resolve({ data: null }),
+    d.from('content_items').select('id,meta,updated_at').eq('org_id', orgId).not('ui_id', 'is', null),
+    d.from('org_state').select('data,updated_at').eq('org_id', orgId).maybeSingle(),
+  ]);
+  if (!org.data) throw new Error('org_not_found');
+  return {
+    org: org.data,
+    me: me.data,
+    demo: orgId === DEMO_ORG,
+    items: (its.data ?? []).map((r: any) => ({ dbid: r.id, ui: r.meta?.ui })).filter((r: any) => r.ui),
+    state: st.data?.data ?? null,
+    stateAt: st.data?.updated_at ?? null,
+  };
+}
 
-  const allowed = ['title', 'body', 'cta', 'tone', 'hashtags', 'html', 'status', 'status_note', 'department_id'];
-  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  for (const k of allowed) if (k in fields) update[k] = fields[k];
-
-  // record status transition
-  if (update.status) {
-    const { data: current } = await database.from('content_items').select('status').eq('id', id).eq('org_id', orgId).maybeSingle();
-    if (current && current.status !== update.status) {
-      await database.from('item_approvals').insert({
-        item_id: id,
-        status: update.status as string,
-        actor_id: memberId,
-        note: (update.status_note as string) ?? null,
-      }).then(() => {});
+async function itemsUpsert(d: DB, orgId: string, list: Record<string, any>[]) {
+  const out: Record<string, string> = {};
+  for (const ui of list.slice(0, 200)) {
+    if (typeof ui?.id !== 'number') continue;
+    const row = itemRow(orgId, ui);
+    const { data: ex } = await d.from('content_items').select('id').eq('org_id', orgId).eq('ui_id', ui.id).maybeSingle();
+    if (ex) {
+      const { error } = await d.from('content_items').update(row).eq('id', ex.id);
+      if (error) throw error;
+      out[ui.id] = ex.id;
+    } else {
+      const { data, error } = await d.from('content_items').insert({ ...row, method: 'free_text' }).select('id').single();
+      if (error) throw error;
+      out[ui.id] = data.id;
     }
   }
-
-  const { data, error } = await database
-    .from('content_items')
-    .update(update)
-    .eq('id', id)
-    .eq('org_id', orgId)
-    .select()
-    .single();
-  if (error) throw error;
-  return { item: data };
+  return { ids: out };
 }
 
-async function handleCommentAdd(database: ReturnType<typeof db>, orgId: string, memberId: string | null, payload: Record<string, unknown>) {
-  const { item_id, body } = payload as { item_id: string; body: string };
-  if (!item_id || !body) throw new Error('missing_fields');
-  const { data: item } = await database.from('content_items').select('id').eq('id', item_id).eq('org_id', orgId).maybeSingle();
-  if (!item) throw new Error('not_found');
-  const { data, error } = await database.from('item_comments').insert({
-    item_id,
-    author_member_id: memberId,
-    body,
-  }).select().single();
-  if (error) throw error;
-  return { comment: data };
-}
-
-// ---- admin handlers ---------------------------------------------------------
-
-async function handleAdminBootstrap(database: ReturnType<typeof db>, adminId: string) {
-  const { data: admin } = await database.from('admin_users').select('id,name,email').eq('id', adminId).single();
-  if (!admin) throw new Error('admin_not_found');
-  return { admin, role: 'admin' };
-}
-
-async function handleAdminOverview(database: ReturnType<typeof db>) {
-  const { data: orgs } = await database.from('organizations').select('id,plan,status');
-  const all = orgs ?? [];
-  const extended = all.filter((o: {plan:string}) => o.plan === 'extended').length;
-  const basic = all.filter((o: {plan:string}) => o.plan === 'basic').length;
-  return {
-    stats: {
-      total_orgs: all.length,
-      extended_count: extended,
-      basic_count: basic,
-      monthly_cost: extended * 490 + basic * 190,
-    },
-    pending_expansions: [],
-    upcoming_meetings: [],
-  };
-}
-
-async function handleAdminClientsList(database: ReturnType<typeof db>, payload: Record<string, unknown>) {
-  const { plan, status, limit = 50, offset = 0 } = payload as { plan?: string; status?: string; limit?: number; offset?: number };
-  let q = database.from('organizations').select('id,name,plan,org_type,status,contact_name,contact_email,created_at');
-  if (plan) q = q.eq('plan', plan);
-  if (status) q = q.eq('status', status);
-  q = q.order('created_at', { ascending: false }).range(offset as number, (offset as number) + (limit as number) - 1);
-  const { data, error } = await q;
-  if (error) throw error;
-
-  const orgs = data ?? [];
-  const orgIds = orgs.map((o: {id:string}) => o.id);
-  if (orgIds.length === 0) return { clients: [] };
-
-  const { data: memberCounts } = await database
-    .from('org_members')
-    .select('org_id')
-    .in('org_id', orgIds);
-
-  const countMap: Record<string, number> = {};
-  for (const m of (memberCounts ?? [])) {
-    const mid = (m as {org_id:string}).org_id;
-    countMap[mid] = (countMap[mid] ?? 0) + 1;
+async function itemsRemove(d: DB, orgId: string, ids: number[]) {
+  if (!ids?.length) return { ok: true };
+  const { data: rows } = await d.from('content_items').select('id').eq('org_id', orgId).in('ui_id', ids);
+  const dbids = (rows ?? []).map((r: any) => r.id);
+  if (dbids.length) {
+    await d.from('item_approvals').delete().in('item_id', dbids);
+    await d.from('item_comments').delete().in('item_id', dbids);
+    const { error } = await d.from('content_items').delete().in('id', dbids);
+    if (error) throw error;
   }
+  return { ok: true, removed: dbids.length };
+}
 
+async function stateSave(d: DB, orgId: string, data: unknown) {
+  const { error } = await d.from('org_state').upsert({ org_id: orgId, data, updated_at: new Date().toISOString() });
+  if (error) throw error;
+  return { ok: true };
+}
+
+async function adminState(d: DB) {
+  const { data } = await d.from('admin_state').select('data,updated_at').eq('id', 'main').maybeSingle();
+  return data;
+}
+
+async function inboxAdd(d: DB, orgId: string, p: { reqs?: any[]; meetings?: any[] }) {
+  const cur = (await adminState(d))?.data ?? null;
+  if (!cur) return { ok: true, skipped: true }; // admin never opened yet - seed data still in place
+  const add = (key: string, arr?: any[]) => {
+    if (!arr?.length) return;
+    const list: any[] = Array.isArray(cur[key]) ? cur[key] : [];
+    for (const x of arr) if (x && !list.some((y) => y.id === x.id)) list.unshift({ ...x, liveOrg: orgId });
+    cur[key] = list;
+  };
+  add('REQS', p.reqs);
+  add('MEETINGS', p.meetings);
+  await d.from('admin_state').upsert({ id: 'main', data: cur, updated_at: new Date().toISOString() });
+  return { ok: true };
+}
+
+// ---------------- admin ----------------
+async function adminLoad(d: DB, adminId: string) {
+  const [a, st, orgs] = await Promise.all([
+    d.from('admin_users').select('id,name,email').eq('id', adminId).maybeSingle(),
+    adminState(d),
+    d.from('organizations').select('id,name,plan,status,settings,created_at').order('created_at'),
+  ]);
+  const ids = (orgs.data ?? []).map((o: any) => o.id);
+  const { data: toks } = ids.length ? await d.from('api_tokens').select('org_id,token').in('org_id', ids) : { data: [] };
+  const tokOf: Record<string, string> = {};
+  for (const t of toks ?? []) if (!tokOf[t.org_id]) tokOf[t.org_id] = t.token;
   return {
-    clients: orgs.map((o: Record<string, unknown>) => ({
-      ...o,
-      member_count: countMap[o.id as string] ?? 0,
-    })),
+    admin: a.data,
+    state: st?.data ?? null,
+    stateAt: st?.updated_at ?? null,
+    realOrgs: (orgs.data ?? []).map((o: any) => ({ id: o.id, name: o.name, plan: o.plan, status: o.status, ui_id: o.settings?.ui_id ?? null, token: tokOf[o.id] ?? null })),
   };
 }
 
-async function handleAdminClientGet(database: ReturnType<typeof db>, payload: Record<string, unknown>) {
-  const { id } = payload as { id: string };
-  if (!id) throw new Error('missing_id');
-  const [orgRes, membersRes, deptsRes] = await Promise.all([
-    database.from('organizations').select('*').eq('id', id).single(),
-    database.from('org_members').select('*').eq('org_id', id).order('created_at'),
-    database.from('departments').select('*').eq('org_id', id),
-  ]);
-  if (!orgRes.data) throw new Error('not_found');
-  return { org: orgRes.data, members: membersRes.data ?? [], departments: deptsRes.data ?? [] };
+async function adminOrgCreate(d: DB, p: Record<string, any>) {
+  if (!p.name) throw new Error('missing_name');
+  const { data: org, error } = await d.from('organizations').insert({
+    name: String(p.name).slice(0, 200),
+    plan: p.plan === 'basic' ? 'basic' : 'extended',
+    org_type: 'municipality',
+    status: 'active',
+    contact_name: p.contact ?? null,
+    contact_email: p.mail ?? null,
+    contact_phone: p.phone ?? null,
+    settings: { ui_id: p.ui_id ?? null, otype: p.otype ?? null },
+  }).select('id').single();
+  if (error) throw error;
+  const { data: mem, error: e2 } = await d.from('org_members').insert({
+    org_id: org.id, name: p.contact || 'מנהל המערכת', email: p.mail ?? null, role: 'admin', view: p.plan === 'basic' ? 'basic' : 'ext',
+  }).select('id').single();
+  if (e2) throw e2;
+  const token = newToken();
+  const { error: e3 } = await d.from('api_tokens').insert({ token, org_id: org.id, member_id: mem.id });
+  if (e3) throw e3;
+  await d.from('org_state').upsert({ org_id: org.id, data: { fresh: true }, updated_at: new Date().toISOString() });
+  return { org_id: org.id, token };
 }
 
-// ---- main dispatcher --------------------------------------------------------
-Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') return preflight(req, 'POST');
-  if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
+// ---------------- auth ----------------
+async function resolve(d: DB, token: string) {
+  const { data: t } = await d.from('api_tokens').select('org_id,member_id').eq('token', token).maybeSingle();
+  if (t) return { kind: 'client' as const, orgId: t.org_id as string, memberId: (t.member_id as string) ?? null };
+  const { data: a } = await d.from('admin_tokens').select('admin_id').eq('token', token).maybeSingle();
+  if (a) return { kind: 'admin' as const, adminId: a.admin_id as string };
+  return null;
+}
 
+async function login(d: DB, p: Record<string, any>) {
+  const email = String(p.email ?? '').toLowerCase().trim();
+  if (!email || !p.password) throw new Error('missing_fields');
+  const { data: m } = await d.from('org_members').select('id,org_id').ilike('email', email).maybeSingle();
+  if (!m || p.password !== 'demo1234') throw new Error('invalid_credentials');
+  const { data: t } = await d.from('api_tokens').select('token').eq('member_id', m.id).limit(1).maybeSingle();
+  if (t) return { token: t.token };
+  const token = newToken();
+  await d.from('api_tokens').insert({ token, org_id: m.org_id, member_id: m.id });
+  return { token };
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
+  if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
   let action = '';
-  let payload: Record<string, unknown> = {};
+  let p: Record<string, any> = {};
   try {
-    const body = await req.json();
-    action = body.action ?? '';
-    payload = body.payload ?? {};
+    const b = await req.json();
+    action = b.action ?? '';
+    p = b.payload ?? {};
   } catch {
     return json(req, { error: 'bad_json' }, 400);
   }
-
-  const database = db();
-
+  const d = db();
   try {
-    if (action === 'login') {
-      return json(req, await handleLogin(database, payload));
+    if (action === 'login') return json(req, await login(d, p));
+    const token = req.headers.get('x-primeos-token')?.trim() ?? '';
+    const s = token ? await resolve(d, token) : null;
+    if (!s) return json(req, { error: 'invalid_token' }, 401);
+
+    if (action === 'whoami') return json(req, { kind: s.kind });
+
+    if (s.kind === 'client') {
+      if (action === 'live.load') return json(req, await liveLoad(d, s.orgId, s.memberId));
+      if (action === 'items.upsert') return json(req, await itemsUpsert(d, s.orgId, p.items ?? []));
+      if (action === 'items.remove') return json(req, await itemsRemove(d, s.orgId, p.ids ?? []));
+      if (action === 'state.save') return json(req, await stateSave(d, s.orgId, p.data ?? {}));
+      if (action === 'inbox.add') return json(req, await inboxAdd(d, s.orgId, p));
+    } else {
+      if (action === 'admin.load') return json(req, await adminLoad(d, s.adminId));
+      if (action === 'admin.state.save') {
+        const { error } = await d.from('admin_state').upsert({ id: 'main', data: p.data ?? {}, updated_at: new Date().toISOString() });
+        if (error) throw error;
+        return json(req, { ok: true });
+      }
+      if (action === 'admin.org.create') return json(req, await adminOrgCreate(d, p));
     }
-
-    const sess = await resolveToken(req);
-    const adminSess = !sess ? await resolveAdminToken(req) : null;
-
-    if (!sess && !adminSess) return json(req, { error: 'invalid_token' }, 401);
-
-    if (adminSess) {
-      if (action === 'bootstrap') return json(req, await handleAdminBootstrap(database, adminSess.adminId));
-      if (action === 'admin.overview') return json(req, await handleAdminOverview(database));
-      if (action === 'admin.clients.list') return json(req, await handleAdminClientsList(database, payload));
-      if (action === 'admin.client.get') return json(req, await handleAdminClientGet(database, payload));
-    }
-
-    if (sess) {
-      const { orgId, memberId } = sess;
-      if (action === 'bootstrap') return json(req, await handleBootstrap(database, orgId, memberId));
-      if (action === 'dashboard') return json(req, await handleDashboard(database, orgId));
-      if (action === 'items.list') return json(req, await handleItemsList(database, orgId, payload));
-      if (action === 'items.get') return json(req, await handleItemGet(database, orgId, payload));
-      if (action === 'items.create') return json(req, await handleItemCreate(database, orgId, memberId, payload));
-      if (action === 'items.update') return json(req, await handleItemUpdate(database, orgId, memberId, payload));
-      if (action === 'comments.add') return json(req, await handleCommentAdd(database, orgId, memberId, payload));
-    }
-
     return json(req, { error: 'unknown_action' }, 400);
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'internal_error';
-    const status = msg === 'invalid_token' ? 401 : msg === 'not_found' ? 404 : 500;
-    return json(req, { error: msg }, status);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : (e as any)?.message ?? 'internal_error';
+    return json(req, { error: msg }, msg === 'invalid_credentials' ? 401 : 500);
   }
 });

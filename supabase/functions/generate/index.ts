@@ -1,154 +1,160 @@
-// PrimeOS generate edge function
-// Calls Claude API to generate social post content for a given brief
-// POST { brief: {...}, org_id, item_id? }
-import { db } from '../_shared/db.ts';
-import { cors, preflight } from '../_shared/cors.ts';
+// PrimeOS generate - all AI text generation through the Claude API.
+// POST { mode, ...input }   header x-primeos-token
+// modes: post | alt | revise | assistant | doc | deck
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
-const CLAUDE_MODEL = 'claude-3-5-haiku-20241022';
+const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-7-sonnet-latest'];
+let goodModel: string | null = null;
 
+const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
+function cors(req: Request) {
+  const o = req.headers.get('origin') ?? '';
+  return {
+    'access-control-allow-origin': ORIGINS.includes(o) ? o : ORIGINS[0],
+    'access-control-allow-headers': 'content-type, x-primeos-token, apikey, authorization',
+    'access-control-allow-methods': 'POST, OPTIONS',
+    vary: 'origin',
+  };
+}
 const json = (req: Request, body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { ...cors(req, 'POST'), 'content-type': 'application/json; charset=utf-8' },
-  });
+  new Response(JSON.stringify(body), { status, headers: { ...cors(req), 'content-type': 'application/json; charset=utf-8' } });
 
-interface Brief {
-  topic: string;
-  tone?: string;
-  cta?: string;
-  type?: string; // graphic | document | deck | video
-  audience?: string;
-  extra?: string;
+function db() {
+  return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 }
 
-interface OrgBrand {
-  name: string;
-  org_type: string;
-  tone?: string;
-  writing_rules?: string[];
-  colors?: { name: string; hex: string }[];
-}
-
-async function loadOrgBrand(database: ReturnType<typeof db>, orgId: string): Promise<OrgBrand> {
-  const { data } = await database
-    .from('organizations')
-    .select('name,org_type')
-    .eq('id', orgId)
-    .maybeSingle();
-  return { name: data?.name ?? 'הארגון', org_type: data?.org_type ?? 'municipality' };
-}
-
-async function callClaude(apiKey: string, prompt: string): Promise<string> {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`claude_api_error: ${err}`);
+async function claude(key: string, system: string, user: string, maxTokens = 1500): Promise<string> {
+  const order = goodModel ? [goodModel, ...MODELS.filter((m) => m !== goodModel)] : MODELS;
+  let last = '';
+  for (const model of order) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+    });
+    if (res.ok) {
+      goodModel = model;
+      const d = await res.json();
+      return (d.content ?? []).filter((c: { type: string }) => c.type === 'text').map((c: { text: string }) => c.text).join('');
+    }
+    last = await res.text();
+    // only fall through to the next model when this one is unknown/unavailable
+    if (res.status !== 404 && !(res.status === 400 && last.includes('model'))) break;
   }
-  const data = await res.json();
-  return data.content?.[0]?.text ?? '';
+  throw new Error('claude_api_error: ' + last.slice(0, 300));
 }
 
-function buildPrompt(brand: OrgBrand, brief: Brief): string {
-  const typeLabel = brief.type === 'document' ? 'פוסט עם טקסט ארוך למסמך'
-    : brief.type === 'deck' ? 'תוכן למצגת'
-    : brief.type === 'video' ? 'סקריפט לסרטון קצר'
-    : 'פוסט לרשתות חברתיות';
-
-  return `אתה כותב תוכן עבור ${brand.name} (${brand.org_type === 'municipality' ? 'עירייה' : 'ארגון ציבורי'}) לרשתות חברתיות.
-
-נושא: ${brief.topic}
-סוג תוכן: ${typeLabel}
-${brief.tone ? `טון: ${brief.tone}` : 'טון: מקצועי ונגיש'}
-${brief.cta ? `קריאה לפעולה: ${brief.cta}` : ''}
-${brief.audience ? `קהל יעד: ${brief.audience}` : ''}
-${brief.extra ? `פרטים נוספים: ${brief.extra}` : ''}
-
-צור את הפריטים הבאים בפורמט JSON בלבד:
-{
-  "title": "כותרת קצרה ומושכת (עד 60 תווים)",
-  "body": "גוף הפוסט (עד 280 תווים לפוסט רגיל, 500 למסמך/מצגת)",
-  "cta": "קריאה לפעולה קצרה (עד 50 תווים)",
-  "hashtags": ["האשטג1", "האשטג2", "האשטג3"],
-  "html": "HTML של כרטיסיית תצוגה מקדימה - div עם סגנון inline המדמה פוסט חברתי יפה. כלול: כותרת, גוף, לוגו טקסטואלי של הארגון. גופן Heebo. ללא תגיות html/head/body."
+function parseJson(raw: string) {
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('invalid_ai_response');
+  return JSON.parse(m[0]);
 }
 
-כתוב בעברית. RTL. ללא הסברים מחוץ ל-JSON.`;
+const RULES = `כללי כתיבה מחייבים:
+- עברית תקנית, פנייה לתושבים בלשון רבים.
+- מקף רגיל בלבד (-), אף פעם לא מקף ארוך.
+- לא להמציא נתונים, מספרי טלפון, כתובות או תאריכים שלא נמסרו. אם חסר פרט - לנסח בלעדיו.
+- בלי פתיחים כמו "בשמחה" ובלי הסברים מחוץ לתוצר.`;
+
+function sys(ctx: Ctx) {
+  return `אתה כותב התוכן של ${ctx.org}${ctx.dept ? ', מחלקת ' + ctx.dept : ''}. כותב לרשתות החברתיות, לאתר ולמסמכים רשמיים של הרשות.
+${ctx.tone ? 'שפת המותג: ' + ctx.tone : ''}
+${ctx.good?.length ? 'ניסוחים טובים לדוגמה: ' + ctx.good.join(' | ') : ''}
+${ctx.bad?.length ? 'להימנע מ: ' + ctx.bad.join(' | ') : ''}
+${RULES}`;
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') return preflight(req, 'POST');
+interface Ctx { org: string; dept?: string; tone?: string; good?: string[]; bad?: string[] }
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
   if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
 
+  const token = req.headers.get('x-primeos-token')?.trim();
+  if (!token) return json(req, { error: 'invalid_token' }, 401);
   const database = db();
-
-  // auth: require valid token
-  const tokenHeader = req.headers.get('x-primeos-token')?.trim();
-  if (!tokenHeader) return json(req, { error: 'invalid_token' }, 401);
-
-  const { data: tokenRow } = await database
-    .from('api_tokens')
-    .select('org_id, member_id')
-    .eq('token', tokenHeader)
-    .maybeSingle();
-
-  // also allow admin tokens
-  let orgId: string | null = tokenRow?.org_id ?? null;
-  if (!orgId) {
-    const { data: adminRow } = await database
-      .from('admin_tokens')
-      .select('admin_id')
-      .eq('token', tokenHeader)
-      .maybeSingle();
-    if (!adminRow) return json(req, { error: 'invalid_token' }, 401);
-    // admin can generate for any org
+  const { data: t } = await database.from('api_tokens').select('org_id').eq('token', token).maybeSingle();
+  let orgName = '';
+  if (t) {
+    const { data: o } = await database.from('organizations').select('name').eq('id', t.org_id).maybeSingle();
+    orgName = o?.name ?? '';
+  } else {
+    const { data: a } = await database.from('admin_tokens').select('admin_id').eq('token', token).maybeSingle();
+    if (!a) return json(req, { error: 'invalid_token' }, 401);
   }
 
-  let body: { brief: Brief; org_id?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return json(req, { error: 'bad_json' }, 400);
-  }
+  let p: Record<string, any>;
+  try { p = await req.json(); } catch { return json(req, { error: 'bad_json' }, 400); }
 
-  const targetOrgId = body.org_id ?? orgId ?? '';
-  const brief = body.brief;
-  if (!brief?.topic) return json(req, { error: 'missing_topic' }, 400);
+  const key = Deno.env.get('ANTHROPIC_API_KEY');
+  if (!key) return json(req, { error: 'claude_not_configured' }, 503);
 
-  const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!apiKey) return json(req, { error: 'claude_not_configured' }, 503);
+  const ctx: Ctx = { org: p.org || orgName || 'הרשות', dept: p.dept, tone: p.tone, good: p.good, bad: p.bad };
+  const s = sys(ctx);
+  const mode = p.mode ?? 'post';
 
   try {
-    const brand = await loadOrgBrand(database, targetOrgId);
-    const prompt = buildPrompt(brand, brief);
-    const raw = await callClaude(apiKey, prompt);
+    if (mode === 'post') {
+      const chans = (p.channels ?? []).join(', ');
+      const raw = await claude(key, s, `כתוב פרסום מסוג ${p.typeLabel || 'פוסט גרפי'} לערוצים: ${chans || 'Facebook, Instagram'}.
+כותרת שהוזנה: ${p.title || '(לא הוזנה - לנסח כותרת)'}
+בריף: ${p.brief || '(אין בריף - לכתוב לפי הכותרת)'}
 
-    // extract JSON from response
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('invalid_claude_response');
+החזר JSON בלבד:
+{"title":"כותרת קצרה לגרפיקה, עד 45 תווים","body":"טקסט הפרסום, 2-4 משפטים, עד 320 תווים","tags":["#האשטג","#האשטג","#האשטג","#האשטג","#האשטג"]}
+ההאשטגים בעברית, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.`);
+      const j = parseJson(raw);
+      return json(req, { ok: true, title: j.title ?? '', body: j.body ?? '', tags: (j.tags ?? []).map((x: string) => (x.startsWith('#') ? x : '#' + x)) });
+    }
 
-    const generated = JSON.parse(jsonMatch[0]);
-    return json(req, {
-      ok: true,
-      title: generated.title ?? '',
-      body: generated.body ?? '',
-      cta: generated.cta ?? '',
-      hashtags: generated.hashtags ?? [],
-      html: generated.html ?? '',
-    });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'generation_failed';
-    return json(req, { error: msg }, 500);
+    if (mode === 'alt') {
+      const raw = await claude(key, s, `כותרת: ${p.title}\nנוסח קיים: ${p.body}\n\nכתוב נוסח חלופי שונה בסגנון ובפתיחה, באותו אורך בערך, עם אותם פרטים בדיוק. החזר JSON בלבד: {"body":"..."}`);
+      return json(req, { ok: true, body: parseJson(raw).body ?? '' });
+    }
+
+    if (mode === 'revise') {
+      const raw = await claude(key, s, `לפניך תוכן קיים בפורמט JSON:
+${JSON.stringify(p.content)}
+
+בקשת התיקון: ${p.instruction}
+
+החזר את אותו JSON בדיוק באותו מבנה ובאותם מפתחות, עם התיקון. JSON בלבד.`, 3000);
+      return json(req, { ok: true, content: parseJson(raw) });
+    }
+
+    if (mode === 'assistant') {
+      const raw = await claude(key, s + `\nאתה גם העוזר החכם של המערכת. עונה קצר וענייני על בסיס הנתונים שמצורפים בלבד. אם אין מידע - אומר זאת. מותר להשתמש ב-<b> להדגשה ובשורות שמתחילות ב-"• ".`,
+        `נתוני המערכת כרגע:\n${String(p.context ?? '').slice(0, 12000)}\n\nשאלה: ${p.question}`, 900);
+      return json(req, { ok: true, answer: raw.trim() });
+    }
+
+    if (mode === 'doc') {
+      const raw = await claude(key, s, `כתוב מסמך מעוצב בסגנון "${p.styleLabel || 'רשמי'}".
+כותרת: ${p.title || '(לנסח כותרת)'}
+מה המסמך צריך להכיל: ${p.prompt || '(לפי הכותרת)'}
+
+החזר JSON בלבד:
+{"title":"כותרת המסמך","paras":["14 פסקאות קצרות, כל אחת משפט או שניים, בסדר הזה: 3 לרקע, 4 לעיקרי הדברים, 2 ללוחות זמנים, 3 לאחריות וביצוע, 1 לפרטי קשר, 1 לטוב לדעת"]}`, 3000);
+      const j = parseJson(raw);
+      return json(req, { ok: true, title: j.title ?? '', paras: j.paras ?? [] });
+    }
+
+    if (mode === 'deck') {
+      const n = Math.max(3, Math.min(30, +p.pages || 10));
+      const raw = await claude(key, s, `בנה מצגת של ${n} עמודים.
+כותרת: ${p.title || '(לנסח כותרת)'}
+מה המצגת צריכה להכיל: ${p.prompt || '(לפי הכותרת)'}
+העמוד הראשון שער, העמוד האחרון סיום.
+
+החזר JSON בלבד:
+{"title":"כותרת המצגת","slides":[{"t":"כותרת העמוד","pts":["2-4 נקודות קצרות"]}]}
+בדיוק ${n} עמודים במערך slides.`, 4000);
+      const j = parseJson(raw);
+      return json(req, { ok: true, title: j.title ?? '', slides: j.slides ?? [] });
+    }
+
+    return json(req, { error: 'unknown_mode' }, 400);
+  } catch (e) {
+    return json(req, { error: e instanceof Error ? e.message : 'internal_error' }, 500);
   }
 });
