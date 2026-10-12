@@ -6,7 +6,9 @@
 (function () {
   'use strict';
   const API = '/api/v2';
-  const GEN = '/api/generate';
+  // long generations (documents, decks) go straight to the edge function: no 60s proxy limit
+  const LIVE_HOST = /(^|\.)primeos\.co\.il$|\.vercel\.app$/.test(location.hostname);
+  const GEN = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/generate' : '/api/generate';
   const L = (window.PrimeLive = { token: null, kind: null, org: null, me: null, admin: null, demo: false, ready: false });
 
   /* ---------------- transport ---------------- */
@@ -28,7 +30,11 @@
     }
   }
   const call = (action, payload) => post(API, { action, payload: payload || {} });
-  const gen = (payload) => post(GEN, Object.assign(aiCtx(), payload), 95000);
+  const gen = (payload) => {
+    const body = Object.assign(aiCtx(), payload);
+    // network-level failure on the direct route (no HTTP status) falls back to the same-origin proxy
+    return post(GEN, body, 95000).catch((e) => (e.status || GEN === '/api/generate' ? Promise.reject(e) : post('/api/generate', body, 60000)));
+  };
 
   /* ---------------- tokens (separate slot per interface) ---------------- */
   const ls = {
