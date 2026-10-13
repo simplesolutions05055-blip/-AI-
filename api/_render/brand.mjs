@@ -18,7 +18,8 @@ export function kit(b = {}) {
     dept: b.dept || '',
     site: b.site || '',
     phone: b.phone || '',
-    logo: b.logo || null, // optional URL of the organisation's own logo
+    logo: b.logo || null, // optional URL of the organisation's own logo (transparent PNG)
+    logoLight: b.logoLight || null, // white version of the logo for dark backgrounds
     navy: col(0, '#0E3B6B'), deep: col(1, '#0A2C51'), gold: col(2, '#9A6B1F'), sky: col(3, '#1E6BA8'),
     ink: col(4, '#41506A'), bg: col(5, '#EEF1F6'), green: col(6, '#0A6C43'), alert: col(7, '#9B1C1C'),
     goldLt: b.goldLt || '#C9A15A', amber: '#E8A317',
@@ -27,7 +28,10 @@ export function kit(b = {}) {
 
 /** Emblem: the organisation's logo when uploaded, otherwise a generated municipal crest in brand colours. */
 export function crest(k, size = 64, onDark = false) {
-  if (k.logo) return `<img src="${esc(k.logo)}" style="height:${Math.round(size * 1.16)}px;width:auto;display:block" alt="">`;
+  if (k.logo) {
+    const src = onDark && k.logoLight ? k.logoLight : k.logo;
+    return `<img src="${esc(src)}" style="height:${Math.round(size * 1.16)}px;width:auto;max-width:${Math.round(size * 3.4)}px;object-fit:contain;display:block" alt="">`;
+  }
   return `<svg width="${size}" height="${Math.round(size * 1.16)}" viewBox="0 0 100 116" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
 <path d="M50 3 L94 17 V55 C94 83 74 102 50 113 C26 102 6 83 6 55 V17 Z" fill="${onDark ? '#FFFFFF' : k.navy}"/>
 <path d="M50 10 L87 22 V55 C87 79 70 95 50 105 C30 95 13 79 13 55 V22 Z" fill="none" stroke="${k.gold}" stroke-width="3.2"/>

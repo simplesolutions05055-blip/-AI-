@@ -1316,7 +1316,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if ((r.good || []).length) { t.rules.good = [...new Set([...r.good, ...t.rules.good])].slice(0, 8); ch.push(r.good.length + ' ניסוחים מועדפים'); }
       if ((r.bad || []).length) { t.rules.bad = [...new Set([...r.bad, ...t.rules.bad])].slice(0, 8); ch.push(r.bad.length + ' כללי הימנעות'); }
       const cols = (r.colors || []).filter((c) => /^#[0-9a-f]{6}$/i.test(c.hex || ''));
-      if (cols.length) { t.colors = cols.slice(0, 8).map((c) => [c.n || 'צבע', c.hex.toUpperCase()]); ch.push(cols.length + ' צבעי מותג'); }
+      if (cols.length) { const pal = paletteFrom(cols.map((c) => c.hex.toUpperCase())); cols.slice(0, 1).forEach((c) => { pal[0][0] = (c.n || 'ראשי') + ' (מהמסמך)'; }); t.colors = pal; ch.push(cols.length + ' צבעי מותג'); }
       if ((r.fonts || []).length && typeof FONTS !== 'undefined') { const f = r.fonts.find((x) => FONTS.includes(x)); if (f) { t.fonts.h = f; t.fonts.b = f; ch.push('גופן'); } }
       render();
       toast(ch.length ? 'המערכת למדה מהמסמכים' : 'המסמכים נקלטו', ch.length ? 'עודכנו: ' + ch.join(', ') + '.' : (r.summary || 'לא נמצאו בהם הנחיות מותג מפורשות.'));
@@ -1562,4 +1562,181 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   const withLogo = (h) => { const l = logoOf(); return l ? h.replace(/<span class="avatar" style="background:var\(--(?:p-navy|brand)\);color:#fff">נה<\/span>/g, '<span class="avatar has-logo"><img src="' + esc(l) + '" alt=""></span>') : h; };
   const _spL = studioPreview; studioPreview = function (o) { return withLogo(_spL(o)); };
   const _ppL = postPreview; postPreview = function (it, r) { return withLogo(_ppL(it, r)); };
+
+  /* =====================================================================
+   * ONE LOGO: upload once; the system makes it transparent, trims it,
+   * creates a white version for dark backgrounds and derives the brand palette from it
+   * ===================================================================== */
+  const loadImg = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+  const hex = (r, g, b) => '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('').toUpperCase();
+  const rgbOf = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const lum = (h) => { const c = rgbOf(h).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  const mix = (a, b, t) => { const x = rgbOf(a), y = rgbOf(b); return hex(x[0] + (y[0] - x[0]) * t, x[1] + (y[1] - x[1]) * t, x[2] + (y[2] - x[2]) * t); };
+  function hsl(h) { let [r, g, b] = rgbOf(h).map((v) => v / 255); const mx = Math.max(r, g, b), mn = Math.min(r, g, b); const l = (mx + mn) / 2; let hh = 0, ss = 0;
+    if (mx !== mn) { const d = mx - mn; ss = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn); hh = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; hh *= 60; }
+    return { h: hh, s: ss, l }; }
+  const canvasOf = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+  const blobOf = (c) => new Promise((r) => c.toBlob(r, 'image/png'));
+  async function processLogo(file) {
+    const src = URL.createObjectURL(file);
+    try {
+      const img = await loadImg(src);
+      let w = img.naturalWidth || 1000, h = img.naturalHeight || 1000;
+      const k = Math.max(w, h) > 1400 ? 1400 / Math.max(w, h) : Math.max(w, h) < 700 ? 1000 / Math.max(w, h) : 1;
+      w = Math.round(w * k); h = Math.round(h * k);
+      const c = canvasOf(w, h), x = c.getContext('2d', { willReadFrequently: true });
+      x.drawImage(img, 0, 0, w, h);
+      const im = x.getImageData(0, 0, w, h), d = im.data, N = w * h;
+      let clear = 0; for (let i = 3; i < d.length; i += 4) if (d[i] < 245) clear++;
+      const hadAlpha = clear > N * 0.01;
+      let removed = false;
+      if (!hadAlpha) {
+        // background = dominant colour of the border; remove it from the edges inwards (keeps white details inside the logo)
+        const border = [];
+        for (let i = 0; i < w; i++) border.push(i, (h - 1) * w + i);
+        for (let j = 0; j < h; j++) border.push(j * w, j * w + w - 1);
+        const cnt = new Map();
+        for (const p of border) { const q = p * 4, key = (d[q] >> 4) + ',' + (d[q + 1] >> 4) + ',' + (d[q + 2] >> 4); cnt.set(key, (cnt.get(key) || 0) + 1); }
+        const [topKey, topN] = [...cnt.entries()].sort((a, b) => b[1] - a[1])[0];
+        if (topN / border.length > 0.55) {
+          const sel = border.filter((p) => { const q = p * 4; return (d[q] >> 4) + ',' + (d[q + 1] >> 4) + ',' + (d[q + 2] >> 4) === topKey; });
+          let br = 0, bg = 0, bb = 0; sel.forEach((p) => { br += d[p * 4]; bg += d[p * 4 + 1]; bb += d[p * 4 + 2]; });
+          br /= sel.length; bg /= sel.length; bb /= sel.length;
+          const T = 42, dist = (q) => Math.hypot(d[q] - br, d[q + 1] - bg, d[q + 2] - bb);
+          const seen = new Uint8Array(N), queue = new Int32Array(N); let qh = 0, qt = 0;
+          for (const p of border) if (!seen[p] && dist(p * 4) < T) { seen[p] = 1; queue[qt++] = p; }
+          while (qh < qt) {
+            const p = queue[qh++], q = p * 4; d[q + 3] = 0;
+            const px = p % w, nb = [px > 0 ? p - 1 : -1, px < w - 1 ? p + 1 : -1, p - w, p + w];
+            for (const n of nb) {
+              if (n < 0 || n >= N || seen[n]) continue;
+              seen[n] = 1;
+              const dn = dist(n * 4);
+              if (dn < T) queue[qt++] = n;
+              else if (dn < T * 2) d[n * 4 + 3] = Math.min(d[n * 4 + 3], Math.round(255 * (dn - T) / T)); // soft edge
+            }
+          }
+          removed = qt > N * 0.02;
+          x.putImageData(im, 0, 0);
+        }
+      }
+      // trim empty margins
+      let x0 = w, y0 = h, x1 = -1, y1 = -1;
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (d[(j * w + i) * 4 + 3] > 12) { if (i < x0) x0 = i; if (i > x1) x1 = i; if (j < y0) y0 = j; if (j > y1) y1 = j; }
+      if (x1 < 0) { x0 = 0; y0 = 0; x1 = w - 1; y1 = h - 1; }
+      const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.03), tw = x1 - x0 + 1 + pad * 2, th = y1 - y0 + 1 + pad * 2;
+      const out = canvasOf(tw, th); out.getContext('2d').drawImage(c, x0, y0, x1 - x0 + 1, y1 - y0 + 1, pad, pad, x1 - x0 + 1, y1 - y0 + 1);
+      // white version for dark backgrounds
+      const lt = canvasOf(tw, th), lx = lt.getContext('2d');
+      lx.drawImage(out, 0, 0); lx.globalCompositeOperation = 'source-in'; lx.fillStyle = '#FFFFFF'; lx.fillRect(0, 0, tw, th);
+      // colours of the logo: opaque pixels, near-white ignored, similar shades merged
+      const buckets = new Map(); let tot = 0;
+      const od = out.getContext('2d').getImageData(0, 0, tw, th).data;
+      for (let i = 0; i < od.length; i += 4) {
+        if (od[i + 3] < 200) continue;
+        const r = od[i], g = od[i + 1], b = od[i + 2];
+        if (r > 236 && g > 236 && b > 236) continue;
+        tot++;
+        const key = (r >> 4) * 256 + (g >> 4) * 16 + (b >> 4), e = buckets.get(key) || [0, 0, 0, 0];
+        e[0] += r; e[1] += g; e[2] += b; e[3]++; buckets.set(key, e);
+      }
+      const clusters = [];
+      [...buckets.values()].sort((a, b) => b[3] - a[3]).forEach((e) => {
+        const col = [e[0] / e[3], e[1] / e[3], e[2] / e[3]];
+        const hit = clusters.find((cl) => Math.hypot(cl.c[0] - col[0], cl.c[1] - col[1], cl.c[2] - col[2]) < 62);
+        if (hit) { hit.n += e[3]; } else clusters.push({ c: col, n: e[3] });
+      });
+      const colors = clusters.filter((cl) => cl.n > tot * 0.015).slice(0, 6).map((cl) => hex(...cl.c));
+      return { png: await blobOf(out), light: await blobOf(lt), colors, removed, hadAlpha, w: tw, h: th };
+    } finally { URL.revokeObjectURL(src); }
+  }
+  // brand palette from the logo colours (white text must stay readable on the main colour)
+  function paletteFrom(cols) {
+    const chroma = cols.filter((c) => { const q = hsl(c); return q.s > 0.18 && q.l > 0.08 && q.l < 0.9; });
+    const darks = cols.filter((c) => !chroma.includes(c));
+    let primary = chroma[0] || darks[0] || '#0E3B6B';
+    let accent = chroma.find((c) => c !== primary && Math.min(Math.abs(hsl(c).h - hsl(primary).h), 360 - Math.abs(hsl(c).h - hsl(primary).h)) > 25) || null;
+    if (lum(primary) > 0.18) { if (!accent) accent = primary; let t = 0; while (lum(primary) > 0.18 && t < 12) { primary = mix(primary, '#000000', 0.12); t++; } }
+    if (!accent) accent = mix(primary, '#FFFFFF', 0.35);
+    const second = chroma.find((c) => c !== accent && c !== cols[0] && c !== primary) || mix(primary, '#FFFFFF', 0.28);
+    return [['ראשי (מהלוגו)', primary], ['כהה', mix(primary, '#000000', 0.32)], ['הדגשה (מהלוגו)', accent], ['משני', second],
+      ['טקסט', mix(primary, '#4A5568', 0.78)], ['רקע בהיר', mix(primary, '#FFFFFF', 0.92)], ['ירוק אישור', '#0A6C43'], ['אדום התראה', '#9B1C1C']];
+  }
+  async function uploadBlob(blob, name) {
+    const s = await call('upload.sign', { name });
+    const r = await fetch(s.upload, { method: 'PUT', headers: { 'content-type': 'image/png', 'x-upsert': 'true' }, body: blob });
+    if (!r.ok) throw new Error('upload_failed');
+    return s.url;
+  }
+  S.logoBusy = '';
+  ACT.logoUp = async () => {
+    const [file] = await pickFiles('image/png,image/jpeg,image/webp,image/svg+xml');
+    if (!file) return;
+    if (file.size > MAXB) { toast('הקובץ גדול מדי', 'עד 50MB.', 'err'); return; }
+    S.logoBusy = 'מעבד את הלוגו: רקע, חיתוך וצבעים...';
+    render();
+    try {
+      const r = await processLogo(file);
+      S.logoBusy = 'מעלה את הלוגו...';
+      render();
+      const [url, light] = await Promise.all([uploadBlob(r.png, 'logo.png'), uploadBlob(r.light, 'logo-white.png')]);
+      const pal = paletteFrom(r.colors);
+      const apply = (b) => {
+        b.logos = [{ n: 'לוגו הארגון', c: pal[0][1], url }];
+        b.logoLight = light;
+        b.logoInfo = { colors: r.colors, removed: r.removed, hadAlpha: r.hadAlpha, name: file.name, at: new Date().toLocaleDateString('he-IL') };
+        b.colors = pal;
+      };
+      apply(BRAND);
+      if (S.brandEdit && S.brandDraft) apply(S.brandDraft);
+      S.logoBusy = '';
+      render();
+      flush();
+      toast('הלוגו עודכן', (r.removed ? 'הרקע הוסר אוטומטית. ' : '') + r.colors.length + ' צבעים זוהו והוחלו על צבעי המותג.');
+    } catch (e) {
+      S.logoBusy = '';
+      render();
+      toast('עיבוד הלוגו נכשל', 'נסו קובץ PNG, JPG או SVG אחר.', 'err');
+    }
+  };
+  ACT.bAddLogo = () => ACT.logoUp();
+  const _brandFor2 = brandFor;
+  brandFor = function (dept) { const b = _brandFor2(dept); if (BRAND.logoLight && b.logo) b.logoLight = BRAND.logoLight; return b; };
+  css.textContent += `
+.logo-one{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:22px;align-items:center;margin-bottom:16px}
+.lo-prev{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.lo-prev>div{aspect-ratio:4/3;border-radius:14px;display:grid;place-items:center;padding:18px;border:1px solid var(--line,#DDE3EC)}
+.lo-prev .lo-l{background:repeating-conic-gradient(#EEF1F6 0 25%,#fff 0 50%) 50%/18px 18px}
+.lo-prev img{max-width:100%;max-height:100%;object-fit:contain}
+.lo-prev small{display:block;text-align:center;font-size:12px;color:var(--ink-3,#5A6386);margin-top:6px}
+.lo-info{display:flex;flex-direction:column;gap:10px}.lo-info h3{margin:0;font-size:17px}
+.lo-chips{display:flex;flex-wrap:wrap;gap:8px}.lo-chips span{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;direction:ltr;border:1px solid var(--line,#DDE3EC);border-radius:999px;padding:4px 10px 4px 5px}
+.lo-chips i{width:20px;height:20px;border-radius:50%;display:block;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
+.lo-busy{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--brand,#0E3B6B)}
+@media (max-width:760px){.logo-one{grid-template-columns:1fr}}`;
+  const _brandR = SCREENS.brand.render;
+  SCREENS.brand.render = function () {
+    let h = _brandR.call(this);
+    if ((S.tab.brand || 'logos') !== 'logos') return h;
+    const b = S.brandEdit && S.brandDraft ? S.brandDraft : BRAND;
+    const l = (b.logos || []).find((x) => x.url), info = b.logoInfo || {};
+    const prev = l
+      ? '<div class="lo-prev"><div class="lo-l"><img src="' + esc(l.url) + '" alt="הלוגו"></div><div class="lo-d" style="background:' + esc((b.colors[0] || [])[1] || '#0E3B6B') + '"><img src="' + esc(b.logoLight || l.url) + '" alt="הלוגו על רקע כהה"></div></div>'
+      : '<div class="lo-prev"><div class="lo-l" style="background:var(--surface-2,#F3F5F9)"><span class="t-sub">עוד לא הועלה לוגו</span></div><div class="lo-d" style="background:#0E3B6B"><span style="color:#fff;font-size:13px">גרסה לרקע כהה</span></div></div>';
+    const panel = '<div class="card card-pad logo-one">' + prev + '<div class="lo-info"><h3>הלוגו של הארגון</h3>' +
+      '<span class="t-sub">מעלים לוגו אחד. המערכת מסירה רקע אם צריך, חותכת שוליים, יוצרת גרסה לבנה לרקע כהה ומחלצת ממנו את צבעי המותג.</span>' +
+      (S.logoBusy ? '<div class="lo-busy"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(S.logoBusy) + '</div>' : '') +
+      (l && info.colors ? '<div><b style="font-size:13.5px">הצבעים שזוהו בלוגו</b><div class="lo-chips" style="margin-top:6px">' + info.colors.map((c) => '<span><i style="background:' + c + '"></i>' + c + '</span>').join('') + '</div></div>' +
+        '<div class="note">' + ic('palette', 15) + '<span>הוחלו על צבעי המותג' + (info.removed ? ' · הרקע הוסר אוטומטית' : info.hadAlpha ? ' · הלוגו הגיע שקוף' : '') + '. <button class="link-btn" data-act="tab:brand:colors" style="background:none;border:0;padding:0;font:inherit;color:var(--brand);font-weight:700;cursor:pointer">לצבעים ופונטים</button></span></div>' : '') +
+      '<div><button class="btn btn-primary" data-act="logoUp"' + (S.logoBusy ? ' disabled' : '') + '>' + ic('upload', 16) + ' ' + (l ? 'החלפת לוגו' : 'העלאת לוגו') + '</button></div>' +
+      '<span class="t-sub">PNG, JPG או SVG. רקע אחיד מוסר אוטומטית.</span></div></div>';
+    return h.replace(/<div class="grid g-4">[\s\S]*?(<div class="card card-pad lp-card">)/, panel + '$1');
+  };
+  // the logo position preview shows the real logo
+  const _lpp = logoPosPreview;
+  logoPosPreview = function (pos, size, bg) {
+    const h = _lpp(pos, size, bg);
+    const l = BRAND.logoLight || logoOf();
+    return l ? h.replace(/<span class="sp-logo([^"]*)"><i>נה<\/i>נווה הדר<\/span>/, '<span class="sp-logo$1" style="background:none;padding:0"><img src="' + esc(l) + '" alt="" style="height:30px;width:auto;max-width:120px;object-fit:contain;display:block"></span>') : h;
+  };
 })();

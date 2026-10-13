@@ -84,7 +84,7 @@ export function cardHtml(k, c, format) {
 #c .ln{width:140px;height:8px;border-radius:4px;background:${k.gold}}#c b.org{font-size:40px;font-weight:800;color:#fff}
 #c .w{display:inline-block}`;
   const words = (t) => esc(t).split(/\s+/).map((w) => `<span class="w">${w}</span>`).join(' ');
-  const body = `<div id="c"><span id="cr">${crest(k, c.end ? 220 : 150)}</span>${c.t ? `<h1>${words(c.t)}</h1>` : ''}<span class="ln" id="ln"></span>${c.s ? `<p id="s">${esc(c.s)}</p>` : ''}${c.end ? `<b class="org" id="o">${esc(k.org)}</b>` : ''}</div>
+  const body = `<div id="c"><span id="cr">${crest(k, c.end ? 220 : 150, true)}</span>${c.t ? `<h1>${words(c.t)}</h1>` : ''}<span class="ln" id="ln"></span>${c.s ? `<p id="s">${esc(c.s)}</p>` : ''}${c.end ? `<b class="org" id="o">${esc(k.org)}</b>` : ''}</div>
 <script>const D=${DUR},eo=x=>1-Math.pow(1-Math.max(0,Math.min(1,x)),3),$=i=>document.getElementById(i);window.DUR=D;
 window.frame=t=>{const out=1-eo((t-(D-.35))/.35);$('c').style.opacity=out;$('cr').style.transform='scale('+(.6+.4*eo(t/.5))+')';$('cr').style.opacity=eo(t/.4);
 [...document.querySelectorAll('.w')].forEach((w,j)=>{const k=eo((t-.2-j*.08)/.45);w.style.opacity=k;w.style.transform='translateY('+(50*(1-k))+'px)';});
