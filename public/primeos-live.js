@@ -1707,6 +1707,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const [file] = await pickFiles('image/png,image/jpeg,image/webp,image/svg+xml');
     if (!file) return;
     if (file.size > MAXB) { toast('הקובץ גדול מדי', 'עד 50MB.', 'err'); return; }
+    return logoApply(file);
+  };
+  async function logoApply(file, quiet) {
     S.logoBusy = 'מעבד את הלוגו: רקע, חיתוך וצבעים...';
     render();
     try {
@@ -1734,7 +1737,25 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       render();
       toast('עיבוד הלוגו נכשל', 'נסו קובץ PNG, JPG או SVG אחר.', 'err');
     }
-  };
+  }
+  // a logo saved before the automatic processing existed: process it once, so the brand colours come from it
+  let logoMigrating = false;
+  async function migrateLogo() {
+    if (logoMigrating || S.logoBusy || BRAND.logoInfo) return;
+    const l = (BRAND.logos || []).find((x) => x.url && !/הפוך|לבן/.test(x.n)) || (BRAND.logos || []).find((x) => x.url);
+    if (!l) return;
+    logoMigrating = true;
+    try {
+      const res = await fetch(l.url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('fetch');
+      const blob = await res.blob();
+      const name = (l.url.split('/').pop() || 'logo.png').split('?')[0];
+      const file = new File([blob], name, { type: blob.type || 'image/png' });
+      await logoApply(file);
+    } catch (e) { /* keep the existing logo as is */ }
+    finally { logoMigrating = false; }
+  }
+  (function waitReady() { if (L.ready) { if (L.kind !== 'admin') setTimeout(migrateLogo, 1200); } else setTimeout(waitReady, 500); })();
   ACT.bAddLogo = () => ACT.logoUp();
   const _brandFor2 = brandFor;
   brandFor = function (dept) { const b = _brandFor2(dept); if (BRAND.logoLight && b.logo) b.logoLight = BRAND.logoLight; return b; };
@@ -1761,6 +1782,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if ((S.tab.brand || 'logos') !== 'logos') return h;
     const b = S.brandEdit && S.brandDraft ? S.brandDraft : BRAND;
     const l = (b.logos || []).find((x) => x.url), info = b.logoInfo || {};
+    if (l && !BRAND.logoInfo && !S.logoBusy) setTimeout(migrateLogo, 0);
     const prev = l
       ? '<div class="lo-prev"><div class="lo-l"><img src="' + esc(l.url) + '" alt="הלוגו"></div><div class="lo-d" style="background:' + esc((b.colors[0] || [])[1] || '#0E3B6B') + '"><img src="' + esc(b.logoLight || l.url) + '" alt="הלוגו על רקע כהה"></div></div>'
       : '<div class="lo-prev"><div class="lo-l" style="background:var(--surface-2,#F3F5F9)"><span class="t-sub">עוד לא הועלה לוגו</span></div><div class="lo-d" style="background:#0E3B6B"><span style="color:#fff;font-size:13px">גרסה לרקע כהה</span></div></div>';
