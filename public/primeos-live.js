@@ -770,7 +770,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     } catch (e) {
       if (S.wiz !== w || m.job !== job) return;
       m.busy = '';
-      if (needsImg(m.layout) && !m.image) { m.layout = 'official'; render(); toast('לא התקבלה תמונה', 'עברנו לפריסה רשמית בלי תמונה. אפשר לנסות שוב בכפתור תמונה חדשה.', 'err'); gfxRun(w); return; }
+      if (needsImg(m.layout) && !m.image) { m.layout = 'official'; render(); toast('לא התקבלה תמונה', 'עברנו לפריסה רשמית בלי תמונה. אפשר לבחור שוב פריסה עם תמונה.', 'err'); gfxRun(w); return; }
       render();
       toast('העיצוב לא הושלם', 'נסו שוב בעוד רגע.', 'err');
     }
