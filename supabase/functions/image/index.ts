@@ -20,7 +20,8 @@ const json = (req: Request, body: unknown, status = 200) =>
 const db = () => createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
 const CLAUDE_MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
-const IMAGE_MODELS = ['gpt-image-1.5', 'gpt-image-1'];
+// newest first: gpt-image-2 is the model the first PrimeOS system used (much better Hebrew); older ones are fallbacks
+const IMAGE_MODELS = (Deno.env.get('OPENAI_IMAGE_MODEL') ? [Deno.env.get('OPENAI_IMAGE_MODEL')!] : []).concat(['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1']).filter((m, i, a) => a.indexOf(m) === i);
 const SIZES: Record<string, string> = { square: '1024x1024', portrait: '1024x1536', landscape: '1536x1024' };
 
 async function claude(key: string, system: string, user: string | unknown[]) {
@@ -54,7 +55,7 @@ Write ONE prompt in English for an image model that will design the COMPLETE fin
 Design freedom: invent the composition, typographic hierarchy, shapes, illustration or photo treatment that best fits this specific message. Avoid generic templates; make it feel like a designer made it for this exact announcement.
 Hard rules:
 - State-grade, dignified, clean, high-end Israeli municipal design. Generous margins, strong hierarchy, nothing cluttered.
-- Use ONLY the brand palette given (hex values). Neutrals: white and very light tints of the palette.
+- Build the design around the brand palette given (hex values) as the dominant identity colours. Photography or illustration may carry natural colours that harmonise with it. Neutrals: white and light tints.
 - Hebrew text is written right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in a clean bold Hebrew sans-serif. Never add any other words, letters, numbers, fake text or English.
 - Include only the texts given. Headline largest; kicker small above it; details as clean rows with simple line icons; organisation name small.
 - If reference images are attached: image 1 may be the organisation logo - place it small and unchanged; other images are real photos to feature prominently and respectfully.
@@ -91,8 +92,9 @@ async function openaiImage(okey: string, prompt: string, size: string, quality: 
       r = await fetch('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` }, body: JSON.stringify({ model, prompt, size, quality, n }) });
     }
     if (r.ok) { const data = (await r.json()).data ?? []; return { b64: data[0]?.b64_json ?? '', all: data.map((x: any) => x.b64_json).filter(Boolean) as string[], model }; }
-    last = await r.text();
-    if (!(r.status === 404 || (r.status === 400 && /model/i.test(last)))) break;
+    last = model + ': ' + (await r.text());
+    // a model that is missing or rejects a parameter: try the next one
+    if (!(r.status === 404 || r.status === 400 || r.status === 403)) break;
   }
   throw new Error('openai_error: ' + last.slice(0, 300));
 }
@@ -252,8 +254,8 @@ fixed=true for texts that belong to the template itself and must stay (organisat
         body: JSON.stringify({ model, prompt, size, quality: p.quality ?? 'high', n: 1 }),
       });
       if (r.ok) { b64 = (await r.json()).data?.[0]?.b64_json ?? ''; used = model; break; }
-      last = await r.text();
-      if (!(r.status === 404 || (r.status === 400 && /model/i.test(last)))) break;
+      last = model + ': ' + (await r.text());
+      if (!(r.status === 404 || r.status === 400 || r.status === 403)) break;
     }
     if (!b64) throw new Error('openai_error: ' + last.slice(0, 300));
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
