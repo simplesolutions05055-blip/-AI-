@@ -2120,12 +2120,14 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       m.busy = 'ChatGPT מעצב את הגרפיקה...'; rerenderCamp();
       const tx = { kicker: x.kicker || '', headline: x.t, sub: x.sub || '', details: [], cta: '' };
       let r = await fx('image', { action: 'design', org: aiCtx().org, dept: c.dept, size, brief: x.t + '\n' + (x.body || ''), colors: brandFor(c.dept).colors, texts: tx,
-        refs: logo ? [logo] : [], logo: !!logo, note: note || '', quality: 'medium', n: 1 }, 150000);
+        refs: logo ? [logo] : [], logo: !!logo, note: note || '', quality: 'high', n: 1 }, 150000);
       let url = r.url, check = r.check || { ok: true };
-      if (!check.ok && (check.fixes || []).length) {
-        m.busy = 'מתקנים את הטקסט בגרפיקה...'; rerenderCamp();
+      // up to two masked fix rounds; the version with the fewest text errors is kept
+      const nI = (c) => (c && !c.ok ? (c.issues || []).length || 1 : 0);
+      for (let round = 1; round <= 2 && !check.ok && (check.fixes || []).length; round++) {
+        m.busy = 'מתקנים את הטקסט בגרפיקה' + (round > 1 ? ' (סבב 2)' : '') + '...'; rerenderCamp();
         try { const f = await fx('image', { action: 'fixtext', url, issues: check.issues, fixes: check.fixes, want: r.want || [], size }, 150000); const fc = f.check || { ok: true };
-          if ((fc.ok ? 0 : (fc.issues || []).length || 1) <= (check.issues || []).length) { url = f.url; check = fc; } } catch (e) { /* keep the first version */ }
+          if (nI(fc) <= nI(check)) { url = f.url; check = fc; } else break; } catch (e) { break; }
       }
       m.design = url; m.warn = !check.ok && (check.issues || []).length ? check.issues : null;
       if (size === 'square' && fmt === '1:1') m.url = url;
