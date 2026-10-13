@@ -103,7 +103,7 @@ export default {
     if (body.async) {
       const work = renderAll(body)
         .then((r) => body.statusUpload && put(body.statusUpload, Buffer.from(JSON.stringify({ ok: true, done: Date.now(), results: r.map(({ thumb, sheet, stills, ...x }: any) => x) })), 'application/json'))
-        .catch(() => {});
+        .catch((e: any) => body.statusUpload && put(body.statusUpload, Buffer.from(JSON.stringify({ ok: false, error: String(e?.message || e).slice(0, 300) })), 'application/json').catch(() => {}));
       if (process.env.VERCEL) { waitUntil(work); return json({ ok: true, accepted: true }, 202); }
       await work;
       return json({ ok: true, accepted: true }, 202);
