@@ -2144,6 +2144,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   function rerenderCamp() { if (S.route !== 'bulkReview' && S.route !== 'bulkGen') return; clearTimeout(rrT); rrT = setTimeout(() => { const t = document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName); if (!t) render(); else paintStrip(); }, 120); }
   window.campMediaNow = () => { const c = campById(S.campId); const x = c && c.items[c.cur]; return x && x.media ? x.media : null; };
   var campMediaNow = window.campMediaNow;
+  // after a reload, graphics that were still in progress are marked so they can be designed again
+  (function clearStale() { if (!L.ready) { setTimeout(clearStale, 800); return; } (S.camps || []).forEach((c) => c.items.forEach((x) => { if (x.media && x.media.busy && !GQ.list.some((j) => j.x === x)) { x.media.busy = ''; if (!x.media.url) x.media.err = 'העיצוב נעצר כשהדף נסגר'; } })); })();
   ACT.bGen = async () => {
     const b = S.bulk;
     const bb = $('#bBrief'); if (bb) b.brief = bb.value;
