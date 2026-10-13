@@ -37,10 +37,21 @@ async function whoami(token: string) {
   return r.ok ? ((await r.json()) as { kind: string }).kind : null;
 }
 
+// one extraction per instance: concurrent requests on the same instance must not race on the binary (ETXTBSY)
+let exe: Promise<string> | null = null;
 async function browser() {
   const local = ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find((p) => existsSync(p));
   if (process.env.VERCEL || !local) {
-    return puppeteer.launch({ args: chromium.args, defaultViewport: { width: 1080, height: 1080 }, executablePath: await chromium.executablePath(), headless: true });
+    exe ??= chromium.executablePath();
+    const executablePath = await exe;
+    for (let i = 0; ; i++) {
+      try {
+        return await puppeteer.launch({ args: chromium.args, defaultViewport: { width: 1080, height: 1080 }, executablePath, headless: true });
+      } catch (e: any) {
+        if (i >= 4 || !/ETXTBSY/.test(String(e?.code || e?.message))) throw e;
+        await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+      }
+    }
   }
   return puppeteer.launch({ args: ['--no-sandbox'], executablePath: local, headless: true });
 }
