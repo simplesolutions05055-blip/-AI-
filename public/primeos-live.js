@@ -1964,10 +1964,10 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   async function siteScan(url, quiet) {
     url = normUrl(url);
     if (!url || S.siteBusy) return;
-    S.siteBusy = 'קורא את האתר: דף הבית ועמודים פנימיים...';
+    S.siteBusy = 'קורא את האתר: דף הבית, צור קשר, מחלקות וחדשות... (עד שתי דקות)';
     if (!quiet) render();
     try {
-      const r = await gen({ mode: 'site', url });
+      const r = await fx('generate', Object.assign(aiCtx(), { mode: 'site', url }), 175000);
       const t = BRAND, ch = [];
       t.site = { url: r.url || url, title: r.title || '', summary: r.summary || '', facts: r.facts || {}, depts: r.depts || [], news: r.news || [], terms: r.terms || [], pages: r.pages || [], at: Date.now() };
       t.rules = t.rules || { tone: '', good: [], bad: [] };
