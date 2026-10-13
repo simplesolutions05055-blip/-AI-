@@ -2,7 +2,7 @@
 // Claude turns the Hebrew brief into a precise English art direction; OpenAI (ChatGPT image model) renders it.
 // action 'design': the image model designs the complete graphic (brand palette, Hebrew text, logo/photos as references), Claude proofreads the Hebrew.
 // action 'fixtext': edits an existing design to correct only the flagged Hebrew.
-// POST { action:'check' } | { action:'design', texts, brief, colors, refs, logo, size, note?, n? } | { action:'fixtext', url, fixes, issues, want, size } | { brief, title?, dept?, size?, prompt? }
+// POST { action:'check' } | { action:'tplscan', url } | design + template:{url,desc,slots} | { action:'design', texts, brief, colors, refs, logo, size, note?, n? } | { action:'fixtext', url, fixes, issues, want, size } | { brief, title?, dept?, size?, prompt? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
@@ -60,6 +60,18 @@ Hard rules:
 - If reference images are attached: image 1 may be the organisation logo - place it small and unchanged; other images are real photos to feature prominently and respectfully.
 - People only when it serves the message: real, diverse Israeli residents, modest, natural. No flags with emblems, no political symbols, no alarming scenes.
 Return only the prompt, max 230 words.`;
+
+// personal template: the organisation's own design is the fixed structure, only texts and imagery change
+const TEMPLATE_DESIGNER = `You are the senior art director of a studio that produces official social-media graphics for an Israeli municipality from the municipality's OWN fixed design template.
+Write ONE prompt in English for an image model. Reference image 1 attached to the image model is the template.
+Hard rules:
+- Reproduce the template EXACTLY: same canvas layout and grid, same background, same shapes, frames, bands, decorative elements, colours, logo placement, typography style, sizes and alignment. Describe these concretely (use the structural description provided) so nothing drifts.
+- Replace ONLY: (a) the text inside each text area with the new Hebrew texts given, mapped to the slot with the same role (headline in the headline area, etc.); (b) the photo or illustration area with new imagery that fits the new message. Text areas that have no new text: remove their old text and leave that area clean in the template style. Fixed elements of the template (logo, organisation name, website, footer strip, icons) stay as they are.
+- Hebrew text is right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in the same font style as the template. Never add other words, letters, numbers, fake text or English.
+- If more reference images are attached after the template: the logo (place it where the template's logo is) and/or real photos to use in the template's image area.
+Return only the prompt, max 260 words.`;
+
+const TEMPLATE_SCAN = `You analyse an organisation's graphic design template so it can be reproduced exactly with different texts and imagery. Answer with JSON only.`;
 
 async function openaiImage(okey: string, prompt: string, size: string, quality: string, refs: string[], n = 1, mask?: Uint8Array) {
   let last = '';
@@ -160,6 +172,26 @@ Deno.serve(async (req) => {
     }
   }
 
+  // read a personal template once, when it is uploaded: its structure, text slots and image area
+  if (p.action === 'tplscan') {
+    const ckey = Deno.env.get('ANTHROPIC_API_KEY');
+    if (!ckey) return json(req, { error: 'claude_not_configured' }, 503);
+    try {
+      const src = String(p.url ?? '');
+      if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(src)) throw new Error('bad_url');
+      const raw = await claude(ckey, TEMPLATE_SCAN, [
+        { type: 'image', source: { type: 'url', url: src } },
+        { type: 'text', text: `Return JSON: {"desc":"precise English structural description for an image model, max 140 words: canvas, background, colour hex values you see, shapes/frames/bands and where, logo position, image/photo area position and shape, each text area with position, alignment, relative size, weight and colour","slots":[{"role":"kicker|headline|sub|details|cta|footer|org|other","he":"short Hebrew name of the area","text":"the text currently written there, if readable","fixed":true|false}],"image":"none|photo|illustration","summary":"one short Hebrew sentence describing the template for the user"}
+fixed=true for texts that belong to the template itself and must stay (organisation name, website, slogan, footer).` },
+      ]);
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error('scan_failed');
+      return json(req, { ok: true, ...JSON.parse(m[0]) });
+    } catch (e) {
+      return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
+    }
+  }
+
   if (p.action === 'design') {
     const ckey = Deno.env.get('ANTHROPIC_API_KEY');
     if (!ckey) return json(req, { error: 'claude_not_configured' }, 503);
@@ -168,20 +200,29 @@ Deno.serve(async (req) => {
       const lines = [['kicker', tx.kicker], ['headline', tx.headline], ['sub', tx.sub], ...((tx.details ?? []) as any[]).map((d: any, i: number) => ['detail ' + (i + 1), typeof d === 'string' ? d : d?.text]), ['call to action', tx.cta], ['organisation name', p.org]]
         .filter((x) => x[1]).map((x) => `${x[0]}: "${x[1]}"`).join('\n');
       const colors = ((p.colors ?? []) as string[]).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 6).join(', ') || '#0E3B6B, #0A2C51, #9A6B1F, #1E6BA8';
-      const refs = ((p.refs ?? []) as string[]).filter((u) => /^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(u)).slice(0, 4);
+      const okUrl = (u: string) => /^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(u);
+      const tpl = p.template && okUrl(String(p.template.url ?? '')) ? p.template : null;
+      const refs = [...(tpl ? [String(tpl.url)] : []), ...((p.refs ?? []) as string[]).filter(okUrl)].slice(0, 4);
       const fmt = p.size === 'portrait' ? 'vertical portrait' : p.size === 'landscape' ? 'wide landscape' : 'square';
-      const prompt = (await claude(ckey, DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nBrand palette: ${colors}\nTexts to place (exactly):\n${lines}\n${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the logo; ' : ''}${refs.length - (p.logo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim();
+      const slots = tpl ? ((tpl.slots ?? []) as any[]).map((x) => `- ${x.role}${x.fixed ? ' (fixed, keep)' : ''}: ${x.he ?? ''}${x.text ? ' - currently "' + x.text + '"' : ''}`).join('\n') : '';
+      const prompt = tpl
+        ? (await claude(ckey, TEMPLATE_DESIGNER, [
+          { type: 'image', source: { type: 'url', url: String(tpl.url) } },
+          { type: 'text', text: `The attached image is the template (it will be reference image 1 for the image model).\nStructural description: ${tpl.desc ?? ''}\nText areas of the template:\n${slots || '(read them from the image)'}\nNew message brief (Hebrew): ${p.brief ?? ''}\nNew texts to place (exactly):\n${lines}\n${refs.length > 1 ? `More reference images after the template: ${p.logo ? 'the logo, then ' : ''}${refs.length - 1 - (p.logo ? 1 : 0)} photo(s).` : ''}\n${p.note ? 'Change request from the user: ' + p.note : ''}` },
+        ])).trim()
+        : (await claude(ckey, DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nBrand palette: ${colors}\nTexts to place (exactly):\n${lines}\n${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the logo; ' : ''}${refs.length - (p.logo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim();
       const size = SIZES[p.size] ?? SIZES.square;
       const gen = await openaiImage(okey, prompt, size, p.quality ?? 'high', refs, Math.max(1, Math.min(3, +p.n || 2)));
       if (!gen.b64) throw new Error('openai_empty');
       // proofread every candidate the image model wrote, keep the one with the fewest text errors
-      const wantTxt = lines.replace(/^[a-z0-9 ]+: /gim, '');
+      const fixedTx = tpl ? ((tpl.slots ?? []) as any[]).filter((x) => x.fixed && x.text).map((x) => `"${x.text}"`) : [];
+      const wantTxt = lines.replace(/^[a-z0-9 ]+: /gim, '') + (fixedTx.length ? '\n' + fixedTx.join('\n') : '');
       const checks = await Promise.all(gen.all.map((x) => proofImage(ckey, x, wantTxt)));
       let best = 0;
       checks.forEach((c, i) => { if (issuesOf(c) < issuesOf(checks[best])) best = i; });
       const b64 = gen.all[best], check = checks[best], model = gen.model;
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-d-${crypto.randomUUID().slice(0, 8)}.png`;
+      const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${tpl ? 't' : 'd'}-${crypto.randomUUID().slice(0, 8)}.png`;
       const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/png', upsert: false });
       if (up.error) throw up.error;
       return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: lines.split('\n').map((l) => l.replace(/^[a-z0-9 ]+: "|"$/gi, '')), prompt, model, size });

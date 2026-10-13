@@ -662,6 +662,9 @@
     ['official', 'רשמי', 0], ['notice', 'הודעה דחופה', 0], ['stat', 'נתון מרכזי', 0], ['editorial', 'בהיר מערכתי', 0],
   ];
   const needsImg = (l) => !!(LAY.find((x) => x[0] === l) || [])[2];
+  // 'ai' = free design in the brand colours; 'tpl:<id>' = the organisation's own template, only texts and imagery change
+  const isAiLay = (l) => l === 'ai' || /^tpl:/.test(String(l || ''));
+  const tplOf = (l) => { const id = /^tpl:(.+)$/.exec(String(l || '')); return id ? ((typeof BRAND !== 'undefined' && BRAND.tpls) || []).find((t) => t.url && String(t.id) === id[1]) || null : null; };
   function brandFor(dept) {
     const c = (typeof BRAND !== 'undefined' && BRAND.colors) || [];
     return { org: aiCtx().org, dept: dept || aiCtx().dept || '', colors: c.map((x) => (Array.isArray(x) ? x[1] : x)) };
@@ -747,7 +750,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (opts.layout) m.layout = opts.layout;
     const fmt = w.fmt || (w.fmts && w.fmts[0]) || '1:1';
     const job = ++m.job || (m.job = 1);
-    if (m.layout === 'ai') return aiDesignRun(w, m, fmt, job, opts);
+    if (isAiLay(m.layout)) return aiDesignRun(w, m, fmt, job, opts);
     try {
       if (needsImg(m.layout) && (!m.image || opts.newImage || (m.imgSize && m.imgSize !== IMG_SIZE(fmt) && opts.fit))) {
         m.busy = 'ChatGPT יוצר תמונת אווירה...';
@@ -779,6 +782,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   }
   // first layout: an image layout for events and calls, the alert layout for disruptions, the stat layout when a number leads
   function pickLayout(d, brief) {
+    const w = S.wiz;
+    if (w && w.tpl0 && tplOf('tpl:' + w.tpl0)) return 'tpl:' + w.tpl0;
     return 'ai';
   }
   function pickTemplate(d, brief) {
@@ -882,7 +887,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const t = $('#sTitle');
     if (t) t.addEventListener('change', () => {
       if (!w.media || w.media.busy) return;
-      if (w.media.layout === 'ai') { w.media.stale = true; render(); return; }
+      if (isAiLay(w.media.layout)) { w.media.stale = true; render(); return; }
       clearTimeout(tmr); tmr = setTimeout(() => gfxRun(w), 300);
     });
   };
@@ -1444,24 +1449,27 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   /* ---------- ChatGPT designs the whole graphic from the brand palette ---------- */
   const DESIGN_AR = { square: '1/1', portrait: '2/3', landscape: '3/2' };
   async function aiDesignRun(w, m, fmt, job, opts) {
-    const size = IMG_SIZE(fmt);
+    const tpl = tplOf(m.layout);
+    if (/^tpl:/.test(m.layout) && !tpl) m.layout = 'ai';
+    const size = tpl ? IMG_SIZE(tpl.r || fmt) : IMG_SIZE(fmt);
     const logo = logoOf();
     const photos = briefPhotos(w);
     try {
       let url = '', check = { ok: true }, want = [];
       if (opts.fixOnly && m.design) {
         url = m.design; check = { ok: false, issues: m.warn || [], fixes: m.fixes || [] }; want = m.want || [];
-      } else if (opts.fit && m.design && m.dsize === size && !opts.note) {
+      } else if (opts.fit && m.design && m.dsize === size && m.dlay === m.layout && !opts.note) {
         url = m.design; check = { ok: !m.warn, issues: m.warn || [] }; want = m.want || [];
         if (m.warn) check.ok = true; // keep the existing warning, no new fix round on a resize
       } else {
-        m.busy = 'ChatGPT מעצב את הגרפיקה... (כדקה)';
+        m.busy = tpl ? 'ממלאים את התבנית „' + tpl.n + '” בתוכן החדש... (כדקה)' : 'ChatGPT מעצב את הגרפיקה... (כדקה)';
         m.warn = null;
         render();
         const r = await fx('image', {
           action: 'design', org: aiCtx().org, dept: w.brief.dept, size, brief: (w.brief.title || '') + '\n' + (w.brief.free || ''),
           colors: brandFor(w.brief.dept).colors, texts: { kicker: w.design.kicker, headline: w.t, sub: w.design.sub, details: w.design.details, cta: w.design.cta },
-          refs: [...(logo ? [logo] : []), ...photos].slice(0, 4), logo: !!logo, note: opts.note || '', quality: 'high', n: 2,
+          refs: [...(logo && !tpl ? [logo] : []), ...photos].slice(0, tpl ? 3 : 4), logo: !!logo && !tpl, note: opts.note || '', quality: 'high', n: 2,
+          template: tpl ? { url: tpl.url, desc: tpl.desc || '', slots: tpl.slots || [] } : undefined,
         }, 150000);
         if (S.wiz !== w || m.job !== job) return;
         url = r.url; check = r.check || { ok: true }; want = r.want || [];
@@ -1477,7 +1485,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         } catch (e) { break; /* keep the last version and show the issues */ }
       }
       const keepWarn = opts.fit && m.dsize === size && !opts.note ? m.warn : null;
-      m.design = url; m.want = want; m.dsize = size; m.stale = false; m.fixes = check.fixes || [];
+      m.design = url; m.want = want; m.dsize = size; m.dlay = m.layout; m.stale = false; m.fixes = check.fixes || [];
       m.warn = keepWarn || (!check.ok && (check.issues || []).length ? check.issues : null);
       // exact platform size: the design is placed into the format without cropping
       if (size === 'square' && fmt === '1:1') { m.url = url; }
@@ -1501,7 +1509,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       m.busy = '';
       m.layout = pickTemplate(w.design || {}, w.brief.free);
       render();
-      toast('העיצוב החופשי לא הושלם', 'עברנו לתבנית מותג. אפשר לנסות שוב בכפתור עיצוב AI חופשי.', 'err');
+      toast(tpl ? 'מילוי התבנית לא הושלם' : 'העיצוב החופשי לא הושלם', 'עברנו לעיצוב גיבוי. אפשר לנסות שוב מהבחירה למעלה.', 'err');
       gfxRun(w);
     }
   }
@@ -1512,8 +1520,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const w = S.wiz;
     if (prefix !== 'w' || S.route !== 'wizard' || !isGfx(w) || !w.media) return h;
     const m = w.media, busy = !!m.busy;
-    h = h.replace('<div class="lay-pick" role="radiogroup" aria-label="פריסה">', '<div class="t-sub" style="margin-bottom:6px">עיצוב חופשי של ChatGPT בצבעי המותג, או תבנית מותג קבועה:</div><div class="lay-pick" role="radiogroup" aria-label="פריסה">');
-    if (m.layout === 'ai') {
+    h = h.replace(/<div class="lay-pick" role="radiogroup" aria-label="פריסה">[\s\S]*?<\/div>/, layPickHtml(m, busy));
+    if (isAiLay(m.layout)) {
       h = h.replace('<div class="real-acts">', '<div class="real-acts"><button class="btn btn-sm" data-act="gNew"' + (busy ? ' disabled' : '') + '>' + ic('refresh', 14) + ' עיצוב חדש</button>' + (m.warn ? '<button class="btn btn-sm" data-act="gFix"' + (busy ? ' disabled' : '') + '>' + ic('edit', 14) + ' תיקון הטקסט</button>' : ''));
       if (m.stale) h += '<div class="note ai-warn">' + ic('edit', 15) + '<span>הכותרת השתנתה. לחצו "עיצוב חדש" כדי לעדכן את הגרפיקה.</span></div>';
       if (m.warn) h += '<div class="note ai-warn">' + ic('alert', 15) + '<span>בדיקת הטקסט מצאה: ' + m.warn.map(esc).join(' · ') + '</span></div>';
@@ -1543,7 +1551,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   }
   ACT.wAi = () => {
     const w = S.wiz;
-    if (!isGfx(w) || !w.media || w.media.layout !== 'ai') return _wAiD();
+    if (!isGfx(w) || !w.media || !isAiLay(w.media.layout)) return _wAiD();
     collectWiz();
     const el = $('#wAi'); const q = (el && el.value || '').trim();
     if (!q) { toast('מה לשנות?', 'לדוגמה: רקע בהיר יותר, להדגיש את התאריך, או תמונה של משפחה בפארק.', 'err'); return; }
@@ -1552,7 +1560,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   };
   ACT.wAiQ = (q) => {
     const w = S.wiz;
-    if (!isGfx(w) || !w.media || w.media.layout !== 'ai') return _wAiQD(q);
+    if (!isGfx(w) || !w.media || !isAiLay(w.media.layout)) return _wAiQD(q);
     collectWiz();
     if (w.media.busy) return;
     gfxRun(w, { note: ({ 'צבעוני יותר': 'יותר צבע ואנרגיה, עדיין בפלטת המותג', 'פריסה אחרת': 'קומפוזיציה שונה לגמרי', 'כותרת גדולה': 'כותרת גדולה ובולטת הרבה יותר', 'סגנון רשמי': 'סגנון רשמי, שמרני ונקי יותר' })[q] || q });
@@ -1577,8 +1585,19 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     return { h: hh, s: ss, l }; }
   const canvasOf = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
   const blobOf = (c) => new Promise((r) => c.toBlob(r, 'image/png'));
+  // an SVG without width/height draws as nothing on a canvas: give it a real size from its viewBox
+  async function svgSized(file) {
+    if (!/svg/i.test(file.type || '') && !/\.svg$/i.test(file.name || '')) return file;
+    const t = await file.text(), m = t.match(/<svg[^>]*>/i);
+    if (!m) return file;
+    const vb = /viewBox=["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(m[0]);
+    let W = 1200, H = 1200;
+    if (vb && +vb[1] && +vb[2]) { const a = +vb[1], b = +vb[2]; if (a >= b) H = Math.round(1200 * b / a); else W = Math.round(1200 * a / b); }
+    const tag = m[0].replace(/\s(width|height)=["'][^"']*["']/gi, '').replace(/<svg/i, '<svg width="' + W + '" height="' + H + '"');
+    return new Blob([t.replace(m[0], tag)], { type: 'image/svg+xml' });
+  }
   async function processLogo(file) {
-    const src = URL.createObjectURL(file);
+    const src = URL.createObjectURL(await svgSized(file));
     try {
       const img = await loadImg(src);
       let w = img.naturalWidth || 1000, h = img.naturalHeight || 1000;
@@ -1690,9 +1709,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       apply(BRAND);
       if (S.brandEdit && S.brandDraft) apply(S.brandDraft);
       S.logoBusy = '';
+      S.logoFresh = Date.now();
       render();
       flush();
-      toast('הלוגו עודכן', (r.removed ? 'הרקע הוסר אוטומטית. ' : '') + r.colors.length + ' צבעים זוהו והוחלו על צבעי המותג.');
+      if (r.colors.length) toast('הלוגו עודכן וצבעי המותג הוחלפו', (r.removed ? 'הרקע הוסר אוטומטית. ' : '') + r.colors.length + ' צבעים זוהו בלוגו. הצבע הראשי החדש: ' + pal[0][1]);
+      else toast('הלוגו עודכן', 'לא זוהו בלוגו צבעים ברורים, נשארו צבעי ברירת המחדל. אפשר לשנות אותם בלשונית צבעים ופונטים.', 'err');
     } catch (e) {
       S.logoBusy = '';
       render();
@@ -1713,6 +1734,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .lo-chips{display:flex;flex-wrap:wrap;gap:8px}.lo-chips span{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;direction:ltr;border:1px solid var(--line,#DDE3EC);border-radius:999px;padding:4px 10px 4px 5px}
 .lo-chips i{width:20px;height:20px;border-radius:50%;display:block;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}
 .lo-busy{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--brand,#0E3B6B)}
+.lo-pal{border:1px solid var(--line,#DDE3EC);border-radius:12px;padding:10px 12px}.lo-pal.fresh{animation:loFresh 2.4s ease-out 2}
+@keyframes loFresh{0%{box-shadow:0 0 0 0 rgba(14,59,107,.45)}100%{box-shadow:0 0 0 12px rgba(14,59,107,0)}}
+.lo-sw{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:8px}.lo-sw span{display:flex;flex-direction:column;gap:3px;min-width:0}
+.lo-sw i{display:block;height:34px;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}.lo-sw em{font-style:normal;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.lo-sw small{font-size:11px;color:var(--ink-3,#5A6386);text-align:right}
+@media (max-width:520px){.lo-sw{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:760px){.logo-one{grid-template-columns:1fr}}`;
   const _brandR = SCREENS.brand.render;
   SCREENS.brand.render = function () {
@@ -1726,6 +1752,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const panel = '<div class="card card-pad logo-one">' + prev + '<div class="lo-info"><h3>הלוגו של הארגון</h3>' +
       '<span class="t-sub">מעלים לוגו אחד. המערכת מסירה רקע אם צריך, חותכת שוליים, יוצרת גרסה לבנה לרקע כהה ומחלצת ממנו את צבעי המותג.</span>' +
       (S.logoBusy ? '<div class="lo-busy"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(S.logoBusy) + '</div>' : '') +
+      (l && info.colors ? '<div class="lo-pal' + (S.logoFresh && Date.now() - S.logoFresh < 8000 ? ' fresh' : '') + '"><b style="font-size:13.5px">צבעי המותג, נשלפו מהלוגו</b><div class="lo-sw">' + (b.colors || []).slice(0, 6).map((c) => '<span title="' + esc(c[0]) + '"><i style="background:' + esc(c[1]) + '"></i><em>' + esc(c[0].replace(/ \(מהלוגו\)/, '')) + '</em><small dir="ltr">' + esc(c[1]) + '</small></span>').join('') + '</div></div>' : '') +
       (l && info.colors ? '<div><b style="font-size:13.5px">הצבעים שזוהו בלוגו</b><div class="lo-chips" style="margin-top:6px">' + info.colors.map((c) => '<span><i style="background:' + c + '"></i>' + c + '</span>').join('') + '</div></div>' +
         '<div class="note">' + ic('palette', 15) + '<span>הוחלו על צבעי המותג' + (info.removed ? ' · הרקע הוסר אוטומטית' : info.hadAlpha ? ' · הלוגו הגיע שקוף' : '') + '. <button class="link-btn" data-act="tab:brand:colors" style="background:none;border:0;padding:0;font:inherit;color:var(--brand);font-weight:700;cursor:pointer">לצבעים ופונטים</button></span></div>' : '') +
       '<div><button class="btn btn-primary" data-act="logoUp"' + (S.logoBusy ? ' disabled' : '') + '>' + ic('upload', 16) + ' ' + (l ? 'החלפת לוגו' : 'העלאת לוגו') + '</button></div>' +
@@ -1735,8 +1762,150 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   // the logo position preview shows the real logo
   const _lpp = logoPosPreview;
   logoPosPreview = function (pos, size, bg) {
-    const h = _lpp(pos, size, bg);
+    const bc = BRAND.colors || [];
+    const h = _lpp(pos, size, bg || (bc[0] && bc[1] ? 'linear-gradient(140deg,' + bc[1][1] + ',' + bc[0][1] + ')' : bg));
     const l = BRAND.logoLight || logoOf();
     return l ? h.replace(/<span class="sp-logo([^"]*)"><i>נה<\/i>נווה הדר<\/span>/, '<span class="sp-logo$1" style="background:none;padding:0"><img src="' + esc(l) + '" alt="" style="height:30px;width:auto;max-width:120px;object-fit:contain;display:block"></span>') : h;
+  };
+  /* ---------- personal templates: the organisation's own design; the system keeps its structure and changes only texts and imagery ---------- */
+  const tplsMine = (b) => ((b || BRAND).tpls || []).filter((t) => t && t.url);
+  const stripBuiltIn = () => { BRAND.tpls = tplsMine(BRAND); if (S.brandDraft && S.brandDraft.tpls) S.brandDraft.tpls = tplsMine(S.brandDraft); };
+  stripBuiltIn();
+  const RATIO_LIST = [['1:1', 1], ['4:5', 0.8], ['9:16', 0.5625], ['16:9', 16 / 9], ['1.91:1', 1.91]];
+  const ratioOf = (w, h) => RATIO_LIST.reduce((a, x) => (Math.abs(Math.log(w / h / x[1])) < Math.abs(Math.log(w / h / a[1])) ? x : a))[0];
+  function layPickHtml(m, busy) {
+    const opts = [['ai', 'עיצוב AI חופשי']].concat(tplsMine().map((t) => ['tpl:' + t.id, t.n]));
+    if (!opts.some((o) => o[0] === m.layout)) { const b = LAY.find((x) => x[0] === m.layout); if (b) opts.push([b[0], b[1] + ' (גיבוי)']); }
+    return '<div class="t-sub" style="margin-bottom:6px">' + (tplsMine().length ? 'עיצוב חופשי בצבעי המותג, או תבנית אישית של הארגון:' : 'עיצוב חופשי בצבעי המותג. <button class="link-btn tpl-link" data-act="tplGo">להעלאת תבנית אישית</button>') + '</div>' +
+      '<div class="lay-pick" role="radiogroup" aria-label="פריסה">' + opts.map((o) => '<button class="' + (m.layout === o[0] ? 'on' : '') + '" data-act="gLay:' + esc(o[0]) + '"' + (busy ? ' disabled' : '') + ' role="radio" aria-checked="' + (m.layout === o[0]) + '">' + esc(o[1]) + '</button>').join('') + '</div>';
+  }
+  ACT.tplGo = () => { S.tab.brand = 'templates'; go('brand'); };
+  // upload drawer
+  function tplUpDrawer() {
+    const u = S.tplU || {};
+    const prev = u.url
+      ? '<div class="tplu-prev"><img src="' + esc(u.url) + '" alt="התבנית"></div>'
+      : '<button class="upload" data-act="tplPick" style="width:100%"' + (u.busy ? ' disabled' : '') + '><div class="ui">' + ic('upload', 18) + '</div><div style="font-weight:600;font-size:13.5px">העלאת העיצוב של התבנית</div><div class="t-sub">PNG או JPG של העיצוב המלא, כמו שהוא אמור להתפרסם</div></button>';
+    return '<div class="drawer-head"><div><h3>תבנית אישית חדשה</h3><p>מעלים עיצוב שנבנה לארגון. המערכת שומרת על המבנה ומחליפה רק טקסטים ותמונה לפי כל בקשה.</p></div><button class="icon-btn" style="margin-inline-start:auto" data-act="closeDrawer" aria-label="סגירה">' + ic('x', 17) + '</button></div>' +
+      '<div class="drawer-body">' + prev +
+      (u.busy ? '<div class="lo-busy" style="margin-top:12px"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(u.busy) + '</div>' : '') +
+      (u.url && !u.busy ? '<div class="real-acts" style="margin-top:10px"><button class="btn btn-sm" data-act="tplPick">' + ic('upload', 14) + ' החלפת הקובץ</button></div>' : '') +
+      (u.scan ? '<div class="note" style="margin-top:12px">' + ic('checkc', 15) + '<span>' + esc(u.scan.summary || 'התבנית נקראה.') + '</span></div>' +
+        ((u.scan.slots || []).length ? '<div class="field" style="margin-top:12px"><label>אזורי הטקסט שזוהו</label><div class="tplu-slots">' + u.scan.slots.map((x) => '<span class="chip">' + esc(x.he || x.role) + (x.fixed ? ' · קבוע' : ' · מתחלף') + '</span>').join('') + '</div></div>' : '') : '') +
+      (u.err ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>' + esc(u.err) + '</span></div>' : '') +
+      '<div class="field" style="margin-top:14px"><label for="tuN">שם התבנית</label><input type="text" id="tuN" value="' + esc(u.n || '') + '" placeholder="לדוגמה: הודעה לתושבים"></div>' +
+      (u.r ? '<div class="t-sub">יחס התבנית: <span dir="ltr">' + esc(u.r) + '</span>. בפורמטים אחרים העיצוב מותאם לגודל בלי חיתוך.</div>' : '') +
+      '</div><div class="drawer-foot"><button class="btn btn-primary" data-act="tplUpSave"' + (!u.url || u.busy ? ' disabled' : '') + '>' + ic('save', 16) + ' שמירת התבנית</button><button class="btn" data-act="closeDrawer">ביטול</button></div>';
+  }
+  const tplRedraw = () => { const n = $('#tuN'); if (n && S.tplU) S.tplU.n = n.value; const d = $('#drawer'); if (d && d.classList.contains('on') && S.tplU) d.innerHTML = tplUpDrawer(); };
+  ACT.tplNew = () => { S.tplU = { n: '' }; openDrawer(tplUpDrawer()); };
+  ACT.tplPick = async () => {
+    const u = S.tplU; if (!u) return;
+    const nEl = $('#tuN'); if (nEl) u.n = nEl.value;
+    const [f] = await pickFiles('image/png,image/jpeg,image/webp');
+    if (!f || S.tplU !== u) return;
+    u.err = ''; u.scan = null; u.busy = 'מעלה את העיצוב...'; tplRedraw();
+    try {
+      const src = URL.createObjectURL(f); const img = await loadImg(src); URL.revokeObjectURL(src);
+      u.w = img.naturalWidth; u.h = img.naturalHeight; u.r = ratioOf(u.w, u.h);
+      const up = await uploadFile(f);
+      u.url = up.url;
+      if (!u.n) u.n = f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ');
+      u.busy = 'Claude קורא את מבנה התבנית: אזורי טקסט, תמונה ולוגו...'; tplRedraw();
+      try { u.scan = await fx('image', { action: 'tplscan', url: u.url }, 90000); }
+      catch (e) { u.err = 'קריאת המבנה לא הושלמה. אפשר לשמור בכל זאת, המבנה ייקרא בזמן העיצוב.'; }
+    } catch (e) { u.err = e && e.message === 'too_big' ? 'הקובץ גדול מ-50MB.' : 'ההעלאה נכשלה. נסו שוב.'; }
+    u.busy = ''; tplRedraw();
+  };
+  ACT.tplUpSave = () => {
+    const u = S.tplU; if (!u || !u.url || u.busy) return;
+    const nEl = $('#tuN'); if (nEl) u.n = nEl.value;
+    if (!(u.n || '').trim()) { toast('חסר שם לתבנית', 'תנו לתבנית שם כדי לשמור.', 'err'); return; }
+    const sc = u.scan || {};
+    const rec = { id: Date.now().toString(36), n: u.n.trim(), ty: 'graphic', r: u.r || '1:1', url: u.url, w: u.w, h: u.h, desc: sc.desc || '', slots: sc.slots || [], image: sc.image || '', summary: sc.summary || '', mine: true, by: curUser().n, at: new Date().toLocaleDateString('he-IL'), lay: 0, bg: 0 };
+    BRAND.tpls = [rec, ...tplsMine(BRAND)];
+    if (S.brandEdit && S.brandDraft) S.brandDraft.tpls = [rec, ...tplsMine(S.brandDraft)];
+    S.tplU = null; closeDrawer(); S.tab.brand = 'templates'; render(); flush();
+    toast('התבנית נשמרה', '„' + rec.n + '” זמינה ביצירת גרפיקה.');
+  };
+  ACT.tplDel = (id) => {
+    confirmModal({ title: 'למחוק את התבנית?', body: 'התבנית תוסר מנכסי המותג. תכנים שכבר נוצרו ממנה לא ישתנו.', ok: 'מחיקה', cancel: 'ביטול', onOk: () => {
+      BRAND.tpls = tplsMine(BRAND).filter((t) => String(t.id) !== String(id));
+      if (S.brandDraft && S.brandDraft.tpls) S.brandDraft.tpls = tplsMine(S.brandDraft).filter((t) => String(t.id) !== String(id));
+      render(); flush(); toast('התבנית נמחקה', '');
+    } });
+  };
+  ACT.tplUse = (id) => {
+    const t = tplsMine().find((x) => String(x.id) === String(id)); if (!t) return;
+    ACT.wiz('graphic');
+    if (S.wiz) { S.wiz.tpl0 = t.id; if (t.r) { S.wiz.fmts = [t.r]; S.wiz.fmt = t.r; } render(); toast('התבנית „' + t.n + '” נבחרה', 'כתבו בריף. המערכת תשמור על המבנה ותחליף טקסטים ותמונה.'); }
+  };
+  ACT.tplEdit = (i) => { const t = tplsMine((S.brandEdit && S.brandDraft) || BRAND)[+i]; if (t) ACT.tplUse(t.id); };
+  css.textContent += `
+.tplu-prev{border:1px solid var(--line,#DDE3EC);border-radius:12px;background:repeating-conic-gradient(#EEF1F6 0 25%,#fff 0 50%) 50%/18px 18px;padding:10px;display:grid;place-items:center}
+.tplu-prev img{max-width:100%;max-height:340px;object-fit:contain;display:block;border-radius:6px}
+.tplu-slots{display:flex;flex-wrap:wrap;gap:6px}
+.tpl-link{background:none;border:0;padding:0;font:inherit;color:var(--brand,#0E3B6B);font-weight:700;cursor:pointer}
+.cc .thumb.tpl-img{background:repeating-conic-gradient(#EEF1F6 0 25%,#fff 0 50%) 50%/16px 16px!important;padding:8px;height:230px;display:flex;align-items:center;justify-content:center}.cc .thumb.tpl-img::before,.cc .thumb.tpl-img::after{display:none!important}.cc .thumb.tpl-img img{height:100%;width:auto;max-width:100%;object-fit:contain;display:block;border-radius:6px;box-shadow:0 2px 10px rgba(14,30,60,.15)}
+.tpl-empty{grid-column:1/-1}`;
+  // brand screen, templates tab: only the add button and the organisation's own templates
+  const _brandRT = SCREENS.brand.render;
+  SCREENS.brand.render = function () {
+    stripBuiltIn();
+    if ((S.tab.brand || 'logos') !== 'templates') return _brandRT.call(this);
+    const keepB = BRAND.tpls, keepD = S.brandDraft && S.brandDraft.tpls;
+    BRAND.tpls = []; if (S.brandDraft) S.brandDraft.tpls = [];
+    let h;
+    try { h = _brandRT.call(this); } finally { BRAND.tpls = keepB; if (S.brandDraft) S.brandDraft.tpls = keepD; }
+    const list = tplsMine(S.brandEdit && S.brandDraft ? S.brandDraft : BRAND);
+    const cards = list.map((t) => '<div class="cc"><div class="thumb tpl-img"><img src="' + esc(t.url) + '" alt="' + esc(t.n) + '" loading="lazy"></div>' +
+      '<div class="cc-body"><span class="cc-title">' + esc(t.n) + '</span><span class="cc-meta">גרפיקה · <span dir="ltr">' + esc(t.r) + '</span>' + (t.by ? ' · הועלתה על ידי ' + esc(t.by) : '') + '</span>' + (t.summary ? '<span class="t-sub" style="font-size:12.5px">' + esc(t.summary) + '</span>' : '') + '</div>' +
+      '<div class="cc-foot"><button class="btn btn-sm" data-act="tplUse:' + esc(t.id) + '">שימוש בתבנית</button><button class="icon-btn" style="margin-inline-start:auto" data-act="tplDel:' + esc(t.id) + '" aria-label="מחיקת התבנית">' + ic('x', 15) + '</button></div></div>').join('');
+    const empty = list.length ? '' : '<div class="note tpl-empty">' + ic('palette', 15) + '<span>עוד אין תבניות. מעלים עיצוב אישי שנבנה לארגון, והמערכת תעבוד לפיו: תשמור על המבנה ותחליף רק את הטקסטים והתמונה לפי כל בקשה.</span></div>';
+    return h.replace(/(<button class="card add-card tall" data-act="tplNew">)[\s\S]*?(<\/button>)/, '$1' + ic('create', 24) + '<b>יצירת תבנית אישית</b><span class="t-sub">העלאת עיצוב שנבנה לארגון</span>$2' + cards + empty);
+  };
+  // the brief shows which template will be filled
+  const _wizRT = SCREENS.wizard.render;
+  SCREENS.wizard.render = function () {
+    const h = _wizRT.call(this), w = S.wiz, t = w && w.step === 0 && w.tpl0 ? tplOf('tpl:' + w.tpl0) : null;
+    if (!t) return h;
+    return h.replace('<div class="brief-tools">', '<div class="note tpl-on"><img src="' + esc(t.url) + '" alt=""><span>התוכן ייבנה בתבנית <b>„' + esc(t.n) + '”</b>: המבנה נשמר, הטקסטים והתמונה מתחלפים לפי הבריף.</span><button class="icon-btn" data-act="tplOff" aria-label="ביטול התבנית">' + ic('x', 14) + '</button></div><div class="brief-tools">');
+  };
+  ACT.tplOff = () => { if (S.wiz) { S.wiz.tpl0 = null; render(); } };
+  css.textContent += `.tpl-on{display:flex;align-items:center;gap:10px;margin:10px 0}.tpl-on img{width:40px;height:40px;object-fit:cover;border-radius:6px;flex:0 0 auto}.tpl-on span{flex:1}`;
+
+  /* ---------- onboarding, brand step: the real logo, colours pulled from it, documents read by Claude ---------- */
+  const _obR = SCREENS.onboard.render;
+  SCREENS.onboard.render = function () {
+    let h = _obR.call(this);
+    if (S.onboardStep !== 1) return h;
+    const l = (BRAND.logos || []).find((x) => x.url), info = BRAND.logoInfo || {};
+    const cols = (BRAND.colors || []).slice(0, 4);
+    const logoField = '<div class="field"><label>לוגו הארגון</label>' + (l
+      ? '<div class="ob-logo"><div class="lo-l"><img src="' + esc(l.url) + '" alt="הלוגו"></div><div><b style="font-size:13.5px">הלוגו נקלט</b><div class="t-sub">' + (info.removed ? 'הרקע הוסר אוטומטית. ' : '') + (info.colors && info.colors.length ? 'צבעי המותג נשלפו מהלוגו.' : '') + '</div><button class="btn btn-sm" data-act="logoUp" style="margin-top:8px"' + (S.logoBusy ? ' disabled' : '') + '>' + ic('upload', 14) + ' החלפת לוגו</button></div></div>'
+      : '<button class="upload" data-act="logoUp" style="width:100%"' + (S.logoBusy ? ' disabled' : '') + '><div class="ui">' + ic('upload', 18) + '</div><div style="font-weight:600;font-size:13.5px">העלאת קובץ לוגו</div><div class="t-sub">קובץ אחד מספיק. הרקע מוסר אוטומטית וצבעי המותג נשלפים מהלוגו.</div></button>') +
+      (S.logoBusy ? '<div class="lo-busy" style="margin-top:8px"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(S.logoBusy) + '</div>' : '') + '</div>';
+    h = h.replace(/<div class="field"><label>לוגו הארגון<\/label><div class="upload" data-act="fakeUpload">[\s\S]*?ברקע שקוף<\/div><\/div><\/div>/, logoField);
+    h = h.replace(/(<div class="field"><label>צבעי המותג<\/label><div class="grid g-4" style="gap:10px">)[\s\S]*?(<\/div><\/div><div class="field"><label>סגנון השפה)/,
+      '$1' + cols.map((c) => '<div><div class="swatch" style="background:' + esc(c[1]) + '"></div><div style="font-size:12.5px;font-weight:600;margin-top:5px">' + esc(c[0]) + '</div><div class="t-sub" dir="ltr" style="text-align:right">' + esc(c[1]) + '</div></div>').join('') + '$2');
+    const p0 = (cols[0] || [])[1] || '#0E3B6B';
+    h = h.replace('<div style="background:#0E3B6B;color:#fff;padding:18px">', '<div style="background:' + esc(p0) + ';color:#fff;padding:18px;display:flex;align-items:center;gap:12px">' + (BRAND.logoLight ? '<img src="' + esc(BRAND.logoLight) + '" alt="" style="height:40px;width:auto;max-width:110px;object-fit:contain">' : '') + '<div>');
+    h = h.replace(/(שפה רשמית · Heebo<\/div>)<\/div>/, '$1</div></div>');
+    h = h.replace(/(<span style="flex:1;height:24px;border-radius:5px;background:#[0-9A-Fa-f]{6}"><\/span>)+/, (BRAND.colors || []).slice(0, 6).map((c) => '<span style="flex:1;height:24px;border-radius:5px;background:' + esc(c[1]) + '"></span>').join(''));
+    return h;
+  };
+  css.textContent += `
+.ob-logo{display:flex;gap:14px;align-items:center;border:1px solid var(--line,#DDE3EC);border-radius:12px;padding:10px}
+.ob-logo .lo-l{width:120px;aspect-ratio:4/3;border-radius:10px;display:grid;place-items:center;padding:10px;background:repeating-conic-gradient(#EEF1F6 0 25%,#fff 0 50%) 50%/16px 16px;flex:0 0 auto}
+.ob-logo img{max-width:100%;max-height:100%;object-fit:contain}`;
+  // onboarding "previous content" upload: Claude learns the brand from it
+  const _fakeUpT = ACT.fakeUpload;
+  ACT.fakeUpload = async () => {
+    if (S.route === 'onboard') {
+      const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,image/*', true);
+      if (fs.length) { learnBrand(fs, () => BRAND); toast('המסמכים הועלו', 'המערכת לומדת מהם את שפת הארגון.'); }
+      return;
+    }
+    return _fakeUpT();
   };
 })();
