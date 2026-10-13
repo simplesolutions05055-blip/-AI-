@@ -1474,6 +1474,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         if (S.wiz !== w || m.job !== job) return;
         url = r.url; check = r.check || { ok: true }; want = r.want || [];
       }
+      // a fix round can break another line: keep the version with the fewest text errors
+      const nIss = (c) => (c && !c.ok ? (c.issues || []).length || 1 : 0);
+      let best = { url, check };
       for (let round = 1; round <= 2 && !check.ok && (check.issues || []).length; round++) {
         m.busy = 'מתקנים את הטקסט בגרפיקה' + (round > 1 ? ' (סבב ' + round + ')' : '') + '...';
         m.design = url;
@@ -1482,8 +1485,10 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           const f = await fx('image', { action: 'fixtext', url, issues: check.issues, fixes: check.fixes || [], want, size }, 150000);
           if (S.wiz !== w || m.job !== job) return;
           url = f.url; check = f.check || { ok: true };
-        } catch (e) { break; /* keep the last version and show the issues */ }
+          if (nIss(check) < nIss(best.check)) best = { url, check };
+        } catch (e) { break; /* keep the best version and show the issues */ }
       }
+      url = best.url; check = best.check;
       const keepWarn = opts.fit && m.dsize === size && !opts.note ? m.warn : null;
       m.design = url; m.want = want; m.dsize = size; m.dlay = m.layout; m.stale = false; m.fixes = check.fixes || [];
       m.warn = keepWarn || (!check.ok && (check.issues || []).length ? check.issues : null);
