@@ -453,7 +453,8 @@
   // up-to-date details read from the organisation's website, passed to every generation
   function siteFacts() {
     const st = (typeof BRAND !== 'undefined' && BRAND.site) || null;
-    if (!st || !st.at) return '';
+    const oi = (typeof BRAND !== 'undefined' && BRAND.orgInfo) || {};
+    if (!st || !st.at) return [oi.phone && 'טלפון: ' + oi.phone, oi.email && 'דוא"ל: ' + oi.email, oi.address && 'כתובת: ' + oi.address].filter(Boolean).join('\n');
     const f = st.facts || {}, L2 = [];
     const add = (k, v) => { if (v && String(v).trim()) L2.push(k + ': ' + String(v).trim()); };
     add('שם רשמי', f.name); add('טלפון', f.phone); add('מוקד', f.hotline); add('דוא"ל', f.email); add('כתובת', f.address); add('שעות קבלת קהל', f.hours); add('ראש הארגון', f.mayor); add('אתר', f.site || st.url);
@@ -1991,7 +1992,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const st = BRAND.site || {}, f = st.facts || {};
     const rows = [['טלפון', f.phone], ['מוקד', f.hotline], ['דוא"ל', f.email], ['כתובת', f.address], ['קבלת קהל', f.hours], ['ראש הארגון', f.mayor]].filter((x) => x[1]);
     return '<div class="card card-pad site-card"><div class="sc-head"><div><h3>אתר הארגון</h3><span class="t-sub">המערכת קוראת את האתר הרשמי, בונה ממנו את כללי הכתיבה ומשתמשת בפרטים המעודכנים שבו בכל תוכן. נקרא מחדש אוטומטית כל יומיים.</span></div></div>' +
-      '<div class="sc-row"><input type="url" id="siteUrl" dir="ltr" placeholder="www.example.muni.il" value="' + esc(st.url || '') + '"' + (S.siteBusy ? ' disabled' : '') + '><button class="btn btn-primary" data-act="siteScan"' + (S.siteBusy ? ' disabled' : '') + '>' + ic('refresh', 15) + ' ' + (st.at ? 'קריאה מחדש' : 'קריאת האתר') + '</button></div>' +
+      '<div class="sc-row"><input type="text" inputmode="url" autocomplete="url" id="siteUrl" dir="ltr" placeholder="www.example.muni.il" value="' + esc(st.url || '') + '"' + (S.siteBusy ? ' disabled' : '') + '><button class="btn btn-primary" data-act="siteScan"' + (S.siteBusy ? ' disabled' : '') + '>' + ic('refresh', 15) + ' ' + (st.at ? 'קריאה מחדש' : 'קריאת האתר') + '</button></div>' +
       (S.siteBusy ? '<div class="lo-busy"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(S.siteBusy) + '</div>' : '') +
       (st.at ? '<div class="note">' + ic('checkc', 15) + '<span>נקרא ' + ago(st.at) + ((st.pages || []).length ? ' · ' + st.pages.length + ' עמודים' : '') + (st.summary ? ' · ' + esc(st.summary) : '') + '</span></div>' : '') +
       (st.err && !st.at ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>הקריאה האחרונה נכשלה. בדקו את הכתובת ונסו שוב.</span></div>' : '') +
@@ -2018,7 +2019,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   SCREENS.onboard.render = function () {
     const h = _obRS.call(this);
     if (S.onboardStep !== 0) return h;
-    return h.replace(/(<label>אתר אינטרנט<\/label>)<input type="text" value="[^"]*">/, '$1<input type="url" id="obSite" dir="ltr" style="text-align:left" placeholder="www.example.muni.il" value="' + esc((BRAND.site && BRAND.site.url) || '') + '"><span class="t-sub" style="margin-top:4px">המערכת תקרא את האתר ותבנה ממנו את כללי הכתיבה.</span>');
+    return h.replace(/(<label>אתר אינטרנט<\/label>)<input type="text" value="[^"]*">/, '$1<input type="text" inputmode="url" autocomplete="url" id="obSite" dir="ltr" style="text-align:left" placeholder="www.example.muni.il" value="' + esc((BRAND.site && BRAND.site.url) || '') + '"><span class="t-sub" style="margin-top:4px">המערכת תקרא את האתר ותבנה ממנו את כללי הכתיבה.</span>');
   };
   const _obNextS = ACT.obNext;
   ACT.obNext = () => {
@@ -2027,4 +2028,42 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   };
   // keep it current: read again when the last read is older than two days
   (function siteAuto() { if (!L.ready) { setTimeout(siteAuto, 700); return; } if (L.kind === 'admin') return; setTimeout(() => { const st = BRAND.site; if (st && st.url && (!st.at || Date.now() - st.at > 2 * 86400000)) siteScan(st.url, true); }, 4000); })();
+  /* ---------- settings, organisation profile: phone, e-mail, website and address are saved; a new website is read at once ---------- */
+  const _setR = SCREENS.settings.render;
+  SCREENS.settings.render = function () {
+    let h = _setR.call(this);
+    if ((S.tab.settings || 'org') !== 'org' || !/<label>אתר אינטרנט<\/label>/.test(h)) return h;
+    const o = BRAND.orgInfo || {}, st = BRAND.site || {};
+    const val = (v, d) => esc(v != null ? v : d);
+    h = h.replace(/(<label>טלפון<\/label><input type="text")([^>]*?) value="[^"]*">/, '$1 id="setPhone"$2 value="' + val(o.phone, '') + '" placeholder="08-0000000">');
+    h = h.replace(/(<label>דוא״ל<\/label><input type="email")([^>]*?) value="[^"]*">/, '$1 id="setMail"$2 value="' + val(o.email, '') + '" placeholder="name@example.muni.il">');
+    h = h.replace(/(<label>כתובת<\/label><input type="text") value="[^"]*">/, '$1 id="setAddr" value="' + val(o.address, '') + '">');
+    const note = S.siteBusy ? '<span class="t-sub site-st"><span class="gm-spin" style="width:13px;height:13px;border-width:2px;display:inline-block;vertical-align:middle"></span> המערכת קוראת את האתר...</span>'
+      : st.at ? '<span class="t-sub site-st">' + ic('checkc', 13) + ' נקרא ' + ago(st.at) + '. כללי הכתיבה נבנו ממנו. <button class="tpl-link" data-act="siteRules">לכללי הכתיבה</button></span>'
+      : st.err ? '<span class="t-sub site-st" style="color:var(--bad,#9B1C1C)">' + ic('alert', 13) + ' הקריאה נכשלה. בדקו את הכתובת ושמרו שוב.</span>'
+      : '<span class="t-sub site-st">בשמירה המערכת תקרא את האתר ותבנה ממנו את כללי הכתיבה.</span>';
+    h = h.replace(/(<label>אתר אינטרנט<\/label>)<input type="text" value="[^"]*">/, '$1<input type="text" inputmode="url" autocomplete="url" id="setSite" dir="ltr" style="text-align:left" placeholder="www.example.muni.il" value="' + val(st.url, '') + '">' + note);
+    return h;
+  };
+  ACT.siteRules = () => { S.tab.brand = 'rules'; go('brand'); };
+  const _saveSet = ACT.saveSettings;
+  ACT.saveSettings = () => {
+    const g = (id) => { const e = $('#' + id); return e ? e.value.trim() : null; };
+    const site = g('setSite');
+    if (site === null) return _saveSet();
+    BRAND.orgInfo = Object.assign(BRAND.orgInfo || {}, { phone: g('setPhone') || '', email: g('setMail') || '', address: g('setAddr') || '' });
+    const u = normUrl(site), cur = BRAND.site || {};
+    if (u && (u !== cur.url || !cur.at)) {
+      BRAND.site = Object.assign({}, cur, { url: u, err: '' });
+      if (cur.url !== u) { BRAND.site.at = 0; }
+      render(); flush();
+      toast('ההגדרות נשמרו', 'המערכת קוראת עכשיו את האתר ובונה ממנו את כללי הכתיבה. זה לוקח עד שתי דקות.');
+      siteScan(u);
+      return;
+    }
+    if (!u && cur.url) BRAND.site = null;
+    render(); flush();
+    _saveSet();
+  };
+  css.textContent += `.site-st{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}`;
 })();
