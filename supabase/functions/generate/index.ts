@@ -1,6 +1,6 @@
 // PrimeOS generate - all AI text generation through the Claude API.
 // POST { mode, ...input }   header x-primeos-token
-// modes: post | alt | revise | assistant | doc | deck | graphic | video | doc2 | deck2 | brand | site
+// modes: post | alt | revise | assistant | doc | deck | graphic | video | doc2 | deck2 | brand | site | series
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import JSZip from 'https://esm.sh/jszip@3.10.1';
 
@@ -301,6 +301,26 @@ ${site ? 'להלן הטקסט של האתר הרשמי (דף הבית ועמוד
         out = parseJson(raw);
       }
       return json(req, { ok: true, ...out, url: siteUrl, title: site?.title ?? '', pages: site?.pages ?? [], via: site ? 'direct' : 'web', notes });
+    }
+
+    // a period of content: one call writes a whole batch of posts (texts for the graphic and the caption)
+    if (mode === 'series') {
+      const slots = ((p.slots ?? []) as any[]).slice(0, 14);
+      if (!slots.length) return json(req, { error: 'no_slots' }, 400);
+      const list = slots.map((x) => `${x.i}. ${x.date}${x.hol ? ' - ברכה לחג ' + x.hol : ''}${x.hint ? ' - נושא מוצע: ' + x.hint : ''}`).join('\n');
+      const raw = await claude(key, s, `בנה סדרת פרסומים לרשתות החברתיות לתקופה, פוסט לכל מועד ברשימה.
+מחלקה: ${p.dept || 'דוברות'}
+${p.brief ? 'בריף לסדרה: ' + p.brief : 'אין בריף - בחר נושאים אמיתיים ורלוונטיים למחלקה ולעונה, לפי הפרטים מאתר הארגון אם יש.'}${filesNote(fb)}
+${(p.avoid ?? []).length ? 'נושאים שכבר נבחרו בסדרה (לא לחזור עליהם): ' + (p.avoid as string[]).join(' | ') : ''}
+המועדים:
+${list}
+
+החזר JSON בלבד:
+{"items":[{"i":מספר המועד,"title":"כותרת ראשית לגרפיקה, 2-5 מילים","kicker":"1-3 מילים שמסווגות את הנושא","sub":"שורת משנה עד 60 תווים","caption":"טקסט הפוסט, 2-3 משפטים","tags":["#האשטג"]}]}
+כל פוסט בנושא שונה. מועד עם חג - ברכה לחג בשם הרשות. אסור להמציא תאריכים, שעות, מקומות או מספרים שלא מופיעים בבריף, בקבצים או בפרטים מאתר הארגון - במקרה כזה לכתוב פוסט כללי בלי פרטים מומצאים. tags: 3-4, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.`, 6000, fb);
+      const j = parseJson(raw);
+      const out = ((j.items ?? []) as any[]).map((x) => tagFix(x));
+      return json(req, { ok: true, items: out });
     }
 
     if (mode === 'graphic') {

@@ -737,7 +737,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   studioPreview = function (o) {
     let h = _sp(o);
     const w = S.route === 'wizard' && S.wiz ? S.wiz : null;
-    const m = o.media || (w && w.media);
+    const m = o.media || (w && w.media) || (S.route === 'bulkReview' && typeof campMediaNow === 'function' ? campMediaNow() : null);
     if (!m || (!realTag(m) && !m.busy)) return h;
     const busy = m.busy ? '<span class="sp-mb"><span class="gm-spin"></span>' + esc(m.busy) + '</span>' : '';
     return h.replace(/<div class="sp-img thumb([^"]*)" id="spImg">/, '<div class="sp-img thumb$1 has-real" id="spImg">' + realTag(m) + busy);
@@ -2066,4 +2066,164 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     _saveSet();
   };
   css.textContent += `.site-st{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}`;
+  /* =====================================================================
+   * PERIOD CONTENT (bulk): Claude writes every post, ChatGPT designs every graphic
+   * ===================================================================== */
+  // the next holidays (post goes out the day before); past ones are not offered
+  HOLIDAYS.splice(0, HOLIDAYS.length, ['חנוכה', '2026-12-05'], ['ט״ו בשבט', '2027-01-23'], ['פורים', '2027-03-23'], ['פסח', '2027-04-22'], ['יום העצמאות', '2027-05-12'], ['שבועות', '2027-06-11'], ['ראש השנה', '2027-10-02']);
+  if (S.bulk) S.bulk.hol = HOLIDAYS.slice(0, 4).map((h) => h[0]);
+  const isoDay = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
+  const plusDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return isoDay(d); };
+  const todayIso = () => isoDay(new Date());
+  // the series starts from the coming week, never in the past
+  function startIso() { const d = new Date(); d.setDate(d.getDate() + ((7 - d.getDay()) % 7 || 7)); return isoDay(d); }
+  bulkCount = function (b) {
+    const weeks = Math.round(b.months * 52 / 12), st = startIso(), end = plusDays(st, b.months * 30);
+    const hol = b.holidays ? HOLIDAYS.filter((h) => b.hol.includes(h[0]) && h[1] >= todayIso() && h[1] <= end).length : 0;
+    return { weeks, base: weeks * b.perWeek, hol, total: weeks * b.perWeek + hol };
+  };
+  buildCamp = function (b, owner) {
+    const c = bulkCount(b), st = startIso(), off = [[2], [0, 3], [0, 2, 4]][b.perWeek - 1];
+    const list = [];
+    for (let w = 0; w < c.weeks; w++) off.forEach((o) => list.push({ t: '', body: '', date: plusDays(st, w * 7 + o), time: ['10:00', '18:00', '20:00'][list.length % 3], g: list.length % GV.length, lay: 0, ver: 1, ch: [...b.ch], flag: null, edited: false, hol: false }));
+    if (b.holidays) HOLIDAYS.filter((h) => b.hol.includes(h[0]) && h[1] >= todayIso() && h[1] <= plusDays(st, b.months * 30)).forEach((h) =>
+      list.push({ t: h[0], body: '', date: plusDays(h[1], -1), time: '12:00', g: 1, lay: 1, ver: 1, ch: [...b.ch], flag: null, edited: false, hol: h[0] }));
+    list.sort((a, x) => (a.date < x.date ? -1 : 1));
+    list.forEach((x, i) => { x.i = i; x.tags = []; x.sugg = []; });
+    const last = list.length ? list[list.length - 1].date : st;
+    return { id: 'c' + Date.now().toString(36), name: (b.files && b.files[0] ? b.files[0].name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]/g, ' ') : 'סדרת ' + b.dept) + ' · ' + b.months + ' ' + (b.months === 1 ? 'חודש' : 'חודשים'),
+      dept: b.dept, owner, status: 'draft', type: b.type, items: list, range: fmtD(list[0] ? list[0].date : st) + ' - ' + fmtD(last), cur: 0, filter: 'all', fmt: (b.fmts || ['1:1'])[0] };
+  };
+  // source material: real uploads (documents are read by Claude)
+  const _bulkR = SCREENS.bulk.render;
+  SCREENS.bulk.render = function () {
+    const h = _bulkR.call(this), b = S.bulk;
+    const files = b.files || [];
+    const up = '<div class="up-row"><button class="up-opt" data-act="bUpload"><span class="fi pdf">' + ic('upload', 14) + '</span>העלאת קובץ</button></div>' + (files.length ? '<div class="up-chips">' + fileChips(files, 'bFileX2') + '</div>' : '') +
+      '<span class="t-sub" style="display:block;margin:4px 0 8px">תוכנית עבודה, לוח אירועים או כל מסמך. Claude קורא אותו ובונה ממנו את הסדרה.</span>';
+    return h.replace(/<div class="up-row">[\s\S]*?<\/button><\/div>(?=<textarea id="bBrief")/, up).replace(/<div class="file-chip">[\s\S]*?<\/button><\/div>(?=<textarea id="bBrief")/, up)
+      .replace('<span>טקסט + גרפיקה לכל תוכן</span>', '<span>טקסט ב-Claude, גרפיקה ב-ChatGPT</span>');
+  };
+  ACT.bUpload = async () => { const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,image/*', true); if (!fs.length) return; S.bulk.files = [...(S.bulk.files || []), ...fs]; render(); };
+  ACT.bFileX2 = (i) => { (S.bulk.files || []).splice(+i, 1); render(); };
+  // generation: texts first (Claude, in batches), then the graphics fill in one by one
+  const GQ = { list: [], run: 0, max: 2 };
+  function campOf(x) { return (S.camps || []).find((c) => c.items.includes(x)); }
+  function queueGraphic(c, x, note) { x.media = Object.assign(x.media || {}, { kind: 'graphic', busy: 'ממתין לעיצוב...', err: '' }); GQ.list.push({ c, x, note }); pumpG(); }
+  function pumpG() {
+    while (GQ.run < GQ.max && GQ.list.length) { const j = GQ.list.shift(); GQ.run++; designItem(j.c, j.x, j.note).finally(() => { GQ.run--; pumpG(); }); }
+  }
+  async function designItem(c, x, note) {
+    const fmt = c.fmt || '1:1', size = IMG_SIZE(fmt), logo = logoOf();
+    const m = x.media;
+    try {
+      m.busy = 'ChatGPT מעצב את הגרפיקה...'; rerenderCamp();
+      const tx = { kicker: x.kicker || '', headline: x.t, sub: x.sub || '', details: [], cta: '' };
+      let r = await fx('image', { action: 'design', org: aiCtx().org, dept: c.dept, size, brief: x.t + '\n' + (x.body || ''), colors: brandFor(c.dept).colors, texts: tx,
+        refs: logo ? [logo] : [], logo: !!logo, note: note || '', quality: 'medium', n: 1 }, 150000);
+      let url = r.url, check = r.check || { ok: true };
+      if (!check.ok && (check.fixes || []).length) {
+        m.busy = 'מתקנים את הטקסט בגרפיקה...'; rerenderCamp();
+        try { const f = await fx('image', { action: 'fixtext', url, issues: check.issues, fixes: check.fixes, want: r.want || [], size }, 150000); const fc = f.check || { ok: true };
+          if ((fc.ok ? 0 : (fc.issues || []).length || 1) <= (check.issues || []).length) { url = f.url; check = fc; } } catch (e) { /* keep the first version */ }
+      }
+      m.design = url; m.warn = !check.ok && (check.issues || []).length ? check.issues : null;
+      if (size === 'square' && fmt === '1:1') m.url = url;
+      else {
+        m.busy = 'מתאימים לגודל ' + fmt + '...'; rerenderCamp();
+        const r2 = await produce([{ id: 'g', kind: 'graphic', layout: 'fit', format: FMT_K[fmt] || '1x1', data: { image: url }, thumb: false }], c.dept);
+        const z = (r2.results || [])[0]; m.url = z && z.ok ? z.urls.main : url;
+      }
+      m.fmt = fmt; m.ar = AR[fmt] || '1/1'; m.ready = true; m.busy = ''; m.stale = false; x.ver = (x.ver || 1) + 1;
+    } catch (e) { m.busy = ''; m.err = 'העיצוב לא הושלם'; }
+    rerenderCamp(); flush();
+  }
+  let rrT = 0;
+  function rerenderCamp() { if (S.route !== 'bulkReview' && S.route !== 'bulkGen') return; clearTimeout(rrT); rrT = setTimeout(() => { const t = document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName); if (!t) render(); else paintStrip(); }, 120); }
+  window.campMediaNow = () => { const c = campById(S.campId); const x = c && c.items[c.cur]; return x && x.media ? x.media : null; };
+  var campMediaNow = window.campMediaNow;
+  ACT.bGen = async () => {
+    const b = S.bulk;
+    const bb = $('#bBrief'); if (bb) b.brief = bb.value;
+    if (!b.ch.length) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
+    const camp = buildCamp(b, curUser().n);
+    if (!camp.items.length) { toast('אין מועדים בתקופה', 'הגדילו את התקופה או את מספר התכנים בשבוע.', 'err'); return; }
+    S.camps.unshift(camp); S.genCamp = camp; S.genP = 0; S.genStage = 'text'; go('bulkGen');
+    const files = (b.files || []).map((f) => ({ url: f.url, name: f.name }));
+    const chunks = []; for (let i = 0; i < camp.items.length; i += 10) chunks.push(camp.items.slice(i, i + 10));
+    let done = 0; const avoid = [];
+    try {
+      for (const part of chunks) {
+        const r = await fx('generate', Object.assign(aiCtx(), { mode: 'series', dept: b.dept, brief: b.brief, files, avoid: avoid.slice(-30), slots: part.map((x) => ({ i: x.i, date: x.date, hol: x.hol || '' })) }), 150000);
+        (r.items || []).forEach((y) => { const x = camp.items[+y.i]; if (!x) return; x.t = y.title || x.t; x.kicker = y.kicker || ''; x.sub = y.sub || ''; x.body = y.caption || ''; x.tags = (y.tags || []).slice(0, 5); x.sugg = x.tags.slice(); avoid.push(x.t); });
+        done += part.length; S.genP = Math.round(done / camp.items.length * 100);
+        const bar = $('#genBar'), num = $('#genNum'); if (bar) bar.style.width = S.genP + '%'; if (num) num.textContent = done;
+      }
+    } catch (e) {
+      if (!camp.items.some((x) => x.body)) { S.camps.splice(S.camps.indexOf(camp), 1); go('bulk'); aiFail(e); return; }
+    }
+    camp.items.forEach((x) => { if (!x.t) x.t = x.hol ? x.hol + ' שמח' : 'עדכון לתושבים'; });
+    flush();
+    S.campId = camp.id; S.campMode = 'edit'; go('bulkReview');
+    camp.items.forEach((x) => queueGraphic(camp, x));
+    toast('הטקסטים מוכנים', 'ChatGPT מעצב עכשיו את הגרפיקות, שתיים במקביל. אפשר לעבור על הפוסטים בינתיים.');
+  };
+  const _genR = SCREENS.bulkGen.render;
+  SCREENS.bulkGen.render = function () { return _genR.call(this).replace('<div class="gen-steps">', '<p class="t-sub" style="margin:6px 0 0">Claude כותב את הפוסטים. אחר כך ChatGPT מעצב את הגרפיקות.</p><div class="gen-steps">'); };
+  // review: real thumbnails in the strip, design status and actions in the graphic box
+  function paintStrip() {
+    const c = campById(S.campId); if (!c) return;
+    c.items.forEach((x) => { const el = document.querySelector('#rvStrip [data-act="cGo:' + x.i + '"] .thumb'); if (el && x.media && x.media.url) { el.style.backgroundImage = 'url("' + x.media.url + '")'; el.classList.add('real'); } });
+  }
+  const _rvRL = SCREENS.bulkReview.render;
+  SCREENS.bulkReview.render = function () {
+    let h = _rvRL.call(this);
+    const c = campById(S.campId); if (!c) return h;
+    c.items.forEach((x) => {
+      const m = x.media; if (!m) return;
+      const re = new RegExp('(data-act="cGo:' + x.i + '"><span class="thumb [^"]*")>');
+      if (m.url) h = h.replace(re, '$1 style="background-image:url(&quot;' + esc(m.url) + '&quot;)" data-real="1">');
+      else if (m.busy) h = h.replace(re, '$1 data-busy="1">');
+    });
+    const n = c.items.filter((x) => x.media && x.media.url).length, busy = c.items.filter((x) => x.media && x.media.busy).length;
+    if (busy) h = h.replace('<div class="rv">', '<div class="note camp-prog">' + '<span class="gm-spin" style="width:15px;height:15px;border-width:2px"></span><span>ChatGPT מעצב את הגרפיקות: ' + n + ' מתוך ' + c.items.length + ' מוכנות.</span></div><div class="rv">');
+    return h;
+  };
+  const _rvMount = SCREENS.bulkReview.mount;
+  SCREENS.bulkReview.mount = function () { _rvMount && _rvMount.call(this); paintStrip(); };
+  const _aiBoxC = aiBox;
+  aiBox = function (prefix) {
+    const h = _aiBoxC(prefix);
+    if (prefix !== 'c' || S.route !== 'bulkReview') return h;
+    const c = campById(S.campId), x = c && c.items[c.cur]; if (!x) return h;
+    const m = x.media || {}, busy = !!m.busy;
+    return '<div class="real-acts" style="margin-bottom:10px"><button class="btn btn-sm" data-act="cRedo"' + (busy ? ' disabled' : '') + '>' + ic('refresh', 14) + ' עיצוב חדש</button>' +
+      (m.url ? '<a class="btn btn-sm" href="' + esc(m.url) + '" target="_blank" rel="noopener">' + ic('down', 14) + ' הורדת הקובץ</a>' : '') + '</div>' +
+      (m.err ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>' + esc(m.err) + '. לחצו "עיצוב חדש".</span></div>' : '') +
+      (m.warn ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>בדיקת הטקסט מצאה: ' + m.warn.map(esc).join(' · ') + '</span></div>' : '') +
+      (m.stale ? '<div class="note ai-warn">' + ic('edit', 15) + '<span>הכותרת השתנתה. לחצו "עיצוב חדש" כדי לעדכן את הגרפיקה.</span></div>' : '') + h;
+  };
+  ACT.cRedo = () => { const [c, x] = CX(); if (!x || (x.media && x.media.busy)) return; const t = $('#cT'); if (t) x.t = t.value; queueGraphic(c, x, 'קומפוזיציה ועיצוב שונים מהגרסה הקודמת'); render(); };
+  ACT.cAi = () => { const [c, x] = CX(); const el = $('#cAi'); const q = (el && el.value || '').trim(); if (!q) { toast('מה לשנות?', 'כתבו בקשה קצרה.', 'err'); return; } x.edited = true; queueGraphic(c, x, q); render(); };
+  ACT.cAiQ = (q) => { const [c, x] = CX(); x.edited = true; queueGraphic(c, x, q); render(); };
+  // a title edit makes the graphic stale (the text is inside the image)
+  const _rvMount2 = SCREENS.bulkReview.mount;
+  SCREENS.bulkReview.mount = function () {
+    _rvMount2.call(this);
+    const t = $('#cT'); if (t) t.addEventListener('change', () => { const [c, x] = CX(); if (x && x.media && x.media.url) { x.media.stale = true; render(); } });
+  };
+  // approved series become real items with the real graphic
+  campToItems = function (c, st) {
+    c.items.forEach((x) => {
+      const it = { id: ++S.seq, t: x.t, ty: c.type, d: c.dept, s: st, o: c.owner, u: 'עכשיו', pub: x.date + ' ' + x.time, ch: [...x.ch], th: GV[x.g % GV.length], body: x.body, tags: x.tags, camp: c.id };
+      if (x.media && x.media.url) it.media = { kind: 'graphic', url: x.media.url, thumb: '', ar: x.media.ar || '1/1', fmt: x.media.fmt, ready: true, layout: 'ai', design: { kicker: x.kicker, sub: x.sub } };
+      items.unshift(it);
+    });
+    flush();
+  };
+  css.textContent += `
+.rs-it .thumb[data-real]{background-size:cover!important;background-position:center!important}.rs-it .thumb[data-real] .tt{display:none}
+.rs-it .thumb[data-busy]{opacity:.55;animation:campPulse 1.4s ease-in-out infinite}@keyframes campPulse{50%{opacity:.85}}
+.rs-it .thumb.real{background-size:cover!important;background-position:center!important}.rs-it .thumb.real .tt{display:none}
+.camp-prog{display:flex;align-items:center;gap:10px;margin-bottom:12px}`;
 })();
