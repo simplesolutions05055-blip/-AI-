@@ -1,0 +1,8 @@
+{
+  "name": "primeos-render-lab",
+  "private": true,
+  "type": "module",
+  "description": "Output quality lab: brand templates that turn Claude content into PNG graphics, A4 PDF documents, PDF+PPTX decks and MP4 videos. Inputs in data/ are real outputs of the live generate function.",
+  "scripts": { "all": "node graphic.mjs && node doc.mjs && node deck.mjs && node video.mjs" },
+  "dependencies": { "@fontsource/heebo": "^5.2.5", "pptxgenjs": "3.12.0" }
+}

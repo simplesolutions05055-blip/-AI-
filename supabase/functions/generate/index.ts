@@ -1,6 +1,6 @@
 // PrimeOS generate - all AI text generation through the Claude API.
 // POST { mode, ...input }   header x-primeos-token
-// modes: post | alt | revise | assistant | doc | deck
+// modes: post | alt | revise | assistant | doc | deck | graphic | video | doc2 | deck2
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-7-sonnet-latest'];
@@ -38,7 +38,6 @@ async function claude(key: string, system: string, user: string, maxTokens = 150
       return (d.content ?? []).filter((c: { type: string }) => c.type === 'text').map((c: { text: string }) => c.text).join('');
     }
     last = await res.text();
-    // only fall through to the next model when this one is unknown/unavailable
     if (res.status !== 404 && !(res.status === 400 && last.includes('model'))) break;
   }
   throw new Error('claude_api_error: ' + last.slice(0, 300));
@@ -48,6 +47,18 @@ function parseJson(raw: string) {
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('invalid_ai_response');
   return JSON.parse(m[0]);
+}
+
+// second pass: language proofing of short on-screen texts (they are printed on images, so errors are costly)
+async function proof(key: string, obj: Record<string, unknown>) {
+  try {
+    const raw = await claude(key, 'אתה עורך לשון עברית קפדן של רשות מקומית. מתקן רק שגיאות דקדוק, כתיב, ה\' הידיעה, התאמה במין ובמספר ופיסוק. לא משנה תוכן, אורך או סגנון. מקף רגיל בלבד.',
+      `תקן את השגיאות בטקסטים שב-JSON הבא והחזר את אותו JSON בדיוק, באותם מפתחות. JSON בלבד.\n${JSON.stringify(obj)}`, 2000);
+    const j = parseJson(raw);
+    return j && typeof j === 'object' ? { ...obj, ...j } : obj;
+  } catch {
+    return obj;
+  }
 }
 
 const RULES = `כללי כתיבה מחייבים:
@@ -151,6 +162,50 @@ ${JSON.stringify(p.content)}
 בדיוק ${n} עמודים במערך slides.`, 4000);
       const j = parseJson(raw);
       return json(req, { ok: true, title: j.title ?? '', slides: j.slides ?? [] });
+    }
+
+    // ---- design-ready structures for real files (graphic / document / deck / video) ----
+    const brief = `כותרת שהוזנה: ${p.title || '(לא הוזנה)'}\nבריף: ${p.brief || p.prompt || '(אין)'}`;
+
+    if (mode === 'graphic') {
+      const raw = await claude(key, s, `אתה גם מעצב הפרסומים של הרשות. כתוב את הטקסטים שיופיעו על גבי גרפיקה לרשתות, ואת טקסט הפוסט שמתחתיה.
+${brief}
+
+החזר JSON בלבד:
+{"kicker":"מילה או שתיים מעל הכותרת, למשל: אירוע קהילתי / הודעה לתושבים","headline":"כותרת ראשית לגרפיקה, 2-5 מילים, חזקה וברורה","sub":"שורת משנה אחת, עד 60 תווים","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט קצר, עד 28 תווים"}],"cta":"קריאה לפעולה קצרה עד 24 תווים","caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"]}
+details: רק פרטים שמופיעים בבריף (תאריך, שעה, מקום, טלפון), עד 3. אם אין פרטים - מערך ריק.`);
+      return json(req, { ok: true, ...(await proof(key, parseJson(raw))) });
+    }
+
+    if (mode === 'video') {
+      const raw = await claude(key, s, `כתוב תסריט לסרטון אנימציה קצר (12-18 שניות) לרשתות, טקסטים בלבד שמופיעים על המסך.
+${brief}
+
+החזר JSON בלבד:
+{"scenes":[{"t":"טקסט ראשי של הסצנה, עד 5 מילים","s":"שורת משנה קצרה או ריק"}],"cta":"סיום, עד 4 מילים","caption":"טקסט הפוסט, 2-3 משפטים","tags":["#האשטג"]}
+4 עד 5 סצנות. סצנה ראשונה תופסת תשומת לב. רק פרטים מהבריף.`);
+      return json(req, { ok: true, ...(await proof(key, parseJson(raw))) });
+    }
+
+    if (mode === 'doc2') {
+      const raw = await claude(key, s, `כתוב מסמך רשמי של הרשות בסגנון "${p.styleLabel || 'רשמי'}", באורך עמוד עד שני עמודים.
+${brief}
+
+החזר JSON בלבד:
+{"title":"כותרת המסמך","to":"אל מי המסמך מופנה, למשל: לתושבי השכונה","summary":"תקציר של משפט או שניים","sections":[{"h":"כותרת סעיף","paras":["פסקה"],"bullets":["נקודה (לא חובה)"]}],"note":"מסגרת 'טוב לדעת' של משפט אחד או ריק","sign":"חתימה, למשל: אגף ההנדסה"}
+3 עד 5 סעיפים. עניינית, בלי חזרות.`, 3500);
+      return json(req, { ok: true, ...parseJson(raw) });
+    }
+
+    if (mode === 'deck2') {
+      const n = Math.max(4, Math.min(20, +p.pages || 8));
+      const raw = await claude(key, s, `בנה מצגת של ${n} שקפים לישיבה או להצגה.
+${brief}
+
+החזר JSON בלבד:
+{"title":"כותרת המצגת","subtitle":"שורת משנה לשער","slides":[{"kind":"cover|bullets|stat|timeline|quote|end","t":"כותרת השקף","pts":["נקודה קצרה"],"stat":{"v":"מספר או ערך","l":"מה הוא מודד"}}]}
+בדיוק ${n} שקפים. ראשון cover, אחרון end. stat רק אם יש מספר אמיתי מהבריף, אחרת לא להשתמש ב-stat. timeline ל-3-5 שלבים או תאריכים. 2-4 נקודות בשקף.`, 4000);
+      return json(req, { ok: true, ...parseJson(raw) });
     }
 
     return json(req, { error: 'unknown_mode' }, 400);
