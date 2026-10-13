@@ -4,7 +4,7 @@
 // Returns per job the uploaded keys and a small JPEG preview (base64) for quality checks.
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -19,7 +19,7 @@ import { docHtml } from './_render/docs.mjs';
 // @ts-ignore
 import { deckHtml, deckPptx } from './_render/decks.mjs';
 // @ts-ignore
-import { videoHtml } from './_render/video.mjs';
+import { videoHtml, cardHtml, overlayHtml } from './_render/video.mjs';
 
 // limits (maxDuration, memory, bundled ffmpeg) are set in vercel.json
 
@@ -216,6 +216,52 @@ async function renderAll(body: any) {
             rmSync(dir, { recursive: true, force: true });
             if (up.main) await put(up.main, mp4, 'video/mp4');
             out.push({ id: j.id, ok: true, bytes: mp4.length, frames: total, ms: Date.now() - t0, stills });
+          } else if (j.kind === 'edit') {
+            // uploaded clip: scaled to the format, logo badge throughout, lower-third title, branded intro and outro
+            const fmt = j.format || '9x16';
+            // @ts-ignore
+            const ff = (await import('ffmpeg-static')).default as string;
+            const dir = mkdtempSync(join(tmpdir(), 'e-'));
+            const src = join(dir, 'src');
+            const rs = await fetch(j.clip);
+            if (!rs.ok) throw new Error('clip_fetch_failed');
+            writeFileSync(src, Buffer.from(await rs.arrayBuffer()));
+            const info = await run(ff, ['-hide_banner', '-i', src]).then(() => '', (e: any) => String(e?.stderr || ''));
+            const hasAudio = /Stream #.*Audio:/.test(info);
+            const fps = 30;
+            const card = async (c: any, name: string) => {
+              const { html, w, h, dur } = cardHtml(k, c, fmt);
+              await load(p, html, w, h);
+              const fd = join(dir, name); mkdirSync(fd);
+              const total = Math.round(dur * fps);
+              for (let f = 0; f < total; f++) {
+                await p.evaluate((tt: number) => (window as any).frame(tt), f / fps);
+                writeFileSync(join(fd, `f${String(f).padStart(4, '0')}.jpg`), Buffer.from(await p.screenshot({ type: 'jpeg', quality: 88 })));
+              }
+              await run(ff, ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', join(fd, 'f%04d.jpg'), '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-shortest', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p', '-c:a', 'aac', join(dir, name + '.mp4')], { maxBuffer: 1 << 26 });
+              return { w, h };
+            };
+            const { w: W, h: H } = await card({ t: j.data.t, s: j.data.s, dur: 2.6 }, 'intro');
+            await card({ t: j.data.cta || '', s: '', end: true, dur: 2.8 }, 'outro');
+            const png = async (only: string, name: string) => {
+              const { html, w, h } = overlayHtml(k, { t: j.data.t, s: j.data.s, only }, fmt);
+              await load(p, html, w, h);
+              writeFileSync(join(dir, name), Buffer.from(await p.screenshot({ type: 'png', omitBackground: true })));
+            };
+            await png('badge', 'badge.png');
+            await png('lower', 'lower.png');
+            const maxT = String(Math.min(60, +j.maxSec || 45));
+            await run(ff, ['-y', '-loglevel', 'error', '-i', src, '-i', join(dir, 'badge.png'), '-i', join(dir, 'lower.png'),
+              ...(hasAudio ? [] : ['-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']),
+              '-filter_complex', `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,fps=${fps}[v0];[v0][1:v]overlay=0:0[v1];[v1][2:v]overlay=0:0:enable='between(t,0.4,5.5)'[v]`,
+              '-map', '[v]', '-map', hasAudio ? '0:a:0' : '3:a', '-t', maxT, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-ar', '44100', '-ac', '2', join(dir, 'mid.mp4')], { maxBuffer: 1 << 26 });
+            await run(ff, ['-y', '-loglevel', 'error', '-i', join(dir, 'intro.mp4'), '-i', join(dir, 'mid.mp4'), '-i', join(dir, 'outro.mp4'),
+              '-filter_complex', '[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[v][a]', '-map', '[v]', '-map', '[a]',
+              '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart', join(dir, 'out.mp4')], { maxBuffer: 1 << 26 });
+            const mp4 = readFileSync(join(dir, 'out.mp4'));
+            rmSync(dir, { recursive: true, force: true });
+            if (up.main) await put(up.main, mp4, 'video/mp4');
+            out.push({ id: j.id, ok: true, bytes: mp4.length, audio: hasAudio, ms: Date.now() - t0 });
           } else out.push({ id: j.id, ok: false, error: 'unknown_kind' });
         } catch (e: any) {
           out.push({ id: j.id, ok: false, error: String(e?.message || e).slice(0, 300), ms: Date.now() - t0 });

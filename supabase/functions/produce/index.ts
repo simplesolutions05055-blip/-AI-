@@ -14,7 +14,7 @@ const RENDER_URL = Deno.env.get('PRIMEOS_RENDER_URL') ?? 'https://app.primeos.co
 const OUTS: Record<string, [string, string][]> = {
   graphic: [['main', 'jpg']], doc: [['main', 'pdf'], ['p1', 'jpg']],
   deck: [['main', 'pdf'], ['pptx', 'pptx'], ...Array.from({ length: 12 }, (_, i) => ['s' + (i + 1), 'jpg'] as [string, string])],
-  video: [['main', 'mp4']],
+  video: [['main', 'mp4']], edit: [['main', 'mp4']],
 };
 
 Deno.serve(async (req) => {
@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
       }
     }
     // videos (or explicit async) render in the background; the caller polls status.json / the file urls
-    const async = !!p.async || jobs.some((j) => j.kind === 'video');
+    const async = !!p.async || jobs.some((j) => j.kind === 'video' || j.kind === 'edit');
     let statusUrl: string | undefined, statusUpload: string | undefined;
     if (async) {
       const sp = `out/${t?.org_id ?? 'admin'}/${batch}/status.json`;

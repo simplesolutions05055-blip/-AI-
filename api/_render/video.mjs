@@ -73,3 +73,35 @@ window.frame=t=>{
 </script>`;
   return { html: page(css, body), w: W, h: H, dur: DUR };
 }
+
+// Title cards around an uploaded clip (intro / outro) + a transparent lower-third overlay for the clip itself.
+export function cardHtml(k, c, format) {
+  const [W, H] = VFORMATS[format] || VFORMATS['9x16'];
+  const wide = W > H, DUR = c.dur || 2.4;
+  const css = `body{width:${W}px;height:${H}px;overflow:hidden;background:${k.deep}}
+#c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:34px;text-align:center;padding:0 ${wide ? 160 : 90}px;color:#fff;background:radial-gradient(120% 80% at 80% 10%,${k.sky},${k.navy} 50%,${k.deep})}
+#c h1{font-size:${wide ? 104 : 118}px;font-weight:900;line-height:1.05;letter-spacing:-.02em}#c p{font-size:${wide ? 42 : 50}px;font-weight:600;color:#DCE7F3}
+#c .ln{width:140px;height:8px;border-radius:4px;background:${k.gold}}#c b.org{font-size:40px;font-weight:800;color:#fff}
+#c .w{display:inline-block}`;
+  const words = (t) => esc(t).split(/\s+/).map((w) => `<span class="w">${w}</span>`).join(' ');
+  const body = `<div id="c"><span id="cr">${crest(k, c.end ? 220 : 150)}</span>${c.t ? `<h1>${words(c.t)}</h1>` : ''}<span class="ln" id="ln"></span>${c.s ? `<p id="s">${esc(c.s)}</p>` : ''}${c.end ? `<b class="org" id="o">${esc(k.org)}</b>` : ''}</div>
+<script>const D=${DUR},eo=x=>1-Math.pow(1-Math.max(0,Math.min(1,x)),3),$=i=>document.getElementById(i);window.DUR=D;
+window.frame=t=>{const out=1-eo((t-(D-.35))/.35);$('c').style.opacity=out;$('cr').style.transform='scale('+(.6+.4*eo(t/.5))+')';$('cr').style.opacity=eo(t/.4);
+[...document.querySelectorAll('.w')].forEach((w,j)=>{const k=eo((t-.2-j*.08)/.45);w.style.opacity=k;w.style.transform='translateY('+(50*(1-k))+'px)';});
+$('ln').style.transform='scaleX('+eo((t-.3)/.5)+')';const s=$('s');if(s)s.style.opacity=eo((t-.55)/.5);const o=$('o');if(o)o.style.opacity=eo((t-.5)/.5);};</script>`;
+  return { html: page(css, body), w: W, h: H, dur: DUR };
+}
+export function overlayHtml(k, o, format) {
+  const [W, H] = VFORMATS[format] || VFORMATS['9x16'];
+  const tall = H / W > 1.5, wide = W > H;
+  const css = `html,body{background:transparent!important}body{width:${W}px;height:${H}px;overflow:hidden}
+#b{position:absolute;top:${tall ? 120 : 50}px;right:${wide ? 70 : 60}px;display:flex;align-items:center;gap:12px;background:#fff;color:${k.navy};border-radius:20px;padding:10px 22px 10px 24px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+#b b{display:block;font-size:28px;font-weight:800}#b small{font-size:20px;color:${k.ink}}
+#l{position:absolute;right:${wide ? 70 : 60}px;left:${wide ? 70 : 60}px;bottom:${tall ? 230 : 70}px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+#l span{background:${k.navy}EB;color:#fff;font-weight:900;font-size:${wide ? 52 : 58}px;line-height:1.15;padding:14px 26px;border-radius:16px;border-inline-start:10px solid ${k.gold}}
+#l small{background:#fff;color:${k.navy};font-weight:700;font-size:${wide ? 30 : 34}px;padding:8px 18px;border-radius:12px}`;
+  const badge = `<div id="b">${crest(k, 44, false)}<span><b>${esc(k.org)}</b>${k.dept ? `<small>${esc(k.dept)}</small>` : ''}</span></div>`;
+  const lower = o.t ? `<div id="l"><span>${esc(o.t)}</span>${o.s ? `<small>${esc(o.s)}</small>` : ''}</div>` : '';
+  const body = o.only === 'badge' ? badge : o.only === 'lower' ? lower : badge + lower;
+  return { html: page(css, body), w: W, h: H };
+}

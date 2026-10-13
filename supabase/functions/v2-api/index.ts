@@ -191,6 +191,17 @@ async function login(d: DB, p: Record<string, any>) {
   return { token };
 }
 
+// files people upload (brand assets, photos, videos, documents): signed direct upload to storage
+const EXT_OK = /^(png|jpe?g|webp|gif|svg|heic|mp4|mov|webm|m4v|pdf|docx?|pptx?|xlsx?|txt|csv|key)$/;
+async function uploadSign(d: any, s: any, p: Record<string, any>) {
+  const ext = String(p.name ?? '').split('.').pop()!.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!EXT_OK.test(ext)) throw new Error('file_type_not_allowed');
+  const path = `up/${s.orgId ?? 'admin'}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  const r = await d.storage.from('v2-content').createSignedUploadUrl(path);
+  if (r.error) throw r.error;
+  return { ok: true, upload: r.data.signedUrl, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, path, ext };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
   if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
@@ -211,6 +222,7 @@ Deno.serve(async (req) => {
     if (!s) return json(req, { error: 'invalid_token' }, 401);
 
     if (action === 'whoami') return json(req, { kind: s.kind });
+    if (action === 'upload.sign') return json(req, await uploadSign(d, s, p));
 
     if (s.kind === 'client') {
       if (action === 'live.load') return json(req, await liveLoad(d, s.orgId, s.memberId));

@@ -657,6 +657,7 @@
   const FMT_K = { '1:1': '1x1', '4:5': '4x5', '9:16': '9x16', '16:9': '16x9', '1.91:1': '191x1' };
   const IMG_SIZE = (f) => (f === '4:5' || f === '9:16' ? 'portrait' : f === '16:9' || f === '1.91:1' ? 'landscape' : 'square');
   const LAY = [
+    ['ai', 'עיצוב AI חופשי', 0],
     ['photo', 'תמונה מלאה', 1], ['frame', 'מסגרת ממלכתית', 1], ['split', 'תמונה ופאנל', 1], ['greeting', 'ברכה', 1],
     ['official', 'רשמי', 0], ['notice', 'הודעה דחופה', 0], ['stat', 'נתון מרכזי', 0], ['editorial', 'בהיר מערכתי', 0],
   ];
@@ -746,6 +747,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (opts.layout) m.layout = opts.layout;
     const fmt = w.fmt || (w.fmts && w.fmts[0]) || '1:1';
     const job = ++m.job || (m.job = 1);
+    if (m.layout === 'ai') return aiDesignRun(w, m, fmt, job, opts);
     try {
       if (needsImg(m.layout) && (!m.image || opts.newImage || (m.imgSize && m.imgSize !== IMG_SIZE(fmt) && opts.fit))) {
         m.busy = 'ChatGPT יוצר תמונת אווירה...';
@@ -777,6 +779,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   }
   // first layout: an image layout for events and calls, the alert layout for disruptions, the stat layout when a number leads
   function pickLayout(d, brief) {
+    return 'ai';
+  }
+  function pickTemplate(d, brief) {
     const tx = [d.kicker, d.headline, d.sub, brief].join(' ');
     if (/הפסק|תקל|סגיר|חסימ|אזהר|דחוף|שיבוש/.test(tx)) return 'notice';
     if (/חג |חג$|ברכ|שנה טובה|חנוכה|פסח|סוכות|פורים|עצמאות/.test(tx)) return 'greeting';
@@ -792,7 +797,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     try {
       const gfx = isGfx(w);
       const r = gfx
-        ? await gen({ mode: 'graphic', title: w.brief.title, brief: w.brief.free, dept: w.brief.dept })
+        ? await gen({ mode: 'graphic', title: w.brief.title, brief: w.brief.free, dept: w.brief.dept, files: briefFiles(w) })
         : await gen({ mode: 'post', title: w.brief.title, brief: w.brief.free, dept: w.brief.dept, channels: chNames(w.ch), typeLabel: TYPES[w.type] ? TYPES[w.type].t : 'גרפיקה' });
       if (S.wiz !== w) return;
       w.step = 1;
@@ -875,7 +880,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const w = S.wiz;
     if (!isGfx(w) || w.step !== 1) return;
     const t = $('#sTitle');
-    if (t) t.addEventListener('change', () => { if (!w.media || w.media.busy) return; clearTimeout(tmr); tmr = setTimeout(() => gfxRun(w), 300); });
+    if (t) t.addEventListener('change', () => {
+      if (!w.media || w.media.busy) return;
+      if (w.media.layout === 'ai') { w.media.stale = true; render(); return; }
+      clearTimeout(tmr); tmr = setTimeout(() => gfxRun(w), 300);
+    });
   };
   // the saved item keeps the real file
   const _wizItemL = wizItem;
@@ -906,7 +915,10 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     m.ready = false;
     render();
     try {
-      const r = await produce([{ id: 'v', kind: 'video', data: edl, fps: 24, stillsAt: [] }], w.brief.dept);
+      const first = (m.scenes || [])[0] || {};
+      const r = await produce([m.edit
+        ? { id: 'v', kind: 'edit', format: edl.format, clip: m.edit, data: { t: first.t || w.t, s: first.s || '', cta: m.cta || '' }, maxSec: 45 }
+        : { id: 'v', kind: 'video', data: edl, fps: 24, stillsAt: [] }], w.brief.dept);
       const x = (r.results || [])[0];
       if (!x || !x.urls) throw new Error('render_failed');
       m.url = x.urls.main;
@@ -931,7 +943,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   ACT.vdGen = async () => {
     const v = S.vd;
     if (!v.style) { toast('לא נבחר סגנון', 'בחרו: אנימציה, סרטון קיים או סרטון AI.', 'err'); return; }
-    if (v.style === 'existing') { toast('עריכת סרטון קיים', 'העלאת סרטון לעריכה תיפתח בשלב הבא. בינתיים בחרו אנימציה או סרטון AI.', 'err'); return; }
+    if (v.style === 'existing' && !(v.clip && v.clip.url)) { toast('לא הועלה סרטון', 'העלו את הסרטון לעריכה.', 'err'); return; }
     v.gen = true;
     render();
     try {
@@ -939,7 +951,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const brief = v.desc + '\nמטרה: ' + goal + '\nקהל יעד: ' + [...v.audQ, v.aud].filter(Boolean).join(', ');
       const [r, imgs] = await Promise.all([
         gen({ mode: 'video', title: v.name, brief }),
-        v.style === 'ai' ? sceneImages(3, v) : Promise.resolve([]),
+        v.style === 'ai' ? (v.imgs.some((m) => m.url && !m.v) ? Promise.resolve(v.imgs.filter((m) => m.url && !m.v).map((m) => m.url)) : sceneImages(3, v)) : Promise.resolve([]),
       ]);
       if (S.vd !== v) return;
       v.gen = false;
@@ -950,7 +962,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const tags = (r.tags || []).slice(0, 6);
       w.sugg = [...new Set([...tags, ...suggestTags(w.t, w.brief.dept)])].slice(0, 7);
       w.tags = tags.slice(0, 4);
-      w.media = { kind: 'video', scenes: r.scenes || [], cta: r.cta || '', details: [], images: imgs.filter(Boolean), thumb: imgs.filter(Boolean)[0] || '', fmt: v.fmt, ar: AR[v.fmt] || '9/16' };
+      w.media = { kind: 'video', scenes: r.scenes || [], cta: r.cta || '', details: [], images: imgs.filter(Boolean), thumb: imgs.filter(Boolean)[0] || '', fmt: v.fmt, ar: AR[v.fmt] || '9/16', edit: v.style === 'existing' ? v.clip.url : '' };
       render();
       videoRun(w, edlFrom(w));
     } catch (e) { v.gen = false; render(); aiFail(e); }
@@ -997,6 +1009,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .real-doc .rd-busy{position:relative;width:100%;max-width:720px;aspect-ratio:210/297;border-radius:12px;overflow:hidden;background:#E6EBF2}
 @media (max-width:900px){.real-doc iframe{display:none}.real-doc img{display:block}}
 .slide.real{position:relative;padding:0;overflow:hidden;background:#E6EBF2}.slide.real img{width:100%;height:100%;object-fit:cover;display:block}`;
+  const docFiles = (w) => [...(w.file && w.file.url ? [{ url: w.file.url, name: w.file.n }] : [])];
   async function docRun(w, opts) {
     opts = opts || {};
     const m = (w.media = w.media || { kind: 'doc', ar: '210/297' });
@@ -1006,7 +1019,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         m.busy = 'ה-AI כותב את המסמך...';
         render();
         const [d, img] = await Promise.all([
-          gen({ mode: 'doc2', style: w.style, styleLabel: DOC_STYLE_T[w.style], title: w.title, brief: w.prompt }),
+          gen({ mode: 'doc2', style: w.style, styleLabel: DOC_STYLE_T[w.style], title: w.title, files: docFiles(w),
+            brief: (w.src === 'file' && w.file ? (w.useAs === 'asis' ? 'השתמש בתוכן הקובץ המצורף כמו שהוא, מילה במילה. רק לארגן אותו למבנה המסמך. ' : 'ערוך ושפר את תוכן הקובץ המצורף: ניסוח, קיצור וסדר, בלי להוסיף עובדות. ') : '') + (w.prompt || '') }),
           w.style === 'designed' && !m.image ? aiImage({ title: w.title, brief: w.prompt, size: 'landscape' }).catch(() => '') : Promise.resolve(m.image || ''),
         ]);
         if (S.dw !== w || m.job !== job) return;
@@ -1046,8 +1060,10 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   ACT.dwGen = () => {
     dwCollect();
     const w = S.dw;
-    if (!w.style || w.src !== 'ai') { _dwGenL(); return; }
-    if (!w.title.trim() && !w.prompt.trim()) { toast('חסר תוכן', 'כתבו כותרת או תיאור חופשי למסמך.', 'err'); return; }
+    const fromFile = w.src === 'file' && w.file && w.file.url;
+    if (!w.style || (w.src !== 'ai' && !fromFile)) { _dwGenL(); return; }
+    if (fromFile && !w.useAs) { toast('מה לעשות עם התוכן?', 'בחרו אם להשתמש בתוכן כמו שהוא או לערוך אותו עם AI.', 'err'); return; }
+    if (!fromFile && !w.title.trim() && !w.prompt.trim()) { toast('חסר תוכן', 'כתבו כותרת או תיאור חופשי למסמך.', 'err'); return; }
     w.step = 1;
     w.doc = null;
     w.media = null;
@@ -1106,7 +1122,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         m.busy = 'ה-AI בונה ' + w.pages + ' שקפים...';
         render();
         const [d, imgs] = await Promise.all([
-          gen({ mode: 'deck2', style: w.style, title: w.title, brief: w.prompt, pages: w.pages }),
+          gen({ mode: 'deck2', style: w.style, title: w.title, pages: w.pages, keep: !!(w.src === 'file' && w.file && w.file.url), files: w.file && w.file.url ? [{ url: w.file.url, name: w.file.n }] : [],
+            brief: (w.src === 'file' && w.file ? ({ visual: 'שמור על הטקסט של המצגת המצורפת כמו שהוא, מילה במילה, שקף אחר שקף. ', text: 'שפר את הניסוח של המצגת המצורפת: קצר, ברור ומדויק, בלי להוסיף עובדות. שמור על סדר השקפים. ', both: 'ערוך את המצגת המצורפת: שפר ניסוח וסדר, בלי להוסיף עובדות. ' })[w.editKind] + 'מספר השקפים כמו במצגת המקורית. ' : '') + (w.prompt || '') }),
           w.style === 'designed' && !m.images ? Promise.all([aiImage({ title: w.title, brief: w.prompt + '\nתמונת שער רחבה ואווירתית', size: 'landscape' }).catch(() => ''), aiImage({ title: w.title, brief: w.prompt + '\nאנשים ורגע אנושי מהנושא', size: 'landscape' }).catch(() => '')]) : Promise.resolve(null),
         ]);
         if (S.dk !== w || m.job !== job) return;
@@ -1149,8 +1166,15 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   ACT.dkGen = () => {
     dkCollect();
     const w = S.dk;
-    if (w.src !== 'ai' || !w.style) { _dkGenL(); return; }
-    if (!w.title.trim() && !w.prompt.trim()) { toast('חסר תוכן', 'כתבו כותרת או תיאור חופשי למצגת.', 'err'); return; }
+    const fromFile = w.src === 'file' && w.file && w.file.url;
+    if (fromFile) {
+      if (!w.editKind) { toast('איזו עריכה דרושה?', 'בחרו: ויזואלית בלבד, טקסט בלבד או גם וגם.', 'err'); return; }
+      if (w.editKind !== 'text' && !w.style) { toast('לא נבחר סגנון', 'בחרו סגנון לעיצוב מחדש.', 'err'); return; }
+      if (!w.style) w.style = 'formal';
+    } else {
+      if (w.src !== 'ai' || !w.style) { _dkGenL(); return; }
+      if (!w.title.trim() && !w.prompt.trim()) { toast('חסר תוכן', 'כתבו כותרת או תיאור חופשי למצגת.', 'err'); return; }
+    }
     w.slides = mkSlides(w.pages);
     w.cur = 0;
     w.fixKind = dkKinds(w)[0];
@@ -1211,5 +1235,326 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (m.pptx) links.push(['PowerPoint', m.pptx]);
     const box = '<div class="note">' + ic('down', 16) + '<span>הקובץ המקורי: ' + links.map((l) => '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" style="font-weight:700;color:var(--brand)">' + l[0] + '</a>').join(' · ') + (m.kind === 'video' && !m.ready ? ' (הסרטון עדיין ברינדור)' : '') + '</span></div>';
     return h.replace('<div class="note">' + ic('help', 16), box + '<div class="note">' + ic('help', 16));
+  };
+
+  /* =====================================================================
+   * REAL UPLOADS: brand assets, photos, videos and documents go to storage,
+   * and every flow uses them (Claude reads them, ChatGPT designs with them)
+   * ===================================================================== */
+  const MAXB = 50 * 1024 * 1024;
+  const extOf = (n) => String(n || '').split('.').pop().toLowerCase();
+  const isImg = (n) => /^(png|jpe?g|webp|gif|svg|heic)$/.test(extOf(n));
+  const isVid = (n) => /^(mp4|mov|webm|m4v)$/.test(extOf(n));
+  const readable = (n) => /^(png|jpe?g|webp|gif|pdf|docx|pptx|txt|csv)$/.test(extOf(n));
+  let lastEl = null;
+  document.addEventListener('click', (e) => { lastEl = e.target; }, true);
+  function pickFiles(accept, multiple) {
+    return new Promise((res) => {
+      const i = document.createElement('input');
+      i.type = 'file'; if (accept) i.accept = accept; i.multiple = !!multiple; i.style.display = 'none';
+      i.addEventListener('change', () => { res([...(i.files || [])]); i.remove(); });
+      document.body.appendChild(i);
+      i.click();
+    });
+  }
+  async function uploadFile(f) {
+    if (f.size > MAXB) throw new Error('too_big');
+    const s = await call('upload.sign', { name: f.name });
+    const r = await fetch(s.upload, { method: 'PUT', headers: { 'content-type': f.type || 'application/octet-stream', 'x-upsert': 'true' }, body: f });
+    if (!r.ok) throw new Error('upload_failed');
+    return { url: s.url, name: f.name, ext: s.ext, type: f.type, size: f.size };
+  }
+  async function uploadPicked(accept, multiple) {
+    const fs = await pickFiles(accept, multiple);
+    if (!fs.length) return [];
+    toast('מעלה ' + (fs.length > 1 ? fs.length + ' קבצים' : 'את הקובץ') + '...', fs.map((f) => f.name).join(', '));
+    const out = [];
+    for (const f of fs) {
+      try { out.push(await uploadFile(f)); }
+      catch (e) { toast('ההעלאה נכשלה', f.name + (e.message === 'too_big' ? ' גדול מ-50MB.' : e.message === 'file_type_not_allowed' ? ': סוג קובץ שלא נתמך.' : '. נסו שוב.'), 'err'); }
+    }
+    return out;
+  }
+  const fileIcon = (n) => (isImg(n) ? 'img' : isVid(n) ? 'vid' : 'doc');
+  const fileChips = (list, xAct) => (list || []).map((f, i) => '<span class="file-chip up-chip">' + (isImg(f.name) ? '<img src="' + esc(f.url) + '" alt="">' : '<span class="fi ' + esc(extOf(f.name)) + '">' + esc(extOf(f.name).toUpperCase()) + '</span>') + '<b>' + esc(f.name) + '</b><button class="icon-btn" data-act="' + xAct + ':' + i + '" aria-label="הסרה">' + ic('x', 14) + '</button></span>').join('');
+  css.textContent += `
+.up-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.up-chip{display:inline-flex;align-items:center;gap:8px;max-width:100%}.up-chip img{width:34px;height:34px;object-fit:cover;border-radius:6px}.up-chip b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;font-size:13px}
+.lc-img.has-logo{background:repeating-conic-gradient(#EEF1F6 0 25%,#fff 0 50%) 50%/18px 18px!important}.lc-img.has-logo img{max-width:80%;max-height:80%;object-fit:contain}
+.raw.real{background-size:cover!important;background-position:center!important}
+.ai-warn{margin-top:10px}`;
+
+  /* ---- brand: logos ---- */
+  const logoOf = () => { const l = (BRAND.logos || []).find((x) => x.url && !/הפוך|לבן/.test(x.n)) || (BRAND.logos || []).find((x) => x.url); return l ? l.url : ''; };
+  const _brandFor = brandFor;
+  brandFor = function (dept) { const b = _brandFor(dept); const l = logoOf(); if (l) b.logo = l; return b; };
+  const _brandMount = SCREENS.brand.mount;
+  SCREENS.brand.mount = function () {
+    _brandMount && _brandMount.call(this);
+    const b = S.brandEdit ? S.brandDraft : BRAND;
+    $$('.logo-card').forEach((c, i) => { const l = b.logos[i]; if (l && l.url) { const box = c.querySelector('.lc-img'); if (box) { box.classList.add('has-logo'); box.innerHTML = '<img src="' + esc(l.url) + '" alt="' + esc(l.n) + '">'; } } });
+    if (!S.brandEdit && (S.tab.brand || 'logos') === 'docs') $$('table tbody tr').forEach((tr, i) => { const d = b.docs[i]; const btn = tr.querySelector('[data-act^="toastInfo"]'); if (d && d.url && btn) { const a = document.createElement('a'); a.className = 'btn btn-sm'; a.href = d.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'צפייה'; btn.replaceWith(a); } });
+  };
+  ACT.bAddLogo = async () => {
+    const [f] = await uploadPicked('image/png,image/svg+xml,image/jpeg,image/webp');
+    if (!f) return;
+    if (!S.brandEdit) ACT.brandEdit();
+    S.brandDraft.logos.push({ n: f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' '), c: '#0E3B6B', url: f.url });
+    render();
+    toast('הלוגו הועלה', 'לחצו שמירה כדי שכל התוכן החדש ישתמש בו.');
+  };
+  /* ---- brand: reference documents (Claude reads them and updates the brand rules) ---- */
+  async function learnBrand(files, target) {
+    const rd = files.filter((f) => readable(f.name));
+    if (!rd.length) return;
+    toast('קלוד קורא את המסמכים...', 'מחלץ שפת מותג, כללים וצבעים.');
+    try {
+      const r = await gen({ mode: 'brand', files: rd.map((f) => ({ url: f.url, name: f.name })) });
+      const t = target();
+      const ch = [];
+      if (r.tone) { t.rules.tone = r.tone; ch.push('טון הכתיבה'); }
+      if ((r.good || []).length) { t.rules.good = [...new Set([...r.good, ...t.rules.good])].slice(0, 8); ch.push(r.good.length + ' ניסוחים מועדפים'); }
+      if ((r.bad || []).length) { t.rules.bad = [...new Set([...r.bad, ...t.rules.bad])].slice(0, 8); ch.push(r.bad.length + ' כללי הימנעות'); }
+      const cols = (r.colors || []).filter((c) => /^#[0-9a-f]{6}$/i.test(c.hex || ''));
+      if (cols.length) { t.colors = cols.slice(0, 8).map((c) => [c.n || 'צבע', c.hex.toUpperCase()]); ch.push(cols.length + ' צבעי מותג'); }
+      if ((r.fonts || []).length && typeof FONTS !== 'undefined') { const f = r.fonts.find((x) => FONTS.includes(x)); if (f) { t.fonts.h = f; t.fonts.b = f; ch.push('גופן'); } }
+      render();
+      toast(ch.length ? 'המערכת למדה מהמסמכים' : 'המסמכים נקלטו', ch.length ? 'עודכנו: ' + ch.join(', ') + '.' : (r.summary || 'לא נמצאו בהם הנחיות מותג מפורשות.'));
+      flush();
+    } catch (e) { aiFail(e); }
+  }
+  ACT.bAddDoc = async () => {
+    const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,.xlsx,image/*', true);
+    if (!fs.length) return;
+    if (!S.brandEdit) ACT.brandEdit();
+    const by = curUser().n, dt = new Date().toLocaleDateString('he-IL');
+    fs.forEach((f) => S.brandDraft.docs.unshift({ n: f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' '), k: extOf(f.name).toUpperCase(), by, d: dt, cat: 'brand', url: f.url }));
+    render();
+    learnBrand(fs, () => S.brandDraft || BRAND);
+  };
+  const DQ = {};
+  ACT.docqAdd = async () => {
+    const q = DOCQ[S.docq.step];
+    const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,.xlsx,image/*', true);
+    if (!fs.length) return;
+    fs.forEach((f) => { S.docq.files[q.k].push(f.name); DQ[f.name] = f; });
+    $('#modalBox').innerHTML = docqHtml();
+  };
+  const _docqClose = ACT.docqClose;
+  ACT.docqClose = () => {
+    const names = Object.values(S.docq.files).flat();
+    _docqClose();
+    const ups = names.map((n) => DQ[n]).filter(Boolean);
+    ups.forEach((f) => { const d = BRAND.docs.find((x) => !x.url && x.n === f.name.replace(/\.[a-z]+( \(\d+\))?$/, '').replace(/_/g, ' ')); if (d) d.url = f.url; });
+    if (ups.length) learnBrand(ups, () => BRAND);
+  };
+
+  /* ---- generic upload buttons: what happens depends on where they sit ---- */
+  ACT.fakeUpload = async () => {
+    const el = lastEl && lastEl.closest ? lastEl : null;
+    const row = el && el.closest('.ed-row, .row-acts, tr');
+    const rm = row && row.querySelector('[data-act^="bRm:"]');
+    // brand screen: replace a logo or a document
+    if (S.route === 'brand' && rm) {
+      const [k, i] = rm.dataset.act.slice(4).split('|');
+      const [f] = await uploadPicked(k === 'logos' ? 'image/png,image/svg+xml,image/jpeg,image/webp' : '.pdf,.docx,.pptx,.txt,.csv,.xlsx,image/*');
+      if (!f) return;
+      const it = S.brandDraft[k][+i];
+      it.url = f.url;
+      if (k === 'docs') { it.k = extOf(f.name).toUpperCase(); it.d = new Date().toLocaleDateString('he-IL'); }
+      render();
+      toast('הקובץ הוחלף', 'לחצו שמירה כדי להחיל.');
+      if (k === 'docs') learnBrand([f], () => S.brandDraft || BRAND);
+      return;
+    }
+    // create wizard: material for the AI (photos are used in the design, documents are read by Claude)
+    if (S.route === 'wizard' && S.wiz && S.wiz.step === 0) {
+      collectWiz();
+      const fs = await uploadPicked('image/*,video/*,.pdf,.docx,.pptx,.txt,.csv', true);
+      if (!fs.length || !S.wiz) return;
+      S.wiz.brief.files = [...(S.wiz.brief.files || []), ...fs];
+      render();
+      return;
+    }
+    // library: an uploaded finished file becomes a draft item
+    if (S.route === 'library') {
+      const fs = await uploadPicked('image/*,video/*,.pdf,.pptx,.docx', true);
+      fs.forEach((f) => {
+        const ty = isImg(f.name) ? 'graphic' : isVid(f.name) ? 'video' : extOf(f.name) === 'pptx' ? 'deck' : 'doc';
+        const it = mkItem({ t: f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' '), ty, s: 'draft', body: '' });
+        it.media = { kind: ty, url: f.url, thumb: isImg(f.name) ? f.url : '', ar: ty === 'doc' ? '210/297' : ty === 'deck' ? '16/9' : '1/1', ready: true, uploaded: true };
+      });
+      if (fs.length) { render(); toast('הקבצים נוספו לספרייה', fs.length + ' פריטים נשמרו כטיוטה.'); flush(); }
+      return;
+    }
+    const fs = await uploadPicked('', true);
+    if (fs.length) toast('הקובץ הועלה', fs.map((f) => f.name).join(', '));
+  };
+  // brief: show the attached files
+  const _wizRU = SCREENS.wizard.render;
+  SCREENS.wizard.render = function () {
+    let h = _wizRU.call(this);
+    const w = S.wiz;
+    if (!w || w.step !== 0 || !(w.brief.files || []).length) return h;
+    return h.replace(/(<div class="brief-tools">[\s\S]*?<\/div>)/, '$1<div class="up-chips">' + fileChips(w.brief.files, 'wFileX') + '</div>');
+  };
+  ACT.wFileX = (i) => { collectWiz(); S.wiz.brief.files.splice(+i, 1); render(); };
+  const briefFiles = (w) => (w.brief.files || []).filter((f) => readable(f.name)).map((f) => ({ url: f.url, name: f.name }));
+  const briefPhotos = (w) => (w.brief.files || []).filter((f) => /^(png|jpe?g|webp)$/.test(extOf(f.name))).map((f) => f.url);
+
+  /* ---- video wizard: real photos and clips ---- */
+  ACT.vdImg = async (v) => {
+    const fs = await uploadPicked(v === '1' ? 'video/*' : 'image/*', true);
+    if (!fs.length || !S.vd) return;
+    fs.forEach((f) => S.vd.imgs.push({ v: isVid(f.name), url: f.url, name: f.name }));
+    render();
+  };
+  const _vidM = SCREENS.vidWiz.mount;
+  SCREENS.vidWiz.mount = function () {
+    _vidM && _vidM.call(this);
+    const w = S.vd;
+    if (!w || !w.imgs) return;
+    $$('.raw.thumb').forEach((el, i) => { const m = w.imgs[i]; if (m && m.url && !m.v) { el.classList.add('real'); el.style.backgroundImage = "url('" + m.url + "')"; } });
+  };
+  ACT.vdClip = async () => {
+    const [f] = await uploadPicked('video/*');
+    if (!f || !S.vd) return;
+    S.vd.clip = { k: extOf(f.name), n: f.name, sub: Math.round(f.size / 1048576) + 'MB', url: f.url };
+    render();
+    toast('הסרטון הועלה', f.name);
+  };
+  /* ---- documents and decks from an uploaded file: Claude reads it ---- */
+  ACT.dwFile = async () => {
+    dwCollect();
+    const [f] = await uploadPicked('.pdf,.docx,.txt,.pptx');
+    if (!f || !S.dw) return;
+    S.dw.file = { k: extOf(f.name), n: f.name, url: f.url };
+    render();
+    toast('הקובץ הועלה', f.name);
+  };
+  ACT.dkFile = async () => {
+    dkCollect();
+    const [f] = await uploadPicked('.pptx,.pdf,.docx');
+    if (!f || !S.dk) return;
+    S.dk.file = { k: extOf(f.name), n: f.name, sub: '', url: f.url };
+    render();
+    toast('המצגת הועלתה', f.name);
+  };
+
+  /* ---------- ChatGPT designs the whole graphic from the brand palette ---------- */
+  const DESIGN_AR = { square: '1/1', portrait: '2/3', landscape: '3/2' };
+  async function aiDesignRun(w, m, fmt, job, opts) {
+    const size = IMG_SIZE(fmt);
+    const logo = logoOf();
+    const photos = briefPhotos(w);
+    try {
+      let url = '', check = { ok: true }, want = [];
+      if (opts.fixOnly && m.design) {
+        url = m.design; check = { ok: false, issues: m.warn || [], fixes: m.fixes || [] }; want = m.want || [];
+      } else if (opts.fit && m.design && m.dsize === size && !opts.note) {
+        url = m.design; check = { ok: !m.warn, issues: m.warn || [] }; want = m.want || [];
+        if (m.warn) check.ok = true; // keep the existing warning, no new fix round on a resize
+      } else {
+        m.busy = 'ChatGPT מעצב את הגרפיקה... (כדקה)';
+        m.warn = null;
+        render();
+        const r = await fx('image', {
+          action: 'design', org: aiCtx().org, dept: w.brief.dept, size, brief: (w.brief.title || '') + '\n' + (w.brief.free || ''),
+          colors: brandFor(w.brief.dept).colors, texts: { kicker: w.design.kicker, headline: w.t, sub: w.design.sub, details: w.design.details, cta: w.design.cta },
+          refs: [...(logo ? [logo] : []), ...photos].slice(0, 4), logo: !!logo, note: opts.note || '', quality: 'high', n: 2,
+        }, 150000);
+        if (S.wiz !== w || m.job !== job) return;
+        url = r.url; check = r.check || { ok: true }; want = r.want || [];
+      }
+      for (let round = 1; round <= 2 && !check.ok && (check.issues || []).length; round++) {
+        m.busy = 'מתקנים את הטקסט בגרפיקה' + (round > 1 ? ' (סבב ' + round + ')' : '') + '...';
+        m.design = url;
+        render();
+        try {
+          const f = await fx('image', { action: 'fixtext', url, issues: check.issues, fixes: check.fixes || [], want, size }, 150000);
+          if (S.wiz !== w || m.job !== job) return;
+          url = f.url; check = f.check || { ok: true };
+        } catch (e) { break; /* keep the last version and show the issues */ }
+      }
+      const keepWarn = opts.fit && m.dsize === size && !opts.note ? m.warn : null;
+      m.design = url; m.want = want; m.dsize = size; m.stale = false; m.fixes = check.fixes || [];
+      m.warn = keepWarn || (!check.ok && (check.issues || []).length ? check.issues : null);
+      // exact platform size: the design is placed into the format without cropping
+      if (size === 'square' && fmt === '1:1') { m.url = url; }
+      else {
+        m.busy = 'מתאימים לגודל ' + fmt + '...';
+        render();
+        const r2 = await produce([{ id: 'g', kind: 'graphic', layout: 'fit', format: FMT_K[fmt] || '1x1', data: { image: url }, thumb: false }], w.brief.dept);
+        if (S.wiz !== w || m.job !== job) return;
+        const x = (r2.results || [])[0];
+        m.url = x && x.ok ? x.urls.main : url;
+      }
+      m.image = '';
+      m.fmt = fmt;
+      m.ar = AR[fmt] || '1/1';
+      m.busy = '';
+      w.ver = (w.ver || 1) + (opts.first ? 0 : 1);
+      render();
+      if (m.warn) toast('בדקו את הטקסט בגרפיקה', 'הבדיקה מצאה שגיאות שלא תוקנו עד הסוף. אפשר ללחוץ "תיקון הטקסט" או לבחור תבנית מותג.', 'err');
+    } catch (e) {
+      if (S.wiz !== w || m.job !== job) return;
+      m.busy = '';
+      m.layout = pickTemplate(w.design || {}, w.brief.free);
+      render();
+      toast('העיצוב החופשי לא הושלם', 'עברנו לתבנית מותג. אפשר לנסות שוב בכפתור עיצוב AI חופשי.', 'err');
+      gfxRun(w);
+    }
+  }
+  // studio: AI design controls
+  const _aiBoxD = aiBox;
+  aiBox = function (prefix) {
+    let h = _aiBoxD(prefix);
+    const w = S.wiz;
+    if (prefix !== 'w' || S.route !== 'wizard' || !isGfx(w) || !w.media) return h;
+    const m = w.media, busy = !!m.busy;
+    h = h.replace('<div class="lay-pick" role="radiogroup" aria-label="פריסה">', '<div class="t-sub" style="margin-bottom:6px">עיצוב חופשי של ChatGPT בצבעי המותג, או תבנית מותג קבועה:</div><div class="lay-pick" role="radiogroup" aria-label="פריסה">');
+    if (m.layout === 'ai') {
+      h = h.replace('<div class="real-acts">', '<div class="real-acts"><button class="btn btn-sm" data-act="gNew"' + (busy ? ' disabled' : '') + '>' + ic('refresh', 14) + ' עיצוב חדש</button>' + (m.warn ? '<button class="btn btn-sm" data-act="gFix"' + (busy ? ' disabled' : '') + '>' + ic('edit', 14) + ' תיקון הטקסט</button>' : ''));
+      if (m.stale) h += '<div class="note ai-warn">' + ic('edit', 15) + '<span>הכותרת השתנתה. לחצו "עיצוב חדש" כדי לעדכן את הגרפיקה.</span></div>';
+      if (m.warn) h += '<div class="note ai-warn">' + ic('alert', 15) + '<span>בדיקת הטקסט מצאה: ' + m.warn.map(esc).join(' · ') + '</span></div>';
+      if (briefPhotos(w).length || logoOf()) h += '<div class="t-sub" style="margin-top:8px">בעיצוב משולבים: ' + [logoOf() ? 'הלוגו מנכסי המותג' : '', briefPhotos(w).length ? briefPhotos(w).length + ' תמונות שהעליתם' : ''].filter(Boolean).join(' ו') + '.</div>';
+    }
+    return h;
+  };
+  ACT.gNew = () => { const w = S.wiz; if (!isGfx(w) || !w.media || w.media.busy) return; collectWiz(); gfxRun(w, { note: 'קומפוזיציה ועיצוב שונים לגמרי מהגרסה הקודמת' }); };
+  ACT.gFix = () => { const w = S.wiz; if (!isGfx(w) || !w.media || w.media.busy) return; gfxRun(w, { fixOnly: true }); };
+  // edit requests on an AI design: Claude updates the texts, ChatGPT redesigns with the request
+  const _wAiD = ACT.wAi, _wAiQD = ACT.wAiQ;
+  async function aiDesignEdit(w, q) {
+    const m = w.media;
+    m.busy = 'ה-AI מעדכן...';
+    render();
+    try {
+      const cur = { headline: w.t, kicker: w.design.kicker, sub: w.design.sub, details: w.design.details, cta: w.design.cta };
+      const r = await gen({ mode: 'revise', content: cur, instruction: q + '\nאם הבקשה נוגעת רק לעיצוב או לתמונה, החזר את הטקסטים בלי שינוי.' });
+      if (S.wiz !== w) return;
+      const c = r.content || {};
+      if (c.headline) w.t = c.headline;
+      ['kicker', 'sub', 'cta'].forEach((k) => { if (typeof c[k] === 'string') w.design[k] = c[k]; });
+      if (Array.isArray(c.details)) w.design.details = c.details;
+      m.busy = '';
+      gfxRun(w, { note: q });
+    } catch (e) { m.busy = ''; render(); aiFail(e); }
+  }
+  ACT.wAi = () => {
+    const w = S.wiz;
+    if (!isGfx(w) || !w.media || w.media.layout !== 'ai') return _wAiD();
+    collectWiz();
+    const el = $('#wAi'); const q = (el && el.value || '').trim();
+    if (!q) { toast('מה לשנות?', 'לדוגמה: רקע בהיר יותר, להדגיש את התאריך, או תמונה של משפחה בפארק.', 'err'); return; }
+    if (w.media.busy) return;
+    aiDesignEdit(w, q);
+  };
+  ACT.wAiQ = (q) => {
+    const w = S.wiz;
+    if (!isGfx(w) || !w.media || w.media.layout !== 'ai') return _wAiQD(q);
+    collectWiz();
+    if (w.media.busy) return;
+    gfxRun(w, { note: ({ 'צבעוני יותר': 'יותר צבע ואנרגיה, עדיין בפלטת המותג', 'פריסה אחרת': 'קומפוזיציה שונה לגמרי', 'כותרת גדולה': 'כותרת גדולה ובולטת הרבה יותר', 'סגנון רשמי': 'סגנון רשמי, שמרני ונקי יותר' })[q] || q });
   };
 })();

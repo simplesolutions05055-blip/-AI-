@@ -69,7 +69,11 @@ function editorial(k, g, w, h, t) {
 <main data-box><h1>${esc(g.headline)}</h1><p class="sub" data-shrink>${esc(g.sub)}</p><div class="list">${det(g, 'row', 30)}</div>${g.cta ? `<span class="cta" data-shrink>${esc(g.cta)}</span>` : ''}</main>
 <footer>${crest(k, 50, true)}<b>${esc(k.org)}</b>${k.dept ? `<span class="sep"></span><span>${esc(k.dept)}</span>` : ''}</footer></div>`;
 }
-const FN = { official, photo, frame, split, notice, greeting, stat, editorial };
+// a finished design (e.g. by the image model) placed into the exact platform size: blurred extension, nothing cropped
+function fit(k, g, w, h, t) {
+  return `<div class="L fit ${t}"><img class="bg" src="${esc(g.image)}" alt=""><img class="fg" src="${esc(g.image)}" alt=""></div>`;
+}
+const FN = { official, photo, frame, split, notice, greeting, stat, editorial, fit };
 
 function css(k, w, h) {
   return `body{width:${w}px;height:${h}px;overflow:hidden;background:#fff}
@@ -158,6 +162,9 @@ h1{font-weight:900;letter-spacing:-.02em;line-height:1.03}
 .editorial .row .di{width:56px;height:56px;border-radius:50%;background:${k.bg};color:${k.navy}}
 .editorial .cta{align-self:flex-start;background:${k.gold};color:#fff;font-size:38px;padding:16px 38px;border-radius:18px}
 .editorial footer{background:${k.navy};color:#fff;display:flex;align-items:center;gap:18px;padding:24px 64px ${h / w > 1.5 ? 140 : 24}px;font-size:30px}.editorial footer b{font-weight:800}.editorial .sep{width:2px;height:30px;background:rgba(255,255,255,.35)}
+/* fit */
+.fit{background:${k.deep}}.fit .bg{position:absolute;inset:-40px;width:calc(100% + 80px);height:calc(100% + 80px);object-fit:cover;filter:blur(38px) saturate(1.1) brightness(.85)}
+.fit .fg{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 18px 50px rgba(0,0,0,.25))}
 /* wide (16:9, 1.91:1): text column beside the image */
 .official.t-wide{padding:70px 96px}.official.t-wide main{max-width:1240px}
 .photo.t-wide{justify-content:center}.photo.t-wide .shade{background:linear-gradient(to left,${k.deep}F5 0%,${k.navy}E0 34%,${k.navy}80 52%,transparent 72%)}

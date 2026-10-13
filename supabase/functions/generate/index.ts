@@ -2,6 +2,7 @@
 // POST { mode, ...input }   header x-primeos-token
 // modes: post | alt | revise | assistant | doc | deck | graphic | video | doc2 | deck2
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import JSZip from 'https://esm.sh/jszip@3.10.1';
 
 const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-7-sonnet-latest'];
 let goodModel: string | null = null;
@@ -23,14 +24,14 @@ function db() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 }
 
-async function claude(key: string, system: string, user: string, maxTokens = 1500): Promise<string> {
+async function claude(key: string, system: string, user: string, maxTokens = 1500, extra: unknown[] = []): Promise<string> {
   const order = goodModel ? [goodModel, ...MODELS.filter((m) => m !== goodModel)] : MODELS;
   let last = '';
   for (const model of order) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: extra.length ? [...extra, { type: 'text', text: user }] : user }] }),
     });
     if (res.ok) {
       goodModel = model;
@@ -42,6 +43,33 @@ async function claude(key: string, system: string, user: string, maxTokens = 150
   }
   throw new Error('claude_api_error: ' + last.slice(0, 300));
 }
+
+// uploaded files become Claude context: images and PDFs natively, Word / PowerPoint / text as extracted text
+const xmlText = (x: string) => x.replace(/<\/a:p>|<\/w:p>/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/\n{3,}/g, '\n\n').trim();
+async function fileBlocks(files: any[]): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for (const f of (files ?? []).slice(0, 6)) {
+    const url = String(f?.url ?? '');
+    if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(url)) continue;
+    const ext = (String(f.name ?? url).split('.').pop() ?? '').toLowerCase();
+    const name = String(f.name ?? 'קובץ');
+    try {
+      if (/^(png|jpe?g|webp|gif)$/.test(ext)) out.push({ type: 'image', source: { type: 'url', url } });
+      else if (ext === 'pdf') out.push({ type: 'document', source: { type: 'url', url }, title: name });
+      else if (/^(txt|csv)$/.test(ext)) out.push({ type: 'text', text: `תוכן הקובץ "${name}":\n` + (await (await fetch(url)).text()).slice(0, 30000) });
+      else if (/^(docx|pptx)$/.test(ext)) {
+        const zip = await JSZip.loadAsync(await (await fetch(url)).arrayBuffer());
+        const names = Object.keys(zip.files).filter((n) => (ext === 'docx' ? n === 'word/document.xml' : /^ppt\/slides\/slide\d+\.xml$/.test(n)))
+          .sort((a, b) => (+(a.match(/\d+/) ?? [0])[0]) - (+(b.match(/\d+/) ?? [0])[0]));
+        const parts: string[] = [];
+        for (const n of names) parts.push((ext === 'pptx' ? `--- שקף ${n.match(/\d+/)![0]} ---\n` : '') + xmlText(await zip.files[n].async('string')));
+        out.push({ type: 'text', text: `תוכן הקובץ "${name}":\n` + parts.join('\n').slice(0, 30000) });
+      }
+    } catch { /* unreadable file is skipped */ }
+  }
+  return out;
+}
+const filesNote = (b: unknown[]) => (b.length ? '\nמצורפים קבצים מהמשתמש. השתמש בתוכן, בפרטים ובנתונים שבהם, ורק בהם.' : '');
 
 function parseJson(raw: string) {
   const m = raw.match(/\{[\s\S]*\}/);
@@ -109,6 +137,7 @@ Deno.serve(async (req) => {
   const ctx: Ctx = { org: p.org || orgName || 'הרשות', dept: p.dept, tone: p.tone, good: p.good, bad: p.bad };
   const s = sys(ctx);
   const mode = p.mode ?? 'post';
+  const fb = await fileBlocks(p.files);
 
   try {
     if (mode === 'post') {
@@ -171,7 +200,16 @@ ${JSON.stringify(p.content)}
     }
 
     // ---- design-ready structures for real files (graphic / document / deck / video) ----
-    const brief = `כותרת שהוזנה: ${p.title || '(לא הוזנה)'}\nבריף: ${p.brief || p.prompt || '(אין)'}`;
+    const brief = `כותרת שהוזנה: ${p.title || '(לא הוזנה)'}\nבריף: ${p.brief || p.prompt || '(אין)'}` + filesNote(fb);
+
+    if (mode === 'brand') {
+      if (!fb.length) return json(req, { error: 'no_readable_file' }, 400);
+      const raw = await claude(key, 'אתה אסטרטג מותג של רשויות מקומיות. קורא מסמכי מותג ומחלץ מהם רק מה שכתוב בהם במפורש. לא ממציא.', `קרא את מסמכי המותג המצורפים וחלץ מהם הנחיות שהמערכת תעבוד לפיהן.
+החזר JSON בלבד:
+{"summary":"משפט אחד: מה המסמך","tone":"שפת המותג בשניים-שלושה משפטים, רק אם מופיע","good":["ניסוח או כלל מומלץ"],"bad":["מה להימנע"],"colors":[{"n":"שם הצבע","hex":"#RRGGBB"}],"fonts":["שם גופן"]}
+colors רק צבעים שמופיעים במסמך עם ערך, או שאפשר לזהות בוודאות מהלוגו/תמונה. אם אין, מערך ריק. אותו דבר לכל שדה.`, 1500, fb);
+      return json(req, { ok: true, ...parseJson(raw) });
+    }
 
     if (mode === 'graphic') {
       const raw = await claude(key, s, `אתה גם מעצב הפרסומים של הרשות. כתוב את הטקסטים שיופיעו על גבי גרפיקה לרשתות, ואת טקסט הפוסט שמתחתיה.
@@ -181,7 +219,7 @@ ${brief}
 {"kicker":"1-3 מילים מעל הכותרת שמסווגות את הנושא באופן ספציפי, למשל: תרבות ופנאי / עבודות תשתית / איכות הסביבה / קול קורא / ברכת חג / שירות לתושב","headline":"כותרת ראשית לגרפיקה, 2-5 מילים, חזקה וברורה","sub":"שורת משנה אחת, עד 60 תווים","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט קצר, עד 28 תווים"}],"cta":"קריאה לפעולה קצרה עד 24 תווים","caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"]}
 details: רק פרטים שמופיעים בבריף (תאריך, שעה, מקום, טלפון), עד 3. אם אין פרטים - מערך ריק.
 kicker: לא "הודעה לתושבים" ולא "עדכון" כלליים, אלא אם אין שום נושא ספציפי.
-tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון (#פסטיבל_הסתיו), כולל אחד עם שם הרשות.`);
+tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון (#פסטיבל_הסתיו), כולל אחד עם שם הרשות.`, 1500, fb);
       return json(req, { ok: true, ...(await proof(key, parseJson(raw))) });
     }
 
@@ -191,7 +229,7 @@ ${brief}
 
 החזר JSON בלבד:
 {"scenes":[{"t":"טקסט ראשי של הסצנה, עד 5 מילים","s":"שורת משנה קצרה או ריק"}],"cta":"סיום, עד 4 מילים","caption":"טקסט הפוסט, 2-3 משפטים","tags":["#האשטג"]}
-4 עד 5 סצנות. סצנה ראשונה תופסת תשומת לב. רק פרטים מהבריף.`);
+4 עד 5 סצנות. סצנה ראשונה תופסת תשומת לב. רק פרטים מהבריף.`, 1500, fb);
       return json(req, { ok: true, ...(await proof(key, parseJson(raw))) });
     }
 
@@ -203,7 +241,7 @@ ${brief}
 {"title":"כותרת המסמך","to":"אל מי המסמך מופנה, למשל: לתושבי השכונה","summary":"תקציר של משפט או שניים","sections":[{"h":"כותרת סעיף","paras":["פסקה"],"bullets":["נקודה (לא חובה)"]}],"note":"מסגרת 'טוב לדעת' של משפט אחד או ריק","sign":"חתימה, למשל: אגף ההנדסה"}
 3 עד 5 סעיפים. עניינית, בלי חזרות.${p.style === 'data' ? `
 סגנון גרפים וטבלאות: הוסף גם "charts":[{"title":"כותרת","unit":"יחידה","type":"bar|pie","items":[{"l":"תווית","v":מספר}]}] (1-2 גרפים) ו-"table":{"head":["עמודה"],"rows":[["תא"]]}. רק מספרים שמופיעים בבריף - אסור להמציא נתונים. אם אין מספרים בבריף, החזר מערך charts ריק.` : ''}${p.style === 'designed' ? `
-סגנון מעוצב: הוסף "highlights":[{"icon":"cal|clock|pin|info|phone|users|check","t":"כותרת קצרה","d":"משפט קצר"}] (3-4 פריטים) ו-"quote":"משפט מוביל קצר להדגשה".` : ''}`, 3500);
+סגנון מעוצב: הוסף "highlights":[{"icon":"cal|clock|pin|info|phone|users|check","t":"כותרת קצרה","d":"משפט קצר"}] (3-4 פריטים) ו-"quote":"משפט מוביל קצר להדגשה".` : ''}`, 3500, fb);
       return json(req, { ok: true, ...parseJson(raw) });
     }
 
@@ -214,9 +252,9 @@ ${brief}
 
 החזר JSON בלבד:
 {"title":"כותרת המצגת","subtitle":"שורת משנה לשער","slides":[{"kind":"cover|bullets|stat|timeline|quote|cards|chart|table|end","t":"כותרת השקף","pts":["נקודה קצרה"],"stat":{"v":"מספר או ערך","l":"מה הוא מודד"}}]}
-בדיוק ${n} שקפים. ראשון cover, אחרון end. stat רק אם יש מספר אמיתי מהבריף, אחרת לא להשתמש ב-stat. timeline ל-3-5 שלבים או תאריכים. 2-4 נקודות בשקף.${p.style === 'data' ? `
+${fb.length && p.keep ? 'מספר השקפים כמו בקובץ המצורף (עד 20), באותו סדר' : 'בדיוק ' + n + ' שקפים'}. ראשון cover, אחרון end. stat רק אם יש מספר אמיתי מהבריף, אחרת לא להשתמש ב-stat. timeline ל-3-5 שלבים או תאריכים. 2-4 נקודות בשקף.${p.style === 'data' ? `
 סגנון גרפים וטבלאות: מותר גם kind "chart" עם "chart":{"type":"bar|pie|line","unit":"יחידה","items":[{"l":"תווית","v":מספר}]}, ו-kind "table" עם "table":{"head":["עמודה"],"rows":[["תא"]]}. רק מספרים מהבריף - אסור להמציא.` : ''}${p.style === 'designed' ? `
-סגנון מעוצב: העדף kinds מגוונים: "cover","bullets","cards" (pts של 3-4 כרטיסים קצרים),"quote","timeline","end".` : ''}`, 4000);
+סגנון מעוצב: העדף kinds מגוונים: "cover","bullets","cards" (pts של 3-4 כרטיסים קצרים),"quote","timeline","end".` : ''}`, 4000, fb);
       return json(req, { ok: true, ...parseJson(raw) });
     }
 
