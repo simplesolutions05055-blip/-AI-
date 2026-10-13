@@ -60,7 +60,11 @@ const gfx=[
 const docs=[['d_formal','רשמי','מכתב לתושבים: עבודות תשתית'],['d_data','גרפים וטבלאות','דוח מיחזור שנתי עם גרפים וטבלה'],['d_designed','מעוצב','מדריך לתושב עם תמונת שער']];
 const decks=[['k_formal','רשמי','תוכנית עבודה שנתית',8],['k_data','גרפים וטבלאות','דוח מיחזור עם גרפים',7],['k_designed','מעוצב','פסטיבל הסתיו עם תמונות',7]];
 const sec=(t,l,inner,cls='')=>`<section><h2>${t}</h2><p class="lead">${l}</p><div class="grid ${cls}">${inner}</div></section>`;
+const AI='https://tgropjisnheppsxejfdn.supabase.co/storage/v1/object/public/v2-content/ai/11111111-0000-0000-0000-000000000001/';
 document.getElementById('app').innerHTML=
+ sec('חדש: עיצוב חופשי של ChatGPT','ChatGPT מעצב את כל הגרפיקה בצבעי המותג, כולל הטקסט בעברית. קלוד בודק כל אות, ובוחר את הגרסה הנקייה מבין שתיים.',
+  `<div class="c"><a href="${AI}1791914711397-d-79e306d6.png" target="_blank" rel="noopener"><img loading="lazy" src="${AI}1791914711397-d-79e306d6.png" alt="עיצוב AI"></a><div class="m"><b>עיצוב AI חופשי</b><span>פסטיבל הסתיו · בדיקת הטקסט: תקין</span></div></div>`+
+  `<div class="c vid"><video controls playsinline muted preload="metadata" src="${B}1791915532134-d075cd/e1.mp4"></video><div class="m"><b>עריכת סרטון שהועלה</b><span>פתיח ממותג, לוגו לאורך הסרטון, כותרת תחתונה וסיום</span></div></div>`)+
  sec('גרפיקות לרשתות','8 פריסות בשלושה פורמטים. כל הטקסט העברי מוגדר בתבנית, לא בתוך התמונה.',
   gfx.map(([id,n,f,d])=>`<div class="c"><a href="${B+G+id}.jpg" target="_blank" rel="noopener"><img loading="lazy" src="${B+G+id}.jpg" alt="${n}"></a><div class="m"><b>${n}</b><span>${f} · ${d}</span></div></div>`).join(''))+
  sec('מסמכים - 3 סגנונות','רשמי, גרפים וטבלאות, מעוצב. PDF בגודל A4 עם מספור עמודים.',
