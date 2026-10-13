@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>PrimeOS - תוצרים לדוגמה</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap">
+<style>
+:root{--navy:#0E3B6B;--deep:#0A2C51;--gold:#9A6B1F;--goldlt:#C9A15A;--ink:#41506A;--bg:#F3F5F9;--card:#fff;--line:#DDE3EC}
+*{box-sizing:border-box;margin:0}
+body{font-family:Heebo,Arial,sans-serif;background:var(--bg);color:#1F2A44;line-height:1.5}
+header{background:var(--deep);color:#fff;padding:36px 20px 30px}
+header .w,main{max-width:1180px;margin:0 auto}
+header small{color:var(--goldlt);font-weight:800;letter-spacing:.06em}
+header h1{font-size:clamp(26px,4vw,38px);font-weight:900;margin-top:6px}
+header p{color:#C9D6E6;margin-top:8px;max-width:720px}
+main{padding:28px 20px 60px;display:grid;gap:44px}
+h2{font-size:22px;font-weight:900;color:var(--navy);display:flex;align-items:center;gap:10px}
+h2::before{content:"";width:6px;height:22px;border-radius:3px;background:var(--gold)}
+.lead{color:var(--ink);margin-top:4px}
+.grid{display:grid;gap:18px;margin-top:16px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));align-items:start}
+.c{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+.c img,.c video{display:block;width:100%;height:auto;background:#E6EBF2}
+.c .m{padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.c b{color:var(--navy);font-weight:800}
+.c span{font-size:13px;color:var(--ink)}
+.c a{font-size:14px;font-weight:700;color:var(--gold);text-decoration:none}
+.c a:hover{text-decoration:underline}
+.links{display:flex;gap:14px;flex-wrap:wrap;margin-top:4px}
+.wide{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+.strip{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:2px;background:#E6EBF2}.strip img{flex:0 0 100%;scroll-snap-align:start;aspect-ratio:16/9}
+.vid{max-width:380px}
+footer{color:var(--ink);font-size:13px;text-align:center;padding-bottom:30px}
+@media (max-width:420px){.wide{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><div class="w">
+<small>PRIMEOS · עיריית נווה הדר (דמו)</small>
+<h1>תוצרים לדוגמה מהמערכת</h1>
+<p>הכול נוצר אוטומטית: טקסטים ב-Claude, תמונות אווירה ב-ChatGPT, ועיצוב, מסמכים, מצגות וסרטון במנוע ההפקה של PrimeOS. צבעי המותג והסמל קבועים בכל התוצרים.</p>
+</div></header>
+<main id="app"></main>
+<footer>קבצים אמיתיים בענן. לחיצה על קישור פותחת או מורידה את הקובץ המקורי.</footer>
+<script>
+const B='https://tgropjisnheppsxejfdn.supabase.co/storage/v1/object/public/v2-content/out/11111111-0000-0000-0000-000000000001/';
+const G='1791909623467-33c01d/',D='__D__/',K='__K__/',V='1791909623508-bfe0c7/';
+const gfx=[
+ ['g_photo45','תמונה מלאה','4:5 פיד','פסטיבל הסתיו, תמונת אווירה AI'],
+ ['g_photo916','תמונה מלאה','9:16 סטורי','אותו תוכן בפורמט סטורי'],
+ ['g_frame11','מסגרת ממלכתית','1:1 ריבוע','מסגרת זהב כפולה, תמונה במרכז'],
+ ['g_split916','מפוצל','9:16 סטורי','קול קורא למתנדבים, דמויות אנושיות'],
+ ['g_greet11','ברכה','1:1 ריבוע','ברכת חנוכה בחתימת ראש העירייה'],
+ ['g_notice45','הודעה דחופה','4:5 פיד','הפסקת מים, פס התראה'],
+ ['g_stat45','נתון מרכזי','4:5 פיד','שיא במיחזור, מספר גדול'],
+ ['g_off11','רשמי','1:1 ריבוע','רקע מותג בלי תמונה'],
+];
+const docs=[['d_formal','רשמי','מכתב לתושבים: עבודות תשתית'],['d_data','גרפים וטבלאות','דוח מיחזור שנתי עם גרפים וטבלה'],['d_designed','מעוצב','מדריך לתושב עם תמונת שער']];
+const decks=[['k_formal','רשמי','תוכנית עבודה שנתית',8],['k_data','גרפים וטבלאות','דוח מיחזור עם גרפים',7],['k_designed','מעוצב','פסטיבל הסתיו עם תמונות',7]];
+const sec=(t,l,inner,cls='')=>`<section><h2>${t}</h2><p class="lead">${l}</p><div class="grid ${cls}">${inner}</div></section>`;
+document.getElementById('app').innerHTML=
+ sec('גרפיקות לרשתות','8 פריסות בשלושה פורמטים. כל הטקסט העברי מוגדר בתבנית, לא בתוך התמונה.',
+  gfx.map(([id,n,f,d])=>`<div class="c"><a href="${B+G+id}.jpg" target="_blank" rel="noopener"><img loading="lazy" src="${B+G+id}.jpg" alt="${n}"></a><div class="m"><b>${n}</b><span>${f} · ${d}</span></div></div>`).join(''))+
+ sec('מסמכים - 3 סגנונות','רשמי, גרפים וטבלאות, מעוצב. PDF בגודל A4 עם מספור עמודים.',
+  docs.map(([id,n,d])=>`<div class="c"><a href="${B+D+id}.pdf" target="_blank" rel="noopener"><img loading="lazy" src="${B+D+id}-p1.jpg" alt="${n} - עמוד ראשון"></a><div class="m"><b>${n}</b><span>${d}</span><div class="links"><a href="${B+D+id}.pdf" target="_blank" rel="noopener">פתיחת PDF</a></div></div></div>`).join(''),'wide')+
+ sec('מצגות - 3 סגנונות','כל מצגת מגיעה גם כ-PDF וגם כ-PowerPoint שאפשר לערוך.',
+  decks.map(([id,n,d,c])=>`<div class="c"><div class="strip">${Array.from({length:c},(_,i)=>`<img loading="lazy" src="${B+K+id}-s${i+1}.jpg" alt="שקף ${i+1}">`).join('')}</div><div class="m"><b>${n}</b><span>${d} · ${c} שקפים · גללו לצד</span><div class="links"><a href="${B+K+id}.pdf" target="_blank" rel="noopener">PDF</a><a href="${B+K+id}-pptx.pptx">PowerPoint</a></div></div></div>`).join(''),'wide')+
+ sec('סרטון','9:16 לסטורי ולריל, 17 שניות: תנועת מצלמה, מעברים, כותרות מונפשות וסיום עם סמל העירייה.',
+  `<div class="c vid"><video controls playsinline muted preload="metadata" src="${B+V}v_916.mp4"></video><div class="m"><b>פסטיבל הסתיו</b><span>5 סצנות, תמונות AI</span><div class="links"><a href="${B+V}v_916.mp4" target="_blank" rel="noopener">הורדת MP4</a></div></div></div>`);
+</script>
+</body>
+</html>

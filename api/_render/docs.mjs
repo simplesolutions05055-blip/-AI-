@@ -34,7 +34,7 @@ section{margin-top:3.6mm;break-inside:avoid}
 h2{display:flex;align-items:center;gap:3mm;font-size:13pt;font-weight:800;color:${k.navy};margin-bottom:2mm}
 h2 .n{width:7.5mm;height:7.5mm;border-radius:50%;background:${k.navy};color:#fff;display:grid;place-items:center;font-size:10pt;font-weight:800;flex:none}
 h2 .bar{width:1.4mm;height:6mm;border-radius:1mm;background:${k.gold};flex:none}
-p{margin-bottom:1.4mm;text-align:justify}
+p{margin-bottom:1.4mm;text-align:start;text-wrap:pretty}
 ul{list-style:none;padding:0;margin:1mm 0 0;display:grid;gap:1.6mm}li{position:relative;padding-inline-start:7mm}
 li::before{content:"";position:absolute;inset-inline-start:1.2mm;top:2.1mm;width:2.4mm;height:2.4mm;border-radius:50%;background:${k.gold}}
 .note{margin-top:6mm;display:flex;gap:3.5mm;align-items:flex-start;padding:4mm 5mm;border:1pt solid #D5DCE8;border-radius:2.5mm;break-inside:avoid}.note .ic{flex:none;margin-top:.6mm}.note b{color:${k.navy}}
@@ -44,8 +44,8 @@ li::before{content:"";position:absolute;inset-inline-start:1.2mm;top:2.1mm;width
 .kpi{border-radius:3mm;padding:4mm 5mm;background:${k.navy};color:#fff}.kpi:nth-child(2){background:${k.gold}}.kpi:nth-child(3){background:${k.sky}}
 .kpi b{display:block;font-size:22pt;font-weight:900;line-height:1.1;letter-spacing:-.01em}.kpi span{font-size:9.5pt;opacity:.9}
 .charts{display:grid;grid-template-columns:1fr 1fr;gap:5mm;margin-top:5mm;break-inside:avoid}
-.ch{margin:0;border:1pt solid #E1E6EF;border-radius:3mm;padding:3.5mm 4mm}.ch figcaption{font-size:10.5pt;font-weight:800;color:${k.navy};margin-bottom:2mm}.ch figcaption small{font-weight:500;color:${k.ink}}
-.ch svg{display:block;margin:0 auto;max-width:100%}.pie{display:flex;align-items:center;gap:3.5mm}.pie svg{flex:none;width:30mm;height:30mm}.pie .lg{flex:1;font-size:11px!important}.pie .lg span{white-space:nowrap}
+.ch{margin:0;min-width:0;border:1pt solid #E1E6EF;border-radius:3mm;padding:3.5mm 4mm;display:flex;flex-direction:column}.ch figcaption{font-size:10.5pt;font-weight:800;color:${k.navy};margin-bottom:2mm}.ch figcaption small{font-weight:500;color:${k.ink}}
+.ch svg{display:block;margin:0 auto;max-width:100%}.pie{flex:1;display:flex;align-items:center;justify-content:center;gap:5mm}.pie svg{flex:none;width:40mm;height:40mm}.pie .lg{flex:1;font-size:11px!important}.pie .lg span{white-space:nowrap}
 table{width:100%;border-collapse:collapse;margin-top:4mm;font-size:10pt;break-inside:avoid}th{background:${k.navy};color:#fff;font-weight:700;text-align:right;padding:2.2mm 3mm}
 td{padding:2.2mm 3mm;border-bottom:.8pt solid #E1E6EF}tr:nth-child(even) td{background:#F6F8FB}td:first-child{font-weight:600}
 /* designed */

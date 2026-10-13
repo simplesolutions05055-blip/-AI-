@@ -137,6 +137,10 @@ async function renderAll(body: any) {
             await load(p, html, 794, 1123);
             const pdf = Buffer.from(await p.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true, displayHeaderFooter: true, headerTemplate: '<span></span>', footerTemplate: footer.replace('<style></style>', `<style>${fontCss}</style>`) }));
             if (up.main) await put(up.main, pdf, 'application/pdf');
+            if (up.p1) { // first-page preview for galleries / mobile
+              await p.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1.4 });
+              await put(up.p1, Buffer.from(await p.screenshot({ type: 'jpeg', quality: 84 })), 'image/jpeg');
+            }
             await p.setViewport({ width: 794, height: 1123 });
             out.push({ id: j.id, ok: true, bytes: pdf.length, ms: Date.now() - t0, thumb: j.thumb === false ? undefined : await thumb(p, 794, 1123, j.thumbMax || 560) });
           } else if (j.kind === 'deck') {
@@ -148,6 +152,16 @@ async function renderAll(body: any) {
             // contact sheet of all slides for review (scroll + plain viewport capture)
             const n = (await p.$$('.sl')).length;
             const thumbs: string[] = [];
+            // slide previews (s1..sN) for galleries / mobile
+            if (Object.keys(up).some((x) => /^s\d+$/.test(x))) {
+              await p.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 0.5 });
+              for (let i = 0; i < n; i++) {
+                if (!up['s' + (i + 1)]) break;
+                await p.evaluate((y: number) => window.scrollTo(0, y), i * 1080);
+                await put(up['s' + (i + 1)], Buffer.from(await p.screenshot({ type: 'jpeg', quality: 82 })), 'image/jpeg');
+              }
+              await p.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+            }
             if (j.thumb !== false) {
               const sc = (j.slideW || 400) / 1920;
               await p.setViewport({ width: 1920, height: 1080, deviceScaleFactor: sc });

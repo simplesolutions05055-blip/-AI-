@@ -12,7 +12,9 @@ const cors = (req: Request) => {
 const json = (req: Request, b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors(req), 'content-type': 'application/json; charset=utf-8' } });
 const RENDER_URL = Deno.env.get('PRIMEOS_RENDER_URL') ?? 'https://app.primeos.co.il/api/render';
 const OUTS: Record<string, [string, string][]> = {
-  graphic: [['main', 'jpg']], doc: [['main', 'pdf']], deck: [['main', 'pdf'], ['pptx', 'pptx']], video: [['main', 'mp4']],
+  graphic: [['main', 'jpg']], doc: [['main', 'pdf'], ['p1', 'jpg']],
+  deck: [['main', 'pdf'], ['pptx', 'pptx'], ...Array.from({ length: 12 }, (_, i) => ['s' + (i + 1), 'jpg'] as [string, string])],
+  video: [['main', 'mp4']],
 };
 
 Deno.serve(async (req) => {
