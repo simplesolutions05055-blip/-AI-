@@ -1280,7 +1280,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   css.textContent += `
 .up-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .up-chip{display:inline-flex;align-items:center;gap:8px;max-width:100%}.up-chip img{width:34px;height:34px;object-fit:cover;border-radius:6px}.up-chip b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;font-size:13px}
-.lc-img.has-logo{background:repeating-conic-gradient(#EEF1F6 0 25%,#fff 0 50%) 50%/18px 18px!important}.lc-img.has-logo img{max-width:80%;max-height:80%;object-fit:contain}
+.lc-img.has-logo{background:repeating-conic-gradient(#EEF1F6 0 25%,#fff 0 50%) 50%/18px 18px!important}.lc-img.has-logo{overflow:hidden}.lc-img.has-logo img{max-width:70%;max-height:96px;width:auto;height:auto;object-fit:contain}.avatar.has-logo{background:#fff!important;padding:3px;overflow:hidden}.avatar.has-logo img{width:100%;height:100%;object-fit:contain}
 .raw.real{background-size:cover!important;background-position:center!important}
 .ai-warn{margin-top:10px}`;
 
@@ -1557,4 +1557,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (w.media.busy) return;
     gfxRun(w, { note: ({ 'צבעוני יותר': 'יותר צבע ואנרגיה, עדיין בפלטת המותג', 'פריסה אחרת': 'קומפוזיציה שונה לגמרי', 'כותרת גדולה': 'כותרת גדולה ובולטת הרבה יותר', 'סגנון רשמי': 'סגנון רשמי, שמרני ונקי יותר' })[q] || q });
   };
+
+  // the uploaded logo is the page avatar in every post preview
+  const withLogo = (h) => { const l = logoOf(); return l ? h.replace(/<span class="avatar" style="background:var\(--(?:p-navy|brand)\);color:#fff">נה<\/span>/g, '<span class="avatar has-logo"><img src="' + esc(l) + '" alt=""></span>') : h; };
+  const _spL = studioPreview; studioPreview = function (o) { return withLogo(_spL(o)); };
+  const _ppL = postPreview; postPreview = function (it, r) { return withLogo(_ppL(it, r)); };
 })();
