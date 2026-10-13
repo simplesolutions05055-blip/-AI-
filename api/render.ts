@@ -70,9 +70,12 @@ async function diag(p: Page) {
     text: (document.body.innerText || '').slice(0, 60),
   }));
 }
+// NOTE: screenshot clips are broken in the serverless Chromium build; always capture the plain viewport.
 async function thumb(p: Page, w: number, h: number, max = 420) {
   const s = Math.min(1, max / Math.max(w, h));
-  const shot = await p.screenshot({ type: 'jpeg', quality: 62, clip: { x: 0, y: 0, width: w, height: h, scale: s } as any });
+  await p.setViewport({ width: w, height: h, deviceScaleFactor: s });
+  const shot = await p.screenshot({ type: 'jpeg', quality: 62 });
+  await p.setViewport({ width: w, height: h, deviceScaleFactor: 1 });
   return Buffer.from(shot).toString('base64');
 }
 
@@ -111,7 +114,7 @@ export default {
           if (j.kind === 'graphic') {
             const { html, w, h } = graphicHtml(k, j.data, j.layout, j.format);
             await load(p, html, w, h);
-            const img = Buffer.from(await p.screenshot({ type: j.image === 'png' ? 'png' : 'jpeg', quality: j.image === 'png' ? undefined : 92, clip: { x: 0, y: 0, width: w, height: h } } as any));
+            const img = Buffer.from(await p.screenshot((j.image === 'png' ? { type: 'png' } : { type: 'jpeg', quality: 92 }) as any));
             if (up.main) await put(up.main, img, j.image === 'png' ? 'image/png' : 'image/jpeg');
             out.push({ id: j.id, ok: true, bytes: img.length, ms: Date.now() - t0, diag: await diag(p), thumb: j.thumb === false ? undefined : await thumb(p, w, h, j.thumbMax || 420) });
           } else if (j.kind === 'doc') {
@@ -127,22 +130,32 @@ export default {
             await load(p, html, 1920, 1080);
             const pdf = Buffer.from(await p.pdf({ width: '1920px', height: '1080px', printBackground: true, preferCSSPageSize: true }));
             if (up.main) await put(up.main, pdf, 'application/pdf');
-            // contact sheet of all slides for review
-            const els = await p.$$('.sl');
+            // contact sheet of all slides for review (scroll + plain viewport capture)
+            const n = (await p.$$('.sl')).length;
             const thumbs: string[] = [];
-            for (const el of els.slice(0, 12)) { const bb = await el.boundingBox(); if (bb) thumbs.push(Buffer.from(await p.screenshot({ type: 'jpeg', quality: 60, clip: { ...bb, scale: (j.slideW || 400) / 1920 } as any })).toString('base64')); }
+            if (j.thumb !== false) {
+              const sc = (j.slideW || 400) / 1920;
+              await p.setViewport({ width: 1920, height: 1080, deviceScaleFactor: sc });
+              for (let i = 0; i < Math.min(n, j.sheetMax || 8); i++) {
+                await p.evaluate((y: number) => window.scrollTo(0, y), i * 1080);
+                thumbs.push(Buffer.from(await p.screenshot({ type: 'jpeg', quality: 60 })).toString('base64'));
+              }
+              await p.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+            }
             // PPTX with the same structure
             const PptxGenJS = (await import('pptxgenjs')).default as any;
             const imageData: Record<string, string> = {};
             for (const u of Object.values(imgs) as string[]) if (u && !imageData[u]) imageData[u] = await fetchData(u);
-            await p.setViewport({ width: 240, height: 280 });
-            await p.setContent(`<body style="margin:0;background:transparent">${crest(k, 200, true)}</body>`);
-            const cd = 'image/png;base64,' + Buffer.from(await (await p.$('svg,img'))!.screenshot({ omitBackground: true })).toString('base64');
-            await p.setContent(`<body style="margin:0;background:transparent">${crest(k, 200, false)}</body>`);
-            const cl = 'image/png;base64,' + Buffer.from(await (await p.$('svg,img'))!.screenshot({ omitBackground: true })).toString('base64');
+            await p.setViewport({ width: 200, height: 232, deviceScaleFactor: 1 });
+            const crestPng = async (dark: boolean) => {
+              await p.setContent(`<body style="margin:0;background:transparent;overflow:hidden">${crest(k, 200, dark)}</body>`);
+              return 'image/png;base64,' + Buffer.from(await p.screenshot({ type: 'png', omitBackground: true })).toString('base64');
+            };
+            const cd = await crestPng(true);
+            const cl = await crestPng(false);
             const pptx = (await deckPptx(PptxGenJS, k, j.data, j.style, { images: imgs, imageData, crestDark: cd, crestLight: cl })) as Buffer;
             if (up.pptx) await put(up.pptx, pptx, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
-            out.push({ id: j.id, ok: true, bytes: pdf.length, pptxBytes: pptx.length, ms: Date.now() - t0, slides: j.thumb === false ? undefined : thumbs.length, sheet: j.thumb === false ? undefined : thumbs.slice(0, j.sheetMax || 8) });
+            out.push({ id: j.id, ok: true, bytes: pdf.length, pptxBytes: pptx.length, ms: Date.now() - t0, slides: n, sheet: j.thumb === false ? undefined : thumbs });
           } else if (j.kind === 'video') {
             const { html, w, h, dur } = videoHtml(k, j.data);
             await load(p, html, w, h);
