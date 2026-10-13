@@ -1977,7 +1977,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (S.brandEdit && S.brandDraft) { S.brandDraft.site = t.site; S.brandDraft.rules = JSON.parse(JSON.stringify(t.rules)); }
       S.siteBusy = '';
       render(); flush();
-      if (!quiet) toast('האתר נקרא וכללי הכתיבה עודכנו', (r.pages || []).length + ' עמודים נקראו. עודכנו: ' + (ch.join(', ') || 'פרטי הארגון') + '.');
+      if (!quiet) toast('האתר נקרא וכללי הכתיבה עודכנו', ((r.pages || []).length ? r.pages.length + ' עמודים נקראו. ' : '') + 'עודכנו: ' + (ch.join(', ') || 'פרטי הארגון') + '.');
     } catch (e) {
       S.siteBusy = '';
       if (BRAND.site) BRAND.site.err = e && e.message;
@@ -1993,7 +1993,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     return '<div class="card card-pad site-card"><div class="sc-head"><div><h3>אתר הארגון</h3><span class="t-sub">המערכת קוראת את האתר הרשמי, בונה ממנו את כללי הכתיבה ומשתמשת בפרטים המעודכנים שבו בכל תוכן. נקרא מחדש אוטומטית כל יומיים.</span></div></div>' +
       '<div class="sc-row"><input type="url" id="siteUrl" dir="ltr" placeholder="www.example.muni.il" value="' + esc(st.url || '') + '"' + (S.siteBusy ? ' disabled' : '') + '><button class="btn btn-primary" data-act="siteScan"' + (S.siteBusy ? ' disabled' : '') + '>' + ic('refresh', 15) + ' ' + (st.at ? 'קריאה מחדש' : 'קריאת האתר') + '</button></div>' +
       (S.siteBusy ? '<div class="lo-busy"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(S.siteBusy) + '</div>' : '') +
-      (st.at ? '<div class="note">' + ic('checkc', 15) + '<span>נקרא ' + ago(st.at) + ' · ' + (st.pages || []).length + ' עמודים' + (st.summary ? ' · ' + esc(st.summary) : '') + '</span></div>' : '') +
+      (st.at ? '<div class="note">' + ic('checkc', 15) + '<span>נקרא ' + ago(st.at) + ((st.pages || []).length ? ' · ' + st.pages.length + ' עמודים' : '') + (st.summary ? ' · ' + esc(st.summary) : '') + '</span></div>' : '') +
       (st.err && !st.at ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>הקריאה האחרונה נכשלה. בדקו את הכתובת ונסו שוב.</span></div>' : '') +
       (rows.length ? '<div class="sc-facts">' + rows.map((x) => '<div><small>' + x[0] + '</small><b>' + esc(x[1]) + '</b></div>').join('') + '</div>' : '') +
       ((st.depts || []).length ? '<div><b style="font-size:13.5px">מחלקות שזוהו באתר</b><div class="tplu-slots" style="margin-top:6px">' + st.depts.slice(0, 12).map((d) => '<span class="chip">' + esc(d.n) + '</span>').join('') + '</div></div>' : '') +

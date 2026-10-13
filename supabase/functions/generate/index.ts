@@ -88,7 +88,8 @@ async function siteText(raw: string) {
   let u: URL;
   try { u = new URL(/^https?:\/\//i.test(raw) ? raw : 'https://' + raw); } catch { throw new Error('bad_url'); }
   if (!/^https?:$/.test(u.protocol) || /^(localhost|127\.|10\.|192\.168\.|169\.254\.)/.test(u.hostname)) throw new Error('bad_url');
-  const home = (await getPage(u.href)) ?? (u.protocol === 'https:' ? await getPage(u.href.replace(/^https:/, 'http:')) : null);
+  let home = (await getPage(u.href)) ?? (u.protocol === 'https:' ? await getPage(u.href.replace(/^https:/, 'http:')) : null);
+  if (home && /Just a moment|cf-challenge|challenges\.cloudflare/i.test(home.html.slice(0, 6000))) home = null;
   if (!home) throw new Error('site_unreachable');
   const base = new URL(home.url);
   const host = base.hostname.replace(/^www\./, '');
@@ -108,6 +109,31 @@ async function siteText(raw: string) {
   const title = (home.html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) ?? [])[1] ?? '';
   const text = pages.map((pg) => `=== ${pg.url} ===\n` + pageText(pg.html).slice(0, 9000)).join('\n\n').slice(0, 55000);
   return { url: home.url, title: decode(title).trim(), pages: pages.map((pg) => pg.url), text };
+}
+
+// a site that blocks automatic reading or renders only with JavaScript: Claude reads it with web search and fetch
+async function claudeWeb(key: string, system: string, user: string, host: string, maxTokens = 3000): Promise<string> {
+  const tools = [
+    { type: 'web_search_20250305', name: 'web_search', max_uses: 6, allowed_domains: [host] },
+    { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 6, allowed_domains: [host] },
+  ];
+  let last = '';
+  for (const model of MODELS.slice(0, 3)) {
+    const messages: any[] = [{ role: 'user', content: user }];
+    for (let turn = 0; turn < 4; turn++) {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'web-fetch-2025-09-10' },
+        body: JSON.stringify({ model, max_tokens: maxTokens, system, tools, messages }),
+      });
+      if (!res.ok) { last = await res.text(); break; }
+      const d = await res.json();
+      if (d.stop_reason === 'pause_turn') { messages.push({ role: 'assistant', content: d.content }); continue; }
+      return (d.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
+    }
+    if (last && !(last.includes('model') || last.includes('not_found'))) break;
+  }
+  throw new Error('claude_web_error: ' + last.slice(0, 300));
 }
 
 function parseJson(raw: string) {
@@ -252,16 +278,22 @@ colors רק צבעים שמופיעים במסמך עם ערך, או שאפשר 
     }
 
     if (mode === 'site') {
-      const site = await siteText(String(p.url ?? ''));
-      if (site.text.length < 200) return json(req, { error: 'site_empty', url: site.url }, 422);
-      const raw = await claude(key, 'אתה עורך התוכן הראשי של רשויות מקומיות וארגונים בישראל. קורא את האתר הרשמי של הארגון ומפיק ממנו כללי כתיבה ופרטים מעודכנים. רק מה שמופיע באתר. לא ממציא.', `שם הארגון במערכת: ${ctx.org}
-להלן הטקסט של האתר הרשמי (דף הבית ועמודים פנימיים):
-${site.text}
+      const SYS_SITE = 'אתה עורך התוכן הראשי של רשויות מקומיות וארגונים בישראל. קורא את האתר הרשמי של הארגון ומפיק ממנו כללי כתיבה ופרטים מעודכנים. רק מה שמופיע באתר. לא ממציא.';
+      let site: { url: string; title: string; pages: string[]; text: string } | null = null;
+      try { site = await siteText(String(p.url ?? '')); } catch (e) { if ((e as Error).message === 'bad_url') throw e; }
+      if (site && site.text.length < 1500) site = null;
+      let host = '';
+      try { host = new URL(/^https?:\/\//i.test(String(p.url)) ? String(p.url) : 'https://' + p.url).hostname.replace(/^www\./, ''); } catch { throw new Error('bad_url'); }
+      const siteUrl = site?.url ?? 'https://' + (String(p.url).replace(/^https?:\/\//i, '').replace(/\/.*$/, '') || host);
+      const ask = `שם הארגון במערכת: ${ctx.org}
+${site ? 'להלן הטקסט של האתר הרשמי (דף הבית ועמודים פנימיים):\n' + site.text : `האתר הרשמי: ${siteUrl}\nקרא אותו בעצמך: חפש באתר וקרא את דף הבית, אודות, צור קשר/מוקד, מחלקות ושירותים, וחדשות אחרונות. השתמש רק במה שמופיע באתר ${host}.`}
 
 החזר JSON בלבד:
-{"summary":"משפט אחד: מה הארגון ומה האתר מציג","tone":"שפת הכתיבה של הארגון כפי שהיא באתר, 2-3 משפטים: רמת רשמיות, פנייה לתושבים, אורך משפטים","good":["5-8 כללי כתיבה או ניסוחים אופייניים מתוך האתר שכדאי לאמץ"],"bad":["3-6 דברים להימנע מהם כדי להישאר בקו של האתר"],"terms":["מונחים ושמות רשמיים כפי שהאתר כותב אותם: שם הרשות, שמות אגפים, שמות מתקנים ושירותים"],"facts":{"name":"השם הרשמי","phone":"","hotline":"מוקד, למשל 106","email":"","address":"","hours":"שעות קבלת קהל","mayor":"שם ראש הרשות או מנהל הארגון אם מופיע","site":"${site.url}"},"depts":[{"n":"שם מחלקה/אגף","phone":"","email":""}],"news":[{"t":"כותרת עדכון אחרון","d":"תאריך אם מופיע"}]}
-שדה בלי מידע באתר - מחרוזת ריקה או מערך ריק. depts עד 12, news עד 5.`, 2500);
-      return json(req, { ok: true, ...parseJson(raw), url: site.url, title: site.title, pages: site.pages });
+{"summary":"משפט אחד: מה הארגון ומה האתר מציג","tone":"שפת הכתיבה של הארגון כפי שהיא באתר, 2-3 משפטים: רמת רשמיות, פנייה לתושבים, אורך משפטים","good":["5-8 כללי כתיבה או ניסוחים אופייניים מתוך האתר שכדאי לאמץ"],"bad":["3-6 דברים להימנע מהם כדי להישאר בקו של האתר"],"terms":["מונחים ושמות רשמיים כפי שהאתר כותב אותם: שם הרשות, שמות אגפים, שמות מתקנים ושירותים"],"facts":{"name":"השם הרשמי","phone":"","hotline":"מוקד, למשל 106","email":"","address":"","hours":"שעות קבלת קהל","mayor":"שם ראש הרשות או מנהל הארגון אם מופיע","site":"${siteUrl}"},"depts":[{"n":"שם מחלקה/אגף","phone":"","email":""}],"news":[{"t":"כותרת עדכון אחרון","d":"תאריך אם מופיע"}]}
+שדה בלי מידע באתר - מחרוזת ריקה או מערך ריק. depts עד 12, news עד 5.`;
+      const raw = site ? await claude(key, SYS_SITE, ask, 2500) : await claudeWeb(key, SYS_SITE, ask, host, 3500);
+      const out = parseJson(raw);
+      return json(req, { ok: true, ...out, url: siteUrl, title: site?.title ?? '', pages: site?.pages ?? [], via: site ? 'direct' : 'web' });
     }
 
     if (mode === 'graphic') {
