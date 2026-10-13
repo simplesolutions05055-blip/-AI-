@@ -291,9 +291,16 @@ ${site ? 'להלן הטקסט של האתר הרשמי (דף הבית ועמוד
 החזר JSON בלבד:
 {"summary":"משפט אחד: מה הארגון ומה האתר מציג","tone":"שפת הכתיבה של הארגון כפי שהיא באתר, 2-3 משפטים: רמת רשמיות, פנייה לתושבים, אורך משפטים","good":["5-8 כללי כתיבה או ניסוחים אופייניים מתוך האתר שכדאי לאמץ"],"bad":["3-6 דברים להימנע מהם כדי להישאר בקו של האתר"],"terms":["מונחים ושמות רשמיים כפי שהאתר כותב אותם: שם הרשות, שמות אגפים, שמות מתקנים ושירותים"],"facts":{"name":"השם הרשמי","phone":"","hotline":"מוקד, למשל 106","email":"","address":"","hours":"שעות קבלת קהל","mayor":"שם ראש הרשות או מנהל הארגון אם מופיע","site":"${siteUrl}"},"depts":[{"n":"שם מחלקה/אגף","phone":"","email":""}],"news":[{"t":"כותרת עדכון אחרון","d":"תאריך אם מופיע"}]}
 שדה בלי מידע באתר - מחרוזת ריקה או מערך ריק. depts עד 12, news עד 5.`;
-      const raw = site ? await claude(key, SYS_SITE, ask, 2500) : await claudeWeb(key, SYS_SITE, ask, host, 3500);
-      const out = parseJson(raw);
-      return json(req, { ok: true, ...out, url: siteUrl, title: site?.title ?? '', pages: site?.pages ?? [], via: site ? 'direct' : 'web' });
+      let raw = site ? await claude(key, SYS_SITE, ask, 2500) : await claudeWeb(key, SYS_SITE, ask, host, 6000);
+      let out: any;
+      const notes = site ? '' : raw.slice(0, 400);
+      try { out = parseJson(raw); } catch {
+        // the reading notes come back as prose: turn them into the same structure
+        const spec = ask.slice(ask.indexOf('החזר JSON בלבד:'));
+        raw = await claude(key, SYS_SITE, `שם הארגון במערכת: ${ctx.org}\nאלה הממצאים שנאספו מהאתר הרשמי ${siteUrl}:\n${raw.slice(0, 20000)}\n\n${spec}`, 2500);
+        out = parseJson(raw);
+      }
+      return json(req, { ok: true, ...out, url: siteUrl, title: site?.title ?? '', pages: site?.pages ?? [], via: site ? 'direct' : 'web', notes });
     }
 
     if (mode === 'graphic') {
