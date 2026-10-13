@@ -1,6 +1,6 @@
 // PrimeOS generate - all AI text generation through the Claude API.
 // POST { mode, ...input }   header x-primeos-token
-// modes: post | alt | revise | assistant | doc | deck | graphic | video | doc2 | deck2
+// modes: post | alt | revise | assistant | doc | deck | graphic | video | doc2 | deck2 | brand | site
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import JSZip from 'https://esm.sh/jszip@3.10.1';
 
@@ -71,6 +71,45 @@ async function fileBlocks(files: any[]): Promise<unknown[]> {
 }
 const filesNote = (b: unknown[]) => (b.length ? '\nמצורפים קבצים מהמשתמש. השתמש בתוכן, בפרטים ובנתונים שבהם, ורק בהם.' : '');
 
+// the organisation's website: homepage plus the most informative internal pages, as plain text
+const UA = 'Mozilla/5.0 (compatible; PrimeOS/1.0; +https://app.primeos.co.il)';
+async function getPage(url: string, ms = 12000) {
+  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(url, { headers: { 'user-agent': UA, accept: 'text/html,*/*', 'accept-language': 'he,en;q=0.5' }, redirect: 'follow', signal: ctl.signal });
+    if (!r.ok || !/html|text/i.test(r.headers.get('content-type') ?? '')) return null;
+    return { url: r.url || url, html: (await r.text()).slice(0, 600000) };
+  } catch { return null; } finally { clearTimeout(tm); }
+}
+const decode = (t: string) => t.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n));
+const pageText = (h: string) => decode(h.replace(/<(script|style|noscript|svg|iframe)[\s\S]*?<\/\1>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ').replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|section|article)>/gi, '\n').replace(/<[^>]+>/g, ' ')).replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+const PRIO = /(about|odot|אודות|contact|tsor|צור|קשר|moked|מוקד|106|depart|machlak|מחלק|אגפ|service|sherut|שירות|news|chadash|חדשות|הודעות|press|דוברות|mayor|ראש|tarbut|תרבות|events|אירוע)/i;
+async function siteText(raw: string) {
+  let u: URL;
+  try { u = new URL(/^https?:\/\//i.test(raw) ? raw : 'https://' + raw); } catch { throw new Error('bad_url'); }
+  if (!/^https?:$/.test(u.protocol) || /^(localhost|127\.|10\.|192\.168\.|169\.254\.)/.test(u.hostname)) throw new Error('bad_url');
+  const home = (await getPage(u.href)) ?? (u.protocol === 'https:' ? await getPage(u.href.replace(/^https:/, 'http:')) : null);
+  if (!home) throw new Error('site_unreachable');
+  const base = new URL(home.url);
+  const host = base.hostname.replace(/^www\./, '');
+  const links = new Map<string, string>();
+  for (const m of home.html.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    try {
+      const l = new URL(decode(m[1]), base);
+      if (!/^https?:$/.test(l.protocol) || l.hostname.replace(/^www\./, '') !== host) continue;
+      if (/\.(pdf|jpe?g|png|gif|zip|docx?|xlsx?|mp4)$/i.test(l.pathname)) continue;
+      const k = l.origin + l.pathname;
+      if (k === base.origin + base.pathname || links.has(k)) continue;
+      links.set(k, pageText(m[2]).slice(0, 60));
+    } catch { /* skip */ }
+  }
+  const pick = [...links.entries()].sort((a, b) => +PRIO.test(b[0] + ' ' + b[1]) - +PRIO.test(a[0] + ' ' + a[1])).slice(0, 7).map((x) => x[0]);
+  const pages = [{ url: home.url, html: home.html }, ...(await Promise.all(pick.map((x) => getPage(x, 9000)))).filter(Boolean) as { url: string; html: string }[]];
+  const title = (home.html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) ?? [])[1] ?? '';
+  const text = pages.map((pg) => `=== ${pg.url} ===\n` + pageText(pg.html).slice(0, 9000)).join('\n\n').slice(0, 55000);
+  return { url: home.url, title: decode(title).trim(), pages: pages.map((pg) => pg.url), text };
+}
+
 function parseJson(raw: string) {
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('invalid_ai_response');
@@ -98,18 +137,19 @@ async function proof(key: string, obj: Record<string, unknown>) {
 const RULES = `כללי כתיבה מחייבים:
 - עברית תקנית, פנייה לתושבים בלשון רבים.
 - מקף רגיל בלבד (-), אף פעם לא מקף ארוך.
-- לא להמציא נתונים, מספרי טלפון, כתובות או תאריכים שלא נמסרו. אם חסר פרט - לנסח בלעדיו.
+- לא להמציא נתונים, מספרי טלפון, כתובות או תאריכים שלא נמסרו בבריף או בפרטים מאתר הארגון. אם חסר פרט - לנסח בלעדיו.
 - בלי פתיחים כמו "בשמחה" ובלי הסברים מחוץ לתוצר.`;
 
 function sys(ctx: Ctx) {
   return `אתה כותב התוכן של ${ctx.org}${ctx.dept ? ', מחלקת ' + ctx.dept : ''}. כותב לרשתות החברתיות, לאתר ולמסמכים רשמיים של הרשות.
+${ctx.facts ? 'פרטים מעודכנים מאתר הארגון (מותר להשתמש בהם כשהם רלוונטיים לנושא, בדיוק כפי שהם):\n' + String(ctx.facts).slice(0, 2500) : ''}
 ${ctx.tone ? 'שפת המותג: ' + ctx.tone : ''}
 ${ctx.good?.length ? 'ניסוחים טובים לדוגמה: ' + ctx.good.join(' | ') : ''}
 ${ctx.bad?.length ? 'להימנע מ: ' + ctx.bad.join(' | ') : ''}
 ${RULES}`;
 }
 
-interface Ctx { org: string; dept?: string; tone?: string; good?: string[]; bad?: string[] }
+interface Ctx { org: string; dept?: string; tone?: string; good?: string[]; bad?: string[]; facts?: string }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
@@ -134,7 +174,7 @@ Deno.serve(async (req) => {
   const key = Deno.env.get('ANTHROPIC_API_KEY');
   if (!key) return json(req, { error: 'claude_not_configured' }, 503);
 
-  const ctx: Ctx = { org: p.org || orgName || 'הרשות', dept: p.dept, tone: p.tone, good: p.good, bad: p.bad };
+  const ctx: Ctx = { org: p.org || orgName || 'הרשות', dept: p.dept, tone: p.tone, good: p.good, bad: p.bad, facts: p.facts };
   const s = sys(ctx);
   const mode = p.mode ?? 'post';
   const fb = await fileBlocks(p.files);
@@ -209,6 +249,19 @@ ${JSON.stringify(p.content)}
 {"summary":"משפט אחד: מה המסמך","tone":"שפת המותג בשניים-שלושה משפטים, רק אם מופיע","good":["ניסוח או כלל מומלץ"],"bad":["מה להימנע"],"colors":[{"n":"שם הצבע","hex":"#RRGGBB"}],"fonts":["שם גופן"]}
 colors רק צבעים שמופיעים במסמך עם ערך, או שאפשר לזהות בוודאות מהלוגו/תמונה. אם אין, מערך ריק. אותו דבר לכל שדה.`, 1500, fb);
       return json(req, { ok: true, ...parseJson(raw) });
+    }
+
+    if (mode === 'site') {
+      const site = await siteText(String(p.url ?? ''));
+      if (site.text.length < 200) return json(req, { error: 'site_empty', url: site.url }, 422);
+      const raw = await claude(key, 'אתה עורך התוכן הראשי של רשויות מקומיות וארגונים בישראל. קורא את האתר הרשמי של הארגון ומפיק ממנו כללי כתיבה ופרטים מעודכנים. רק מה שמופיע באתר. לא ממציא.', `שם הארגון במערכת: ${ctx.org}
+להלן הטקסט של האתר הרשמי (דף הבית ועמודים פנימיים):
+${site.text}
+
+החזר JSON בלבד:
+{"summary":"משפט אחד: מה הארגון ומה האתר מציג","tone":"שפת הכתיבה של הארגון כפי שהיא באתר, 2-3 משפטים: רמת רשמיות, פנייה לתושבים, אורך משפטים","good":["5-8 כללי כתיבה או ניסוחים אופייניים מתוך האתר שכדאי לאמץ"],"bad":["3-6 דברים להימנע מהם כדי להישאר בקו של האתר"],"terms":["מונחים ושמות רשמיים כפי שהאתר כותב אותם: שם הרשות, שמות אגפים, שמות מתקנים ושירותים"],"facts":{"name":"השם הרשמי","phone":"","hotline":"מוקד, למשל 106","email":"","address":"","hours":"שעות קבלת קהל","mayor":"שם ראש הרשות או מנהל הארגון אם מופיע","site":"${site.url}"},"depts":[{"n":"שם מחלקה/אגף","phone":"","email":""}],"news":[{"t":"כותרת עדכון אחרון","d":"תאריך אם מופיע"}]}
+שדה בלי מידע באתר - מחרוזת ריקה או מערך ריק. depts עד 12, news עד 5.`, 2500);
+      return json(req, { ok: true, ...parseJson(raw), url: site.url, title: site.title, pages: site.pages });
     }
 
     if (mode === 'graphic') {

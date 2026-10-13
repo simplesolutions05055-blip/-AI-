@@ -447,7 +447,19 @@
       tone: r.tone || '',
       good: r.good || [],
       bad: r.bad || [],
+      facts: siteFacts(),
     };
+  }
+  // up-to-date details read from the organisation's website, passed to every generation
+  function siteFacts() {
+    const st = (typeof BRAND !== 'undefined' && BRAND.site) || null;
+    if (!st || !st.at) return '';
+    const f = st.facts || {}, L2 = [];
+    const add = (k, v) => { if (v && String(v).trim()) L2.push(k + ': ' + String(v).trim()); };
+    add('שם רשמי', f.name); add('טלפון', f.phone); add('מוקד', f.hotline); add('דוא"ל', f.email); add('כתובת', f.address); add('שעות קבלת קהל', f.hours); add('ראש הארגון', f.mayor); add('אתר', f.site || st.url);
+    (st.depts || []).slice(0, 12).forEach((d) => add('מחלקה ' + d.n, [d.phone, d.email].filter(Boolean).join(' · ') || 'קיימת'));
+    if ((st.terms || []).length) L2.push('מונחים רשמיים: ' + st.terms.slice(0, 20).join(', '));
+    return L2.join('\n');
   }
   const chNames = (list) => (list || []).map((k) => (CH[k] ? CH[k].t : k));
 
@@ -1946,4 +1958,73 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     }
     return _fakeUpT();
   };
+  /* ---------- the organisation's website: up-to-date details and the writing rules come from it ---------- */
+  S.siteBusy = '';
+  const normUrl = (u) => String(u || '').trim().replace(/\s+/g, '');
+  async function siteScan(url, quiet) {
+    url = normUrl(url);
+    if (!url || S.siteBusy) return;
+    S.siteBusy = 'קורא את האתר: דף הבית ועמודים פנימיים...';
+    if (!quiet) render();
+    try {
+      const r = await gen({ mode: 'site', url });
+      const t = BRAND, ch = [];
+      t.site = { url: r.url || url, title: r.title || '', summary: r.summary || '', facts: r.facts || {}, depts: r.depts || [], news: r.news || [], terms: r.terms || [], pages: r.pages || [], at: Date.now() };
+      t.rules = t.rules || { tone: '', good: [], bad: [] };
+      if (r.tone) { t.rules.tone = r.tone; ch.push('טון הכתיבה'); }
+      if ((r.good || []).length) { t.rules.good = [...new Set([...r.good, ...(t.rules.good || [])])].slice(0, 10); ch.push(r.good.length + ' כללים מועדפים'); }
+      if ((r.bad || []).length) { t.rules.bad = [...new Set([...r.bad, ...(t.rules.bad || [])])].slice(0, 8); ch.push(r.bad.length + ' כללי הימנעות'); }
+      if (S.brandEdit && S.brandDraft) { S.brandDraft.site = t.site; S.brandDraft.rules = JSON.parse(JSON.stringify(t.rules)); }
+      S.siteBusy = '';
+      render(); flush();
+      if (!quiet) toast('האתר נקרא וכללי הכתיבה עודכנו', (r.pages || []).length + ' עמודים נקראו. עודכנו: ' + (ch.join(', ') || 'פרטי הארגון') + '.');
+    } catch (e) {
+      S.siteBusy = '';
+      if (BRAND.site) BRAND.site.err = e && e.message;
+      render();
+      if (!quiet) toast('לא הצלחנו לקרוא את האתר', e && /unreachable|bad_url/.test(e.message || '') ? 'בדקו את הכתובת. ייתכן שהאתר חוסם קריאה אוטומטית.' : 'נסו שוב בעוד רגע.', 'err');
+    }
+  }
+  ACT.siteScan = () => { const i = $('#siteUrl'); const u = normUrl(i ? i.value : (BRAND.site && BRAND.site.url)); if (!u) { toast('חסרה כתובת אתר', 'הזינו את כתובת האתר הרשמי.', 'err'); return; } BRAND.site = Object.assign(BRAND.site || {}, { url: u }); siteScan(u); };
+  const ago = (t) => { const d = Math.floor((Date.now() - t) / 86400000); return d <= 0 ? 'היום' : d === 1 ? 'אתמול' : 'לפני ' + d + ' ימים'; };
+  function siteCard() {
+    const st = BRAND.site || {}, f = st.facts || {};
+    const rows = [['טלפון', f.phone], ['מוקד', f.hotline], ['דוא"ל', f.email], ['כתובת', f.address], ['קבלת קהל', f.hours], ['ראש הארגון', f.mayor]].filter((x) => x[1]);
+    return '<div class="card card-pad site-card"><div class="sc-head"><div><h3>אתר הארגון</h3><span class="t-sub">המערכת קוראת את האתר הרשמי, בונה ממנו את כללי הכתיבה ומשתמשת בפרטים המעודכנים שבו בכל תוכן. נקרא מחדש אוטומטית כל יומיים.</span></div></div>' +
+      '<div class="sc-row"><input type="url" id="siteUrl" dir="ltr" placeholder="www.example.muni.il" value="' + esc(st.url || '') + '"' + (S.siteBusy ? ' disabled' : '') + '><button class="btn btn-primary" data-act="siteScan"' + (S.siteBusy ? ' disabled' : '') + '>' + ic('refresh', 15) + ' ' + (st.at ? 'קריאה מחדש' : 'קריאת האתר') + '</button></div>' +
+      (S.siteBusy ? '<div class="lo-busy"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(S.siteBusy) + '</div>' : '') +
+      (st.at ? '<div class="note">' + ic('checkc', 15) + '<span>נקרא ' + ago(st.at) + ' · ' + (st.pages || []).length + ' עמודים' + (st.summary ? ' · ' + esc(st.summary) : '') + '</span></div>' : '') +
+      (st.err && !st.at ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>הקריאה האחרונה נכשלה. בדקו את הכתובת ונסו שוב.</span></div>' : '') +
+      (rows.length ? '<div class="sc-facts">' + rows.map((x) => '<div><small>' + x[0] + '</small><b>' + esc(x[1]) + '</b></div>').join('') + '</div>' : '') +
+      ((st.depts || []).length ? '<div><b style="font-size:13.5px">מחלקות שזוהו באתר</b><div class="tplu-slots" style="margin-top:6px">' + st.depts.slice(0, 12).map((d) => '<span class="chip">' + esc(d.n) + '</span>').join('') + '</div></div>' : '') +
+      ((st.terms || []).length ? '<div><b style="font-size:13.5px">מונחים רשמיים</b><div class="tplu-slots" style="margin-top:6px">' + st.terms.slice(0, 16).map((x) => '<span class="chip">' + esc(x) + '</span>').join('') + '</div></div>' : '') +
+      '</div>';
+  }
+  css.textContent += `
+.card-pad > h3 + p[style*="line-height:1.7"]{display:block!important}
+.site-card{display:flex;flex-direction:column;gap:12px;margin-bottom:16px}.site-card h3{margin:0 0 4px;font-size:15.5px}
+.sc-row{display:flex;gap:8px}.sc-row input{flex:1;min-width:0;border:1px solid var(--line,#DDE3EC);border-radius:10px;padding:10px 12px;font:inherit;background:#fff;text-align:left}
+.sc-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.sc-facts>div{border:1px solid var(--line,#DDE3EC);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.sc-facts small{font-size:11.5px;color:var(--ink-3,#5A6386)}.sc-facts b{font-size:13px;font-weight:600;overflow-wrap:anywhere}
+@media (max-width:640px){.sc-row{flex-direction:column}.sc-facts{grid-template-columns:1fr 1fr}}`;
+  const _brandRS = SCREENS.brand.render;
+  SCREENS.brand.render = function () {
+    const h = _brandRS.call(this);
+    if ((S.tab.brand || 'logos') !== 'rules') return h;
+    return h.replace('<div class="card card-pad"><h3 style="margin:0 0 12px;font-size:15.5px">טון הכתיבה</h3>', siteCard() + '<div class="card card-pad"><h3 style="margin:0 0 12px;font-size:15.5px">טון הכתיבה</h3>');
+  };
+  // onboarding, organisation step: the website address is read in the background
+  const _obRS = SCREENS.onboard.render;
+  SCREENS.onboard.render = function () {
+    const h = _obRS.call(this);
+    if (S.onboardStep !== 0) return h;
+    return h.replace(/(<label>אתר אינטרנט<\/label>)<input type="text" value="[^"]*">/, '$1<input type="url" id="obSite" dir="ltr" style="text-align:left" placeholder="www.example.muni.il" value="' + esc((BRAND.site && BRAND.site.url) || '') + '"><span class="t-sub" style="margin-top:4px">המערכת תקרא את האתר ותבנה ממנו את כללי הכתיבה.</span>');
+  };
+  const _obNextS = ACT.obNext;
+  ACT.obNext = () => {
+    if (S.onboardStep === 0) { const i = $('#obSite'); const u = normUrl(i && i.value); if (u && (!BRAND.site || BRAND.site.url !== u || !BRAND.site.at)) { BRAND.site = Object.assign(BRAND.site || {}, { url: u }); siteScan(u, true).then(() => { if (BRAND.site && BRAND.site.at) toast('האתר נקרא', 'כללי הכתיבה נבנו מהאתר. אפשר לראות אותם בנכסי מותג.'); }); } }
+    return _obNextS();
+  };
+  // keep it current: read again when the last read is older than two days
+  (function siteAuto() { if (!L.ready) { setTimeout(siteAuto, 700); return; } if (L.kind === 'admin') return; setTimeout(() => { const st = BRAND.site; if (st && st.url && (!st.at || Date.now() - st.at > 2 * 86400000)) siteScan(st.url, true); }, 4000); })();
 })();
