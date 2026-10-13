@@ -674,7 +674,14 @@
     return r.url;
   }
   async function produce(jobs, dept) {
-    return fx('produce', { brand: brandFor(dept), jobs }, 150000);
+    const b = brandFor(dept);
+    try {
+      if (b.colors && b.colors[0] && lum(b.colors[0]) > 0.18) {
+        let c = b.colors[0]; for (let t = 0; lum(c) > 0.18 && t < 12; t++) c = mix(c, '#000000', 0.12);
+        b.colors = [c, ...b.colors.slice(1)];
+      }
+    } catch (e) { /* keep the palette as is */ }
+    return fx('produce', { brand: b, jobs }, 150000);
   }
   // async renders (video): poll the result file until it exists
   function waitFile(url, maxMs) {
@@ -1321,7 +1328,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if ((r.good || []).length) { t.rules.good = [...new Set([...r.good, ...t.rules.good])].slice(0, 8); ch.push(r.good.length + ' ניסוחים מועדפים'); }
       if ((r.bad || []).length) { t.rules.bad = [...new Set([...r.bad, ...t.rules.bad])].slice(0, 8); ch.push(r.bad.length + ' כללי הימנעות'); }
       const cols = (r.colors || []).filter((c) => /^#[0-9a-f]{6}$/i.test(c.hex || ''));
-      if (cols.length) { const pal = paletteFrom(cols.map((c) => c.hex.toUpperCase())); cols.slice(0, 1).forEach((c) => { pal[0][0] = (c.n || 'ראשי') + ' (מהמסמך)'; }); t.colors = pal; ch.push(cols.length + ' צבעי מותג'); }
+      if (cols.length) { const pal = paletteFrom(cols.map((c) => c.hex.toUpperCase())); pal.forEach((x) => { x[0] = x[0].replace('(מהלוגו)', '(מהמסמך)'); }); if (cols[0] && cols[0].n) pal[0][0] = cols[0].n + ' (מהמסמך)'; t.colors = pal; ch.push(cols.length + ' צבעי מותג'); }
       if ((r.fonts || []).length && typeof FONTS !== 'undefined') { const f = r.fonts.find((x) => FONTS.includes(x)); if (f) { t.fonts.h = f; t.fonts.b = f; ch.push('גופן'); } }
       render();
       toast(ch.length ? 'המערכת למדה מהמסמכים' : 'המסמכים נקלטו', ch.length ? 'עודכנו: ' + ch.join(', ') + '.' : (r.summary || 'לא נמצאו בהם הנחיות מותג מפורשות.'));
@@ -1680,10 +1687,13 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const darks = cols.filter((c) => !chroma.includes(c));
     let primary = chroma[0] || darks[0] || '#0E3B6B';
     let accent = chroma.find((c) => c !== primary && Math.min(Math.abs(hsl(c).h - hsl(primary).h), 360 - Math.abs(hsl(c).h - hsl(primary).h)) > 25) || null;
-    if (lum(primary) > 0.18) { if (!accent) accent = primary; let t = 0; while (lum(primary) > 0.18 && t < 12) { primary = mix(primary, '#000000', 0.12); t++; } }
-    if (!accent) accent = mix(primary, '#FFFFFF', 0.35);
-    const second = chroma.find((c) => c !== accent && c !== cols[0] && c !== primary) || mix(primary, '#FFFFFF', 0.28);
-    return [['ראשי (מהלוגו)', primary], ['כהה', mix(primary, '#000000', 0.32)], ['הדגשה (מהלוגו)', accent], ['משני', second],
+    // the logo's own colours stay exact; only the helper shades are derived
+    const accentOwn = !!accent;
+    if (!accent) accent = chroma.find((c) => c !== primary) || mix(primary, '#FFFFFF', 0.35);
+    const third = chroma.find((c) => c !== accent && c !== primary);
+    const second = third || mix(primary, '#FFFFFF', 0.28);
+    let dark = mix(primary, '#000000', 0.32); for (let t = 0; lum(dark) > 0.06 && t < 10; t++) dark = mix(dark, '#000000', 0.15);
+    return [['ראשי (מהלוגו)', primary], ['כהה', dark], [accentOwn || chroma.includes(accent) ? 'הדגשה (מהלוגו)' : 'הדגשה', accent], [third ? 'משני (מהלוגו)' : 'משני', second],
       ['טקסט', mix(primary, '#4A5568', 0.78)], ['רקע בהיר', mix(primary, '#FFFFFF', 0.92)], ['ירוק אישור', '#0A6C43'], ['אדום התראה', '#9B1C1C']];
   }
   async function uploadBlob(blob, name) {
@@ -1717,7 +1727,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       S.logoFresh = Date.now();
       render();
       flush();
-      if (r.colors.length) toast('הלוגו עודכן וצבעי המותג הוחלפו', (r.removed ? 'הרקע הוסר אוטומטית. ' : '') + r.colors.length + ' צבעים זוהו בלוגו. הצבע הראשי החדש: ' + pal[0][1]);
+      if (r.colors.length) toast('הלוגו עודכן וצבעי המותג הוחלפו', (r.removed ? 'הרקע הוסר אוטומטית. ' : '') + r.colors.length + ' צבעים זוהו בלוגו. הצבע הראשי החדש: \u200E' + pal[0][1]);
       else toast('הלוגו עודכן', 'לא זוהו בלוגו צבעים ברורים, נשארו צבעי ברירת המחדל. אפשר לשנות אותם בלשונית צבעים ופונטים.', 'err');
     } catch (e) {
       S.logoBusy = '';
@@ -1857,6 +1867,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   const _brandRT = SCREENS.brand.render;
   SCREENS.brand.render = function () {
     stripBuiltIn();
+    if ((S.tab.brand || 'logos') === 'colors') return _brandRT.call(this).replace(/<div class="t-sub">(#[0-9A-Fa-f]{6})<\/div>/g, '<div class="t-sub" dir="ltr" style="text-align:right">$1</div>');
     if ((S.tab.brand || 'logos') !== 'templates') return _brandRT.call(this);
     const keepB = BRAND.tpls, keepD = S.brandDraft && S.brandDraft.tpls;
     BRAND.tpls = []; if (S.brandDraft) S.brandDraft.tpls = [];
