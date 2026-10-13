@@ -2,7 +2,7 @@
 // { kicker, headline, sub, details:[{icon,text}], cta, image?, stat?:{v,l}, sign? }
 import { esc, crest, icon, page } from './brand.mjs';
 
-export const FORMATS = { '1x1': [1080, 1080], '4x5': [1080, 1350], '9x16': [1080, 1920] };
+export const FORMATS = { '1x1': [1080, 1080], '4x5': [1080, 1350], '9x16': [1080, 1920], '16x9': [1920, 1080], '191x1': [2064, 1080] };
 export const LAYOUTS = {
   official: 'רשמי כחול', photo: 'תמונה מלאה', frame: 'מסגרת ממלכתית', split: 'תמונה ופאנל',
   notice: 'הודעה לתושבים', greeting: 'ברכה', stat: 'נתון מרכזי', editorial: 'בהיר מערכתי',
@@ -46,7 +46,7 @@ function notice(k, g, w, h, t) {
   return `<div class="L notice ${t}"><div class="band">${crest(k, 62, true)}<span><b>${esc(k.org)}</b>${k.dept ? `<small>${esc(k.dept)}</small>` : ''}</span></div>
 <div class="strip">${icon('alert', 40, '#3A2A00', 2.4)}<span>${esc(g.kicker || 'הודעה חשובה')}</span></div>
 <main data-box><h1>${esc(g.headline)}</h1><p class="sub" data-shrink>${esc(g.sub)}</p><div class="tbl">${rows}</div></main>
-<footer><span>${esc(g.cta || (k.phone ? 'לפרטים: ' + k.phone : 'לפרטים: מוקד 106'))}</span>${k.site ? `<small>${esc(k.site)}</small>` : ''}</footer></div>`;
+<footer><span>${esc(g.cta || (k.phone ? 'לפרטים: ' + k.phone : ''))}</span>${k.site ? `<small>${esc(k.site)}</small>` : ''}</footer></div>`;
 }
 function greeting(k, g, w, h, t) {
   return `<div class="L greeting ${t}">${img(g, g.pos || 'center')}<div class="veil"></div>
@@ -158,13 +158,24 @@ h1{font-weight:900;letter-spacing:-.02em;line-height:1.03}
 .editorial .row .di{width:56px;height:56px;border-radius:50%;background:${k.bg};color:${k.navy}}
 .editorial .cta{align-self:flex-start;background:${k.gold};color:#fff;font-size:38px;padding:16px 38px;border-radius:18px}
 .editorial footer{background:${k.navy};color:#fff;display:flex;align-items:center;gap:18px;padding:24px 64px ${h / w > 1.5 ? 140 : 24}px;font-size:30px}.editorial footer b{font-weight:800}.editorial .sep{width:2px;height:30px;background:rgba(255,255,255,.35)}
+/* wide (16:9, 1.91:1): text column beside the image */
+.official.t-wide{padding:70px 96px}.official.t-wide main{max-width:1240px}
+.photo.t-wide{justify-content:center}.photo.t-wide .shade{background:linear-gradient(to left,${k.deep}F5 0%,${k.navy}E0 34%,${k.navy}80 52%,transparent 72%)}
+.photo.t-wide main{max-width:54%;max-height:none;padding:120px 90px 60px}
+.frame.t-wide{align-items:flex-start;padding:64px 100px 0}.frame.t-wide .win{position:absolute;left:70px;top:70px;bottom:150px;width:44%;height:auto;margin:0}
+.frame.t-wide .top,.frame.t-wide main{width:46%}.frame.t-wide footer{width:calc(100% + 200px);margin-right:-100px;padding:26px 0 30px;font-size:36px}
+.split.t-wide{flex-direction:row}.split.t-wide .pic{order:2;width:46%;height:100%}.split.t-wide .arc{display:none}.split.t-wide main{padding:70px 90px;border-left:8px solid ${k.gold}}
+.split.t-wide .chip{right:auto;left:56px}
+.greeting.t-wide main{margin-top:120px;max-width:1400px}
+.stat.t-wide{padding:64px 96px}.stat.t-wide .big{font-size:230px}
+.editorial.t-wide{grid-template-rows:auto minmax(0,1fr) auto}.editorial.t-wide main{padding:30px 96px}
 `;
 }
 
 /** Full HTML page for one graphic */
 export function graphicHtml(k, g, layout, format) {
   const [w, h] = FORMATS[format] || FORMATS['1x1'];
-  const t = h / w > 1.5 ? 't-story' : h / w > 1.2 ? 't-tall' : 't-sq';
+  const t = h / w > 1.5 ? 't-story' : h / w > 1.2 ? 't-tall' : w / h > 1.3 ? 't-wide' : 't-sq';
   const fn = FN[layout] || official;
   return { html: page(css(k, w, h), fn(k, g, w, h, t)), w, h };
 }
