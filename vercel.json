@@ -4,7 +4,20 @@
   "outputDirectory": "dist",
   "installCommand": "npm install --include=dev",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "functions": {
+    "api/render.ts": {
+      "maxDuration": 300,
+      "memory": 2048,
+      "includeFiles": "{node_modules/ffmpeg-static/ffmpeg,api/_render/**}"
+    }
+  }
 }
