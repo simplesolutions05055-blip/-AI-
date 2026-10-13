@@ -40,11 +40,22 @@ Deno.serve(async (req) => {
         urls[j.id][key] = d.storage.from('v2-content').getPublicUrl(path).data.publicUrl;
       }
     }
-    const r = await fetch(RENDER_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token }, body: JSON.stringify({ brand: p.brand ?? {}, jobs }) });
+    // videos (or explicit async) render in the background; the caller polls status.json / the file urls
+    const async = !!p.async || jobs.some((j) => j.kind === 'video');
+    let statusUrl: string | undefined, statusUpload: string | undefined;
+    if (async) {
+      const sp = `out/${t?.org_id ?? 'admin'}/${batch}/status.json`;
+      const s = await d.storage.from('v2-content').createSignedUploadUrl(sp);
+      if (s.error) throw s.error;
+      statusUpload = s.data.signedUrl;
+      statusUrl = d.storage.from('v2-content').getPublicUrl(sp).data.publicUrl;
+    }
+    const r = await fetch(RENDER_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token }, body: JSON.stringify({ brand: p.brand ?? {}, jobs, async, statusUpload }) });
     const txt = await r.text();
     let res: any;
     try { res = JSON.parse(txt); } catch { throw new Error('render_bad_response ' + r.status + ' ' + txt.slice(0, 200)); }
     if (!r.ok) throw new Error('render_failed ' + r.status + ' ' + (res.error ?? ''));
+    if (async) return json(req, { ok: true, batch, pending: true, status: statusUrl, results: jobs.map((j) => ({ id: j.id, urls: urls[j.id] })) });
     return json(req, { ok: true, batch, results: (res.results ?? []).map((x: any) => ({ ...x, urls: x.ok ? urls[x.id] : undefined })) });
   } catch (e) {
     return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);

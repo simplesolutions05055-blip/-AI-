@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { waitUntil } from '@vercel/functions';
 // @ts-ignore - plain ESM render library shared with the lab
 import { kit, crest, fontCss } from './_render/brand.mjs';
 // @ts-ignore
@@ -87,6 +88,20 @@ export default {
     if (!token || !(local || (await whoami(token)))) return json({ error: 'invalid_token' }, 401);
     let body: any;
     try { body = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
+    // async: answer at once and keep rendering (long videos exceed the caller's 150s idle limit)
+    if (body.async) {
+      const work = renderAll(body)
+        .then((r) => body.statusUpload && put(body.statusUpload, Buffer.from(JSON.stringify({ ok: true, done: Date.now(), results: r.map(({ thumb, sheet, stills, ...x }: any) => x) })), 'application/json'))
+        .catch(() => {});
+      if (process.env.VERCEL) { waitUntil(work); return json({ ok: true, accepted: true }, 202); }
+      await work;
+      return json({ ok: true, accepted: true }, 202);
+    }
+    return json({ ok: true, results: await renderAll(body) });
+  },
+};
+
+async function renderAll(body: any) {
     const k = kit(body.brand || {});
     const jobs: any[] = Array.isArray(body.jobs) ? body.jobs.slice(0, 12) : [];
     const b = await browser();
@@ -184,6 +199,5 @@ export default {
     } finally {
       await b.close().catch(() => {});
     }
-    return json({ ok: true, results: out });
-  },
-};
+    return out;
+}

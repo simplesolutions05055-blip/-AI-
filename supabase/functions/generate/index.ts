@@ -50,14 +50,20 @@ function parseJson(raw: string) {
 }
 
 // second pass: language proofing of short on-screen texts (they are printed on images, so errors are costly)
+// hashtags: always '#', words joined by a single underscore, no duplicates
+function tagFix(o: Record<string, unknown>) {
+  if (!Array.isArray(o.tags)) return o;
+  const t = (o.tags as string[]).map((x) => '#' + String(x).replace(/^#+/, '').trim().replace(/[\s\-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')).filter((x) => x.length > 1);
+  return { ...o, tags: [...new Set(t)] };
+}
 async function proof(key: string, obj: Record<string, unknown>) {
   try {
     const raw = await claude(key, 'אתה עורך לשון עברית קפדן של רשות מקומית. מתקן רק שגיאות דקדוק, כתיב, ה\' הידיעה, התאמה במין ובמספר ופיסוק. לא משנה תוכן, אורך או סגנון. מקף רגיל בלבד.',
       `תקן את השגיאות בטקסטים שב-JSON הבא והחזר את אותו JSON בדיוק, באותם מפתחות. JSON בלבד.\n${JSON.stringify(obj)}`, 2000);
     const j = parseJson(raw);
-    return j && typeof j === 'object' ? { ...obj, ...j } : obj;
+    return tagFix(j && typeof j === 'object' ? { ...obj, ...j } : obj);
   } catch {
-    return obj;
+    return tagFix(obj);
   }
 }
 
@@ -115,7 +121,7 @@ Deno.serve(async (req) => {
 {"title":"כותרת קצרה לגרפיקה, עד 45 תווים","body":"טקסט הפרסום, 2-4 משפטים, עד 320 תווים","tags":["#האשטג","#האשטג","#האשטג","#האשטג","#האשטג"]}
 ההאשטגים בעברית, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.`);
       const j = parseJson(raw);
-      return json(req, { ok: true, title: j.title ?? '', body: j.body ?? '', tags: (j.tags ?? []).map((x: string) => (x.startsWith('#') ? x : '#' + x)) });
+      return json(req, { ok: true, title: j.title ?? '', body: j.body ?? '', tags: (tagFix({ tags: j.tags ?? [] }).tags as string[]) });
     }
 
     if (mode === 'alt') {
@@ -172,8 +178,10 @@ ${JSON.stringify(p.content)}
 ${brief}
 
 החזר JSON בלבד:
-{"kicker":"מילה או שתיים מעל הכותרת, למשל: אירוע קהילתי / הודעה לתושבים","headline":"כותרת ראשית לגרפיקה, 2-5 מילים, חזקה וברורה","sub":"שורת משנה אחת, עד 60 תווים","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט קצר, עד 28 תווים"}],"cta":"קריאה לפעולה קצרה עד 24 תווים","caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"]}
-details: רק פרטים שמופיעים בבריף (תאריך, שעה, מקום, טלפון), עד 3. אם אין פרטים - מערך ריק.`);
+{"kicker":"1-3 מילים מעל הכותרת שמסווגות את הנושא באופן ספציפי, למשל: תרבות ופנאי / עבודות תשתית / איכות הסביבה / קול קורא / ברכת חג / שירות לתושב","headline":"כותרת ראשית לגרפיקה, 2-5 מילים, חזקה וברורה","sub":"שורת משנה אחת, עד 60 תווים","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט קצר, עד 28 תווים"}],"cta":"קריאה לפעולה קצרה עד 24 תווים","caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"]}
+details: רק פרטים שמופיעים בבריף (תאריך, שעה, מקום, טלפון), עד 3. אם אין פרטים - מערך ריק.
+kicker: לא "הודעה לתושבים" ולא "עדכון" כלליים, אלא אם אין שום נושא ספציפי.
+tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון (#פסטיבל_הסתיו), כולל אחד עם שם הרשות.`);
       return json(req, { ok: true, ...(await proof(key, parseJson(raw))) });
     }
 

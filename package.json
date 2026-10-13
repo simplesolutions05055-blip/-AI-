@@ -10,6 +10,7 @@
     "typecheck:api": "tsc -p tsconfig.api.json --noEmit"
   },
   "dependencies": {
+    "@vercel/functions": "^1.5.2",
     "docx": "^9.7.1",
     "ffmpeg-static": "^5.2.0",
     "jszip": "^3.10.1",
