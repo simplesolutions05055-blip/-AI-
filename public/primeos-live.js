@@ -1492,7 +1492,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           template: tpl ? { url: tpl.url, desc: tpl.desc || '', slots: tpl.slots || [] } : undefined,
         }, 150000);
         if (S.wiz !== w || m.job !== job) return;
-        url = r.url; check = r.check || { ok: true }; want = r.want || [];
+        url = r.url; check = r.check || { ok: true }; want = r.want || []; m.model = r.model || '';
       }
       // a fix round can break another line: keep the version with the fewest text errors
       const nIss = (c) => (c && !c.ok ? (c.issues || []).length || 1 : 0);
@@ -1550,6 +1550,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       h = h.replace('<div class="real-acts">', '<div class="real-acts"><button class="btn btn-sm" data-act="gNew"' + (busy ? ' disabled' : '') + '>' + ic('refresh', 14) + ' עיצוב חדש</button>' + (m.warn ? '<button class="btn btn-sm" data-act="gFix"' + (busy ? ' disabled' : '') + '>' + ic('edit', 14) + ' תיקון הטקסט</button>' : ''));
       if (m.stale) h += '<div class="note ai-warn">' + ic('edit', 15) + '<span>הכותרת השתנתה. לחצו "עיצוב חדש" כדי לעדכן את הגרפיקה.</span></div>';
       if (m.warn) h += '<div class="note ai-warn">' + ic('alert', 15) + '<span>בדיקת הטקסט מצאה: ' + m.warn.map(esc).join(' · ') + '</span></div>';
+      if (m.model && m.url) h += '<div class="t-sub" style="margin-top:8px">' + ic('img', 13) + ' עוצב ב-ChatGPT, מודל <span dir="ltr">' + esc(m.model) + '</span> · <a href="' + esc(m.design || m.url) + '" target="_blank" rel="noopener">הקובץ המקורי</a></div>';
       if (briefPhotos(w).length || logoOf()) h += '<div class="t-sub" style="margin-top:8px">בעיצוב משולבים: ' + [logoOf() ? 'הלוגו מנכסי המותג' : '', briefPhotos(w).length ? briefPhotos(w).length + ' תמונות שהעליתם' : ''].filter(Boolean).join(' ו') + '.</div>';
     }
     return h;
@@ -2121,7 +2122,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const tx = { kicker: x.kicker || '', headline: x.t, sub: x.sub || '', details: [], cta: '' };
       let r = await fx('image', { action: 'design', org: aiCtx().org, dept: c.dept, size, brief: x.t + '\n' + (x.body || ''), colors: brandFor(c.dept).colors, texts: tx,
         refs: logo ? [logo] : [], logo: !!logo, note: note || '', quality: 'high', n: 1 }, 150000);
-      let url = r.url, check = r.check || { ok: true };
+      let url = r.url, check = r.check || { ok: true }; m.model = r.model || '';
       // up to two masked fix rounds; the version with the fewest text errors is kept
       const nI = (c) => (c && !c.ok ? (c.issues || []).length || 1 : 0);
       for (let round = 1; round <= 2 && !check.ok && (check.fixes || []).length; round++) {
@@ -2205,6 +2206,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       (m.url ? '<a class="btn btn-sm" href="' + esc(m.url) + '" target="_blank" rel="noopener">' + ic('down', 14) + ' הורדת הקובץ</a>' : '') + '</div>' +
       (m.err ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>' + esc(m.err) + '. לחצו "עיצוב חדש".</span></div>' : '') +
       (m.warn ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>בדיקת הטקסט מצאה: ' + m.warn.map(esc).join(' · ') + '</span></div>' : '') +
+      (m.model && m.url ? '<div class="t-sub" style="margin-bottom:8px">' + ic('img', 13) + ' עוצב ב-ChatGPT, מודל <span dir="ltr">' + esc(m.model) + '</span> · <a href="' + esc(m.design || m.url) + '" target="_blank" rel="noopener">הקובץ המקורי</a></div>' : '') +
       (m.stale ? '<div class="note ai-warn">' + ic('edit', 15) + '<span>הכותרת השתנתה. לחצו "עיצוב חדש" כדי לעדכן את הגרפיקה.</span></div>' : '') + h;
   };
   ACT.cRedo = () => { const [c, x] = CX(); if (!x || (x.media && x.media.busy)) return; const t = $('#cT'); if (t) x.t = t.value; queueGraphic(c, x, 'קומפוזיציה ועיצוב שונים מהגרסה הקודמת'); render(); };
