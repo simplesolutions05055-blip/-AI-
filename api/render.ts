@@ -94,6 +94,20 @@ export default {
         const t0 = Date.now();
         try {
           const up = j.uploads || {};
+          if (j.kind === 'probe') {
+            const { html, w, h } = graphicHtml(k, j.data, j.layout || 'official', j.format || '1x1');
+            await load(p, html, w, h);
+            const v: Record<string, number> = {};
+            const tries: [string, any][] = [
+              ['clip', { type: 'jpeg', quality: 80, clip: { x: 0, y: 0, width: w, height: h } }],
+              ['plain', { type: 'jpeg', quality: 80 }],
+              ['noBeyond', { type: 'jpeg', quality: 80, captureBeyondViewport: false }],
+              ['png', { type: 'png', captureBeyondViewport: false }],
+            ];
+            for (const [n, o] of tries) { try { v[n] = Buffer.from(await p.screenshot(o)).length; } catch (e: any) { v[n] = -1; } }
+            out.push({ id: j.id, ok: true, v, ua: await b.version() });
+            continue;
+          }
           if (j.kind === 'graphic') {
             const { html, w, h } = graphicHtml(k, j.data, j.layout, j.format);
             await load(p, html, w, h);
