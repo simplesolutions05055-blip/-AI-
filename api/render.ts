@@ -62,6 +62,14 @@ async function load(p: Page, html: string, w: number, h: number) {
   await p.setContent(html, { waitUntil: 'load', timeout: 60_000 });
   await p.waitForSelector('body[data-ready="1"]', { timeout: 60_000 });
 }
+async function diag(p: Page) {
+  return p.evaluate(() => ({
+    imgs: [...document.images].map((i) => [i.naturalWidth, i.naturalHeight, i.src.slice(-30)]),
+    fonts: [...(document as any).fonts].filter((f: any) => f.status === 'loaded').length,
+    h1: (document.querySelector('h1') as HTMLElement | null)?.getBoundingClientRect().height ?? null,
+    text: (document.body.innerText || '').slice(0, 60),
+  }));
+}
 async function thumb(p: Page, w: number, h: number, max = 420) {
   const s = Math.min(1, max / Math.max(w, h));
   const shot = await p.screenshot({ type: 'jpeg', quality: 62, clip: { x: 0, y: 0, width: w, height: h, scale: s } as any });
@@ -91,7 +99,7 @@ export default {
             await load(p, html, w, h);
             const img = Buffer.from(await p.screenshot({ type: j.image === 'png' ? 'png' : 'jpeg', quality: j.image === 'png' ? undefined : 92, clip: { x: 0, y: 0, width: w, height: h } } as any));
             if (up.main) await put(up.main, img, j.image === 'png' ? 'image/png' : 'image/jpeg');
-            out.push({ id: j.id, ok: true, bytes: img.length, ms: Date.now() - t0, thumb: j.thumb === false ? undefined : await thumb(p, w, h, j.thumbMax || 420) });
+            out.push({ id: j.id, ok: true, bytes: img.length, ms: Date.now() - t0, diag: await diag(p), thumb: j.thumb === false ? undefined : await thumb(p, w, h, j.thumbMax || 420) });
           } else if (j.kind === 'doc') {
             const { html, footer } = docHtml(k, j.data, j.style, { image: j.imageUrl, date: j.date });
             await load(p, html, 794, 1123);
