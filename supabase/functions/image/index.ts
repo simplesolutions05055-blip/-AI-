@@ -197,7 +197,9 @@ fixed=true for texts that belong to the template itself and must stay (organisat
     if (!ckey) return json(req, { error: 'claude_not_configured' }, 503);
     try {
       const tx = p.texts ?? {};
-      const lines = [['kicker', tx.kicker], ['headline', tx.headline], ['sub', tx.sub], ...((tx.details ?? []) as any[]).map((d: any, i: number) => ['detail ' + (i + 1), typeof d === 'string' ? d : d?.text]), ['call to action', tx.cta], ['organisation name', p.org]]
+      // a template that carries its own organisation line keeps it; the org name is not added again
+      const ownOrg = !!p.template && ((p.template.slots ?? []) as any[]).some((x) => x?.fixed && (x.role === 'org' || x.role === 'footer'));
+      const lines = [['kicker', tx.kicker], ['headline', tx.headline], ['sub', tx.sub], ...((tx.details ?? []) as any[]).map((d: any, i: number) => ['detail ' + (i + 1), typeof d === 'string' ? d : d?.text]), ['call to action', tx.cta], ['organisation name', ownOrg ? '' : p.org]]
         .filter((x) => x[1]).map((x) => `${x[0]}: "${x[1]}"`).join('\n');
       const colors = ((p.colors ?? []) as string[]).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 6).join(', ') || '#0E3B6B, #0A2C51, #9A6B1F, #1E6BA8';
       const okUrl = (u: string) => /^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(u);
@@ -225,7 +227,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${tpl ? 't' : 'd'}-${crypto.randomUUID().slice(0, 8)}.png`;
       const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/png', upsert: false });
       if (up.error) throw up.error;
-      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: lines.split('\n').map((l) => l.replace(/^[a-z0-9 ]+: "|"$/gi, '')), prompt, model, size });
+      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: [...lines.split('\n').map((l) => l.replace(/^[a-z0-9 ]+: "|"$/gi, '')), ...fixedTx.map((x) => x.slice(1, -1))], prompt, model, size });
     } catch (e) {
       return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
     }
