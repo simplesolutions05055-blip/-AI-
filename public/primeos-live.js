@@ -667,6 +667,8 @@
    * ===================================================================== */
   const FX = 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/';
   const fx = (name, body, ms) => post(FX + name, body, ms || 150000);
+  // period content (many graphics at once) uses OpenAI's fast model; single graphics use the server default (the precision model)
+  const FAST_IMG = 'gpt-image-2.5-flare';
   const FMT_K = { '1:1': '1x1', '4:5': '4x5', '9:16': '9x16', '16:9': '16x9', '1.91:1': '191x1' };
   const IMG_SIZE = (f) => (f === '4:5' || f === '9:16' ? 'portrait' : f === '16:9' || f === '1.91:1' ? 'landscape' : 'square');
   const LAY = [
@@ -2121,7 +2123,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       m.busy = 'ChatGPT מעצב את הגרפיקה...'; rerenderCamp();
       const tx = { kicker: x.kicker || '', headline: x.t, sub: x.sub || '', details: [], cta: '' };
       let r = await fx('image', { action: 'design', org: aiCtx().org, dept: c.dept, size, brief: x.t + '\n' + (x.body || ''), colors: brandFor(c.dept).colors, texts: tx,
-        refs: logo ? [logo] : [], logo: !!logo, note: note || '', quality: 'high', n: 1 }, 150000);
+        refs: logo ? [logo] : [], logo: !!logo, note: note || '', quality: 'high', n: 1, model: FAST_IMG }, 150000);
       let url = r.url, check = r.check || { ok: true }; m.model = r.model || '';
       // up to two masked fix rounds; the version with the fewest text errors is kept
       const nI = (c) => (c && !c.ok ? (c.issues || []).length || 1 : 0);

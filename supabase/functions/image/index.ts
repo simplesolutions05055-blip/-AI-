@@ -2,7 +2,7 @@
 // Claude turns the Hebrew brief into a precise English art direction; OpenAI (ChatGPT image model) renders it.
 // action 'design': the image model designs the complete graphic (brand palette, Hebrew text, logo/photos as references), Claude proofreads the Hebrew.
 // action 'fixtext': edits an existing design to correct only the flagged Hebrew.
-// POST { action:'check' } | { action:'tplscan', url } | design + template:{url,desc,slots} | { action:'design', texts, brief, colors, refs, logo, size, note?, n? } | { action:'fixtext', url, fixes, issues, want, size } | { brief, title?, dept?, size?, prompt? }
+// POST { action:'check' } | { action:'models' } | { action:'tplscan', url } | design + template:{url,desc,slots} | { action:'design', texts, brief, colors, refs, logo, size, note?, n? } | { action:'fixtext', url, fixes, issues, want, size } | { brief, title?, dept?, size?, prompt? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
@@ -20,8 +20,30 @@ const json = (req: Request, body: unknown, status = 200) =>
 const db = () => createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
 const CLAUDE_MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
-// newest first: gpt-image-2 is the model the first PrimeOS system used (much better Hebrew); older ones are fallbacks
+// static fallbacks; the live list from OpenAI (newest first, e.g. gpt-image-2.5-sunburst) is tried before these
 const IMAGE_MODELS = (Deno.env.get('OPENAI_IMAGE_MODEL') ? [Deno.env.get('OPENAI_IMAGE_MODEL')!] : []).concat(['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1']).filter((m, i, a) => a.indexOf(m) === i);
+// the newest gpt-image models the account's key can use, read once per cold start from OpenAI's model list
+let LIVE: string[] | null = null;
+const ver = (id: string) => { const m = id.match(/^gpt-image-(\d+(?:\.\d+)?)/); return m ? +m[1] : 0; };
+async function liveModels(okey: string) {
+  if (LIVE) return LIVE;
+  try {
+    const r = await fetch('https://api.openai.com/v1/models', { headers: { authorization: `Bearer ${okey}` } });
+    const ids: string[] = r.ok ? ((await r.json()).data ?? []).map((x: any) => String(x.id)) : [];
+    // full models only (no mini), newest version first; within a version: plain aliases (always the latest snapshot) before dated ones,
+    // and the precision variant (sunburst: best typography and edits) before the fast one (flare)
+    const dated = (id: string) => (/-\d{4}-\d{2}-\d{2}$/.test(id) ? 1 : 0);
+    const rank = (id: string) => (/sunburst/.test(id) ? 0 : /flare/.test(id) ? 2 : 1);
+    const img = ids.filter((id) => /^gpt-image-\d/.test(id) && !/mini/.test(id))
+      .sort((a, b) => ver(b) - ver(a) || dated(a) - dated(b) || rank(a) - rank(b) || b.localeCompare(a));
+    if (img.length) LIVE = img; // an empty answer (network hiccup) is not cached
+    return img;
+  } catch { return []; }
+}
+async function modelsFor(okey: string, prefer = '') {
+  const env = Deno.env.get('OPENAI_IMAGE_MODEL');
+  return [...(/^gpt-image-[\w.-]+$/.test(prefer) ? [prefer] : []), ...(env ? [env] : []), ...(await liveModels(okey)), ...IMAGE_MODELS].filter((m, i, a) => a.indexOf(m) === i);
+}
 const SIZES: Record<string, string> = { square: '1024x1024', portrait: '1024x1536', landscape: '1536x1024' };
 
 async function claude(key: string, system: string, user: string | unknown[]) {
@@ -74,9 +96,9 @@ Return only the prompt, max 260 words.`;
 
 const TEMPLATE_SCAN = `You analyse an organisation's graphic design template so it can be reproduced exactly with different texts and imagery. Answer with JSON only.`;
 
-async function openaiImage(okey: string, prompt: string, size: string, quality: string, refs: string[], n = 1, mask?: Uint8Array) {
+async function openaiImage(okey: string, prompt: string, size: string, quality: string, refs: string[], n = 1, mask?: Uint8Array, prefer = '') {
   let last = '';
-  for (const model of IMAGE_MODELS) {
+  for (const model of await modelsFor(okey, prefer)) {
     let r: Response;
     if (refs.length) {
       const fd = new FormData();
@@ -146,6 +168,7 @@ Deno.serve(async (req) => {
   const okey = Deno.env.get('OPENAI_API_KEY');
   if (p.action === 'check') return json(req, { openai: !!okey, claude: !!Deno.env.get('ANTHROPIC_API_KEY') });
   if (!okey) return json(req, { error: 'openai_not_configured' }, 503);
+  if (p.action === 'models') return json(req, { ok: true, available: await liveModels(okey), order: await modelsFor(okey) });
 
   // correct only the misspelled Hebrew in an existing design, keep everything else
   if (p.action === 'fixtext') {
@@ -161,7 +184,7 @@ Deno.serve(async (req) => {
       const prompt = fixes.length
         ? `This is a finished official graphic. Edit ONLY the transparent masked area(s). In each masked area rewrite the Hebrew text line so it reads exactly (right-to-left, letter by letter): ${fixes.map((f) => `"${f.right}"`).join(' ; ')}. Match the original font, weight, colour, size, alignment and background of that line exactly so the edit is invisible. Do not change anything outside the mask.`
         : `This is a finished official graphic with Hebrew text. Keep the design, layout, colours, images, icons and every element exactly identical. Only correct the Hebrew text errors listed below so every text reads exactly as specified (Hebrew, right-to-left, same font, size and position).\nErrors to fix:\n${((p.issues ?? []) as string[]).join('\n')}\nThe complete correct texts are:\n${want}`;
-      const { b64, model } = await openaiImage(okey, prompt, size, p.quality ?? 'high', [src], 1, mask);
+      const { b64, model } = await openaiImage(okey, prompt, size, p.quality ?? 'high', [src], 1, mask, p.model);
       if (!b64) throw new Error('openai_empty');
       const check = ckey ? await proofImage(ckey, b64, want) : { ok: true, unchecked: true };
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -216,7 +239,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
         ])).trim()
         : (await claude(ckey, DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nBrand palette: ${colors}\nTexts to place (exactly):\n${lines}\n${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the logo; ' : ''}${refs.length - (p.logo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim();
       const size = SIZES[p.size] ?? SIZES.square;
-      const gen = await openaiImage(okey, prompt, size, p.quality ?? 'high', refs, Math.max(1, Math.min(3, +p.n || 2)));
+      const gen = await openaiImage(okey, prompt, size, p.quality ?? 'high', refs, Math.max(1, Math.min(3, +p.n || 2)), undefined, p.model);
       if (!gen.b64) throw new Error('openai_empty');
       // proofread every candidate the image model wrote, keep the one with the fewest text errors
       const fixedTx = tpl ? ((tpl.slots ?? []) as any[]).filter((x) => x.fixed && x.text).map((x) => `"${x.text}"`) : [];
@@ -247,7 +270,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
     }
     const size = SIZES[p.size] ?? SIZES.square;
     let b64 = '', used = '', last = '';
-    for (const model of IMAGE_MODELS) {
+    for (const model of await modelsFor(okey, p.model)) {
       const r = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` },
