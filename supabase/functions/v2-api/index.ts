@@ -1,5 +1,7 @@
 // PrimeOS v2-api - data gateway for the live system (client + admin).
 // POST { action, payload }   header x-primeos-token
+// client: live.load | items.upsert | items.remove | state.save | inbox.add | members.list | members.create | members.remove | members.relink | upload.sign
+// admin: admin.load | admin.state.save | admin.org.create | admin.org.delete
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
@@ -51,6 +53,17 @@ function itemRow(orgId: string, ui: Record<string, any>) {
 }
 
 // ---------------- client ----------------
+const isManager = (m: any) => !m || m.role === 'owner' || m.role === 'admin';
+// every member of the organisation; login links only for managers (owner/admin), never for a department user
+async function membersOf(d: DB, orgId: string, withLinks: boolean) {
+  const { data: ms } = await d.from('org_members').select('id,name,email,phone,role,dept,view,created_at').eq('org_id', orgId).order('created_at');
+  const ids = (ms ?? []).map((m: any) => m.id);
+  const { data: toks } = withLinks && ids.length ? await d.from('api_tokens').select('member_id,token').in('member_id', ids) : { data: [] };
+  const tokOf: Record<string, string> = {};
+  for (const t of toks ?? []) if (t.member_id && !tokOf[t.member_id]) tokOf[t.member_id] = t.token;
+  return (ms ?? []).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone ?? null, role: m.role, dept: m.dept, view: m.view, token: withLinks ? tokOf[m.id] ?? null : null }));
+}
+
 async function liveLoad(d: DB, orgId: string, memberId: string | null) {
   const [org, me, its, st] = await Promise.all([
     d.from('organizations').select('id,name,plan,org_type,status').eq('id', orgId).single(),
@@ -66,7 +79,51 @@ async function liveLoad(d: DB, orgId: string, memberId: string | null) {
     items: (its.data ?? []).map((r: any) => ({ dbid: r.id, ui: r.meta?.ui })).filter((r: any) => r.ui),
     state: st.data?.data ?? null,
     stateAt: st.data?.updated_at ?? null,
+    members: await membersOf(d, orgId, isManager(me.data)),
   };
+}
+
+// the spokesperson (owner/admin) opens department users and gets each one a login link
+async function memberCreate(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
+  if (!isManager(me)) throw new Error('forbidden');
+  const name = String(p.name ?? '').trim().slice(0, 120);
+  if (!name) throw new Error('missing_name');
+  const view = p.view === 'dept' ? 'dept' : 'ext';
+  const role = view === 'dept' ? 'member' : 'admin';
+  const { data: mem, error } = await d.from('org_members').insert({
+    org_id: orgId, name, email: p.email ? String(p.email).trim().toLowerCase().slice(0, 200) : null, phone: p.phone ? String(p.phone).slice(0, 40) : null,
+    role, dept: view === 'dept' ? String(p.dept ?? '').slice(0, 120) || null : null, view,
+  }).select('id').single();
+  if (error) throw error;
+  const token = newToken();
+  const { error: e2 } = await d.from('api_tokens').insert({ token, org_id: orgId, member_id: mem.id });
+  if (e2) throw e2;
+  return { id: mem.id, token };
+}
+async function memberRemove(d: DB, orgId: string, memberId: string | null, id: string) {
+  const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
+  if (!isManager(me)) throw new Error('forbidden');
+  if (!id || id === memberId) throw new Error('bad_member');
+  const { data: m } = await d.from('org_members').select('id,role').eq('id', id).eq('org_id', orgId).maybeSingle();
+  if (!m) throw new Error('not_found');
+  if (m.role === 'owner') throw new Error('owner_protected');
+  await d.from('api_tokens').delete().eq('member_id', id);
+  const { error } = await d.from('org_members').delete().eq('id', id);
+  if (error) throw error;
+  return { ok: true };
+}
+// a fresh login link for a member (the old link stops working)
+async function memberRelink(d: DB, orgId: string, memberId: string | null, id: string) {
+  const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
+  if (!isManager(me)) throw new Error('forbidden');
+  const { data: m } = await d.from('org_members').select('id').eq('id', id).eq('org_id', orgId).maybeSingle();
+  if (!m) throw new Error('not_found');
+  const token = newToken();
+  await d.from('api_tokens').delete().eq('member_id', id);
+  const { error } = await d.from('api_tokens').insert({ token, org_id: orgId, member_id: id });
+  if (error) throw error;
+  return { token };
 }
 
 async function itemsUpsert(d: DB, orgId: string, list: Record<string, any>[]) {
@@ -132,18 +189,51 @@ async function adminLoad(d: DB, adminId: string) {
   const [a, st, orgs] = await Promise.all([
     d.from('admin_users').select('id,name,email').eq('id', adminId).maybeSingle(),
     adminState(d),
-    d.from('organizations').select('id,name,plan,status,settings,created_at').order('created_at'),
+    d.from('organizations').select('id,name,plan,status,settings,created_at,contact_name,contact_email,contact_phone').order('created_at'),
   ]);
   const ids = (orgs.data ?? []).map((o: any) => o.id);
   const { data: toks } = ids.length ? await d.from('api_tokens').select('org_id,token').in('org_id', ids) : { data: [] };
   const tokOf: Record<string, string> = {};
   for (const t of toks ?? []) if (!tokOf[t.org_id]) tokOf[t.org_id] = t.token;
+  const { data: mems } = ids.length ? await d.from('org_members').select('id,org_id,name,email,phone,role,dept,view,created_at').in('org_id', ids).order('created_at') : { data: [] };
+  const { data: cnt } = ids.length ? await d.from('content_items').select('org_id').in('org_id', ids).not('ui_id', 'is', null) : { data: [] };
+  const items: Record<string, number> = {};
+  for (const c of cnt ?? []) items[c.org_id] = (items[c.org_id] ?? 0) + 1;
   return {
     admin: a.data,
     state: st?.data ?? null,
     stateAt: st?.updated_at ?? null,
-    realOrgs: (orgs.data ?? []).map((o: any) => ({ id: o.id, name: o.name, plan: o.plan, status: o.status, ui_id: o.settings?.ui_id ?? null, token: tokOf[o.id] ?? null })),
+    realOrgs: (orgs.data ?? []).map((o: any) => ({
+      id: o.id, name: o.name, plan: o.plan, status: o.status, ui_id: o.settings?.ui_id ?? null, otype: o.settings?.otype ?? null, token: tokOf[o.id] ?? null, created: o.created_at,
+      contact: o.contact_name ?? null, mail: o.contact_email ?? null, phone: o.contact_phone ?? null, items: items[o.id] ?? 0,
+      members: (mems ?? []).filter((m: any) => m.org_id === o.id).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone, role: m.role, dept: m.dept, view: m.view })),
+    })),
   };
+}
+
+// delete an organisation with everything it owns (test clients, closed accounts)
+async function adminOrgDelete(d: DB, p: Record<string, any>) {
+  const id = String(p.org_id ?? '');
+  if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('bad_org');
+  if (id === DEMO_ORG && !p.force) throw new Error('demo_protected');
+  const { data: org } = await d.from('organizations').select('id').eq('id', id).maybeSingle();
+  if (!org) throw new Error('not_found');
+  await d.from('api_tokens').delete().eq('org_id', id);
+  await d.from('org_members').delete().eq('org_id', id);
+  await d.from('org_state').delete().eq('org_id', id);
+  const { data: its } = await d.from('content_items').select('id').eq('org_id', id);
+  const dbids = (its ?? []).map((r: any) => r.id);
+  if (dbids.length) { await d.from('item_approvals').delete().in('item_id', dbids); await d.from('item_comments').delete().in('item_id', dbids); }
+  await d.from('content_items').delete().eq('org_id', id);
+  const { error } = await d.from('organizations').delete().eq('id', id);
+  if (error) throw error;
+  // the organisation's files
+  for (const prefix of ['ai/' + id, 'up/' + id, 'out/' + id]) {
+    const { data: files } = await d.storage.from('v2-content').list(prefix, { limit: 1000 });
+    const names = (files ?? []).map((f: any) => prefix + '/' + f.name);
+    if (names.length) await d.storage.from('v2-content').remove(names);
+  }
+  return { ok: true, removed: dbids.length };
 }
 
 async function adminOrgCreate(d: DB, p: Record<string, any>) {
@@ -230,6 +320,10 @@ Deno.serve(async (req) => {
       if (action === 'items.remove') return json(req, await itemsRemove(d, s.orgId, p.ids ?? []));
       if (action === 'state.save') return json(req, await stateSave(d, s.orgId, p.data ?? {}));
       if (action === 'inbox.add') return json(req, await inboxAdd(d, s.orgId, p));
+      if (action === 'members.list') return json(req, { members: await membersOf(d, s.orgId, isManager(s.memberId ? (await d.from('org_members').select('role').eq('id', s.memberId).maybeSingle()).data : null)) });
+      if (action === 'members.create') return json(req, await memberCreate(d, s.orgId, s.memberId, p));
+      if (action === 'members.remove') return json(req, await memberRemove(d, s.orgId, s.memberId, String(p.id ?? '')));
+      if (action === 'members.relink') return json(req, await memberRelink(d, s.orgId, s.memberId, String(p.id ?? '')));
     } else {
       if (action === 'admin.load') return json(req, await adminLoad(d, s.adminId));
       if (action === 'admin.state.save') {
@@ -238,6 +332,7 @@ Deno.serve(async (req) => {
         return json(req, { ok: true });
       }
       if (action === 'admin.org.create') return json(req, await adminOrgCreate(d, p));
+      if (action === 'admin.org.delete') return json(req, await adminOrgDelete(d, p));
     }
     return json(req, { error: 'unknown_action' }, 400);
   } catch (e) {

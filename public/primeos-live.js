@@ -86,6 +86,7 @@
   function clientState() {
     const o = {};
     for (const k in CLIENT_KEYS) o[k] = CLIENT_KEYS[k]();
+    o.users = users.map((u) => { const c = Object.assign({}, u); delete c.tok; return c; }); // login links never leave the server's answer
     o.camps = S.camps || [];
     o.events = S.events || [];
     o.flags = { docqDone: !!S.docqDone, defRoute: S.defRoute || 'full' };
@@ -322,10 +323,11 @@
     else if (!L.demo || !fresh) items = [];
     S.seq = items.reduce((m, i) => Math.max(m, +i.id || 0), 100);
     S.org = L.org.name;
+    if (Array.isArray(d.members) && d.members.length && L.applyMembers) L.applyMembers(d.members);
     if (L.me) {
       const demoUser = L.demo && L.me.name === 'יעל כהן';
       S.user = { name: L.me.name, role: demoUser ? 'מנהלת תקשורת' : (L.me.role === 'admin' ? 'מנהל/ת מערכת' : 'משתמש מערכת'), init: initials(L.me.name), dept: L.me.dept || S.user.dept || DEPTS[0] };
-      if (!users.some((u) => u.n === L.me.name)) users.unshift({ n: L.me.name, r: S.user.role, d: S.user.dept, st: 'פעיל', last: 'עכשיו', i: S.user.init, direct: true });
+      if (!L.members && !users.some((u) => u.n === L.me.name)) users.unshift({ n: L.me.name, r: S.user.role, d: S.user.dept, st: 'פעיל', last: 'עכשיו', i: S.user.init, direct: true });
     }
     if (!L.demo) {
       const v = (L.me && L.me.view) || (L.org.plan === 'basic' ? 'basic' : 'ext');
@@ -344,7 +346,7 @@
     L.admin = d.admin;
     L.srvHadState = !!d.state;
     if (d.state) hydrateAdmin(d.state);
-    linkRealOrgs(d.realOrgs || []);
+    liveAdmin(d.realOrgs || []);
     setPath('/admin');
     enterAdmin();
     startSync();
@@ -389,13 +391,66 @@
       if (r) o.live = { id: r.id, token: r.token };
     });
   }
+  /* the console shows the real organisations only: the demo municipalities of the mockup never appear */
+  const ROLE_A = { owner: 'מנהל/ת מערכת', admin: 'מנהל/ת תקשורת', member: 'משתמש/ת מחלקה' };
+  function liveAdmin(real) {
+    const keep = ['uLim', 'dLim', 'agr', 'add', 'c', 'type', 'ch', 'xch', 'xu', 'st'];
+    const list = real.map((r) => {
+      const ext = r.plan !== 'basic';
+      const id = r.ui_id ? 'o' + r.ui_id : 'r' + String(r.id).slice(0, 8);
+      const prev = ORGS.find((o) => o.id === id) || {};
+      const cd = r.created ? new Date(r.created) : new Date();
+      const o = { id, n: r.name, type: r.otype || 'רשות מקומית', st: r.status === 'active' ? 'active' : 'paused', since: String(cd.getMonth() + 1).padStart(2, '0') + '/' + cd.getFullYear(), plan: ext ? 'appr' : 'solo', rev: null,
+        ch: 0, xch: 0, xu: 0, add: [], gfx: 0, docs: 0, decks: 0, vids: 0, ai: 0, logins: 0, items: r.items || 0, last: r.items ? 'פעיל' : '-', cost: PLANS[ext ? 'appr' : 'solo'].cost,
+        contact: r.contact || ((r.members || [])[0] || {}).name || '', phone: r.phone || '', mail: r.mail || '', c: '#4A1BE8', uLim: ext ? 5 : 1, dLim: ext ? 5 : 0,
+        agr: { start: String(cd.getDate()) + '.' + (cd.getMonth() + 1) + '.' + cd.getFullYear(), term: 'חודשי', signed: false, signedAt: '', signer: r.contact || '' } };
+      keep.forEach((k) => { if (prev[k] !== undefined) o[k] = prev[k]; });
+      o.live = { id: r.id, token: r.token };
+      o.members = r.members || [];
+      return o;
+    });
+    replaceAll(ORGS, list);
+    Object.keys(PLAN_OF).forEach((k) => delete PLAN_OF[k]);
+    list.forEach((o) => { PLAN_OF[o.id] = o.plan; });
+    const au = [];
+    list.forEach((o) => o.members.forEach((m) => au.push({ id: au.length, org: o.id, n: m.name, r: (m.view === 'dept' ? ROLE_A.member : ROLE_A[m.role]) || m.role, dept: m.dept || '', items: 0, logins: 0, last: '-', st: 'פעיל', gfx: 0, docs: 0, decks: 0, vids: 0, ai: 0 })));
+    replaceAll(AUSERS, au);
+    const ids = new Set(list.map((o) => o.id));
+    replaceAll(PURCH, PURCH.filter((x) => ids.has(x.org)));
+    replaceAll(REQS, REQS.filter((x) => x.liveOrg));
+    replaceAll(MEETINGS, MEETINGS.filter((x) => x.liveOrg));
+    if (L.admin && ADMINS[0]) { ADMINS[0].n = L.admin.name || ADMINS[0].n; ADMINS[0].mail = L.admin.email || ADMINS[0].mail; }
+  }
   const linkOf = (o) => location.origin + '/?k=' + encodeURIComponent(o.live.token);
   function linkBox(o) {
     return '<div class="card card-pad" style="margin-top:14px;text-align:start"><b style="font-size:13.5px">קישור כניסה ללקוח</b>' +
       '<div class="t-sub" style="margin:4px 0 10px">שולחים את הקישור לאיש הקשר. הכניסה ישירה, בלי סיסמה.</div>' +
       '<div style="display:flex;gap:8px;align-items:center"><input type="text" readonly value="' + esc(linkOf(o)) + '" style="flex:1;direction:ltr;font-size:12.5px" onclick="this.select()">' +
-      '<button class="btn btn-sm btn-primary" data-act="liveCopy:' + o.id + '">' + ic('copy', 14) + ' העתקה</button></div></div>';
+      '<button class="btn btn-sm btn-primary" data-act="liveCopy:' + o.id + '">' + ic('copy', 14) + ' העתקה</button></div>' +
+      ((o.members || []).length ? '<div class="t-sub" style="margin-top:10px">משתמשים: ' + o.members.map((m) => esc(m.name) + (m.dept ? ' (' + esc(m.dept) + ')' : '')).join(', ') + '</div>' : '') +
+      '<div style="margin-top:14px;display:flex;justify-content:flex-end"><button class="btn btn-sm btn-quiet-bad" data-act="liveDelete:' + o.id + '">' + ic('x', 14) + ' מחיקת הלקוח לצמיתות</button></div></div>';
   }
+  ACT.liveDelete = (id) => {
+    const o = ORGS.find((x) => x.id === id);
+    if (!o || !o.live) return;
+    openModal('<div class="mb"><div class="m-ic bad">' + ic('x', 20) + '</div><h3>למחוק את „' + esc(o.n) + '”?</h3>' +
+      '<p>כל התכנים, המשתמשים, הקבצים וקישורי הכניסה של הלקוח יימחקו לצמיתות. אין שחזור.</p>' +
+      '<div class="field" style="margin-top:14px"><label for="delTxt">כתבו את שם הלקוח לאישור</label><input type="text" id="delTxt" placeholder="' + esc(o.n) + '"></div></div>' +
+      '<div class="modal-foot"><button class="btn btn-quiet-bad is-disabled" id="delOk" disabled>מחיקה לצמיתות</button><button class="btn" id="delCancel">ביטול</button></div>');
+    $('#delCancel').onclick = closeModal;
+    $('#delTxt').addEventListener('input', (e) => { const ok = e.target.value.trim() === o.n; $('#delOk').classList.toggle('is-disabled', !ok); $('#delOk').disabled = !ok; });
+    $('#delOk').onclick = async () => {
+      const done = busyBtn('#delOk', 'מוחקים...');
+      try {
+        await call('admin.org.delete', { org_id: o.live.id });
+        const i = ORGS.indexOf(o); if (i >= 0) ORGS.splice(i, 1);
+        replaceAll(AUSERS, AUSERS.filter((u) => u.org !== o.id));
+        delete PLAN_OF[o.id];
+        closeModal(); S.orgId = null; go('a_orgs', { force: true }); flush();
+        toast('הלקוח נמחק', o.n);
+      } catch (e) { done(); toast('המחיקה נכשלה', e.message === 'demo_protected' ? 'ארגון ההדגמה מוגן.' : 'נסו שוב בעוד רגע.', 'err'); }
+    };
+  };
   ACT.liveCopy = (id) => {
     const o = ORGS.find((x) => x.id === id);
     if (!o || !o.live) return;
@@ -2283,5 +2338,193 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!items.some((x) => x.id === S.itemId)) { setTimeout(() => go('library', { force: true }), 0); return '<div class="card card-pad"><p class="t-sub">הפריט לא נמצא. עוברים לספריית התוכן...</p></div>'; }
       return _itemG.apply(this, arguments);
     };
+  })();
+
+  /* ---------------- team: real members with their own login links ----------------
+   * The spokesperson (owner/admin) opens users here. A department user gets a link that opens the department interface only. */
+  (function () {
+    const ROLE_T = { owner: 'מנהל/ת מערכת', admin: 'דובר/ת · מנהל/ת', member: 'משתמש/ת מחלקה' };
+    const linkOfTok = (t) => location.origin + '/?k=' + encodeURIComponent(t);
+    const waShare = (name, link) => 'https://wa.me/?text=' + encodeURIComponent('שלום ' + name + ', זה קישור הכניסה האישי שלך למערכת PrimeOS של ' + (L.org ? L.org.name : '') + ':\n' + link + '\nהקישור אישי, לא להעביר הלאה.');
+    function rowOf(m) {
+      return { n: m.name, r: ROLE_T[m.role] || m.role, d: m.view === 'dept' ? (m.dept || '') : 'דוברות', st: 'פעיל', last: m.id === (L.me && L.me.id) ? 'עכשיו' : '-', i: initials(m.name), mid: m.id, view: m.view || 'ext', tok: m.token || '', phone: m.phone || '', mail: m.email || '', role: m.role, direct: true };
+    }
+    L.applyMembers = function (list) {
+      if (!Array.isArray(list)) return;
+      L.members = list;
+      replaceAll(users, list.map(rowOf));
+    };
+    const canManage = () => !L.me || L.me.role === 'owner' || L.me.role === 'admin';
+    function usersTable() {
+      const me = L.me && L.me.id;
+      return '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>שם</th><th>תפקיד</th><th>מחלקה</th><th>קישור כניסה</th><th></th></tr></thead><tbody>' +
+        users.map((u) => '<tr><td data-l="שם"><span style="display:flex;align-items:center;gap:9px"><span class="avatar">' + esc(u.i) + '</span><span><b>' + esc(u.n) + '</b>' + (u.phone ? '<div class="t-sub" dir="ltr" style="text-align:start">' + esc(u.phone) + '</div>' : '') + '</span></span></td>' +
+          '<td data-l="תפקיד">' + esc(u.r) + (u.mid === me ? ' <span class="badge s-approved">את/ה</span>' : '') + '</td><td data-l="מחלקה">' + esc(u.d) + '</td>' +
+          '<td data-l="קישור כניסה">' + (u.tok ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" data-act="userLink:' + esc(u.mid) + '">' + ic('copy', 14) + ' העתקה</button><a class="btn btn-sm" target="_blank" rel="noopener" href="' + waShare(u.n, linkOfTok(u.tok)) + '">' + ic('send', 14) + ' WhatsApp</a></span>' : '<span class="t-sub">-</span>') + '</td>' +
+          '<td>' + (u.mid && u.mid !== me && u.role !== 'owner' ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" data-act="userRelink:' + esc(u.mid) + '">קישור חדש</button><button class="btn btn-sm btn-quiet-bad" data-act="userRemove:' + esc(u.mid) + '">הסרה</button></span>' : '') + '</td></tr>').join('') +
+        '</tbody></table></div>' +
+        (users.length <= 1 ? '<div class="note" style="margin-top:14px">' + ic('users', 15) + '<span>עדיין אין משתמשי מחלקה. בלחיצה על „הזמנת משתמש” נפתח משתמש ומתקבל קישור כניסה אישי לשליחה.</span></div>' : '');
+    }
+    if (SCREENS.team) {
+      const _teamR = SCREENS.team.render;
+      SCREENS.team.render = function () {
+        let h = _teamR.apply(this, arguments);
+        if (!L.members || (S.tab.team || 'users') !== 'users') return h;
+        return h.replace(/<div class="filters">[\s\S]*?<\/div><div class="tbl-wrap">[\s\S]*?<\/table><\/div>/, usersTable());
+      };
+    }
+    const _invite = ACT.inviteUser;
+    ACT.inviteUser = () => {
+      if (!L.members) return _invite();
+      if (!canManage()) { toast('אין הרשאה', 'רק מנהל המערכת או הדובר פותחים משתמשים.', 'err'); return; }
+      if (L.org && L.org.plan === 'basic') { toast('המסלול הבסיסי כולל משתמש אחד', 'למחלקות ולמשתמשים נוספים עוברים למסלול המורחב.', ''); return; }
+      openDrawer('<div class="drawer-head"><div><h3>הזמנת משתמש</h3><p>המשתמש מקבל קישור כניסה אישי. בלי סיסמה.</p></div>' +
+        '<button class="icon-btn" style="margin-inline-start:auto" data-act="closeDrawer" aria-label="סגירה">' + ic('x', 17) + '</button></div>' +
+        '<div class="drawer-body">' +
+        '<div class="field"><label for="ivName">שם מלא</label><input type="text" id="ivName" placeholder="לדוגמה: דנה לוי"></div>' +
+        '<div class="field"><label for="ivKind">סוג משתמש</label><select id="ivKind"><option value="dept">משתמש מחלקה (יצירה ושליחה לאישור בלבד)</option><option value="ext">דובר / מנהל (כל המערכת ואישורים)</option></select></div>' +
+        '<div class="field" id="ivDeptWrap"><label for="ivDept">מחלקה</label><select id="ivDept">' + DEPTS.map((d) => '<option>' + esc(d) + '</option>').join('') + '</select></div>' +
+        '<div class="field"><label for="ivPhone">טלפון נייד</label><input type="text" id="ivPhone" inputmode="tel" dir="ltr" placeholder="050-0000000"></div>' +
+        '<div class="field"><label for="ivMail">דוא״ל (לא חובה)</label><input type="text" id="ivMail" inputmode="email" dir="ltr" placeholder="name@example.muni.il"></div>' +
+        '<div class="note">' + ic('shield', 16) + '<span>משתמש מחלקה רואה רק את התוכן של המחלקה שלו ואינו יכול לפרסם. הפרסום רק לאחר אישור.</span></div></div>' +
+        '<div class="drawer-foot"><button class="btn btn-primary" data-act="doInvite">פתיחת משתמש וקבלת קישור</button><button class="btn" data-act="closeDrawer">ביטול</button></div>');
+      const k = $('#ivKind'), w = $('#ivDeptWrap');
+      if (k && w) k.onchange = () => { w.style.display = k.value === 'dept' ? '' : 'none'; };
+    };
+    const _doInvite = ACT.doInvite;
+    ACT.doInvite = async () => {
+      if (!L.members) return _doInvite();
+      const name = ($('#ivName') && $('#ivName').value || '').trim();
+      if (!name) { toast('חסר שם', 'כתבו את שם המשתמש.', 'err'); return; }
+      const view = $('#ivKind') ? $('#ivKind').value : 'dept';
+      const dept = $('#ivDept') ? $('#ivDept').value : '';
+      const phone = ($('#ivPhone') && $('#ivPhone').value || '').trim();
+      const email = ($('#ivMail') && $('#ivMail').value || '').trim();
+      const done = busyBtn('[data-act="doInvite"]', 'פותחים...');
+      try {
+        const r = await call('members.create', { name, view, dept, phone, email });
+        const m = { id: r.id, name, role: view === 'dept' ? 'member' : 'admin', dept: view === 'dept' ? dept : null, view, phone, email, token: r.token };
+        L.applyMembers([...(L.members || []), m]);
+        closeDrawer();
+        render();
+        linkModal(m);
+      } catch (e) { done(); toast('הפתיחה נכשלה', e.message === 'forbidden' ? 'אין לך הרשאה לפתוח משתמשים.' : 'נסו שוב בעוד רגע.', 'err'); }
+    };
+    function linkModal(m) {
+      const link = linkOfTok(m.token);
+      openModal('<div class="mb"><div class="m-ic ok">' + ic('checkc', 20) + '</div><h3>המשתמש נפתח</h3><p>„' + esc(m.name) + '” · ' + esc(ROLE_T[m.role] || '') + (m.dept ? ' · ' + esc(m.dept) : '') + '</p>' +
+        '<div style="display:flex;gap:8px;align-items:center;margin-top:14px"><input type="text" readonly value="' + esc(link) + '" style="flex:1;direction:ltr;font-size:12.5px" onclick="this.select()"><button class="btn btn-sm btn-primary" data-act="userLink:' + esc(m.id) + '">' + ic('copy', 14) + ' העתקה</button></div>' +
+        '<p class="t-sub" style="margin-top:10px">הקישור אישי. מי שמחזיק בו נכנס למערכת בשם המשתמש הזה. אפשר להנפיק קישור חדש בכל רגע מטבלת הצוות.</p></div>' +
+        '<div class="modal-foot"><a class="btn btn-primary" target="_blank" rel="noopener" href="' + waShare(m.name, link) + '">' + ic('send', 16) + ' שליחה ב-WhatsApp</a><button class="btn" data-act="closeModal">סגירה</button></div>');
+    }
+    ACT.closeModal = ACT.closeModal || (() => closeModal());
+    ACT.userLink = (mid) => {
+      const u = users.find((x) => x.mid === mid); if (!u || !u.tok) return;
+      const t = linkOfTok(u.tok);
+      (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('הקישור הועתק', u.n), () => toast('העתקה ידנית', t));
+    };
+    ACT.userRelink = (mid) => {
+      const u = users.find((x) => x.mid === mid); if (!u) return;
+      confirmModal({ title: 'קישור חדש ל„' + u.n + '”?', body: 'הקישור הישן יפסיק לעבוד מיד. שולחים למשתמש את הקישור החדש.', ok: 'הנפקת קישור חדש', tone: 'warn', icon: 'alert',
+        onOk: async () => { try { const r = await call('members.relink', { id: mid }); const m = (L.members || []).find((x) => x.id === mid); if (m) m.token = r.token; L.applyMembers(L.members); render(); linkModal(Object.assign({}, m, { token: r.token })); } catch (e) { toast('לא הצלחנו להנפיק קישור', 'נסו שוב בעוד רגע.', 'err'); } } });
+    };
+    ACT.userRemove = (mid) => {
+      const u = users.find((x) => x.mid === mid); if (!u) return;
+      confirmModal({ title: 'להסיר את „' + u.n + '”?', body: 'הקישור שלו יפסיק לעבוד. התכנים שיצר נשארים בספרייה.', ok: 'הסרת המשתמש', tone: 'warn', icon: 'alert',
+        onOk: async () => { try { await call('members.remove', { id: mid }); L.applyMembers((L.members || []).filter((x) => x.id !== mid)); render(); toast('המשתמש הוסר', u.n); } catch (e) { toast('ההסרה נכשלה', e.message === 'owner_protected' ? 'את מנהל המערכת הראשי אי אפשר להסיר.' : 'נסו שוב בעוד רגע.', 'err'); } } });
+    };
+    // the demo "edit user" drawer makes no sense for real members: open the link actions instead
+    const _userEdit = ACT.userEdit;
+    ACT.userEdit = (i) => { if (!L.members) return _userEdit(i); const u = users[+i]; if (u && u.tok) ACT.userLink(u.mid); };
+  })();
+
+  /* ---------------- calendar on real dates: month / week / list, navigation, filters; dashboard week = this week ---------------- */
+  (function () {
+    const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+    const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+    const pad = (n) => String(n).padStart(2, '0');
+    const iso = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    const dayOf = (it) => (typeof it.pub === 'string' && /^\d{4}-\d{2}-\d{2}/.test(it.pub) ? it.pub.slice(0, 10) : '');
+    const timeOf = (it) => (it.pub || '').slice(11, 16);
+    const sunday = (d) => { const x = new Date(d); x.setDate(x.getDate() - x.getDay()); x.setHours(12, 0, 0, 0); return x; };
+    const heb = (isoDay) => { const [y, m, d] = isoDay.split('-').map(Number); return d + '.' + m + '.' + y; };
+    const F = () => (S.calF = S.calF || { dept: '', ch: '', st: '' });
+    const chName = (c) => (typeof CH !== 'undefined' && CH[c] ? CH[c].t : c);
+    function visible() {
+      const f = F();
+      return items.filter((i) => dayOf(i) && (!f.dept || i.d === f.dept) && (!f.st || (ST[i.s] && ST[i.s].t === f.st)) && (!f.ch || (i.ch || []).some((c) => chName(c) === f.ch)));
+    }
+    const pill = (i, extra) => '<button class="cal-ev ' + (ST[i.s] ? ST[i.s].e : '') + '"' + (extra || '') + ' data-act="peek:' + i.id + '">' + esc(i.t.slice(0, 26)) + '</button>';
+    function monthHtml(y, m, today) {
+      const first = new Date(y, m, 1), start = first.getDay(), dim = new Date(y, m + 1, 0).getDate();
+      const byDay = {}; visible().forEach((i) => { const k = dayOf(i); (byDay[k] = byDay[k] || []).push(i); });
+      const cells = Math.ceil((start + dim) / 7) * 7;
+      let h = '';
+      for (let c = 0; c < cells; c++) {
+        const dn = c - start + 1, off = dn < 1 || dn > dim;
+        const k = off ? '' : y + '-' + pad(m + 1) + '-' + pad(dn);
+        h += '<div class="cal-cell ' + (off ? 'off' : '') + ' ' + (k === today ? 'today' : '') + '"><span class="dn">' + (off ? '' : dn) + '</span>' + (byDay[k] || []).sort((a, b) => timeOf(a).localeCompare(timeOf(b))).map((i) => pill(i)).join('') + '</div>';
+      }
+      return '<div class="cal"><div class="cal-head">' + DAYS.map((d) => '<div>' + d + '</div>').join('') + '</div><div class="cal-grid">' + h + '</div></div>';
+    }
+    function weekHtml(ws, today) {
+      const byDay = {}; visible().forEach((i) => { const k = dayOf(i); (byDay[k] = byDay[k] || []).push(i); });
+      return '<div class="cal"><div class="cal-head">' + DAYS.map((d, i) => { const x = new Date(ws); x.setDate(ws.getDate() + i); return '<div>' + d + ' ' + x.getDate() + '</div>'; }).join('') + '</div>' +
+        '<div class="cal-grid">' + DAYS.map((d, i) => { const x = new Date(ws); x.setDate(ws.getDate() + i); const k = iso(x);
+          return '<div class="cal-cell ' + (k === today ? 'today' : '') + '" style="min-height:220px">' + (byDay[k] || []).sort((a, b) => timeOf(a).localeCompare(timeOf(b))).map((i) => '<button class="cal-ev ' + (ST[i.s] ? ST[i.s].e : '') + '" style="padding:8px" data-act="peek:' + i.id + '"><span style="display:block">' + esc(i.t) + '</span><span style="font-weight:500;opacity:.85">' + esc(timeOf(i)) + '</span></button>').join('') + '</div>'; }).join('') + '</div></div>';
+    }
+    function listHtml(today) {
+      const list = visible().filter((i) => ['scheduled', 'approved', 'pending', 'published'].includes(i.s)).sort((a, b) => (a.pub || '').localeCompare(b.pub || ''));
+      const up = list.filter((i) => dayOf(i) >= today), past = list.filter((i) => dayOf(i) < today).reverse();
+      const row = (i) => '<tr><td data-l="מועד"><b>' + esc(heb(dayOf(i)) + (timeOf(i) ? ' · ' + timeOf(i) : '')) + '</b></td><td data-l="כותרת"><span class="row-title" data-act="open:' + i.id + '">' + esc(i.t) + '</span></td><td data-l="מחלקה">' + esc(i.d) + '</td><td data-l="ערוצים">' + (i.ch || []).map(chName).join(', ') + '</td><td data-l="סטטוס">' + badge(i.s) + '</td><td><button class="btn btn-sm" data-act="peek:' + i.id + '">תצוגה מהירה</button></td></tr>';
+      if (!list.length) return '<div class="card card-pad" style="text-align:center;padding:40px"><p class="t-sub" style="margin:0">אין תכנים עם מועד פרסום. תכנים שנשלחים לאישור או מתוזמנים יופיעו כאן לפי התאריך.</p></div>';
+      return '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>מועד</th><th>כותרת</th><th>מחלקה</th><th>ערוצים</th><th>סטטוס</th><th></th></tr></thead><tbody>' + up.map(row).join('') + (past.length ? '<tr><td colspan="6" class="t-sub" style="padding-top:18px">פורסמו / חלפו</td></tr>' + past.map(row).join('') : '') + '</tbody></table></div>';
+    }
+    if (SCREENS.calendar) {
+      const _calR = SCREENS.calendar.render;
+      SCREENS.calendar.render = function () {
+        if (L.demo && !L.org) return _calR.apply(this, arguments);
+        const now = new Date(), today = iso(now);
+        S.calM = S.calM || { y: now.getFullYear(), m: now.getMonth() };
+        S.calW = S.calW || iso(sunday(now));
+        const v = S.calView || 'month', f = F();
+        const ws = new Date(S.calW + 'T12:00:00');
+        const we = new Date(ws); we.setDate(ws.getDate() + 6);
+        const label = v === 'week' ? ws.getDate() + '.' + (ws.getMonth() + 1) + ' - ' + we.getDate() + '.' + (we.getMonth() + 1) : v === 'list' ? 'לפי תאריך' : MONTHS[S.calM.m] + ' ' + S.calM.y;
+        const body = v === 'month' ? monthHtml(S.calM.y, S.calM.m, today) : v === 'week' ? weekHtml(ws, today) : listHtml(today);
+        const n = visible().length;
+        return pageHead({ title: 'לוח התוכן', desc: MONTHS[now.getMonth()] + ' ' + now.getFullYear() + ' · ' + (n ? n + ' תכנים עם מועד' : 'עדיין אין תכנים עם מועד') + ' · מתוזמנים, מאושרים וממתינים, לפי מחלקה וערוץ.', actions: '<button class="btn btn-primary" data-nav="create">' + ic('create', 16) + ' תוכן חדש</button>' }) +
+          '<div class="filters">' +
+          (v !== 'list' ? '<button class="icon-btn" data-act="calNav:-1" aria-label="הקודם">' + ic('chevR', 17) + '</button><b style="font-size:14.5px;min-width:110px;text-align:center">' + label + '</b><button class="icon-btn" data-act="calNav:1" aria-label="הבא">' + ic('chevL', 17) + '</button><button class="btn btn-sm" data-act="calNav:0">היום</button>' : '') +
+          (isDept() || isBasic() ? '' : '<select id="calDept"><option value="">כל המחלקות</option>' + DEPTS.map((d) => '<option' + (f.dept === d ? ' selected' : '') + '>' + esc(d) + '</option>').join('') + '</select>') +
+          '<select id="calCh"><option value="">כל הערוצים</option>' + Object.values(CH).map((c) => '<option' + (f.ch === c.t ? ' selected' : '') + '>' + c.t + '</option>').join('') + '</select>' +
+          '<select id="calSt"><option value="">כל הסטטוסים</option>' + Object.values(ST).map((x) => '<option' + (f.st === x.t ? ' selected' : '') + '>' + x.t + '</option>').join('') + '</select>' +
+          '<div class="seg" style="margin-inline-start:auto">' + [['month', 'חודש'], ['week', 'שבוע'], ['list', 'רשימה']].map((x) => '<button class="' + (v === x[0] ? 'on' : '') + '" data-act="calview:' + x[0] + '">' + x[1] + '</button>').join('') + '</div></div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' + ['draft', 'pending', 'approved', 'scheduled', 'published'].map((k) => badge(k)).join('') + '</div>' + body;
+      };
+      const _calM = SCREENS.calendar.mount;
+      SCREENS.calendar.mount = function () {
+        if (_calM) _calM.apply(this, arguments);
+        [['calDept', 'dept'], ['calCh', 'ch'], ['calSt', 'st']].forEach(([id, k]) => { const el = $('#' + id); if (el) el.onchange = () => { F()[k] = el.value; render(); }; });
+      };
+    }
+    ACT.calNav = (d) => {
+      d = +d; const now = new Date();
+      if ((S.calView || 'month') === 'week') { if (!d) S.calW = iso(sunday(now)); else { const x = new Date(S.calW + 'T12:00:00'); x.setDate(x.getDate() + 7 * d); S.calW = iso(x); } }
+      else { if (!d) S.calM = { y: now.getFullYear(), m: now.getMonth() }; else { let m = S.calM.m + d, y = S.calM.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } S.calM = { y, m }; } }
+      render();
+    };
+    // dashboard: "this week" is really this week
+    if (SCREENS.dashboard) {
+      const _dashR = SCREENS.dashboard.render;
+      SCREENS.dashboard.render = function () {
+        let h = _dashR.apply(this, arguments);
+        if (L.demo && !L.org) return h;
+        const ws = sunday(new Date()), today = iso(new Date());
+        const wk = DAYS.map((d, i) => { const x = new Date(ws); x.setDate(ws.getDate() + i); const k = iso(x); return { d, n: x.getDate(), k, its: items.filter((it) => dayOf(it) === k) }; });
+        const strip = '<div class="week-mini">' + wk.map((w) => '<div class="wm-day' + (w.k === today ? ' today' : '') + '"><span class="h">' + w.d + '<br><span style="font-size:13px;color:var(--ink)">' + w.n + '</span></span>' + w.its.map((it) => '<button class="wm-pill ' + (ST[it.s] ? ST[it.s].e : '') + '" data-act="open:' + it.id + '">' + esc(it.t.slice(0, 22)) + '</button>').join('') + '</div>').join('') + '</div>';
+        return h.replace(/<div class="week-mini">[\s\S]*?<\/div><\/div>(?=<\/div>)/, strip);
+      };
+    }
   })();
 })();
