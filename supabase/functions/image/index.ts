@@ -68,7 +68,7 @@ Hard rules:
 - Dignified, state-grade, optimistic and inclusive. Realistic Israeli setting: Mediterranean light, local architecture and vegetation, diverse Israeli residents (secular, religious, Arab, elderly, children) only when relevant.
 - People: real, natural, candid, respectful, modest clothing, no celebrities, no identifiable public figures, no minors as the main subject in sensitive topics.
 - Composition: leave clean negative space (sky, soft wall, blurred background) on the side indicated so typography can sit on it.
-- Colour grading that harmonises with a navy blue #0E3B6B and warm gold #9A6B1F brand: deep blue shadows, warm golden highlights, no neon, no oversaturation.
+- Colour: natural, true-to-life palette. The organisation's brand colours (given below) may appear as a light accent only, roughly 20-40% of the image at most (a garment, a banner, the light), never as a colour cast over everything. No neon, no oversaturation.
 - Never depict disasters, injuries, weapons, police action or anything alarming; for warnings use calm, neutral symbolic scenes.
 Return only the prompt, max 110 words.`;
 
@@ -77,7 +77,7 @@ Write ONE prompt in English for an image model that will design the COMPLETE fin
 Design freedom: invent the composition, typographic hierarchy, shapes, illustration or photo treatment that best fits this specific message. Avoid generic templates; make it feel like a designer made it for this exact announcement.
 Hard rules:
 - State-grade, dignified, clean, high-end Israeli municipal design. Generous margins, strong hierarchy, nothing cluttered.
-- Build the design around the brand palette given (hex values) as the dominant identity colours. Photography or illustration may carry natural colours that harmonise with it. Neutrals: white and light tints.
+- Brand colours (hex values given) are an identity accent, roughly 20-40% of the design: typography, a band, a shape, an icon colour. The remaining 60-80% is free: natural photography or illustration colours, white and light neutrals, and any complementary palette that makes this specific piece striking. Do not flood the canvas with the brand colours.
 - Hebrew text is written right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in a clean bold Hebrew sans-serif. Never add any other words, letters, numbers, fake text or English.
 - Include only the texts given. Headline largest; kicker small above it; details as clean rows with simple line icons; organisation name small.
 - If reference images are attached: image 1 may be the organisation logo - place it small and unchanged; other images are real photos to feature prominently and respectfully.
@@ -103,6 +103,7 @@ async function openaiImage(okey: string, prompt: string, size: string, quality: 
     if (refs.length) {
       const fd = new FormData();
       fd.append('model', model); fd.append('prompt', prompt); fd.append('size', size); fd.append('quality', quality); fd.append('n', String(n));
+      fd.append('output_format', 'jpeg'); fd.append('output_compression', '90');
       if (mask) fd.append('mask', new Blob([mask], { type: 'image/png' }), 'mask.png');
       for (const [i, u] of refs.entries()) {
         const b = await fetch(u); if (!b.ok) continue;
@@ -111,7 +112,7 @@ async function openaiImage(okey: string, prompt: string, size: string, quality: 
       }
       r = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { authorization: `Bearer ${okey}` }, body: fd });
     } else {
-      r = await fetch('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` }, body: JSON.stringify({ model, prompt, size, quality, n }) });
+      r = await fetch('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` }, body: JSON.stringify({ model, prompt, size, quality, n, output_format: 'jpeg', output_compression: 90 }) });
     }
     if (r.ok) { const data = (await r.json()).data ?? []; return { b64: data[0]?.b64_json ?? '', all: data.map((x: any) => x.b64_json).filter(Boolean) as string[], model }; }
     last = model + ': ' + (await r.text());
@@ -124,7 +125,7 @@ async function openaiImage(okey: string, prompt: string, size: string, quality: 
 async function proofImage(ckey: string, b64: string, want: string) {
   try {
     const raw = await claude(ckey, 'You proofread Hebrew text inside images. Answer with JSON only.', [
-      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: b64 } },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
       { type: 'text', text: `Expected Hebrew texts (each must appear spelled exactly):\n${want}\nRead every piece of text in the image and compare.\nReturn JSON: {"ok":true|false,"issues":["short Hebrew description of each problem, quoting what is written and what it should be"],"fixes":[{"right":"the full correct text of that line, exactly as expected","box":[x0,y0,x1,y1]}]}\nbox = the bounding box of the whole wrong text line as fractions (0-1) of image width and height, x from the left edge, y from the top.\nok=false if any Hebrew word is misspelled, reversed, garbled, missing, or if gibberish/extra text appears.` },
     ]);
     const m = raw.match(/\{[\s\S]*\}/);
@@ -188,8 +189,8 @@ Deno.serve(async (req) => {
       if (!b64) throw new Error('openai_empty');
       const check = ckey ? await proofImage(ckey, b64, want) : { ok: true, unchecked: true };
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-f-${crypto.randomUUID().slice(0, 8)}.png`;
-      const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/png', upsert: false });
+      const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-f-${crypto.randomUUID().slice(0, 8)}.jpg`;
+      const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
       if (up.error) throw up.error;
       return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, model, size });
     } catch (e) {
@@ -249,8 +250,8 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       checks.forEach((c, i) => { if (issuesOf(c) < issuesOf(checks[best])) best = i; });
       const b64 = gen.all[best], check = checks[best], model = gen.model;
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${tpl ? 't' : 'd'}-${crypto.randomUUID().slice(0, 8)}.png`;
-      const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/png', upsert: false });
+      const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${tpl ? 't' : 'd'}-${crypto.randomUUID().slice(0, 8)}.jpg`;
+      const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
       if (up.error) throw up.error;
       return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: [...lines.split('\n').map((l) => l.replace(/^[a-z0-9 ]+: "|"$/gi, '')), ...fixedTx.map((x) => x.slice(1, -1))], prompt, model, size });
     } catch (e) {
@@ -266,7 +267,8 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const people = p.people === 'yes' ? 'Include people as the main subject.' : p.people === 'no' ? 'No people at all.' : 'Include people only if it strengthens the message.';
       const style = p.style === 'illustration' ? 'Style: refined editorial vector illustration, flat shapes with subtle grain, limited palette.' : 'Style: high-end editorial photography, natural light, shallow depth of field.';
       const side = p.space ?? (p.size === 'portrait' ? 'top half' : 'left side');
-      prompt = (await claude(ckey, DIRECTOR, `Brief (Hebrew): ${p.title ?? ''}\n${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\n${people}\n${style}\nNegative space for text: ${side}.`)).trim();
+      const bc = ((p.colors ?? []) as string[]).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 4).join(', ');
+      prompt = (await claude(ckey, DIRECTOR, `Brief (Hebrew): ${p.title ?? ''}\n${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\n${people}\n${style}\nBrand colours (light accent only): ${bc || 'none given'}\nNegative space for text: ${side}.`)).trim();
     }
     const size = SIZES[p.size] ?? SIZES.square;
     let b64 = '', used = '', last = '';
@@ -274,7 +276,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const r = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` },
-        body: JSON.stringify({ model, prompt, size, quality: p.quality ?? 'high', n: 1 }),
+        body: JSON.stringify({ model, prompt, size, quality: p.quality ?? 'high', n: 1, output_format: 'jpeg', output_compression: 90 }),
       });
       if (r.ok) { b64 = (await r.json()).data?.[0]?.b64_json ?? ''; used = model; break; }
       last = model + ': ' + (await r.text());
@@ -282,8 +284,8 @@ fixed=true for texts that belong to the template itself and must stay (organisat
     }
     if (!b64) throw new Error('openai_error: ' + last.slice(0, 300));
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.png`;
-    const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/png', upsert: false });
+    const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.jpg`;
+    const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
     if (up.error) throw up.error;
     const url = d.storage.from('v2-content').getPublicUrl(path).data.publicUrl;
     return json(req, { ok: true, url, prompt, model: used, size });

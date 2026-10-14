@@ -57,7 +57,7 @@ async function browser() {
 }
 
 async function put(url: string, body: Buffer, type: string) {
-  const r = await fetch(url, { method: 'PUT', headers: { 'content-type': type, 'x-upsert': 'true' }, body });
+  const r = await fetch(url, { method: 'PUT', headers: { 'content-type': type, 'x-upsert': 'true' }, body: new Uint8Array(body) });
   if (!r.ok) throw new Error('upload_failed ' + r.status + ' ' + (await r.text()).slice(0, 200));
 }
 
@@ -76,7 +76,7 @@ async function load(p: Page, html: string, w: number, h: number) {
 }
 async function diag(p: Page) {
   return p.evaluate(() => ({
-    imgs: [...document.images].map((i) => [i.naturalWidth, i.naturalHeight, i.src.slice(-30)]),
+    imgs: Array.from(document.images).map((i) => [i.naturalWidth, i.naturalHeight, i.src.slice(-30)]),
     fonts: [...(document as any).fonts].filter((f: any) => f.status === 'loaded').length,
     h1: (document.querySelector('h1') as HTMLElement | null)?.getBoundingClientRect().height ?? null,
     text: (document.body.innerText || '').slice(0, 60),

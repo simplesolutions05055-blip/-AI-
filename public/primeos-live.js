@@ -685,8 +685,24 @@
     return { org: aiCtx().org, dept: dept || aiCtx().dept || '', colors: c.map((x) => (Array.isArray(x) ? x[1] : x)) };
   }
   async function aiImage(o) {
-    const r = await fx('image', { brief: o.brief || '', title: o.title || '', dept: o.dept || '', people: o.people || 'auto', style: o.style || 'photo', size: o.size || 'square', quality: 'high' }, 150000);
+    const r = await fx('image', { brief: o.brief || '', title: o.title || '', dept: o.dept || '', people: o.people || 'auto', style: o.style || 'photo', size: o.size || 'square', quality: o.quality || 'high', model: o.model || undefined, colors: brandFor(o.dept).colors }, 150000);
     return r.url;
+  }
+  /* a photo for every slide of a presentation (fast image model, medium quality); reused by slide title between re-renders */
+  async function deckImages(w, m, d) {
+    const sl = d.slides || [];
+    m.imgBy = m.imgBy || {};
+    const keyOf = (s, i) => (s.kind || 'b') + '|' + (i === 0 ? (d.title || s.t || '') : (s.t || '')) + '|' + ((s.pts || []).slice(0, 2).join(' '));
+    const briefOf = (s, i) => ((m.imgNote && m.imgNote[i]) ? m.imgNote[i] + '\n' : '') + (i === 0 ? 'תמונת שער רחבה ואווירתית למצגת: ' + (d.title || w.title) : s.kind === 'end' ? 'תמונת סיום חמה ואופטימית למצגת: ' + (d.title || w.title) : 'תמונה שמלווה את השקף "' + (s.t || '') + '": ' + (s.pts || []).slice(0, 3).join('. ')) + '\n' + (w.prompt || '');
+    const todo = sl.map((s, i) => [s, i]).filter(([s, i]) => !m.imgBy[keyOf(s, i)]);
+    // up to 4 images at a time
+    let at = 0;
+    const worker = async () => { while (at < todo.length) { const [s, i] = todo[at++]; try { m.imgBy[keyOf(s, i)] = await aiImage({ title: w.title, brief: briefOf(s, i), size: 'landscape', quality: 'medium', model: FAST_IMG }); } catch (e) { /* that slide stays without a photo */ } } };
+    await Promise.all(Array.from({ length: Math.min(4, todo.length) }, worker));
+    const out = {};
+    sl.forEach((s, i) => { const u = m.imgBy[keyOf(s, i)]; if (u) out['s' + i] = u; });
+    if (out.s0) out.cover = out.s0;
+    return out;
   }
   async function produce(jobs, dept) {
     const b = brandFor(dept);
@@ -1148,14 +1164,16 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (opts.regen || !w.deck) {
         m.busy = 'ה-AI בונה ' + w.pages + ' שקפים...';
         render();
-        const [d, imgs] = await Promise.all([
+        const [d] = await Promise.all([
           gen({ mode: 'deck2', style: w.style, title: w.title, pages: w.pages, keep: !!(w.src === 'file' && w.file && w.file.url), files: w.file && w.file.url ? [{ url: w.file.url, name: w.file.n }] : [],
             brief: (w.src === 'file' && w.file ? ({ visual: 'שמור על הטקסט של המצגת המצורפת כמו שהוא, מילה במילה, שקף אחר שקף. ', text: 'שפר את הניסוח של המצגת המצורפת: קצר, ברור ומדויק, בלי להוסיף עובדות. שמור על סדר השקפים. ', both: 'ערוך את המצגת המצורפת: שפר ניסוח וסדר, בלי להוסיף עובדות. ' })[w.editKind] + 'מספר השקפים כמו במצגת המקורית. ' : '') + (w.prompt || '') }),
-          w.style === 'designed' && !m.images ? Promise.all([aiImage({ title: w.title, brief: w.prompt + '\nתמונת שער רחבה ואווירתית', size: 'landscape' }).catch(() => ''), aiImage({ title: w.title, brief: w.prompt + '\nאנשים ורגע אנושי מהנושא', size: 'landscape' }).catch(() => '')]) : Promise.resolve(null),
         ]);
         if (S.dk !== w || m.job !== job) return;
         w.deck = d;
-        if (imgs) m.images = { cover: imgs[0] || imgs[1], quote: imgs[1] || imgs[0], side: imgs[1] || imgs[0], end: imgs[0] || imgs[1] };
+        m.busy = 'ChatGPT מצלם תמונה לכל שקף...';
+        render();
+        m.images = await deckImages(w, m, d);
+        if (S.dk !== w || m.job !== job) return;
         const sl = d.slides || [];
         w.slides = mkSlides(sl.length || w.pages);
         w.slides.forEach((s, i) => { if (sl[i]) { s.t = sl[i].t || s.t; s.pts = sl[i].pts || []; } });
@@ -1163,6 +1181,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         w.ai = true;
         if (w.cur >= w.slides.length) w.cur = 0;
       }
+      if (!opts.regen) { m.busy = 'ChatGPT מצלם תמונה לכל שקף...'; render(); m.images = await deckImages(w, m, w.deck); if (S.dk !== w || m.job !== job) return; }
       m.busy = 'מעצבים את המצגת...';
       render();
       const r = await produce([{ id: 'k', kind: 'deck', style: w.style, data: w.deck, images: m.images || {}, thumb: false }]);
@@ -1221,6 +1240,15 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (!v) { toast('מה לתקן בעמוד הזה?', 'כתבו בחופשיות מה לשנות.', 'err'); return; }
     if (w.media.busy) return;
     const cur = w.deck.slides[w.cur] || { t: s.t, pts: s.pts || [] };
+    // a request about the picture: a new photo for this slide only, the text stays
+    if (w.fixKind === 'visual' && /תמונ|צילום|רקע/.test(v)) {
+      const m = w.media; m.imgBy = m.imgBy || {}; m.imgNote = m.imgNote || {};
+      Object.keys(m.imgBy).forEach((k) => { if (k.includes('|' + (w.cur === 0 ? (w.deck.title || cur.t || '') : (cur.t || '')) + '|')) delete m.imgBy[k]; });
+      m.imgNote[w.cur] = v;
+      s.ver++; s.fixes.push({ k: w.fixKind, t: v, v: s.ver });
+      deckRun(w);
+      return;
+    }
     w.media.busy = 'ה-AI מתקן את עמוד ' + (w.cur + 1) + '...';
     render();
     gen({ mode: 'revise', content: w.cur === 0 ? { title: w.deck.title, subtitle: w.deck.subtitle, slide: cur } : { slide: cur }, instruction: v })
@@ -2006,6 +2034,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   }
   css.textContent += `
 .card-pad > h3 + p[style*="line-height:1.7"]{display:block!important}
+@media(max-width:900px){.rv-strip{padding-bottom:170px}}
 .site-card{display:flex;flex-direction:column;gap:12px;margin-bottom:16px}.site-card h3{margin:0 0 4px;font-size:15.5px}
 .sc-row{display:flex;gap:8px}.sc-row input{flex:1;min-width:0;border:1px solid var(--line,#DDE3EC);border-radius:10px;padding:10px 12px;font:inherit;background:#fff;text-align:left}
 .sc-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.sc-facts>div{border:1px solid var(--line,#DDE3EC);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -2234,4 +2263,25 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .rs-it .thumb[data-busy]{opacity:.55;animation:campPulse 1.4s ease-in-out infinite}@keyframes campPulse{50%{opacity:.85}}
 .rs-it .thumb.real{background-size:cover!important;background-position:center!important}.rs-it .thumb.real .tt{display:none}
 .camp-prog{display:flex;align-items:center;gap:10px;margin-bottom:12px}`;
+
+  /* ---------------- live dates and guards: the mockup's demo dates (September 2026) never reach a real organisation ---------------- */
+  (function () {
+    const tomorrow = () => { const d = new Date(); d.setDate(d.getDate() + 1); return isoDay(d); };
+    const DEMO_DAYS = ['2026-09-08', '2026-09-10'];
+    const _sw = startWiz;
+    startWiz = function () {
+      _sw.apply(this, arguments);
+      const w = S.wiz;
+      if (w && DEMO_DAYS.includes(w.date)) w.date = tomorrow();
+      if (w && w.dist && DEMO_DAYS.includes(w.dist.date)) w.dist.date = tomorrow();
+    };
+    const _sched = ACT.sched;
+    ACT.sched = (id) => { const it = itemById(id); if (it && !it.pub) it.pub = tomorrow() + ' 18:00'; _sched(id); };
+    // an item that no longer exists (deleted on another device, stale link) opens the library instead of a blank error
+    const _itemG = SCREENS.item.render;
+    SCREENS.item.render = function () {
+      if (!items.some((x) => x.id === S.itemId)) { setTimeout(() => go('library', { force: true }), 0); return '<div class="card card-pad"><p class="t-sub">הפריט לא נמצא. עוברים לספריית התוכן...</p></div>'; }
+      return _itemG.apply(this, arguments);
+    };
+  })();
 })();
