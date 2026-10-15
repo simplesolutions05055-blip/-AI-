@@ -2,7 +2,7 @@
 // Output: api/_video/bundle (shipped with api/video.ts via vercel.json includeFiles).
 // Only the fonts go in the public folder; sample media stays out of production.
 import { bundle } from '@remotion/bundler';
-import { cpSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -14,5 +14,4 @@ cpSync(path.join(root, 'public/fonts'), path.join(pub, 'fonts'), { recursive: tr
 rmSync(out, { recursive: true, force: true });
 await bundle({ entryPoint: path.join(root, 'src/index.ts'), publicDir: pub, outDir: out, enableCaching: false });
 rmSync(pub, { recursive: true, force: true });
-for (const f of readdirSync(out)) if (f.endsWith('.map')) rmSync(path.join(out, f));
 console.log('video bundle ->', path.relative(process.cwd(), out));
