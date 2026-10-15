@@ -5,7 +5,7 @@
 // admin: admin.load | admin.state.save | admin.org.create | admin.org.delete | admin.invite.send | admin.org.update
 // open (sign token): sign.load | sign.submit
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, NEEDS_VIDEO, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
+import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, NEEDS_VIDEO, NO_POST, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
@@ -188,7 +188,7 @@ async function itemsUpsert(d: DB, orgId: string, list: Record<string, any>[]) {
 }
 
 /* ---------------- publishing (provider layer in publish.ts) ---------------- */
-const CH_HE: Record<string, string> = { fb: 'פייסבוק', ig: 'אינסטגרם', x: 'X', yt: 'יוטיוב', li: 'לינקדאין', tk: 'טיקטוק' };
+const CH_HE: Record<string, string> = { fb: 'פייסבוק', ig: 'אינסטגרם', x: 'X', yt: 'יוטיוב', li: 'לינקדאין', tk: 'טיקטוק', th: 'Threads', gb: 'גוגל לעסקים', tg: 'טלגרם', wa: 'וואטסאפ' };
 const roleOf = async (d: DB, memberId: string | null) => memberId ? (await d.from('org_members').select('role').eq('id', memberId).maybeSingle()).data : null;
 // organisation channels belong to the organisation; a department user connects channels of its own
 const scopeOf = async (d: DB, memberId: string | null) => (isManager(await roleOf(d, memberId)) ? null : memberId);
@@ -227,6 +227,14 @@ async function chConnect(d: DB, orgId: string, memberId: string | null, p: Recor
   if (!CH_KEYS.includes(ch)) throw new Error('bad_channel');
   try { await ensureHook(d, pv); } catch (e) { console.error('hook', e instanceof Error ? e.message : e); }
   const pid = await pubProfile(d, pv, orgId, await scopeOf(d, memberId), true);
+  if (ch === 'tg') {
+    // Telegram: the organisation adds the provider's bot as an admin, then gives the channel name
+    let chat = String(p.chat ?? '').trim();
+    if (!chat) throw new Error('missing_chat');
+    if (/^https?:\/\/t\.me\//i.test(chat)) chat = '@' + chat.replace(/^https?:\/\/t\.me\//i, '').split(/[/?#]/)[0];
+    if (!/^(@[A-Za-z0-9_]{4,}|-?\d{5,})$/.test(chat)) chat = '@' + chat.replace(/^@/, '');
+    return { connected: true, account: await pv.connectChat(pid!, ch, chat.slice(0, 80)) };
+  }
   return { url: await pv.connectUrl(pid!, ch, `${APP}/?chcb=${ch}`) };
 }
 async function chDisconnect(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
@@ -323,7 +331,7 @@ async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; p
     const skipped: string[] = [];
     if (pick) {
       pick.targets = pick.targets.filter((t) => {
-        const ok = (!NEEDS_MEDIA.includes(t.ch) || media.length > 0) && (!NEEDS_VIDEO.includes(t.ch) || media.some((m) => m.type === 'video'));
+        const ok = !NO_POST.includes(t.ch) && (!NEEDS_MEDIA.includes(t.ch) || media.length > 0) && (!NEEDS_VIDEO.includes(t.ch) || media.some((m) => m.type === 'video'));
         if (!ok) skipped.push(t.ch);
         return ok;
       });
@@ -338,7 +346,7 @@ async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; p
     }
     try {
       const res = await pv.createPost({ profileId: pick.pid, text: textOf(ui), targets: pick.targets, media, when, tz: 'Asia/Jerusalem', key: `primeos-${orgId}-${ui.id}-${sig}` });
-      const note = [...missing.map((c) => (CH_HE[c] ?? c) + ' לא מחובר'), ...skipped.map((c) => (CH_HE[c] ?? c) + ' דורש תמונה או סרטון')].join(' · ') || null;
+      const note = [...missing.map((c) => (CH_HE[c] ?? c) + ' לא מחובר'), ...skipped.map((c) => (CH_HE[c] ?? c) + (NO_POST.includes(c as ChKey) ? ' משמש להודעות תפוצה ולא לפוסטים' : ' דורש תמונה או סרטון'))].join(' · ') || null;
       const { data: r2 } = await d.from('v2_pub_posts').upsert({ ...base, post_id: res.id, status: res.status, targets: pick.targets, result: res.perTarget, error: note }, { onConflict: 'org_id,ui_id' }).select('*').single();
       if (FINAL.includes(res.status)) await pubApply(d, r2, res.status, res.perTarget, res.error);
       else if (note) await setUi(d, orgId, ui.id, (u) => { u.pubWarn = note; });

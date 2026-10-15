@@ -4,8 +4,10 @@
 // same shape and switching PUBLISH_PROVIDER. Nothing outside this file knows which provider is used.
 
 // channel keys used by the PrimeOS UI
-export type ChKey = 'fb' | 'ig' | 'x' | 'yt' | 'li' | 'tk';
-export const CH_KEYS: ChKey[] = ['fb', 'ig', 'x', 'yt', 'li', 'tk'];
+export type ChKey = 'fb' | 'ig' | 'x' | 'yt' | 'li' | 'tk' | 'th' | 'gb' | 'tg' | 'wa';
+export const CH_KEYS: ChKey[] = ['fb', 'ig', 'x', 'yt', 'li', 'tk', 'th', 'gb', 'tg', 'wa'];
+// connected for messaging, not for feed posts (WhatsApp sends approved templates to contacts)
+export const NO_POST: ChKey[] = ['wa'];
 
 export interface Account { id: string; ch: ChKey; name: string; active: boolean; pic?: string | null; followers?: number | null }
 export interface Media { url: string; type: 'image' | 'video' }
@@ -28,6 +30,8 @@ export interface Provider {
   stats(accountId: string, ch: ChKey, from: string, to: string, debug?: boolean): Promise<Stats>;
   ensureProfile(externalId: string, name: string, existing?: string | null): Promise<string>;
   connectUrl(profileId: string, ch: ChKey, redirect: string): Promise<string>;
+  // channels joined by adding a bot instead of an authorisation window (Telegram)
+  connectChat(profileId: string, ch: ChKey, chatId: string): Promise<Account>;
   accounts(profileId: string): Promise<Account[]>;
   disconnect(accountId: string): Promise<void>;
   createPost(p: PostIn): Promise<PostOut>;
@@ -43,7 +47,7 @@ export class PubError extends Error {
 }
 
 /* ---------------- Zernio ---------------- */
-const ZP: Record<ChKey, string> = { fb: 'facebook', ig: 'instagram', x: 'twitter', yt: 'youtube', li: 'linkedin', tk: 'tiktok' };
+const ZP: Record<ChKey, string> = { fb: 'facebook', ig: 'instagram', x: 'twitter', yt: 'youtube', li: 'linkedin', tk: 'tiktok', th: 'threads', gb: 'googlebusiness', tg: 'telegram', wa: 'whatsapp' };
 const ZK: Record<string, ChKey> = Object.fromEntries(Object.entries(ZP).map(([k, v]) => [v, k as ChKey]));
 // final post states: anything else is still on its way
 export const FINAL = ['published', 'failed', 'partial', 'cancelled'];
@@ -142,6 +146,11 @@ export function zernio(key: string, base = 'https://zernio.com/api/v1'): Provide
       const j = await req('GET', `/connect/${ZP[ch]}?${q}`);
       if (!j.authUrl) throw new PubError('provider_no_url');
       return String(j.authUrl);
+    },
+    async connectChat(profileId, ch, chatId) {
+      const j = await req('POST', `/connect/${ZP[ch]}`, { profileId, chatId });
+      const a = j.account ?? j;
+      return { id: String(a._id ?? a.id ?? a.accountId ?? ''), ch, active: a.isActive !== false, name: String(a.displayName || a.username || a.name || chatId), pic: a.profilePicture ?? null, followers: null };
     },
     async accounts(profileId) {
       const j = await req('GET', `/accounts?${new URLSearchParams({ profileId })}`);

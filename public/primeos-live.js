@@ -2972,7 +2972,18 @@ video.sp-real{object-fit:contain;background:#0A2C51}
    * The server talks to the publishing provider (Zernio today, replaceable). The UI only knows:
    * ch.list / ch.connect / ch.disconnect, and that a scheduled or published item goes out by itself. */
   (function () {
-    const CHK = ['fb', 'ig', 'x', 'yt', 'li', 'tk'];
+    const CHK = ['fb', 'ig', 'x', 'yt', 'li', 'tk', 'th', 'gb', 'tg', 'wa'];
+    // networks added on top of the mockup's six
+    Object.assign(CH, { th: { t: 'Threads', b: '#101010', s: 'TH' }, gb: { t: 'גוגל לעסקים', b: '#4285F4', s: 'G' }, tg: { t: 'Telegram', b: '#229ED9', s: 'TG' }, wa: { t: 'WhatsApp', b: '#25A244', s: 'WA' } });
+    const NO_POST = ['wa'];
+    CHK.forEach((k) => { if (!channels.some((c) => c.k === k)) channels.push({ k, acc: '-', st: 'לא מחובר', sync: '-', fol: '-' }); });
+    // the content wizards offer the networks the organisation actually connected
+    const DEF_ON = CH_ON.slice();
+    L.syncChOn = function () {
+      if (!L.pub.on) return;
+      const on = channels.filter((c) => c.st === 'מחובר' && !NO_POST.includes(c.k)).map((c) => c.k);
+      CH_ON.splice(0, CH_ON.length, ...(on.length ? on : DEF_ON.filter((k) => k !== 'web')));
+    };
     L.pub = { on: null, acc: [] };
     const hm = () => new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
     const chName = (k) => (CH[k] ? CH[k].t : k);
@@ -2989,7 +3000,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       try {
         const r = await call('ch.list');
         L.pub.on = !!r.configured;
-        if (r.configured) { L.pub.acc = r.accounts || []; applyAcc(L.pub.acc); }
+        if (r.configured) { L.pub.acc = r.accounts || []; CHK.forEach((k) => { if (!channels.some((c) => c.k === k)) channels.push({ k, acc: '-', st: 'לא מחובר', sync: '-', fol: '-' }); }); applyAcc(L.pub.acc); L.syncChOn(); }
       } catch (e) {
         // a server without the publishing layer yet answers unknown_action: same as not configured
         if (/unknown_action|publishing_not_configured/.test(String(e.message || ''))) { L.pub.on = false; if (S.route === 'channels') render(); return true; }
@@ -3015,8 +3026,34 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       else toast('החיבור בבדיקה', 'אם הערוץ לא מופיע כמחובר, לחצו על „בדיקת חיבור” בעוד רגע.');
     };
     const notReady = () => openModal('<div class="mb"><div class="m-ic warn">' + ic('plug', 20) + '</div><h3>חיבור ערוצים</h3><p>חיבור הרשתות ייפתח ברגע שמנהל המערכת ישלים את הגדרת ספק הפרסום. עד אז התוכן נשמר ומתוזמן במערכת.</p></div><div class="modal-foot"><button class="btn btn-primary" data-act="closeModal">הבנתי</button></div>');
+    ACT.tgConnect = async () => {
+      const v = ($('#tgChat') || {}).value || '';
+      if (!v.trim()) { toast('חסר שם ערוץ', 'כתבו את שם הערוץ, למשל @nave_hadar', 'err'); return; }
+      const b = $('#tgGo'); if (b) { b.disabled = true; b.textContent = 'מחברים...'; }
+      try {
+        await call('ch.connect', { ch: 'tg', chat: v.trim() });
+        closeModal(); await refresh(true);
+        toast('הערוץ חובר', 'Telegram מחובר. פרסומים יוצאים אליו מעכשיו.');
+      } catch (e) {
+        if (b) { b.disabled = false; b.textContent = 'חיבור הערוץ'; }
+        toast('החיבור לא הושלם', 'בדקו שהבוט נוסף כמנהל עם הרשאת פרסום, ושהשם נכון.', 'err');
+      }
+    };
+    const tgModal = () => openModal('<div class="mb"><div class="m-ic">' + ic('link', 20) + '</div><h3>חיבור ערוץ Telegram</h3>' +
+      '<p>בטלגרם החיבור הוא דרך בוט, בלי חלון הרשאות:</p>' +
+      '<ol style="margin:8px 0 12px;padding-inline-start:20px;line-height:1.9;font-size:14px"><li>פותחים את הערוץ בטלגרם ונכנסים לניהול הערוץ ולמנהלים.</li><li>מוסיפים כמנהל את הבוט הזה, עם הרשאה לפרסם הודעות:<div dir="ltr" style="text-align:left;font-weight:700;margin:4px 0">@ZernioScheduleBot</div></li><li>כותבים כאן את שם הערוץ ולוחצים על חיבור.</li></ol>' +
+      '<div class="field"><label for="tgChat">שם הערוץ או הקישור אליו</label><input type="text" id="tgChat" dir="ltr" placeholder="@channel_name"></div></div>' +
+      '<div class="modal-foot"><button class="btn btn-primary" id="tgGo" data-act="tgConnect">חיבור הערוץ</button><button class="btn" data-act="closeModal">ביטול</button></div>');
     ACT.chGo = async (k) => {
       if (L.pub.on === false) { notReady(); return; }
+      // a modal already on screen (the network picker) closes first, then the next one opens
+      const after = (fn) => { if ($('#modal').classList.contains('hidden')) fn(); else { closeModal(); setTimeout(fn, 230); } };
+      if (k === 'tg') { after(tgModal); return; }
+      if (k === 'wa' && !ACT.chGo.waOk) {
+        after(() => confirmModal({ title: 'חיבור WhatsApp', icon: 'link', body: 'החיבור דורש חשבון WhatsApp Business בתוך חשבון עסקי של מטא. בוואטסאפ לא מפרסמים פוסטים: הוא משמש לשליחת הודעות תפוצה מאושרות לאנשי קשר. להמשיך לחלון החיבור?', ok: 'המשך לחיבור',
+          onOk: () => { ACT.chGo.waOk = true; ACT.chGo('wa'); ACT.chGo.waOk = false; } }));
+        return;
+      }
       try {
         toast('פותחים את חלון ההרשאות', chName(k) + '. אחרי האישור חוזרים לכאן.');
         const r = await call('ch.connect', { ch: k });
