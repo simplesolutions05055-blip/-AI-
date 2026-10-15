@@ -3577,7 +3577,7 @@ ACT.openCampA=id=>{S.campId=id;S.campMode='approve';campById(id).cur=0;go('bulkR
 
 
 /* ================= ADMIN v2: cost model $50 / $15 ================= */
-const PLANS={appr:{t:'משתמש ארגון',d:'מחלקות, משתמשי מחלקה ואישורי תוכן',cost:1750,c:'#0124C7'},solo:{t:'משתמש יחיד',d:'משתמש אחד, בלי מחלקות',cost:950,c:'#01B6FD'}};
+const PLANS={appr:{t:'מסלול מורחב',d:'משתמש ארגון, מחלקות, משתמשי מחלקה ואישורי תוכן',cost:1750,c:'#0124C7'},solo:{t:'מסלול בסיסי',d:'משתמש יחיד, בלי מחלקות',cost:950,c:'#01B6FD'}};
 /* money model: prices in ILS per month (annual plan, + VAT); expenses = vendor subscriptions (USD) + AI usage per client */
 const VAT=0.18;
 const FX={usd:3.7};
@@ -3843,7 +3843,7 @@ SCREENS.a_purch={
     const on=f.q||f.org||f.type||f.plan||f.month;
     return pageHead({title:'רכישות',actions:'<button class="btn" data-act="toastInfo:הקובץ ירד בפורמט CSV (הדגמה)">'+ic('down',16)+' ייצוא</button>'})+
     '<div class="grid g-4" style="margin-bottom:16px">'+
-      stat({l:'מנויים פעילים',n:ORGS.filter(o=>o.st!=='paused').length,s:ORGS.filter(o=>o.plan==='appr'&&o.st!=='paused').length+' משתמש ארגון · '+ORGS.filter(o=>o.plan==='solo'&&o.st!=='paused').length+' משתמש יחיד',i:'bldg',nav:'a_purch',f:'draft'})+
+      stat({l:'מנויים פעילים',n:ORGS.filter(o=>o.st!=='paused').length,s:ORGS.filter(o=>o.plan==='appr'&&o.st!=='paused').length+' מורחב · '+ORGS.filter(o=>o.plan==='solo'&&o.st!=='paused').length+' בסיסי',i:'bldg',nav:'a_purch',f:'draft'})+
       stat({l:'מנויים חדשים החודש',n:thisM.filter(x=>x.type==='new'||x.type==='trial').length,s:'ספטמבר 2026',i:'spark',nav:'a_purch',f:'published'})+
       stat({l:'רכישות החודש',n:thisM.length,s:'חידושים, משתמשים ושינויים',i:'library',nav:'a_purch',f:'pending'})+
       stat({l:'הכנסה חדשה החודש',n:usd(thisM.reduce((s,x)=>s+x.cost,0)),s:'לפי מחירי המסלולים, לפני מע״מ',i:'chart',nav:'a_purch',f:'scheduled'})+
@@ -3891,8 +3891,8 @@ waRequests.forEach(r=>{if(r.ph==='054-902-0253')r.ph='054-771-2034';});
 DEPT_INFO['תרבות ואירועים'].phones=DEPT_INFO['תרבות ואירועים'].phones.map(p=>p==='054-9020253'?'054-7712034':p);
 
 /* ---------- plans: basic / extended ---------- */
-PLANS.appr.t='משתמש ארגון'; PLANS.appr.d='אישורי תוכן · מחלקות · משתמשי מחלקה';
-PLANS.solo.t='משתמש יחיד'; PLANS.solo.d='משתמש אחד · ללא אישורים ומחלקות';
+PLANS.appr.t='מסלול מורחב'; PLANS.appr.d='משתמש ארגון · מחלקות · אישורי תוכן';
+PLANS.solo.t='מסלול בסיסי'; PLANS.solo.d='משתמש יחיד · ללא אישורים ומחלקות';
 ORGS.forEach(o=>{o.rev=null;o.uLim=o.plan==='solo'?1:Math.max(5,orgUsers(o).length);o.dLim=o.plan==='solo'?0:5;
   const k=+o.id.slice(1);o.decks=Math.round(o.items*.08)+k%3;o.vids=Math.round(o.items*.05)+(k%2);o.ai=Math.round(o.logins*1.7)+k*6;
   o.agr={start:o.since.replace('/','.'),term:k%3===0?'שנתי':'חודשי',signed:o.st!=='trial',signedAt:o.st!=='trial'?'1.'+o.since.replace('/','.'):'',signer:o.contact};});
@@ -3936,7 +3936,7 @@ channels.find(c=>c.k==='tk').st='מחובר';channels.find(c=>c.k==='tk').acc='@
 
 /* ---------- interface view: extended (main) / extended (department) / basic ---------- */
 S.view='ext'; S.dept='תרבות ואירועים'; S.docqDone=false;
-const VIEW_T={ext:'משתמש ארגון',dept:'ממשק מחלקה',basic:'משתמש יחיד'};
+const VIEW_T={ext:'מסלול מורחב',dept:'ממשק מחלקה',basic:'מסלול בסיסי'};
 const NAV_V={
   ext:['dashboard','create','library','calendar','approvals','publications','channels','insights','brand','team','reports','settings'],
   dept:['dashboard','create','library','calendar','reports','settings'],
@@ -4982,7 +4982,7 @@ SCREENS.a_org={
         '<div class="field"><label>סוג הגוף</label><select id="eoT">'+OTYPES.map(t=>'<option'+(t===o.type?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
         '<div class="field"><label>סטטוס חשבון</label><select id="eoS">'+Object.entries(OST).map(([k,v])=>'<option value="'+k+'"'+(k===o.st?' selected':'')+'>'+v.t+'</option>').join('')+'</select></div>'+
         '<div class="field"><label>מכסת משתמשים</label><input type="text" id="eoUL" dir="ltr" style="text-align:right" value="'+o.uLim+'"></div>'+
-        '<div class="field"><label>מכסת מחלקות <span class="hint">משתמש ארגון</span></label><input type="text" id="eoDL" dir="ltr" style="text-align:right" value="'+o.dLim+'"'+(o.plan==='solo'?' disabled':'')+'></div>'+
+        '<div class="field"><label>מכסת מחלקות <span class="hint">מסלול מורחב</span></label><input type="text" id="eoDL" dir="ltr" style="text-align:right" value="'+o.dLim+'"'+(o.plan==='solo'?' disabled':'')+'></div>'+
         '<div class="field"><label>איש קשר</label><input type="text" id="eoP" value="'+esc(o.contact)+'"></div>'+
         '<div class="field"><label>טלפון</label><input type="text" dir="ltr" style="text-align:right" value="'+o.phone+'"></div>'+
         '<div class="field"><label>דוא״ל</label><input type="email" dir="ltr" style="text-align:right" value="'+o.mail+'"></div>'+
@@ -5182,8 +5182,8 @@ SCREENS.a_new={
     const w=S.nw||(S.nw=nwNew());const steps=NW_STEPS[w.plan];const cur=steps[w.step][0];let body='';
     if(cur==='plan'){
       body='<h3 class="nw-h">איזה מנוי מקימים?</h3><p class="t-sub nw-p">סוג המנוי קובע את שלבי ההקמה ואת הממשק שהלקוח יקבל.</p><div class="plan-pick big">'+
-        [['solo','משתמש יחיד','משתמש מערכת אחד. בלי אישורים ובלי מחלקות. מתאים למתנ״ס, למוסד או לרשות קטנה.',['משתמש אחד','יצירה, לוח, ספרייה ופרסום','נכסי מותג ונתוני ערוצים']],
-         ['appr','משתמש ארגון','דובר/ת או מנהל/ת מערכת, מחלקות עם ממשק נפרד, ואישור תוכן לפני פרסום.',['כמה משתמשים ומחלקות','מרכז אישורים ואישור ב־WhatsApp','ממשק נפרד לכל מחלקה']]]
+        [['solo','מסלול בסיסי','משתמש יחיד אחד. בלי אישורים ובלי מחלקות. מתאים למתנ״ס, למוסד או לרשות קטנה.',['משתמש אחד','יצירה, לוח, ספרייה ופרסום','נכסי מותג ונתוני ערוצים']],
+         ['appr','מסלול מורחב','משתמש ארגון (דובר/ת או מנהל/ת מערכת), מחלקות עם ממשק נפרד, ואישור תוכן לפני פרסום.',['כמה משתמשים ומחלקות','מרכז אישורים ואישור ב־WhatsApp','ממשק נפרד לכל מחלקה']]]
         .map(p=>'<button class="tile plan-tile big'+(w.plan===p[0]?' on':'')+'" data-act="nwPlan:'+p[0]+'" style="--pc:'+PLANS[p[0]].c+'"><span class="rt-head"><span class="rt-radio"></span><span class="tn">'+p[1]+'</span><b class="pt-cost">'+usd(PLANS[p[0]].cost)+'<small> לחודש + מע״מ</small></b></span><span class="t-sub">'+p[2]+'</span><span class="pt-feats">'+p[3].map(f=>'<span>'+ic('check',13,2.4)+f+'</span>').join('')+'</span><span class="t-sub">'+NW_STEPS[p[0]].length+' שלבי הקמה</span></button>').join('')+'</div>';
     } else if(cur==='org'){
       body='<h3 class="nw-h">פרטי הארגון</h3><div class="form-grid">'+nwField('org.n','שם הארגון',w.org.n,{req:1,ph:'לדוגמה: עיריית ...'})+nwField('org.type','סוג הגוף',w.org.type,{sel:OTYPES})+
