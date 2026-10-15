@@ -234,6 +234,9 @@ async function adminLoad(d: DB, adminId: string) {
   const { data: toks } = ids.length ? await d.from('api_tokens').select('org_id,token').in('org_id', ids) : { data: [] };
   const tokOf: Record<string, string> = {};
   for (const t of toks ?? []) if (!tokOf[t.org_id]) tokOf[t.org_id] = t.token;
+  const { data: mtoks } = ids.length ? await d.from('api_tokens').select('member_id,token').in('org_id', ids).not('member_id', 'is', null) : { data: [] };
+  const mtokOf: Record<string, string> = {};
+  for (const t of mtoks ?? []) if (!mtokOf[t.member_id]) mtokOf[t.member_id] = t.token;
   const { data: mems } = ids.length ? await d.from('org_members').select('id,org_id,name,email,phone,role,dept,view,perms,created_at').in('org_id', ids).order('created_at') : { data: [] };
   const { data: cnt } = ids.length ? await d.from('content_items').select('org_id').in('org_id', ids).not('ui_id', 'is', null) : { data: [] };
   const items: Record<string, number> = {};
@@ -260,7 +263,7 @@ async function adminLoad(d: DB, adminId: string) {
       contact: o.contact_name ?? null, mail: o.contact_email ?? null, phone: o.contact_phone ?? null, items: items[o.id] ?? 0,
       main_dept: o.settings?.main_dept ?? null, role: o.settings?.role ?? null, agr: o.settings?.agr ?? null,
       use: usage[o.id]?.use ?? null, useM: usage[o.id]?.useM ?? null,
-      members: (mems ?? []).filter((m: any) => m.org_id === o.id).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone, role: m.role, dept: m.dept, view: m.view, use: usage[o.id]?.members?.[m.id] ?? null })),
+      members: (mems ?? []).filter((m: any) => m.org_id === o.id).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone, role: m.role, dept: m.dept, view: m.view, token: mtokOf[m.id] ?? null, use: usage[o.id]?.members?.[m.id] ?? null })),
     })),
   };
 }

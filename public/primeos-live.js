@@ -539,13 +539,25 @@
     if (!l) { toast('אין קישור לחתימה', 'ההסכם כבר נחתם או שהלקוח לא נשמר בשרת.', 'err'); return; }
     navigator.clipboard.writeText(l).then(() => toast('הקישור הועתק', 'קישור החתימה של ' + o.n + '.'), () => prompt('קישור לחתימה', l));
   };
+  // every user of the client with a personal login link: the organisation user and each department user
+  const tokLink = (t) => location.origin + '/?k=' + encodeURIComponent(t);
+  function memberLinks(o) {
+    const ms = o.members || [];
+    const dept = ms.filter((m) => m.role === 'member');
+    const rows = ms.map((m) => '<div class="ml-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line-2)">' +
+      '<span style="flex:1;min-width:160px"><b>' + esc(m.name) + '</b> <span class="t-sub">' + (m.role === 'member' ? 'משתמש יחיד' + (m.dept ? ' · ' + esc(m.dept) : '') : 'משתמש ארגון') + '</span></span>' +
+      (m.token ? '<button class="btn btn-sm" data-act="liveCopyTok:' + esc(m.token) + '">' + ic('copy', 14) + ' העתקת קישור</button><a class="btn btn-sm" target="_blank" rel="noopener" href="' + esc(tokLink(m.token)) + '">' + ic('eye', 14) + ' כניסה</a>' : '<span class="t-sub">אין קישור</span>') + '</div>').join('');
+    return '<div style="margin-top:14px"><b style="font-size:13.5px">משתמשים וקישורי כניסה</b>' + rows +
+      (dept.length ? '' : '<div class="note" style="margin-top:8px">' + ic('help', 14) + '<span>עדיין אין משתמשי מחלקה. משתמש הארגון פותח אותם מתוך הממשק שלו: צוות והרשאות -> הזמנת משתמש -> סוג "משתמש יחיד". הקישור שנוצר מופיע גם כאן.</span></div>') + '</div>';
+  }
+  ACT.liveCopyTok = (t) => { const l = tokLink(t); navigator.clipboard.writeText(l).then(() => toast('הקישור הועתק', ''), () => prompt('קישור כניסה', l)); };
   function linkBox(o) {
     return '<div class="card card-pad" style="margin-top:14px;text-align:start"><b style="font-size:13.5px">קישור כניסה ללקוח</b>' +
       '<div class="t-sub" style="margin:4px 0 10px">שולחים את הקישור לאיש הקשר. הכניסה ישירה, בלי סיסמה.</div>' +
       '<div style="display:flex;gap:8px;align-items:center"><input type="text" readonly value="' + esc(linkOf(o)) + '" style="flex:1;direction:ltr;font-size:12.5px" onclick="this.select()">' +
       '<button class="btn btn-sm btn-primary" data-act="liveCopy:' + o.id + '">' + ic('copy', 14) + ' העתקה</button>' +
       '<a class="btn btn-sm" target="_blank" rel="noopener" href="https://wa.me/' + waNum(o.phone) + '?text=' + encodeURIComponent('שלום ' + (o.contact || '') + ', נפתח עבור ' + o.n + ' חשבון במערכת PrimeOS.\nקישור הכניסה האישי שלך (בלי סיסמה):\n' + linkOf(o) + (signLinkOf(o) && !(o.agr && o.agr.signed) ? '\n\nהסכם המנוי לחתימה דיגיטלית:\n' + signLinkOf(o) : '') + '\n\nהקישורים אישיים, לא להעביר הלאה.') + '">' + ic('send', 14) + ' WhatsApp</a></div>' +
-      ((o.members || []).length ? '<div class="t-sub" style="margin-top:10px">משתמשים: ' + o.members.map((m) => esc(m.name) + (m.dept ? ' (' + esc(m.dept) + ')' : '')).join(', ') + '</div>' : '') +
+      memberLinks(o) +
       '<div style="margin-top:14px;display:flex;justify-content:flex-end"><button class="btn btn-sm btn-quiet-bad" data-act="liveDelete:' + o.id + '">' + ic('x', 14) + ' מחיקת הלקוח לצמיתות</button></div></div>';
   }
   ACT.liveDelete = (id) => {
