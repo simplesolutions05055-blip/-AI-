@@ -1,8 +1,10 @@
 // PrimeOS generate - all AI text generation through the Claude API.
 // POST { mode, ...input }   header x-primeos-token
 // modes: post | alt | revise | assistant | doc | deck | graphic | video | doc2 | deck2 | brand | site | series
+//        vcaps | vbrief | vvoice | vmusic | vstock (video director and media, see video.ts)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import JSZip from 'https://esm.sh/jszip@3.10.1';
+import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES } from './video.ts';
 
 const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-7-sonnet-latest'];
 let goodModel: string | null = null;
@@ -356,6 +358,24 @@ ${brief}
 4 עד 5 סצנות. סצנה ראשונה תופסת תשומת לב. רק פרטים מהבריף.`, 1500, fb);
       return json(req, { ok: true, ...(await proof(key, parseJson(raw))) });
     }
+
+    // ---- video director: capabilities, brief + plan, then narration / music / stock for production ----
+    if (mode === 'vcaps' || mode === 'vbrief' || mode === 'vvoice') {
+      const c = caps();
+      const { data: vs } = await database.from('admin_state').select('data').eq('id', 'voices').maybeSingle();
+      const voices = voicesFor(c, (vs?.data as any)?.approved);
+      if (mode === 'vcaps') return json(req, { ok: true, caps: c, voices: voices.map(({ id, n, g, tone }) => ({ id, n, g, tone })) });
+      if (mode === 'vvoice') {
+        if (!voices.some((v) => v.id === p.voiceId) && !VOICES.some((v) => v.id === p.voiceId)) return json(req, { error: 'unknown_voice' }, 400);
+        const clips = await voiceScenes(database, CUR.org ?? '', String(p.voiceId), (p.says ?? []) as string[]);
+        return json(req, { ok: true, clips });
+      }
+      const imgs = await fileBlocks(((p.media ?? []) as any[]).filter((m) => !m.v).map((m) => ({ url: m.url, name: m.name || m.url })));
+      const raw = await claude(key, DIRECTOR_SYS + '\n' + s, directorPrompt(p, c, voices), 6000, [...imgs, ...fb]);
+      return json(req, { ok: true, caps: c, ...sanitizeBrief(parseJson(raw), p, voices) });
+    }
+    if (mode === 'vmusic') return json(req, { ok: true, ...(await musicTrack(database, CUR.org ?? '', String(p.prompt ?? ''), +p.seconds || 30)) });
+    if (mode === 'vstock') return json(req, { ok: true, items: await stock((p.queries ?? []) as any[], String(p.format ?? '9x16')) });
 
     if (mode === 'doc2') {
       const raw = await claude(key, s, `כתוב מסמך רשמי של הרשות בסגנון "${p.styleLabel || 'רשמי'}", באורך עמוד עד שני עמודים.

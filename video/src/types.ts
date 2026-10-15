@@ -48,6 +48,7 @@ export interface Scene {
   text?: SceneText;
   transition?: Transition;   // transition INTO the next scene
   fx?: Fx[];
+  voice?: { src: string; words?: Word[]; vol?: number; at?: number }; // narration clip for this scene, words relative to the clip
 }
 
 export interface Word { w: string; s: number; e: number } // seconds on the final timeline
@@ -60,7 +61,7 @@ export interface Plan {
   mood?: 'energetic' | 'emotional' | 'informative' | 'festive' | 'solemn' | 'calm' | 'luxury';
   scenes: Scene[];
   outro?: { cta?: string; details?: { icon?: string; text: string }[]; dur?: number };
-  captions?: { words: Word[]; style?: 'karaoke' | 'pop' | 'clean'; pos?: 'bottom' | 'center' };
+  captions?: { words: Word[]; style?: 'karaoke' | 'pop' | 'clean' | 'none'; pos?: 'bottom' | 'center' };
   audio?: { voice?: { src: string; vol?: number; start?: number }; music?: { src: string; vol?: number } };
   fx?: Fx[];                 // global effects over the whole video
   showLogo?: boolean;

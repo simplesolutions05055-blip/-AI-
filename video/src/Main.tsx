@@ -21,6 +21,20 @@ export function totalFrames(p: Plan, fps: number) {
   return Math.max(fps, t + outroFrames(p, fps));
 }
 
+// frame where each scene begins on the final timeline (transitions overlap neighbouring scenes)
+export function sceneStarts(p: Plan, fps: number) {
+  const out: number[] = []; let t = 0;
+  p.scenes.forEach((s, i) => { out.push(t); t += Math.round(s.dur * fps) - (i < p.scenes.length - 1 ? transFrames(s.transition, fps) : 0); });
+  return out;
+}
+// caption words for the whole video: global words plus every scene's narration shifted to its start
+export function allWords(p: Plan, fps: number) {
+  const st = sceneStarts(p, fps);
+  const w = [...(p.captions?.words ?? [])];
+  p.scenes.forEach((s, i) => { const o = st[i] / fps + (s.voice?.at ?? 0.25); (s.voice?.words ?? []).forEach((x) => w.push({ w: x.w, s: x.s + o, e: x.e + o })); });
+  return w.sort((a, b) => a.s - b.s);
+}
+
 export const Main: React.FC<{ plan: Plan }> = ({ plan }) => {
   const { fps, width, height, durationInFrames } = useVideoConfig();
   const music = plan.audio?.music; const voice = plan.audio?.voice;
@@ -45,20 +59,24 @@ export const Main: React.FC<{ plan: Plan }> = ({ plan }) => {
   const oF = outroFrames(plan, fps);
   if (plan.outro) items.push(<TransitionSeries.Sequence key="outro" durationInFrames={oF}><Outro plan={plan} durF={oF} /></TransitionSeries.Sequence>);
   const vStart = Math.round((voice?.start ?? 0.3) * fps);
+  const starts = sceneStarts(plan, fps);
+  const words = allWords(plan, fps);
+  const hasVoice = !!voice?.src || plan.scenes.some((s) => s.voice?.src);
   return (
     <AbsoluteFill style={{ background: '#000' }}>
       <TransitionSeries>{items}</TransitionSeries>
       <FxLayer fx={plan.fx} plan={plan} />
       {plan.showLogo !== false && plan.brand.logo && <Sequence durationInFrames={durationInFrames - oF}><Bug plan={plan} /></Sequence>}
-      <Captions plan={plan} />
+      {plan.captions?.style !== 'none' && <Captions plan={{ ...plan, captions: { ...(plan.captions ?? {}), words } as Plan['captions'] }} />}
+      {plan.scenes.map((s, i) => s.voice?.src ? <Sequence key={'v' + i} from={starts[i] + Math.round((s.voice.at ?? 0.25) * fps)}><Audio src={asset(s.voice.src)!} volume={s.voice.vol ?? 1} /></Sequence> : null)}
       {voice?.src && <Sequence from={vStart}><Audio src={asset(voice.src)!} volume={voice.vol ?? 1} /></Sequence>}
       {music?.src && (
         <Audio src={asset(music.src)!} volume={(f) => {
           // music sits under the narration and swells at the open and the ending card
-          const base = music.vol ?? (voice?.src ? 0.16 : 0.55);
+          const base = music.vol ?? (hasVoice ? 0.16 : 0.55);
           const open = interpolate(f, [0, fps * 0.8], [0, 1], { extrapolateRight: 'clamp' });
           const end = interpolate(f, [durationInFrames - fps * 1.6, durationInFrames - 2], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
-          const swell = voice?.src && f > durationInFrames - oF ? 2.2 : 1;
+          const swell = hasVoice && f > durationInFrames - oF ? 2.2 : 1;
           return Math.min(1, base * swell) * open * end;
         }} />
       )}

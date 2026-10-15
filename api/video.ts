@@ -33,6 +33,8 @@ const okSrc = (s: unknown) => {
 const num = (v: unknown, lo: number, hi: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
 const str = (v: unknown, n = 160) => (typeof v === 'string' ? v.slice(0, n) : undefined);
 
+const cleanWords = (a: unknown) => (Array.isArray(a) ? a.slice(0, 600).filter((w: any) => typeof w?.w === 'string').map((w: any) => ({ w: w.w.slice(0, 40), s: num(w.s, 0, 95, 0), e: num(w.e, 0, 95, 0) })) : []);
+
 // keeps the plan inside the engine's limits: 90 seconds, sane sizes, allowed media only
 export function cleanPlan(p: any) {
   if (!p || typeof p !== 'object' || !Array.isArray(p.scenes) || !p.scenes.length) throw new Error('bad_plan');
@@ -42,14 +44,16 @@ export function cleanPlan(p: any) {
     if (visual.src && !okSrc(visual.src)) { delete visual.src; visual.kind = 'gradient'; }
     const t = s?.text;
     const text = t && Array.isArray(t.lines) ? { ...t, lines: t.lines.slice(0, 6).map((l: unknown) => str(l, 90) ?? ''), kicker: str(t.kicker, 60), sub: str(t.sub, 140) } : undefined;
-    return { ...s, dur: num(s?.dur, 0.8, 20, 3), visual, text };
+    const vo = s?.voice;
+    const voice = vo && okSrc(vo.src) ? { src: vo.src, at: num(vo.at, 0, 3, 0.25), vol: num(vo.vol, 0, 1.5, 1), words: cleanWords(vo.words) } : undefined;
+    return { ...s, dur: num(s?.dur, 0.8, 20, 3), visual, text, voice };
   });
   let total = scenes.reduce((a: number, s: any) => a + s.dur, 0) + num(p.outro?.dur, 0, 6, 3.2);
   if (total > 90) { const k = 88 / total; scenes.forEach((s: any) => (s.dur = Math.max(0.8, s.dur * k))); total = 90; }
   const audio: any = {};
   if (okSrc(p.audio?.voice?.src)) audio.voice = { src: p.audio.voice.src, vol: num(p.audio.voice.vol, 0, 1.5, 1), start: num(p.audio.voice.start, 0, 5, 0.3) };
   if (okSrc(p.audio?.music?.src)) audio.music = { src: p.audio.music.src, vol: p.audio.music.vol == null ? undefined : num(p.audio.music.vol, 0, 1, 0.2) };
-  const words = Array.isArray(p.captions?.words) ? p.captions.words.slice(0, 600).filter((w: any) => typeof w?.w === 'string').map((w: any) => ({ w: w.w.slice(0, 40), s: num(w.s, 0, 95, 0), e: num(w.e, 0, 95, 0) })) : [];
+  const words = cleanWords(p.captions?.words);
   const logo = okSrc(p.brand?.logo) ? p.brand.logo : undefined;
   return {
     ...p,
@@ -58,7 +62,7 @@ export function cleanPlan(p: any) {
     brand: { ...p.brand, org: str(p.brand?.org, 80) ?? '', logo, colors: { deep: '#0B1F3A', main: '#1F5FBF', accent: '#FFC93C', light: '#BFD7FF', ...(p.brand?.colors ?? {}) } },
     scenes,
     audio,
-    captions: words.length ? { ...p.captions, words } : undefined,
+    captions: { style: ['karaoke', 'pop', 'clean', 'none'].includes(p.captions?.style) ? p.captions.style : 'karaoke', pos: p.captions?.pos === 'center' ? 'center' : 'bottom', words },
   };
 }
 
@@ -71,6 +75,8 @@ async function start(body: any) {
   try { plan = cleanPlan(body.plan); } catch { return json({ error: 'bad_plan' }, 400); }
   const sandbox = await createSandbox({ resources: { vcpus: 8 } });
   try {
+    // the library creates the bundle's sub folders but not the bundle root itself
+    await sandbox.mkDir('remotion-bundle').catch(() => {});
     await addBundleToSandbox({ sandbox, bundleDir: path.join(process.cwd(), 'api/_video/bundle') });
     // detached render without Vercel Blob: the mp4 stays in the sandbox and status() uploads it to storage
     const r = await (renderMediaOnVercel as any)({
