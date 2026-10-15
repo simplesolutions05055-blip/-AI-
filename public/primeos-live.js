@@ -104,7 +104,13 @@
     VENDORS: () => VENDORS, FX: () => FX, RATES: () => RATES, PACKS: () => PACKS,
   };
   function adminStateObj() { const o = {}; for (const k in ADMIN_KEYS) o[k] = ADMIN_KEYS[k](); return o; }
-  function hydrateAdmin(st) { for (const k in ADMIN_KEYS) if (st[k] !== undefined) restore(ADMIN_KEYS[k](), st[k]); }
+  // plan names, descriptions and colours come from the code; only the prices are the admin's saved values
+  const PLAN_DEF = JSON.parse(JSON.stringify(PLANS));
+  function hydrateAdmin(st) {
+    for (const k in ADMIN_KEYS) if (st[k] !== undefined) restore(ADMIN_KEYS[k](), st[k]);
+    Object.keys(PLAN_DEF).forEach((k) => { if (!PLANS[k]) PLANS[k] = JSON.parse(JSON.stringify(PLAN_DEF[k])); PLANS[k].t = PLAN_DEF[k].t; PLANS[k].d = PLAN_DEF[k].d; PLANS[k].c = PLAN_DEF[k].c; if (!(+PLANS[k].cost > 100)) PLANS[k].cost = PLAN_DEF[k].cost; });
+    VENDORS.forEach((v) => { if (typeof v.usd !== 'number') v.usd = +v.usd || 0; });
+  }
 
   // 'דוברות' is the mockup's main department; a client may call it שיווק, תקשורת...
   function renameMainDept(name) {
