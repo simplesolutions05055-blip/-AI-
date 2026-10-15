@@ -24,6 +24,15 @@ function db() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 }
 
+
+// ---- AI usage log (v2_usage): what each call cost, per organisation and member ----
+let CUR: { org: string | null; member: string | null } = { org: null, member: null };
+function logUse(row: Record<string, unknown>) {
+  const c = CUR;
+  if (!c.org) return;
+  try { db().from('v2_usage').insert({ org_id: c.org, member_id: c.member, ...row }).then(() => {}, () => {}); } catch { /* usage log never breaks a call */ }
+}
+
 async function claude(key: string, system: string, user: string, maxTokens = 1500, extra: unknown[] = []): Promise<string> {
   const order = goodModel ? [goodModel, ...MODELS.filter((m) => m !== goodModel)] : MODELS;
   let last = '';
@@ -36,6 +45,7 @@ async function claude(key: string, system: string, user: string, maxTokens = 150
     if (res.ok) {
       goodModel = model;
       const d = await res.json();
+      logUse({ kind: 'claude', model, cin: d.usage?.input_tokens ?? 0, cout: d.usage?.output_tokens ?? 0 });
       return (d.content ?? []).filter((c: { type: string }) => c.type === 'text').map((c: { text: string }) => c.text).join('');
     }
     last = await res.text();
@@ -128,6 +138,7 @@ async function claudeWeb(key: string, system: string, user: string, host: string
       });
       if (!res.ok) { last = await res.text(); break; }
       const d = await res.json();
+      logUse({ kind: 'claude', model, cin: d.usage?.input_tokens ?? 0, cout: d.usage?.output_tokens ?? 0 });
       if (d.stop_reason === 'pause_turn') { messages.push({ role: 'assistant', content: d.content }); continue; }
       return (d.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
     }
@@ -184,7 +195,8 @@ Deno.serve(async (req) => {
   const token = req.headers.get('x-primeos-token')?.trim();
   if (!token) return json(req, { error: 'invalid_token' }, 401);
   const database = db();
-  const { data: t } = await database.from('api_tokens').select('org_id').eq('token', token).maybeSingle();
+  const { data: t } = await database.from('api_tokens').select('org_id,member_id').eq('token', token).maybeSingle();
+  CUR = { org: t?.org_id ?? null, member: t?.member_id ?? null };
   let orgName = '';
   if (t) {
     const { data: o } = await database.from('organizations').select('name').eq('id', t.org_id).maybeSingle();

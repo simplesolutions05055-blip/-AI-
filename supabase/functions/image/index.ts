@@ -46,6 +46,16 @@ async function modelsFor(okey: string, prefer = '') {
 }
 const SIZES: Record<string, string> = { square: '1024x1024', portrait: '1024x1536', landscape: '1536x1024' };
 
+
+// ---- AI usage log (v2_usage): what each call cost, per organisation and member ----
+let CUR: { org: string | null; member: string | null } = { org: null, member: null };
+function logUse(row: Record<string, unknown>) {
+  const c = CUR;
+  if (!c.org) return;
+  try { db().from('v2_usage').insert({ org_id: c.org, member_id: c.member, ...row }).then(() => {}, () => {}); } catch { /* usage log never breaks a call */ }
+}
+
+const qKey = (q: string) => (q === 'low' ? 'img_low' : q === 'medium' ? 'img_med' : 'img_high');
 async function claude(key: string, system: string, user: string | unknown[]) {
   let last = '';
   for (const model of CLAUDE_MODELS) {
@@ -54,7 +64,7 @@ async function claude(key: string, system: string, user: string | unknown[]) {
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model, max_tokens: 1200, system, messages: [{ role: 'user', content: user }] }),
     });
-    if (r.ok) return ((await r.json()).content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
+    if (r.ok) { const d = await r.json(); logUse({ kind: 'claude', model, cin: d.usage?.input_tokens ?? 0, cout: d.usage?.output_tokens ?? 0 }); return (d.content ?? []).map((c: { text?: string }) => c.text ?? '').join(''); }
     last = await r.text();
     if (r.status !== 404 && !(r.status === 400 && last.includes('model'))) break;
   }
@@ -114,7 +124,7 @@ async function openaiImage(okey: string, prompt: string, size: string, quality: 
     } else {
       r = await fetch('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` }, body: JSON.stringify({ model, prompt, size, quality, n, output_format: 'jpeg', output_compression: 90 }) });
     }
-    if (r.ok) { const data = (await r.json()).data ?? []; return { b64: data[0]?.b64_json ?? '', all: data.map((x: any) => x.b64_json).filter(Boolean) as string[], model }; }
+    if (r.ok) { const data = (await r.json()).data ?? []; logUse({ kind: 'openai', model, [qKey(quality)]: data.length }); return { b64: data[0]?.b64_json ?? '', all: data.map((x: any) => x.b64_json).filter(Boolean) as string[], model }; }
     last = model + ': ' + (await r.text());
     // a model that is missing or rejects a parameter: try the next one
     if (!(r.status === 404 || r.status === 400 || r.status === 403)) break;
@@ -160,7 +170,8 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
   const d = db();
   const token = req.headers.get('x-primeos-token')?.trim() ?? '';
-  const { data: t } = await d.from('api_tokens').select('org_id').eq('token', token).maybeSingle();
+  const { data: t } = await d.from('api_tokens').select('org_id,member_id').eq('token', token).maybeSingle();
+  CUR = { org: t?.org_id ?? null, member: t?.member_id ?? null };
   const { data: a } = t ? { data: null } : await d.from('admin_tokens').select('admin_id').eq('token', token).maybeSingle();
   if (!t && !a) return json(req, { error: 'invalid_token' }, 401);
 
@@ -278,7 +289,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
         headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` },
         body: JSON.stringify({ model, prompt, size, quality: p.quality ?? 'high', n: 1, output_format: 'jpeg', output_compression: 90 }),
       });
-      if (r.ok) { b64 = (await r.json()).data?.[0]?.b64_json ?? ''; used = model; break; }
+      if (r.ok) { b64 = (await r.json()).data?.[0]?.b64_json ?? ''; used = model; logUse({ kind: 'openai', model, [qKey(p.quality ?? 'high')]: 1 }); break; }
       last = model + ': ' + (await r.text());
       if (!(r.status === 404 || r.status === 400 || r.status === 403)) break;
     }

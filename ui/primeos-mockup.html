@@ -598,7 +598,7 @@ body{overflow-x:hidden}
 .org-cell{display:inline-flex;align-items:center;gap:10px;cursor:pointer;line-height:1.3}
 .org-cell:hover b{color:var(--brand)}.org-cell.sm{gap:7px;font-size:13px}
 .row-acts{display:flex;gap:6px;justify-content:flex-end}
-.uwrap{display:flex;align-items:center;gap:8px;min-width:120px}.uwrap span,.uwrap b{font-size:12.5px;min-width:34px}
+.uwrap{display:flex;align-items:center;gap:8px;min-width:120px}.tbl-wrap td .uwrap{min-width:88px}@media(max-width:1500px){body.is-admin .tbl-wrap th,body.is-admin .tbl-wrap td{padding-inline:9px}}.uwrap span,.uwrap b{font-size:12.5px;min-width:34px}
 .ubar{flex:1;height:8px;border-radius:999px;background:rgba(9,36,101,.07);overflow:hidden}
 .ubar span{display:block;height:100%;border-radius:999px;background:linear-gradient(270deg,#0124C7,#4A1BE8)}
 .ubar.cy span{background:linear-gradient(270deg,#0296D8,#01B6FD)}.ubar.pu span{background:linear-gradient(270deg,#7501F6,#A45BFF)}.ubar.bl span{background:linear-gradient(270deg,#46B000,#8BE83A)}
@@ -1221,7 +1221,7 @@ body:has(.action-bar) .ai-panel{bottom:154px}
 .err-t{font-size:12px;color:var(--bad);font-weight:600}
 .nw-depts{display:flex;flex-direction:column;gap:8px;margin-top:16px}
 .nwd{display:grid;grid-template-columns:32px 1.2fr 1fr 1fr 36px;gap:10px;align-items:end;padding:12px;border:1px solid var(--line);border-radius:14px;background:#fff}
-.nwd:has(.locked){grid-template-columns:32px 1fr}
+.nwd:has(.locked){grid-template-columns:32px 1.4fr 1fr}
 .nwd.has-err{border-color:var(--bad)}
 .nwd .err-t{grid-column:2/-1}
 .nwd-n{width:28px;height:28px;border-radius:9px;background:var(--brand-100);color:var(--brand);display:grid;place-items:center;font-weight:800;margin-bottom:6px}
@@ -3577,14 +3577,25 @@ ACT.openCampA=id=>{S.campId=id;S.campMode='approve';campById(id).cur=0;go('bulkR
 
 
 /* ================= ADMIN v2: cost model $50 / $15 ================= */
-const PLANS={appr:{t:'מסלול אישורים',d:'אישורי תוכן · משתמשים לפי צורך',cost:50,c:'#0124C7'},solo:{t:'משתמש יחיד',d:'ללא אישורי תוכן · משתמש מערכת 1',cost:15,c:'#01B6FD'}};
+const PLANS={appr:{t:'משתמש ארגון',d:'מחלקות, משתמשי מחלקה ואישורי תוכן',cost:1750,c:'#0124C7'},solo:{t:'משתמש יחיד',d:'משתמש אחד, בלי מחלקות',cost:950,c:'#01B6FD'}};
+/* money model: prices in ILS per month (annual plan, + VAT); expenses = vendor subscriptions (USD) + AI usage per client */
+const VAT=0.18;
+const FX={usd:3.7};
+const VENDORS=[{k:'claude',n:'Claude',usd:200,note:'מנוי'},{k:'gpt',n:'ChatGPT',usd:40,note:'מנוי'},{k:'vercel',n:'Vercel',usd:25,note:'Pro'},{k:'supabase',n:'Supabase',usd:20,note:'Pro'},{k:'zernio',n:'Zernio',usd:0,note:'פרסום'}];
+const RATES={cin:3,cout:15,img_low:0.02,img_med:0.07,img_high:0.19};
+const PACKS=[{k:'p1',n:'חבילת גרפיקות ומסמכים',q:'',price:null},{k:'p2',n:'חבילת מצגות',q:'',price:null},{k:'p3',n:'חבילת סרטונים',q:'',price:null}];
+const vendorsUsd=()=>VENDORS.reduce((s,v)=>s+(+v.usd||0),0);
+const vendorsIls=()=>vendorsUsd()*FX.usd;
+function aiCost(u){u=u||{};return FX.usd*((+u.cin||0)/1e6*RATES.cin+(+u.cout||0)/1e6*RATES.cout+(+u.img_low||0)*RATES.img_low+(+u.img_med||0)*RATES.img_med+(+u.img_high||0)*RATES.img_high);}
+const withVat=n=>Math.round(n*(1+VAT));
+function orgRevM(o){return (o.st==='paused'||o.st==='trial')?0:PLANS[o.plan].cost;}
 delete OST.overdue;
 const PLAN_OF={o1:'appr',o2:'appr',o3:'appr',o4:'solo',o5:'appr',o6:'solo',o7:'solo',o8:'appr'};
 ORGS.forEach(o=>{o.plan=PLAN_OF[o.id]||'appr';o.rev=null;if(o.st==='overdue')o.st='active';});
 ORGS.find(o=>o.id==='o7').pausedFrom=9;
 for(let i=AUSERS.length-1;i>=0;i--){const u=AUSERS[i];const o=orgById(u.org);if(o.plan==='solo'&&AUSERS.filter(x=>x.org===o.id).indexOf(u)>0)AUSERS.splice(i,1);}
 AUSERS.forEach((u,i)=>u.id=i);
-const usd=n=>'$'+Math.round(n).toLocaleString('en-US');
+const usd=n=>'₪'+Math.round(n).toLocaleString('en-US');
 const orgCost=o=>o.st==='paused'?0:PLANS[o.plan].cost;
 const orgRevV=o=>o.rev==null?null:+o.rev;
 function sinceM(o){const[m,y]=o.since.split('/').map(Number);return y<2026?0:m;}
@@ -3592,7 +3603,7 @@ const MNUM=[4,5,6,7,8,9];
 function monthCost(m,list){return (list||ORGS).reduce((s,o)=>s+((sinceM(o)<=m&&!(o.pausedFrom&&m>=o.pausedFrom))?PLANS[o.plan].cost:0),0);}
 function monthRev(m,list){return (list||ORGS).reduce((s,o)=>s+((o.rev!=null&&sinceM(o)<=m&&!(o.pausedFrom&&m>=o.pausedFrom))?+o.rev:0),0);}
 function T2(list){const c=list.reduce((s,o)=>s+orgCost(o),0);const withRev=list.filter(o=>o.rev!=null);const r=withRev.reduce((s,o)=>s+(+o.rev),0);return {c,r,hasRev:withRev.length>0,nRev:withRev.length};}
-function planBadge(k){return '<span class="plan-b plan-'+k+'">'+(k==='appr'?ic('checkc',13,2):ic('users',13,2))+PLANS[k].t+' · '+usd(PLANS[k].cost)+'</span>';}
+function planBadge(k){return '<span class="plan-b plan-'+k+'">'+(k==='appr'?ic('checkc',13,2):ic('users',13,2))+PLANS[k].t+'</span>';}
 function revCell(o){const r=orgRevV(o);return r==null?'<button class="rev-empty" data-act="aRevEdit:'+o.id+'">'+ic('create',13,2)+' הגדרה</button>':'<b>'+usd(r)+'</b>';}
 function costChart(W,list){
   list=list||ORGS;W=W||640;const H=230,pl=8,pr=52,pt=22,pb=34;
@@ -3632,7 +3643,7 @@ SCREENS.a_dash={
     '<div class="grid g-4" style="margin-bottom:16px">'+
       stat({l:'לקוחות פעילים',n:act.length,s:'מתוך '+ORGS.length,i:'bldg',nav:'a_orgs',f:'draft'})+
       stat({l:'משתמשים',n:AUSERS.length,s:AUSERS.filter(u=>u.st==='פעיל').length+' פעילים',i:'users',nav:'a_users',f:'pending'})+
-      stat({l:'הוצאה חודשית',n:usd(T.c),s:byPlan('appr').length+' × $50 · '+byPlan('solo').length+' × $15',i:'refresh',nav:'a_finance',f:'scheduled'})+
+      stat({l:'הוצאה חודשית',n:usd(T.c),s:'ספקים + שימוש AI',i:'refresh',nav:'a_finance',f:'scheduled'})+
       stat({l:'הכנסה חודשית',n:T.hasRev?usd(T.r):'טרם הוגדר',s:T.hasRev?T.nRev+' לקוחות עם הכנסה':'אין עדיין מודל הכנסות',i:'chart',nav:'a_finance',f:'published'})+
     '</div>'+
     '<div class="split-wide" style="margin-bottom:16px">'+
@@ -3667,7 +3678,7 @@ SCREENS.a_orgs={
       '<select id="aPlan"><option value="">כל המסלולים</option>'+Object.entries(PLANS).map(([k,p])=>'<option value="'+k+'"'+(f.plan===k?' selected':'')+'>'+p.t+'</option>').join('')+'</select>'+
       '<select id="aSt"><option value="">כל הסטטוסים</option>'+Object.entries(OST).map(([k,v])=>'<option value="'+k+'"'+(f.st===k?' selected':'')+'>'+v.t+'</option>').join('')+'</select>'+
       '<select id="aType"><option value="">כל סוגי הגוף</option>'+OTYPES.map(t=>'<option'+(f.type===t?' selected':'')+'>'+t+'</option>').join('')+'</select>'+
-      '<select id="aSort">'+[['cost','מיון: הוצאה'],['use','מיון: שימוש'],['users','מיון: משתמשים'],['name','מיון: שם']].map(s=>'<option value="'+s[0]+'"'+(f.sort===s[0]?' selected':'')+'>'+s[1]+'</option>').join('')+'</select>'+
+      '<select id="aSort">'+[['cost','מיון: מחיר'],['use','מיון: שימוש'],['users','מיון: משתמשים'],['name','מיון: שם']].map(s=>'<option value="'+s[0]+'"'+(f.sort===s[0]?' selected':'')+'>'+s[1]+'</option>').join('')+'</select>'+
       (on?'<button class="btn btn-sm" data-act="aClear">'+ic('x',14)+' ניקוי</button>':'')+
     '</div>'+
     '<div class="sum-strip"><span><b>'+list.length+'</b> לקוחות</span><span><b>'+list.reduce((s,o)=>s+orgUsers(o).length,0)+'</b> משתמשים</span><span>הוצאה <b>'+usd(T.c)+'</b></span><span>הכנסה <b>'+(T.hasRev?usd(T.r):'טרם הוגדר')+'</b></span></div>'+
@@ -3832,10 +3843,10 @@ SCREENS.a_purch={
     const on=f.q||f.org||f.type||f.plan||f.month;
     return pageHead({title:'רכישות',actions:'<button class="btn" data-act="toastInfo:הקובץ ירד בפורמט CSV (הדגמה)">'+ic('down',16)+' ייצוא</button>'})+
     '<div class="grid g-4" style="margin-bottom:16px">'+
-      stat({l:'מנויים פעילים',n:ORGS.filter(o=>o.st!=='paused').length,s:ORGS.filter(o=>o.plan==='appr'&&o.st!=='paused').length+' אישורים · '+ORGS.filter(o=>o.plan==='solo'&&o.st!=='paused').length+' משתמש יחיד',i:'bldg',nav:'a_purch',f:'draft'})+
+      stat({l:'מנויים פעילים',n:ORGS.filter(o=>o.st!=='paused').length,s:ORGS.filter(o=>o.plan==='appr'&&o.st!=='paused').length+' משתמש ארגון · '+ORGS.filter(o=>o.plan==='solo'&&o.st!=='paused').length+' משתמש יחיד',i:'bldg',nav:'a_purch',f:'draft'})+
       stat({l:'מנויים חדשים החודש',n:thisM.filter(x=>x.type==='new'||x.type==='trial').length,s:'ספטמבר 2026',i:'spark',nav:'a_purch',f:'published'})+
       stat({l:'רכישות החודש',n:thisM.length,s:'חידושים, משתמשים ושינויים',i:'library',nav:'a_purch',f:'pending'})+
-      stat({l:'עלות החודש',n:usd(thisM.reduce((s,x)=>s+x.cost,0)),s:'לפי $50 / $15 ללקוח',i:'refresh',nav:'a_purch',f:'scheduled'})+
+      stat({l:'הכנסה חדשה החודש',n:usd(thisM.reduce((s,x)=>s+x.cost,0)),s:'לפי מחירי המסלולים, לפני מע״מ',i:'chart',nav:'a_purch',f:'scheduled'})+
     '</div>'+
     '<div class="filters">'+
       '<div class="search" style="max-width:260px;flex:1 1 200px"><span class="ic">'+ic('search',16)+'</span><input type="text" id="pQ" value="'+esc(f.q)+'" placeholder="חיפוש לקוח או פרט"></div>'+
@@ -3880,8 +3891,8 @@ waRequests.forEach(r=>{if(r.ph==='054-902-0253')r.ph='054-771-2034';});
 DEPT_INFO['תרבות ואירועים'].phones=DEPT_INFO['תרבות ואירועים'].phones.map(p=>p==='054-9020253'?'054-7712034':p);
 
 /* ---------- plans: basic / extended ---------- */
-PLANS.appr.t='מסלול מורחב'; PLANS.appr.d='אישורי תוכן · מחלקות · כמה משתמשים';
-PLANS.solo.t='מסלול בסיסי'; PLANS.solo.d='משתמש מערכת אחד · ללא אישורים ומחלקות';
+PLANS.appr.t='משתמש ארגון'; PLANS.appr.d='אישורי תוכן · מחלקות · משתמשי מחלקה';
+PLANS.solo.t='משתמש יחיד'; PLANS.solo.d='משתמש אחד · ללא אישורים ומחלקות';
 ORGS.forEach(o=>{o.rev=null;o.uLim=o.plan==='solo'?1:Math.max(5,orgUsers(o).length);o.dLim=o.plan==='solo'?0:5;
   const k=+o.id.slice(1);o.decks=Math.round(o.items*.08)+k%3;o.vids=Math.round(o.items*.05)+(k%2);o.ai=Math.round(o.logins*1.7)+k*6;
   o.agr={start:o.since.replace('/','.'),term:k%3===0?'שנתי':'חודשי',signed:o.st!=='trial',signedAt:o.st!=='trial'?'1.'+o.since.replace('/','.'):'',signer:o.contact};});
@@ -3925,7 +3936,7 @@ channels.find(c=>c.k==='tk').st='מחובר';channels.find(c=>c.k==='tk').acc='@
 
 /* ---------- interface view: extended (main) / extended (department) / basic ---------- */
 S.view='ext'; S.dept='תרבות ואירועים'; S.docqDone=false;
-const VIEW_T={ext:'מסלול מורחב',dept:'ממשק מחלקה',basic:'מסלול בסיסי'};
+const VIEW_T={ext:'משתמש ארגון',dept:'ממשק מחלקה',basic:'משתמש יחיד'};
 const NAV_V={
   ext:['dashboard','create','library','calendar','approvals','publications','channels','insights','brand','team','reports','settings'],
   dept:['dashboard','create','library','calendar','reports','settings'],
@@ -4884,7 +4895,7 @@ SCREENS.a_dash={
     '<div class="grid g-4" style="margin-bottom:16px">'+
       stat({l:'לקוחות פעילים',n:act.length,s:byPlan('appr').length+' מורחב · '+byPlan('solo').length+' בסיסי',i:'bldg',nav:'a_orgs',f:'draft'})+
       stat({l:'משתמשים',n:AUSERS.length,s:AUSERS.filter(u=>u.st==='פעיל').length+' פעילים',i:'users',nav:'a_users',f:'pending'})+
-      stat({l:'הוצאה חודשית',n:usd(T.c),s:byPlan('appr').length+' × $50 · '+byPlan('solo').length+' × $15',i:'refresh',nav:'a_finance',f:'scheduled'})+
+      stat({l:'הכנסה חודשית',n:usd(T.r),s:byPlan('appr').length+' × '+usd(PLANS.appr.cost)+' · '+byPlan('solo').length+' × '+usd(PLANS.solo.cost),i:'chart',nav:'a_revenue',f:'scheduled'})+
       stat({l:'תוצרים החודש',n:(U.gfx+U.docs+U.decks+U.vids).toLocaleString('en-US'),s:U.gfx+' גרפיקות · '+U.docs+' מסמכים · '+U.ai+' שאלות AI',i:'spark',nav:'a_finance',f:'published'})+
     '</div>'+
     '<div class="split-wide" style="margin-bottom:16px">'+
@@ -4915,18 +4926,18 @@ SCREENS.a_orgs={
       '<select id="aPlan"><option value="">כל המסלולים</option>'+Object.entries(PLANS).map(([k,p])=>'<option value="'+k+'"'+(f.plan===k?' selected':'')+'>'+p.t+'</option>').join('')+'</select>'+
       '<select id="aSt"><option value="">כל הסטטוסים</option>'+Object.entries(OST).map(([k,v])=>'<option value="'+k+'"'+(f.st===k?' selected':'')+'>'+v.t+'</option>').join('')+'</select>'+
       '<select id="aType"><option value="">כל סוגי הגוף</option>'+OTYPES.map(t=>'<option'+(f.type===t?' selected':'')+'>'+t+'</option>').join('')+'</select>'+
-      '<select id="aSort">'+[['cost','מיון: הוצאה'],['use','מיון: שימוש'],['users','מיון: משתמשים'],['name','מיון: שם']].map(s=>'<option value="'+s[0]+'"'+(f.sort===s[0]?' selected':'')+'>'+s[1]+'</option>').join('')+'</select>'+
+      '<select id="aSort">'+[['cost','מיון: מחיר'],['use','מיון: שימוש'],['users','מיון: משתמשים'],['name','מיון: שם']].map(s=>'<option value="'+s[0]+'"'+(f.sort===s[0]?' selected':'')+'>'+s[1]+'</option>').join('')+'</select>'+
       (on?'<button class="btn btn-sm" data-act="aClear">'+ic('x',14)+' ניקוי</button>':'')+'</div>'+
-    '<div class="sum-strip"><span><b>'+list.length+'</b> לקוחות</span><span><b>'+list.reduce((s,o)=>s+orgUsers(o).length,0)+'</b> משתמשים</span><span>הוצאה <b>'+usd(T.c)+'</b></span><span><b>'+list.reduce((s,o)=>s+o.items,0)+'</b> פריטים החודש</span></div>'+
-    (list.length?'<div class="tbl-wrap"><table class="responsive"><thead><tr><th>לקוח</th><th>מסלול</th><th>סטטוס</th><th>משתמשים</th><th>מחלקות</th><th>שימוש</th><th>הוצאה</th><th>הסכם</th><th></th></tr></thead><tbody>'+
+    '<div class="sum-strip"><span><b>'+list.length+'</b> לקוחות</span><span><b>'+list.reduce((s,o)=>s+orgUsers(o).length,0)+'</b> משתמשים</span><span>הכנסה לחודש <b>'+usd(list.reduce((s,o)=>s+orgRevM(o),0))+'</b></span><span><b>'+list.reduce((s,o)=>s+o.items,0)+'</b> פריטים החודש</span></div>'+
+    (list.length?'<div class="tbl-wrap"><table class="responsive"><thead><tr><th>לקוח</th><th>מסלול</th><th>סטטוס</th><th>משתמשים</th><th>מחלקות</th><th>שימוש</th><th>הכנסה לחודש</th><th>הסכם</th><th></th></tr></thead><tbody>'+
     list.map(o=>{const nu=orgUsers(o).length;return '<tr>'+
       '<td data-l="לקוח"><span class="org-cell" data-act="aOrg:'+o.id+'">'+orgAv(o)+'<span><b>'+esc(o.n)+'</b><br><span class="t-sub">'+o.type+'</span></span></span></td>'+
       '<td data-l="מסלול">'+planBadge(o.plan)+'</td><td data-l="סטטוס">'+orgBadge(o.st)+'</td>'+
       '<td data-l="משתמשים"><b>'+nu+'</b><span class="t-sub"> / '+o.uLim+'</span></td><td data-l="מחלקות">'+(o.plan==='solo'?'<span class="t-sub">-</span>':(o.id==='o1'?DEPTS.length:Math.min(o.dLim,3+(+o.id.slice(1))%3))+'<span class="t-sub"> / '+o.dLim+'</span>')+'</td>'+
       '<td data-l="שימוש"><div class="uwrap">'+uBar(o.gfx,QUOTA.gfx)+'<span>'+pct(o.gfx,QUOTA.gfx)+'%</span></div></td>'+
-      '<td data-l="הוצאה"><b class="neg">'+usd(orgCost(o))+'</b></td>'+
-      '<td data-l="הסכם"><button class="agr-link" data-act="agrView:'+o.id+'">'+ic('doc',14)+(o.agr.signed?'נחתם':'ממתין לחתימה')+'</button></td>'+
-      '<td><span class="row-acts"><button class="btn btn-sm" data-act="aOrg:'+o.id+'">פרופיל</button><button class="btn btn-sm btn-ghost" data-act="imp:'+o.id+'">'+ic('eye',15)+' כניסה</button></span></td></tr>';}).join('')+
+      '<td data-l="הכנסה"><b class="'+(orgRevM(o)?'pos':'')+'">'+(orgRevM(o)?usd(orgRevM(o)):'ניסיון')+'</b></td>'+
+      '<td data-l="הסכם"><button class="agr-link" data-act="agrView:'+o.id+'">'+ic('doc',14)+(o.agr.signed?'נחתם':'ממתין')+'</button></td>'+
+      '<td><span class="row-acts"><button class="btn btn-sm" data-act="aOrg:'+o.id+'">פרופיל</button><button class="icon-btn" data-act="imp:'+o.id+'" title="כניסה לממשק הלקוח" aria-label="כניסה לממשק הלקוח">'+ic('eye',16)+'</button></span></td></tr>';}).join('')+
     '</tbody></table></div>':emptyState({i:'bldg',t:'אין לקוחות שתואמים לסינון',d:'נסו לשנות את הסינון.'}));
   },
   mount(){bindAF([['aQ','q','input'],['aSt','st'],['aType','type'],['aPlan','plan'],['aSort','sort']],S.aF);}
@@ -4940,7 +4951,7 @@ SCREENS.a_org={
     if(tab==='buy'){panel=purchTable(PURCH.filter(x=>x.org===o.id),true);}
     else if(tab==='over'){
       panel='<div class="grid g-4" style="margin-bottom:16px">'+
-        [['משתמשים',us.length+' / '+o.uLim,PLANS[o.plan].t,'users'],['פריטים שנוצרו',o.items,'החודש','library'],['שאלות AI',o.ai,'החודש','bot'],['הוצאה חודשית',usd(cost),PLANS[o.plan].t,'refresh']]
+        [['משתמשים',us.length+' / '+o.uLim,PLANS[o.plan].t,'users'],['פריטים שנוצרו',o.items,'החודש','library'],['שאלות AI',o.ai,'החודש','bot'],['הכנסה חודשית',orgRevM(o)?usd(orgRevM(o)):'ניסיון',PLANS[o.plan].t+' · + מע״מ','chart']]
         .map(k=>'<div class="card card-pad kpi"><span class="t-sub" style="display:flex;gap:8px;align-items:center">'+ic(k[3],15)+k[0]+'</span><b>'+k[1]+'</b><span class="t-sub">'+k[2]+'</span></div>').join('')+'</div>'+
         '<div class="grid g-2">'+
         '<div class="card"><div class="card-head">'+ic('img',18)+'<h3>מכסות ושימוש החודש</h3></div><div class="card-pad quota">'+
@@ -4971,7 +4982,7 @@ SCREENS.a_org={
         '<div class="field"><label>סוג הגוף</label><select id="eoT">'+OTYPES.map(t=>'<option'+(t===o.type?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
         '<div class="field"><label>סטטוס חשבון</label><select id="eoS">'+Object.entries(OST).map(([k,v])=>'<option value="'+k+'"'+(k===o.st?' selected':'')+'>'+v.t+'</option>').join('')+'</select></div>'+
         '<div class="field"><label>מכסת משתמשים</label><input type="text" id="eoUL" dir="ltr" style="text-align:right" value="'+o.uLim+'"></div>'+
-        '<div class="field"><label>מכסת מחלקות <span class="hint">מסלול מורחב</span></label><input type="text" id="eoDL" dir="ltr" style="text-align:right" value="'+o.dLim+'"'+(o.plan==='solo'?' disabled':'')+'></div>'+
+        '<div class="field"><label>מכסת מחלקות <span class="hint">משתמש ארגון</span></label><input type="text" id="eoDL" dir="ltr" style="text-align:right" value="'+o.dLim+'"'+(o.plan==='solo'?' disabled':'')+'></div>'+
         '<div class="field"><label>איש קשר</label><input type="text" id="eoP" value="'+esc(o.contact)+'"></div>'+
         '<div class="field"><label>טלפון</label><input type="text" dir="ltr" style="text-align:right" value="'+o.phone+'"></div>'+
         '<div class="field"><label>דוא״ל</label><input type="email" dir="ltr" style="text-align:right" value="'+o.mail+'"></div>'+
@@ -4980,7 +4991,7 @@ SCREENS.a_org={
     const req=REQS.filter(r=>r.org===o.id&&r.st==='new');
     return '<div class="crumb"><button data-nav="a_orgs">לקוחות</button>'+ic('chevL',13,2)+'<span>'+esc(o.n)+'</span></div>'+
     '<div class="card org-hero"><div class="oh-main">'+orgAv(o,64)+'<div><h1>'+esc(o.n)+'</h1><div class="oh-meta">'+orgBadge(o.st)+planBadge(o.plan)+'<span class="chip">'+o.type+'</span><span class="t-sub">מאז '+o.since+'</span></div></div>'+
-    '<div class="oh-money"><div><span>הוצאה</span><b class="neg">'+usd(cost)+'</b></div><div><span>פריטים</span><b>'+o.items+'</b></div></div>'+
+    '<div class="oh-money"><div><span>הכנסה לחודש</span><b class="pos">'+(orgRevM(o)?usd(orgRevM(o)):'ניסיון')+'</b></div><div><span>עלות AI</span><b class="neg">'+usd(aiCost(o.use))+'</b></div></div>'+
     '<div class="oh-acts"><button class="btn" data-act="agrView:'+o.id+'">'+ic('doc',16)+' הסכם המנוי</button><button class="btn btn-primary" data-act="imp:'+o.id+'">'+ic('eye',16)+' כניסה לממשק הלקוח</button></div></div></div>'+
     (req.length?'<div class="note req-note">'+ic('limit',16)+'<span><b>בקשת הרחבה ממתינה:</b> '+req.map(r=>(r.type==='users'?'עוד '+r.add+' משתמשים':'עוד '+r.add+' מחלקות')+' · '+esc(r.who)).join(' · ')+'</span><button class="btn btn-sm btn-primary" data-act="reqOpen:'+req[0].id+'">טיפול בבקשה</button></div>':'')+
     '<div class="tabs">'+[['over','סקירה'],['buy','רכישות ('+PURCH.filter(x=>x.org===o.id).length+')'],['users','משתמשים ('+us.length+')'],['fin','הוצאות ושימוש'],['account','הגדרות חשבון']].map(t=>'<button class="'+(tab===t[0]?'on':'')+'" data-act="tab:aorg:'+t[0]+'">'+t[1]+'</button>').join('')+'</div>'+panel;
@@ -5041,7 +5052,7 @@ SCREENS.a_finance={
       stat({l:'הוצאות',n:usd(C),s:rows.length+' לקוחות',i:'refresh',nav:'a_finance',f:'scheduled'})+
       stat({l:'תוצרים',n:outs.toLocaleString('en-US'),s:U.gfx+' גרפיקות · '+U.docs+' מסמכים',i:'spark',nav:'a_finance',f:'published'})+
       stat({l:'שאלות AI',n:U.ai.toLocaleString('en-US'),s:'בכל הממשקים',i:'bot',nav:'a_finance',f:'pending'})+
-      stat({l:'הוצאה לתוצר',n:outs?'$'+(C/outs).toFixed(2):'-',s:perUser+' משתמשים · '+(perUser?usd(C/perUser/idx.length):'-')+' למשתמש בחודש',i:'users',nav:'a_finance',f:'draft'})+
+      stat({l:'הוצאה לתוצר',n:outs?'₪'+(C/outs).toFixed(2):'-',s:perUser+' משתמשים · '+(perUser?usd(C/perUser/idx.length):'-')+' למשתמש בחודש',i:'users',nav:'a_finance',f:'draft'})+
     '</div>'+
     '<div class="split-wide" style="margin-bottom:16px"><div class="card"><div class="card-head">'+ic('chart',18)+'<h3>הוצאות לפי חודש</h3></div><div class="card-pad" style="padding-top:12px">'+costChart(760,list)+'</div></div>'+
       '<div class="card"><div class="card-head">'+ic('spark',18)+'<h3>שימוש לפי סוג</h3></div><div class="card-pad quota">'+USE_T.map(t=>'<div><div class="q-row"><b>'+ic(t[2],14)+' '+t[1]+'</b><span>'+U[t[0]].toLocaleString('en-US')+'</span></div>'+uBar(U[t[0]],Math.max(...USE_T.map(x=>U[x[0]]),1),'pu')+'</div>').join('')+'</div></div></div>'+
@@ -5056,11 +5067,11 @@ SCREENS.a_finance={
 /* purchases: no client price, no income */
 purchTable=function(list,compact){
   if(!list.length)return emptyState({i:'library',t:'אין רכישות להצגה',d:'נסו לשנות את הסינון.'});
-  return '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>תאריך</th>'+(compact?'':'<th>לקוח</th>')+'<th>סוג</th><th>מסלול</th><th>פרטים</th><th>עלות</th></tr></thead><tbody>'+
+  return '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>תאריך</th>'+(compact?'':'<th>לקוח</th>')+'<th>סוג</th><th>מסלול</th><th>פרטים</th><th>מחיר לחודש</th></tr></thead><tbody>'+
   list.map(x=>{const o=orgById(x.org),t=PTYPE[x.type];return '<tr'+(compact?'':' data-act="aOrgBuy:'+o.id+'"')+'><td data-l="תאריך"><b>'+fmtDate(x.date)+'</b></td>'+
     (compact?'':'<td data-l="לקוח"><span class="org-cell">'+orgAv(o,30)+'<b>'+esc(o.n)+'</b></span></td>')+
     '<td data-l="סוג"><span class="badge '+t.c+'">'+ic(t.i,13,2)+t.t+'</span></td><td data-l="מסלול">'+planBadge(x.plan)+'</td>'+
-    '<td data-l="פרטים" class="t-sub">'+esc(x.note)+'</td><td data-l="עלות"><b class="'+(x.cost?'neg':'')+'">'+(x.cost?usd(x.cost):'$0')+'</b></td></tr>';}).join('')+'</tbody></table></div>';
+    '<td data-l="פרטים" class="t-sub">'+esc(x.note)+'</td><td data-l="מחיר"><b class="'+(x.cost?'pos':'')+'">'+(x.cost?usd(x.cost):usd(0))+'</b></td></tr>';}).join('')+'</tbody></table></div>';
 };
 const _purR6=SCREENS.a_purch.render;
 SCREENS.a_purch.render=function(){return _purR6.call(this).replace(/<span>הכנסה <b>טרם תומחר<\/b><\/span>/,'');};
@@ -5136,15 +5147,16 @@ function agrDoc(o,x){
     '<div class="ad-sec"><h4>1. הצדדים</h4><p>PrimeOS (להלן: „הספק”) ו<b>'+esc(o.n)+'</b>, '+esc(o.type)+' (להלן: „הלקוח”), באמצעות '+esc(a.signer||o.contact)+'.</p></div>'+
     '<div class="ad-sec"><h4>2. השירות</h4><p>גישה למערכת PrimeOS לניהול, יצירה, תזמון ופרסום של תוכן ברשתות החברתיות, במסלול '+esc(PLANS[o.plan].t)+'.</p>'+
       '<div class="ad-tbl">'+[['משתמשים',ext?o.uLim+' משתמשים':'משתמש מערכת אחד'],['מחלקות',ext?o.dLim+' מחלקות, ממשק נפרד לכל מחלקה':'לא כלול'],['אישורי תוכן',ext?'כלול, כולל אישור ב־WhatsApp':'לא כלול'],['מכסה חודשית',QUOTA.gfx+' גרפיקות · '+QUOTA.docs+' מסמכים, לא מצטברת'],['ערוצים',(o.ch||1)+(o.xch?'+'+o.xch:'')+' ערוצים מחוברים'],['תמיכה','מדריכים, סרטוני הדרכה, עוזר AI ופגישות וידאו']].map(r=>'<div><span>'+r[0]+'</span><b>'+r[1]+'</b></div>').join('')+'</div></div>'+
-    '<div class="ad-sec"><h4>3. תקופה</h4><p>תחילת המנוי: '+esc(a.start)+'. מסלול '+esc(a.term)+', מתחדש אוטומטית עד להודעה על סיום.</p></div>'+
-    '<div class="ad-sec"><h4>4. תנאים מסחריים</h4><p>לפי הצעת המחיר שנחתמה ומצורפת להסכם.</p></div>'+
+    '<div class="ad-sec"><h4>3. תקופה</h4><p>תחילת המנוי: '+esc(a.start)+'. מנוי שנתי'+(a.startIso?' עד '+heDate(addMonths(a.startIso,12)):'')+', מתחדש אוטומטית לשנה נוספת אלא אם נמסרה הודעה על סיום 30 יום לפני תום התקופה.'+(a.trial?' תקופת ניסיון: חודשיים ללא עלות, מ־'+esc(a.start)+(a.startIso?' עד '+heDate(addMonths(a.startIso,2))+'. החיוב מתחיל ב־'+heDate(addMonths(a.startIso,2))+'.':'.'):'')+'</p></div>'+
+    '<div class="ad-sec"><h4>4. תנאים מסחריים</h4><p>דמי המנוי: '+usd(PLANS[o.plan].cost)+' לחודש בתוספת מע״מ ('+usd(withVat(PLANS[o.plan].cost))+' כולל מע״מ), במסלול '+esc(PLANS[o.plan].t)+'. חבילות הרחבה לכמויות יצירה נרכשות בנפרד לפי המחירון.</p></div>'+
     '<div class="ad-sec"><h4>5. הרחבת המנוי</h4><p>בקשה להגדלת משתמשים או מחלקות נשלחת מתוך המערכת ונכנסת לתוקף לאחר אישור הספק.</p></div>'+
-    '<div class="ad-sign"><div><span>חתימת הלקוח</span><b>'+(a.signed?'<i class="sig">'+esc(a.signer||o.contact)+'</i>':'')+'</b></div><div><span>חתימת הספק</span><b><i class="sig">PrimeOS</i></b></div></div>'+
-    '<div class="note" style="margin-top:12px">'+ic('alert',14)+'<span>נוסח לדוגמה למוקאפ. הנוסח המחייב ייקבע ויאושר משפטית לפני שימוש.</span></div></div>';
+    '<div class="ad-sign"><div><span>חתימת הלקוח</span><b>'+(a.signed?'<i class="sig">'+esc(a.signer||o.contact)+'</i><small class="t-sub" style="display:block;font-size:11px">'+esc(a.signedAt||'')+'</small>':'')+'</b></div><div><span>חתימת הספק</span><b><i class="sig">PrimeOS</i></b></div></div></div>';
 }
 ACT.agrView=id=>{const o=orgById(id);
   openModal('<div class="mb">'+agrDoc(o)+'</div><div class="modal-foot"><button class="btn btn-primary" data-act="toastInfo:ההסכם ירד כ־PDF (הדגמה)">'+ic('down',16)+' הורדת PDF</button>'+
-  (o.agr.signed?'':'<button class="btn" data-act="toastInfo:ההסכם נשלח שוב לחתימה דיגיטלית">'+ic('sign',16)+' שליחה לחתימה</button>')+'<button class="btn" data-act="closeModal">סגירה</button></div>',true);};
+  (o.agr.signed?'':'<button class="btn" data-act="agrSend:'+o.id+'">'+ic('sign',16)+' שליחה לחתימה</button><button class="btn" data-act="agrLink:'+o.id+'">'+ic('copy',16)+' העתקת קישור לחתימה</button>')+'<button class="btn" data-act="closeModal">סגירה</button></div>',true);};
+ACT.agrSend=id=>{toast('נשלח לחתימה','הקישור לחתימה נשלח ללקוח.');};
+ACT.agrLink=id=>{toast('הקישור הועתק','');};
 
 /* ================= NEW CLIENT WIZARD by plan (19) ================= */
 const NW_STEPS={
@@ -5153,7 +5165,11 @@ const NW_STEPS={
 };
 function nwNew(){return {plan:'appr',step:0,org:{n:'',type:OTYPES[0],addr:'',web:'',phone:'',mail:''},admin:{n:'',role:'דובר/ת',ph:'',mail:''},uLim:5,dLim:5,
   depts:[{n:'דוברות',ap:'',ph:'',main:true},{n:'',ap:'',ph:''}],ch:['fb','ig'],xch:0,addons:{deck:false,video:false},
-  agr:{start:'2026-10-01',term:'חודשי',sign:'digital'},send:{mail:true,wa:true},err:{}};}
+  agr:{start:todayISO(),term:'שנתי',trial:true,sign:'digital'},send:{mail:true,wa:true},err:{}};}
+function todayISO(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function addMonths(iso,n){const[y,m,d]=iso.split('-').map(Number);const x=new Date(y,m-1+n,d);return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');}
+const heDate=iso=>{const[y,m,d]=iso.split('-');return +d+'.'+(+m)+'.'+y;};
+const mkey=iso=>+iso.slice(0,7).replace('-','');
 ACT.aNewOrg=()=>{closeDrawer();S.nw=nwNew();go('a_new');};
 function nwField(k,label,val,opts){opts=opts||{};const e=S.nw.err[k];
   return '<div class="field'+(opts.full?' full':'')+(e?' has-err':'')+'"><label for="nw-'+k+'">'+label+(opts.req?' <span class="req">*</span>':'')+(opts.hint?' <span class="hint">'+opts.hint+'</span>':'')+'</label>'+
@@ -5166,22 +5182,22 @@ SCREENS.a_new={
     const w=S.nw||(S.nw=nwNew());const steps=NW_STEPS[w.plan];const cur=steps[w.step][0];let body='';
     if(cur==='plan'){
       body='<h3 class="nw-h">איזה מנוי מקימים?</h3><p class="t-sub nw-p">סוג המנוי קובע את שלבי ההקמה ואת הממשק שהלקוח יקבל.</p><div class="plan-pick big">'+
-        [['solo','מסלול בסיסי','משתמש מערכת אחד. בלי אישורים ובלי מחלקות. מתאים למתנ״ס, למוסד או לרשות קטנה.',['משתמש אחד','יצירה, לוח, ספרייה ופרסום','נכסי מותג ונתוני ערוצים']],
-         ['appr','מסלול מורחב','דובר/ת או מנהל/ת מערכת, מחלקות עם ממשק נפרד, ואישור תוכן לפני פרסום.',['כמה משתמשים ומחלקות','מרכז אישורים ואישור ב־WhatsApp','ממשק נפרד לכל מחלקה']]]
-        .map(p=>'<button class="tile plan-tile big'+(w.plan===p[0]?' on':'')+'" data-act="nwPlan:'+p[0]+'" style="--pc:'+PLANS[p[0]].c+'"><span class="rt-head"><span class="rt-radio"></span><span class="tn">'+p[1]+'</span><b class="pt-cost">'+usd(PLANS[p[0]].cost)+'<small> עלות/חודש</small></b></span><span class="t-sub">'+p[2]+'</span><span class="pt-feats">'+p[3].map(f=>'<span>'+ic('check',13,2.4)+f+'</span>').join('')+'</span><span class="t-sub">'+NW_STEPS[p[0]].length+' שלבי הקמה</span></button>').join('')+'</div>';
+        [['solo','משתמש יחיד','משתמש מערכת אחד. בלי אישורים ובלי מחלקות. מתאים למתנ״ס, למוסד או לרשות קטנה.',['משתמש אחד','יצירה, לוח, ספרייה ופרסום','נכסי מותג ונתוני ערוצים']],
+         ['appr','משתמש ארגון','דובר/ת או מנהל/ת מערכת, מחלקות עם ממשק נפרד, ואישור תוכן לפני פרסום.',['כמה משתמשים ומחלקות','מרכז אישורים ואישור ב־WhatsApp','ממשק נפרד לכל מחלקה']]]
+        .map(p=>'<button class="tile plan-tile big'+(w.plan===p[0]?' on':'')+'" data-act="nwPlan:'+p[0]+'" style="--pc:'+PLANS[p[0]].c+'"><span class="rt-head"><span class="rt-radio"></span><span class="tn">'+p[1]+'</span><b class="pt-cost">'+usd(PLANS[p[0]].cost)+'<small> לחודש + מע״מ</small></b></span><span class="t-sub">'+p[2]+'</span><span class="pt-feats">'+p[3].map(f=>'<span>'+ic('check',13,2.4)+f+'</span>').join('')+'</span><span class="t-sub">'+NW_STEPS[p[0]].length+' שלבי הקמה</span></button>').join('')+'</div>';
     } else if(cur==='org'){
       body='<h3 class="nw-h">פרטי הארגון</h3><div class="form-grid">'+nwField('org.n','שם הארגון',w.org.n,{req:1,ph:'לדוגמה: עיריית ...'})+nwField('org.type','סוג הגוף',w.org.type,{sel:OTYPES})+
         nwField('org.phone','טלפון',w.org.phone,{ltr:1})+nwField('org.mail','דוא״ל כללי',w.org.mail,{ltr:1,type:'email'})+nwField('org.web','אתר',w.org.web,{ltr:1})+nwField('org.addr','כתובת',w.org.addr)+'</div>';
     } else if(cur==='admin'){
       const ext=w.plan==='appr';
       body='<h3 class="nw-h">'+(ext?'מנהל המערכת אצל הלקוח':'משתמש המערכת')+'</h3><p class="t-sub nw-p">'+(ext?'הדובר/ת או מי שמנהל את המערכת בארגון. הוא הגורם המאשר הראשי, ותוכן שהוא יוצר מתוזמן בלי אישור.':'המשתמש היחיד במנוי. הוא נכנס עם הדוא״ל והטלפון האלה.')+'</p><div class="form-grid">'+
-        nwField('admin.n','שם מלא',w.admin.n,{req:1})+(ext?nwField('admin.role','תפקיד',w.admin.role,{sel:['דובר/ת','מנהל/ת תקשורת','מנהל/ת מערכת']}):'')+
+        nwField('admin.n','שם מלא',w.admin.n,{req:1})+(ext?nwField('admin.role','תפקיד',w.admin.role,{ph:'דובר/ת, מנהל/ת שיווק...',hint:'טקסט חופשי'}):'')+
         nwField('admin.mail','דוא״ל לכניסה',w.admin.mail,{req:1,ltr:1,type:'email'})+nwField('admin.ph','טלפון נייד',w.admin.ph,{req:1,ltr:1,ph:'05X-XXXXXXX',hint:ext?'מקבל בקשות אישור ב־WhatsApp':''})+'</div>';
     } else if(cur==='depts'){
       body='<h3 class="nw-h">מחלקות ומשתמשים</h3><p class="t-sub nw-p">המכסות נכנסות להסכם. אפשר להקים מחלקות עכשיו, או להשאיר ללקוח להקים בעצמו בתוך המכסה.</p>'+
         '<div class="form-grid" style="max-width:520px">'+nwField('uLim','מכסת משתמשים',w.uLim,{ltr:1})+nwField('dLim','מכסת מחלקות',w.dLim,{ltr:1})+'</div>'+
         '<div class="nw-depts">'+w.depts.map((d,i)=>'<div class="nwd'+(S.nw.err['d'+i]?' has-err':'')+'"><span class="nwd-n">'+(i+1)+'</span>'+
-          (d.main?'<div class="field"><label>שם המחלקה</label><div class="locked">'+ic('lock',14)+'<span>'+d.n+'</span><span class="lk-note">מאושרת על ידי המנהל הראשי</span></div></div>':
+          (d.main?'<div class="field"><label>שם המחלקה הראשית <span class="hint">המחלקה של מנהל המערכת</span></label><input type="text" data-nwd="'+i+'.n" value="'+esc(d.n)+'" placeholder="דוברות / שיווק / תקשורת"></div><div class="field"><label>גורם מאשר</label><div class="locked">'+ic('lock',14)+'<span>'+esc(w.admin.n||'מנהל המערכת')+'</span><span class="lk-note">מאשר ראשי</span></div></div>':
           '<div class="field"><label>שם המחלקה</label><input type="text" data-nwd="'+i+'.n" value="'+esc(d.n)+'" placeholder="לדוגמה: תרבות"></div>'+
           '<div class="field"><label>גורם מאשר</label><input type="text" data-nwd="'+i+'.ap" value="'+esc(d.ap)+'"></div>'+
           '<div class="field"><label>טלפון המאשר</label><input type="text" dir="ltr" data-nwd="'+i+'.ph" value="'+esc(d.ph)+'" placeholder="05X-XXXXXXX"></div>'+
@@ -5195,19 +5211,20 @@ SCREENS.a_new={
     } else if(cur==='agr'){
       const fake={n:w.org.n||'שם הארגון',type:w.org.type,plan:w.plan,uLim:w.plan==='appr'?w.uLim:1,dLim:w.dLim,ch:w.ch.length,xch:0,contact:w.admin.n};
       body='<div class="split" style="align-items:start"><div><h3 class="nw-h">הסכם מנוי</h3><p class="t-sub nw-p">ההסכם נבנה מהנתונים שהוזנו. הלקוח יוכל לצפות בו מתוך ההגדרות שלו, ואתם מתוך עמוד הלקוח.</p><div class="form-grid">'+
-        nwField('agr.start','תחילת המנוי',w.agr.start,{type:'date'})+nwField('agr.term','תקופה',w.agr.term,{sel:['חודשי','שנתי']})+'</div>'+
-        '<div class="field" style="margin-top:14px"><label>חתימה</label><div class="seg">'+[['digital','שליחה לחתימה דיגיטלית'],['upload','העלאת הסכם חתום']].map(x=>'<button class="'+(w.agr.sign===x[0]?'on':'')+'" data-act="nwSign:'+x[0]+'">'+x[1]+'</button>').join('')+'</div></div>'+
-        (w.agr.sign==='upload'?'<button class="upload" style="width:100%;margin-top:10px" data-act="fakeUpload"><div class="ui">'+ic('upload',18)+'</div><div style="font-weight:600;font-size:13.5px">העלאת PDF חתום</div></button>':'<div class="note" style="margin-top:10px">'+ic('mail',15)+'<span>ההסכם יישלח לחתימה דיגיטלית ל־<span dir="ltr">'+esc(w.admin.mail||'הדוא״ל של המנהל')+'</span> יחד עם ההזמנה.</span></div>')+'</div>'+
-        '<div class="agr-mini">'+agrDoc(fake,{start:fmtDM(w.agr.start)+'.'+w.agr.start.slice(0,4),term:w.agr.term,signed:false,signer:w.admin.n||'איש הקשר'})+'</div></div>';
+        '<div class="field"><label>תחילת המנוי</label><div class="locked">'+ic('cal',14)+'<span>'+heDate(w.agr.start)+'</span><span class="lk-note">יום השליחה</span></div></div><div class="field"><label>תקופה</label><div class="locked">'+ic('lock',14)+'<span>שנתי</span><span class="lk-note">עד '+heDate(addMonths(w.agr.start,12))+'</span></div></div></div>'+
+        '<div class="checkline" style="margin-top:12px;max-width:520px"><button class="sw '+(w.agr.trial?'on':'')+'" data-act="nwTrial" role="switch" aria-checked="'+w.agr.trial+'" aria-label="תקופת ניסיון"></button><span><b>2 חודשי ניסיון ללא עלות</b><br><span class="t-sub">'+(w.agr.trial?'החיוב מתחיל ב־'+heDate(addMonths(w.agr.start,2)):'החיוב מתחיל ביום תחילת המנוי')+'</span></span></div>'+
+        '<div class="field" style="margin-top:14px"><label>חתימה</label><div class="seg">'+[['digital','חתימה דיגיטלית בקישור'],['upload','העלאת הסכם חתום']].map(x=>'<button class="'+(w.agr.sign===x[0]?'on':'')+'" data-act="nwSign:'+x[0]+'">'+x[1]+'</button>').join('')+'</div></div>'+
+        (w.agr.sign==='upload'?'<button class="upload" style="width:100%;margin-top:10px" data-act="fakeUpload"><div class="ui">'+ic('upload',18)+'</div><div style="font-weight:600;font-size:13.5px">העלאת PDF חתום</div></button>':'<div class="note" style="margin-top:10px">'+ic('mail',15)+'<span>הלקוח מקבל קישור לחתימה יחד עם ההזמנה, ל־<span dir="ltr">'+esc(w.admin.mail||'הדוא״ל של המנהל')+'</span>. בקישור הוא רואה את ההסכם, מקליד שם מלא ומאשר. החתימה נשמרת עם תאריך ושעה.</span></div>')+'</div>'+
+        '<div class="agr-mini">'+agrDoc(fake,{start:heDate(w.agr.start),startIso:w.agr.start,term:'שנתי',trial:w.agr.trial,signed:false,signer:w.admin.n||'איש הקשר'})+'</div></div>';
     } else {
       const ext=w.plan==='appr';
       body='<h3 class="nw-h">סיכום ושליחה</h3><div class="nw-sum">'+
-        [['מסלול',PLANS[w.plan].t+' · עלות '+usd(PLANS[w.plan].cost)+' לחודש'],['ארגון',w.org.n+' · '+w.org.type],[ext?'מנהל המערכת':'משתמש',w.admin.n+' · '+w.admin.mail+' · '+w.admin.ph],
+        [['מסלול',PLANS[w.plan].t+' · '+usd(PLANS[w.plan].cost)+' לחודש + מע״מ, מנוי שנתי'],['ארגון',w.org.n+' · '+w.org.type],[ext?'מנהל המערכת':'משתמש',w.admin.n+' · '+w.admin.mail+' · '+w.admin.ph],
          ...(ext?[['מכסות',w.uLim+' משתמשים · '+w.dLim+' מחלקות'],['מחלקות שהוקמו',w.depts.filter(d=>d.n).map(d=>d.n).join(', ')||'-']]:[]),
-         ['ערוצים',w.ch.map(k=>CH[k].t).join(', ')],['הסכם',w.agr.term+' · מ־'+w.agr.start+' · '+(w.agr.sign==='digital'?'נשלח לחתימה דיגיטלית':'הועלה הסכם חתום')]]
+         ['ערוצים',w.ch.map(k=>CH[k].t).join(', ')],['הסכם','שנתי · מ־'+heDate(w.agr.start)+(w.agr.trial?' · 2 חודשי ניסיון, חיוב מ־'+heDate(addMonths(w.agr.start,2)):'')+' · '+(w.agr.sign==='digital'?'קישור לחתימה דיגיטלית':'הועלה הסכם חתום')]]
         .map(r=>'<div><span class="t-sub">'+r[0]+'</span><b>'+esc(r[1])+'</b></div>').join('')+'</div>'+
-        '<h3 class="nw-h" style="margin-top:20px">מה נשלח ל'+(ext?'מנהל המערכת':'משתמש')+'</h3>'+
-        [['mail','מייל הזמנה עם קישור כניסה'+(w.agr.sign==='digital'?' והסכם לחתימה':'')],['wa','הודעת WhatsApp עם קישור הכניסה']].map(x=>'<div class="checkline" style="justify-content:space-between;border-bottom:1px solid var(--line-2);padding:10px 0;max-width:560px"><span>'+x[1]+'</span><button class="sw '+(w.send[x[0]]?'on':'')+'" data-act="nwSend:'+x[0]+'" role="switch" aria-checked="'+w.send[x[0]]+'"></button></div>').join('')+
+        '<h3 class="nw-h" style="margin-top:20px">מה נשלח ל'+(ext?'מנהל המערכת':'משתמש')+'</h3><p class="t-sub nw-p">הנמען: '+esc(w.admin.n)+' · <span dir="ltr">'+esc(w.admin.mail)+'</span> · <span dir="ltr">'+esc(w.admin.ph)+'</span></p>'+
+        [['mail','מייל הזמנה עם קישור כניסה'+(w.agr.sign==='digital'?' וקישור לחתימת ההסכם':'')],['wa','הודעת WhatsApp עם קישור הכניסה']].map(x=>'<div class="checkline" style="justify-content:space-between;border-bottom:1px solid var(--line-2);padding:10px 0;max-width:560px"><span>'+x[1]+'</span><button class="sw '+(w.send[x[0]]?'on':'')+'" data-act="nwSend:'+x[0]+'" role="switch" aria-checked="'+w.send[x[0]]+'"></button></div>').join('')+
         '<div class="note" style="margin-top:14px;max-width:560px">'+ic('help',15)+'<span>בכניסה הראשונה הלקוח עובר שאלון מסמכי ייחוס של 5 שלבים, ומחבר את הערוצים.</span></div>';
     }
     return '<div class="crumb"><button data-nav="a_orgs">לקוחות</button>'+ic('chevL',13,2)+'<span>הקמת לקוח חדש</span></div>'+
@@ -5223,7 +5240,7 @@ SCREENS.a_new={
 function nwValidate(){const w=S.nw,cur=NW_STEPS[w.plan][w.step][0],e={};const ph=v=>String(v).replace(/\D/g,'').length>=9,ml=v=>/\S+@\S+\.\S+/.test(v);
   if(cur==='org'&&!w.org.n.trim())e['org.n']='חובה להזין שם ארגון';
   if(cur==='admin'){if(!w.admin.n.trim())e['admin.n']='חובה';if(!ml(w.admin.mail))e['admin.mail']='כתובת לא תקינה';if(!ph(w.admin.ph))e['admin.ph']='מספר לא תקין';}
-  if(cur==='depts'){w.uLim=parseInt(w.uLim)||0;w.dLim=parseInt(w.dLim)||0;if(w.uLim<1)e.uLim='לפחות משתמש אחד';if(w.dLim<1)e.dLim='לפחות מחלקה אחת';
+  if(cur==='depts'){w.uLim=parseInt(w.uLim)||0;w.dLim=parseInt(w.dLim)||0;if(w.uLim<1)e.uLim='לפחות משתמש אחד';if(w.dLim<1)e.dLim='לפחות מחלקה אחת';if(w.depts[0]&&!w.depts[0].n.trim())e.d0='חובה להזין שם למחלקה הראשית';
     w.depts.forEach((d,i)=>{if(d.main||!d.n.trim())return;if(!d.ap.trim()||!ph(d.ph))e['d'+i]='למחלקה חייב להיות גורם מאשר עם טלפון';});
     if(w.depts.filter(d=>d.n).length>w.dLim)e.dLim='יותר מחלקות מהמכסה';}
   if(cur==='ch'&&!w.ch.length){toast('לא נבחר ערוץ','בחרו לפחות ערוץ אחד.','err');return false;}
@@ -5231,11 +5248,11 @@ function nwValidate(){const w=S.nw,cur=NW_STEPS[w.plan][w.step][0],e={};const ph
 ACT.nwPlan=p=>{S.nw.plan=p;render();};
 ACT.nwNext=()=>{const w=S.nw;if(!nwValidate())return;const steps=NW_STEPS[w.plan];
   if(w.step<steps.length-1){w.step++;w.err={};render();window.scrollTo({top:0,behavior:'smooth'});return;}
-  const ext=w.plan==='appr';const id='o'+(ORGS.length+1);
-  const o={id,n:w.org.n.trim(),type:w.org.type,st:'trial',since:'10/2026',plan:w.plan,rev:null,ch:w.ch.length,xch:0,xu:0,add:Object.keys(w.addons).filter(k=>w.addons[k]),gfx:0,docs:0,decks:0,vids:0,ai:0,logins:0,items:0,last:'עכשיו',cost:0,
-    contact:w.admin.n,phone:w.org.phone||w.admin.ph,mail:w.org.mail||w.admin.mail,c:'#4A1BE8',uLim:ext?w.uLim:1,dLim:ext?w.dLim:0,agr:{start:fmtDM(w.agr.start)+'.'+w.agr.start.slice(0,4),term:w.agr.term,signed:w.agr.sign==='upload',signedAt:w.agr.sign==='upload'?'6.10.2026':'',signer:w.admin.n}};
+  const ext=w.plan==='appr';const id='o'+(ORGS.length+1);w.agr.start=todayISO();const now=new Date();
+  const o={id,n:w.org.n.trim(),type:w.org.type,st:w.agr.trial?'trial':'active',since:String(now.getMonth()+1).padStart(2,'0')+'/'+now.getFullYear(),mainDept:(w.depts[0]&&w.depts[0].n.trim())||'דוברות',payFrom:mkey(w.agr.trial?addMonths(w.agr.start,2):w.agr.start),plan:w.plan,rev:null,ch:w.ch.length,xch:0,xu:0,add:Object.keys(w.addons).filter(k=>w.addons[k]),gfx:0,docs:0,decks:0,vids:0,ai:0,logins:0,items:0,last:'עכשיו',cost:0,
+    contact:w.admin.n,phone:w.org.phone||w.admin.ph,mail:w.org.mail||w.admin.mail,c:'#4A1BE8',uLim:ext?w.uLim:1,dLim:ext?w.dLim:0,agr:{start:heDate(w.agr.start),startIso:w.agr.start,endIso:addMonths(w.agr.start,12),term:'שנתי',trial:!!w.agr.trial,trialEnd:w.agr.trial?addMonths(w.agr.start,2):'',signed:w.agr.sign==='upload',signedAt:w.agr.sign==='upload'?heDate(todayISO()):'',signer:w.admin.n,sign:w.agr.sign}};
   ORGS.push(o);AUSERS.push({id:AUSERS.length,org:id,n:w.admin.n,r:ext?w.admin.role:'משתמש מערכת',items:0,logins:0,last:'-',st:'לא פעיל',gfx:0,docs:0,decks:0,vids:0,ai:0});
-  PURCH.unshift({id:Date.now(),org:id,date:'2026-10-06',type:'new',plan:w.plan,note:'הקמה מתוך האשף',cost:PLANS[w.plan].cost,price:null});
+  PURCH.unshift({id:Date.now(),org:id,date:todayISO(),type:w.agr.trial?'trial':'new',plan:w.plan,note:w.agr.trial?'הקמה · 2 חודשי ניסיון ללא עלות':'הקמה מתוך האשף',cost:PLANS[w.plan].cost,price:null});
   S.nw=null;HIST.length=0;S.orgId=id;S.tab.aorg='over';go('a_org',{force:true});
   openModal('<div class="mb"><div class="m-ic ok">'+ic('checkc',20)+'</div><h3>הלקוח הוקם</h3><p>'+esc(o.n)+' · '+PLANS[o.plan].t+'. '+(w.send.mail||w.send.wa?'ההזמנה נשלחה ל'+esc(o.contact)+(w.send.mail&&w.send.wa?' במייל וב־WhatsApp':w.send.mail?' במייל':' ב־WhatsApp')+'.':'לא נשלחה הזמנה.')+'</p></div>'+
     '<div class="modal-foot"><button class="btn btn-primary" data-act="closeModal">לעמוד הלקוח</button><button class="btn" data-act="agrView:'+id+'">'+ic('doc',15)+' הסכם המנוי</button></div>');};
@@ -5244,9 +5261,10 @@ ACT.nwExit=()=>{const w=S.nw;if(w&&w.step>0){confirmModal({title:'לצאת מה�
 ACT.nwCh=k=>{const a=S.nw.ch,i=a.indexOf(k);i<0?a.push(k):a.splice(i,1);render();};
 ACT.nwAdd=k=>{S.nw.addons[k]=!S.nw.addons[k];render();};
 ACT.nwSign=k=>{S.nw.agr.sign=k;render();};
+ACT.nwTrial=()=>{S.nw.agr.trial=!S.nw.agr.trial;render();};
 ACT.nwSend=k=>{S.nw.send[k]=!S.nw.send[k];render();};
 ACT.nwDAdd=()=>{S.nw.depts.push({n:'',ap:'',ph:''});render();};
-ACT.nwDRm=i=>{S.nw.depts.splice(+i,1);render();};
+ACT.nwDRm=i=>{if(+i===0)return;S.nw.depts.splice(+i,1);render();};
 const _go7=go;
 go=function(r,opts){if(S.route==='a_new'&&r!=='a_new'&&S.nw&&S.nw.step>0&&!(opts&&opts.force)){confirmModal({title:'לצאת מהקמת הלקוח?',body:'הנתונים שהוזנו לא יישמרו.',ok:'יציאה',cancel:'המשך הקמה',onOk:()=>{S.nw=null;go(r,{force:true});}});return;}_go7(r,opts);};
 
@@ -5809,6 +5827,195 @@ $('#btnNotif').onclick=()=>{_notif9();if(S.mode==='admin')return;const due=S.eve
 ACT.evRemind=id=>{closeDrawer();ACT.openEvent(id);};
 
 /* ================= INIT ================= */
+/* =====================================================================
+   ADMIN v4 · 15.10.2026: money model. Income = plan prices (ILS/month, annual plan, + VAT).
+   Expenses = vendor subscriptions (USD -> ILS) + AI usage per client. Revenue board.
+   ===================================================================== */
+const MNAME_S=['ינו׳','פבר׳','מרץ','אפר׳','מאי','יוני','יולי','אוג׳','ספט׳','אוק׳','נוב׳','דצמ׳'];
+function mkeysBack(n){const a=[];const d=new Date();for(let i=n-1;i>=0;i--){const x=new Date(d.getFullYear(),d.getMonth()-i,1);a.push(x.getFullYear()*100+x.getMonth()+1);}return a;}
+const mkLabel=k=>MNAME_S[k%100-1]+(k%100===1||k===MNUM[0]?' '+String(Math.floor(k/100)).slice(2):'');
+MNUM.splice(0,MNUM.length,...mkeysBack(6));
+MONTHS.splice(0,MONTHS.length,...MNUM.map(mkLabel));
+const MK_NOW=mkeysBack(1)[0];
+sinceM=function(o){const[m,y]=String(o.since||'').split('/').map(Number);return y&&m?y*100+m:MK_NOW;};
+const orgLive=(o,m)=>sinceM(o)<=m&&!(o.pausedFrom&&m>=o.pausedFrom)&&o.st!=='paused';
+const orgPays=(o,m)=>orgLive(o,m)&&(o.payFrom?o.payFrom<=m:o.st!=='trial');
+monthRev=function(m,list){return (list||ORGS).reduce((s,o)=>s+(orgPays(o,m)?PLANS[o.plan].cost:0),0);};
+const monthAi=(m,list)=>(list||ORGS).reduce((s,o)=>s+aiCost(o.useM&&o.useM[m]),0);
+const MK_FIRST=()=>ORGS.length?Math.min(MK_NOW,...ORGS.map(o=>sinceM(o))):MK_NOW;
+monthCost=function(m,list){const all=!list||list.length===ORGS.length;return monthAi(m,list)+(all&&m>=MK_FIRST()?vendorsIls():0);};
+T2=function(list){const all=list.length===ORGS.length;const c=monthAi(MK_NOW,list)+(all?vendorsIls():0);const r=list.reduce((s,o)=>s+orgRevM(o),0);return {c,r,hasRev:true,nRev:list.filter(o=>orgRevM(o)>0).length};};
+userCost=function(u){return aiCost(u.use);};
+const aiShare=o=>aiCost(o.use);
+function moneyChart(W,keys,list){
+  list=list||ORGS;W=W||760;keys=keys||MNUM;const H=240,pl=8,pr=60,pt=22,pb=34,n=keys.length;
+  const data=keys.map(m=>[monthRev(m,list),monthCost(m,list)]);
+  const max=Math.max(1000,Math.ceil(Math.max(...data.flat())/1000)*1000);
+  const cw=(W-pl-pr)/n,bw=Math.min(20,cw/3.4),y=v=>pt+(H-pt-pb)*(1-v/max);
+  let g='';
+  for(let t=0;t<=4;t++){const v=max*t/4,yy=y(v);g+='<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+yy+'" y2="'+yy+'" class="gl"/><text x="'+(W-pr+8)+'" y="'+(yy+4)+'" class="ax" text-anchor="start">'+usd(v)+'</text>';}
+  data.forEach((d,i)=>{const cx=W-pr-cw*(i+.5);const xr=cx-1,xc=cx+bw+1;
+    g+='<g class="bar-g"><rect class="hit" x="'+(cx-cw/2)+'" y="'+pt+'" width="'+cw+'" height="'+(H-pt-pb)+'"/>'+
+      '<path d="'+barPath(xr,y(d[0]),bw,H-pb)+'" fill="#2A4BF0"/><path d="'+barPath(xc,y(d[1]),bw,H-pb)+'" fill="#E0069F"/>'+
+      '<text x="'+cx+'" y="'+(H-pb+20)+'" class="ax" text-anchor="middle">'+mkLabel(keys[i])+'</text>'+
+      '<g class="tip-g" transform="translate('+Math.max(80,Math.min(W-pr-80,cx))+','+(pt-2)+')"><rect x="-76" y="0" width="152" height="54" rx="10"/><text x="64" y="22" text-anchor="start" class="tt1">הכנסות '+usd(d[0])+'</text><text x="64" y="42" text-anchor="start" class="tt2">הוצאות '+usd(d[1])+' · רווח '+usd(Math.round(d[0])-Math.round(d[1]))+'</text></g></g>';});
+  g+='<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+(H-pb)+'" y2="'+(H-pb)+'" class="base"/>';
+  return '<div class="chart-legend"><span><i style="background:#2A4BF0"></i>הכנסות</span><span><i style="background:#E0069F"></i>הוצאות</span></div><svg class="rev-chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="הכנסות והוצאות לפי חודש">'+g+'</svg>';
+}
+const daysTo=iso=>Math.ceil((new Date(iso)-new Date())/86400000);
+function vendorsCard(){return '<div class="card"><div class="card-head">'+ic('refresh',18)+'<h3>ספקים</h3><span class="t-sub" style="margin-inline-start:auto;display:inline">$1 = ₪'+FX.usd+'</span></div><div class="fin-lines">'+
+  VENDORS.map(v=>'<div><span>'+esc(v.n)+' <span class="t-sub">'+esc(v.note||'')+'</span></span><b>'+usd(v.usd*FX.usd)+' <span class="t-sub">$'+v.usd+'</span></b></div>').join('')+
+  '<div><span>שימוש AI החודש <span class="t-sub">לפי יצירות בפועל</span></span><b>'+usd(monthAi(MK_NOW))+'</b></div>'+
+  '<div class="tot"><span>סה״כ הוצאות לחודש</span><b>'+usd(vendorsIls()+monthAi(MK_NOW))+'</b></div></div></div>';}
+
+/* dashboard: income first */
+SCREENS.a_dash.render=function(){
+  const T=T2(ORGS),U=usageTotals(ORGS.filter(o=>o.st!=='paused')),act=ORGS.filter(o=>o.st!=='paused');
+  const byPlan=k=>ORGS.filter(o=>o.plan===k&&o.st!=='paused');const paying=ORGS.filter(o=>orgRevM(o)>0),trial=ORGS.filter(o=>o.st==='trial');
+  const reqs=REQS.filter(r=>r.st==='new'),meets=MEETINGS.filter(m=>m.st==='scheduled').sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1);
+  const top=ORGS.slice().sort((a,b)=>b.items-a.items).slice(0,5);
+  return '<div class="hero"><img class="hero-mark" src="'+document.querySelector('.logo-img').src+'" alt="">'+pageHead({title:'ממשק הניהול',desc:'הלקוחות, ההכנסות, ההוצאות וכמויות השימוש במערכת.',
+    actions:'<button class="btn" data-nav="a_revenue">'+ic('chart',16)+' לוח הכנסות</button><button class="btn btn-primary btn-lg" data-act="aNewOrg">'+ic('create',17)+' הקמת לקוח חדש</button>'})+'</div>'+
+  '<div class="grid g-4" style="margin-bottom:16px">'+
+    stat({l:'לקוחות פעילים',n:act.length,s:paying.length+' משלמים · '+trial.length+' בניסיון',i:'bldg',nav:'a_orgs',f:'draft'})+
+    stat({l:'הכנסה חודשית',n:usd(T.r),s:byPlan('appr').length+' × '+usd(PLANS.appr.cost)+' · '+byPlan('solo').length+' × '+usd(PLANS.solo.cost)+' · לפני מע״מ',i:'chart',nav:'a_revenue',f:'scheduled'})+
+    stat({l:'הוצאות החודש',n:usd(T.c),s:'ספקים '+usd(vendorsIls())+' · AI '+usd(monthAi(MK_NOW)),i:'refresh',nav:'a_finance',f:'pending'})+
+    stat({l:'רווח החודש',n:usd(T.r-T.c),s:(U.gfx+U.docs+U.decks+U.vids)+' תוצרים · '+U.ai+' שאלות AI',i:'spark',nav:'a_revenue',f:'published'})+
+  '</div>'+
+  '<div class="split-wide" style="margin-bottom:16px">'+
+    '<div class="card"><div class="card-head">'+ic('chart',18)+'<h3>הכנסות והוצאות לפי חודש</h3></div><div class="card-pad" style="padding-top:12px">'+moneyChart(640)+'</div></div>'+
+    '<div style="display:flex;flex-direction:column;gap:16px">'+
+      '<div class="card"><div class="card-head">'+ic('limit',18)+'<h3>בקשות הרחבה</h3><span class="chip" style="margin-inline-start:auto">'+reqs.length+' ממתינות</span></div>'+
+        (reqs.length?'<div class="row-list">'+reqs.map(r=>'<div class="rowi"><span class="ic-box warn">'+ic(r.type==='users'?'users':'dept',17)+'</span><span class="grow"><span class="nm">'+esc(orgById(r.org).n)+'</span><br><span class="mt">'+(r.type==='users'?'עוד '+r.add+' משתמשים':'עוד '+r.add+' מחלקות')+' · '+esc(r.who)+'</span></span><button class="btn btn-sm" data-act="reqOpen:'+r.id+'">טיפול</button></div>').join('')+'</div>':'<div class="card-pad t-sub">אין בקשות ממתינות.</div>')+'</div>'+
+      '<div class="card"><div class="card-head">'+ic('vid',18)+'<h3>פגישות קרובות</h3><button class="btn btn-sm more" data-nav="a_meet">ליומן</button></div>'+
+        (meets.length?'<div class="row-list">'+meets.slice(0,3).map(m=>'<div class="rowi"><span class="mt-date"><b>'+fmtDM(m.date)+'</b><span>'+m.time+'</span></span><span class="grow"><span class="nm">'+esc(orgById(m.org).n)+'</span><br><span class="mt">'+esc(m.topic)+' · '+esc(m.who)+'</span></span></div>').join('')+'</div>':'<div class="card-pad t-sub">אין פגישות קרובות.</div>')+'</div>'+
+    '</div></div>'+
+  '<div class="card"><div class="card-head">'+ic('users',18)+'<h3>שימוש לפי לקוח</h3><button class="btn btn-sm more" data-nav="a_orgs">לכל הלקוחות</button></div>'+
+  '<div class="tbl-wrap flat"><table class="responsive"><thead><tr><th>לקוח</th><th>מסלול</th><th>גרפיקות מהמכסה</th><th>מסמכים</th><th>מצגות</th><th>סרטונים</th><th>שאלות AI</th><th>הכנסה לחודש</th><th>עלות AI</th></tr></thead><tbody>'+
+  (top.length?top.map(o=>'<tr data-act="aOrg:'+o.id+'"><td data-l="לקוח"><span class="org-cell">'+orgAv(o)+'<b>'+esc(o.n)+'</b></span></td><td data-l="מסלול">'+planBadge(o.plan)+'</td>'+
+    '<td data-l="גרפיקות"><div class="uwrap">'+uBar(o.gfx,QUOTA.gfx)+'<span>'+o.gfx+'/'+QUOTA.gfx+'</span></div></td><td data-l="מסמכים">'+o.docs+'</td><td data-l="מצגות">'+o.decks+'</td><td data-l="סרטונים">'+o.vids+'</td><td data-l="AI">'+o.ai+'</td><td data-l="הכנסה"><b class="pos">'+(orgRevM(o)?usd(orgRevM(o)):'ניסיון')+'</b></td><td data-l="עלות AI"><b class="neg">'+usd(aiShare(o))+'</b></td></tr>').join(''):'<tr><td colspan="9" class="t-sub">עדיין אין לקוחות. הלקוח הראשון נפתח מ„הקמת לקוח חדש”.</td></tr>')+'</tbody></table></div></div>';
+};
+
+/* expenses: vendors + AI usage per client */
+SCREENS.a_finance.render=function(){
+  const f=S.fF;const idx=f.period==='quarter'?[3,4,5]:f.period==='half'?[0,1,2,3,4,5]:[5];
+  const list=ORGS.filter(o=>(!f.org||o.id===f.org)&&(!f.plan||o.plan===f.plan));
+  const rows=list.map(o=>({o,c:idx.reduce((s,i)=>s+aiCost(o.useM&&o.useM[MNUM[i]]),0),u:Object.fromEntries(USE_T.map(t=>[t[0],o[t[0]]||0]))})).sort((a,b)=>b.c-a.c||b.o.items-a.o.items);
+  const AI=rows.reduce((s,x)=>s+x.c,0),V=vendorsIls()*idx.length,C=AI+V,mxC=Math.max(...rows.map(x=>x.c),1);
+  const U=Object.fromEntries(USE_T.map(t=>[t[0],rows.reduce((s,x)=>s+x.u[t[0]],0)]));
+  const perUser=AUSERS.filter(u=>list.some(o=>o.id===u.org)).length;const outs=U.gfx+U.docs+U.decks+U.vids;
+  return pageHead({title:'הוצאות ושימוש',desc:'מה המערכת עולה: מנויי הספקים ושימוש ה־AI בפועל, בכלל ולפי לקוח.',actions:'<button class="btn" data-act="toastInfo:הקובץ ירד בפורמט CSV (הדגמה)">'+ic('down',16)+' ייצוא</button><button class="btn" data-act="asTabGo:money">'+ic('gear',16)+' ספקים ומחירים</button>'})+
+  '<div class="filters">'+
+    '<div class="seg">'+[['month','החודש'],['quarter','רבעון'],['half','חצי שנה']].map(p=>'<button class="'+(f.period===p[0]?'on':'')+'" data-act="fPer:'+p[0]+'">'+p[1]+'</button>').join('')+'</div>'+
+    '<select id="fPlan"><option value="">כל המסלולים</option>'+Object.entries(PLANS).map(([k2,p])=>'<option value="'+k2+'"'+(f.plan===k2?' selected':'')+'>'+p.t+'</option>').join('')+'</select>'+
+    '<select id="fOrg"><option value="">כל הלקוחות</option>'+ORGS.map(o=>'<option value="'+o.id+'"'+(f.org===o.id?' selected':'')+'>'+o.n+'</option>').join('')+'</select></div>'+
+  '<div class="grid g-4" style="margin-bottom:16px">'+
+    stat({l:'הוצאות',n:usd(C),s:'ספקים '+usd(V)+' · AI '+usd(AI),i:'refresh',nav:'a_finance',f:'scheduled'})+
+    stat({l:'תוצרים',n:outs.toLocaleString('en-US'),s:U.gfx+' גרפיקות · '+U.docs+' מסמכים',i:'spark',nav:'a_finance',f:'published'})+
+    stat({l:'שאלות AI',n:U.ai.toLocaleString('en-US'),s:'בכל הממשקים',i:'bot',nav:'a_finance',f:'pending'})+
+    stat({l:'עלות AI לתוצר',n:outs?'₪'+(AI/outs).toFixed(2):'-',s:perUser+' משתמשים · '+(perUser?usd(AI/perUser/idx.length):'-')+' למשתמש בחודש',i:'users',nav:'a_finance',f:'draft'})+
+  '</div>'+
+  '<div class="split-wide" style="margin-bottom:16px"><div class="card"><div class="card-head">'+ic('chart',18)+'<h3>הכנסות והוצאות לפי חודש</h3></div><div class="card-pad" style="padding-top:12px">'+moneyChart(760,MNUM,list)+'</div></div>'+vendorsCard()+'</div>'+
+  '<div class="card" style="margin-bottom:16px"><div class="card-head">'+ic('spark',18)+'<h3>שימוש לפי סוג</h3></div><div class="card-pad quota" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px">'+USE_T.map(t=>'<div><div class="q-row"><b>'+ic(t[2],14)+' '+t[1]+'</b><span>'+U[t[0]].toLocaleString('en-US')+'</span></div>'+uBar(U[t[0]],Math.max(...USE_T.map(x=>U[x[0]]),1),'pu')+'</div>').join('')+'</div></div>'+
+  '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>לקוח</th><th>מסלול</th><th>משתמשים</th>'+USE_T.map(t=>'<th>'+t[1]+'</th>').join('')+'<th>עלות AI</th><th>חלק מעלות ה־AI</th></tr></thead><tbody>'+
+  (rows.length?rows.map(x=>'<tr data-act="aOrgFin:'+x.o.id+'"><td data-l="לקוח"><span class="org-cell">'+orgAv(x.o)+'<b>'+esc(x.o.n)+'</b></span></td><td data-l="מסלול">'+planBadge(x.o.plan)+'</td><td data-l="משתמשים">'+orgUsers(x.o).length+'</td>'+useCells(x.u)+
+    '<td data-l="עלות AI"><b class="neg">'+usd(x.c)+'</b></td><td data-l="חלק"><div class="uwrap">'+uBar(x.c,mxC,'pk')+'<span>'+(AI?Math.round(x.c/AI*100):0)+'%</span></div></td></tr>').join(''):'<tr><td colspan="10" class="t-sub">עדיין אין שימוש לדווח עליו.</td></tr>')+
+  '<tr class="tot-row"><td data-l="">סה״כ AI</td><td></td><td>'+perUser+'</td>'+useCells(U)+'<td data-l="עלות"><b>'+usd(AI)+'</b></td><td></td></tr>'+
+  '<tr class="tot-row"><td data-l="">ספקים</td><td></td><td></td>'+USE_T.map(()=>'<td></td>').join('')+'<td data-l="עלות"><b>'+usd(V)+'</b></td><td></td></tr></tbody></table></div>';
+};
+ACT.asTabGo=t=>{S.asTab=t;go('a_settings');};
+
+/* client page: income + AI cost */
+const _aorgR9=SCREENS.a_org.render;
+SCREENS.a_org.render=function(){
+  const o=orgById(S.orgId)||ORGS[0];const tab=S.tab.aorg||'over';
+  if(!o||tab!=='fin')return _aorgR9.call(this);
+  const rev=orgRevM(o),ai=aiShare(o);
+  const hist=MNUM.map((m,i)=>[MONTHS[i],orgPays(o,m)?PLANS[o.plan].cost:0,aiCost(o.useM&&o.useM[m]),orgLive(o,m)]).reverse();
+  const panel='<div class="grid g-2" style="margin-bottom:16px">'+
+    '<div class="card"><div class="card-head">'+ic('chart',18)+'<h3>הכנסה חודשית</h3><b style="margin-inline-start:auto" class="pos">'+(rev?usd(rev):'ניסיון')+'</b></div><div class="fin-lines">'+
+      '<div><span>'+PLANS[o.plan].t+' <span class="t-sub">('+PLANS[o.plan].d+')</span></span><b>'+usd(PLANS[o.plan].cost)+'</b></div>'+
+      '<div><span>מע״מ '+Math.round(VAT*100)+'%</span><b>'+usd(PLANS[o.plan].cost*VAT)+'</b></div>'+
+      (o.st==='trial'?'<div><span>תקופת ניסיון'+(o.agr&&o.agr.trialEnd?' עד '+heDate(o.agr.trialEnd):'')+'</span><b>-'+usd(PLANS[o.plan].cost)+'</b></div>':'')+
+      (o.st==='paused'?'<div><span>חשבון מושהה</span><b>-'+usd(PLANS[o.plan].cost)+'</b></div>':'')+
+      '<div class="tot"><span>לחודש, לפני מע״מ</span><b>'+usd(rev)+'</b></div><div class="tot"><span>לשנה, לפני מע״מ</span><b>'+usd(rev*12)+'</b></div></div></div>'+
+    '<div class="card"><div class="card-head">'+ic('refresh',18)+'<h3>עלות AI החודש</h3><b style="margin-inline-start:auto" class="neg">'+usd(ai)+'</b></div><div class="fin-lines">'+USE_T.map(t=>'<div><span>'+t[1]+'</span><b>'+(o[t[0]]||0)+'</b></div>').join('')+
+      '<div class="tot"><span>רווח גולמי לחודש</span><b class="'+(rev-ai>=0?'pos':'neg')+'">'+usd(rev-ai)+'</b></div></div></div></div>'+
+    '<div class="card"><div class="card-head">'+ic('hist',18)+'<h3>היסטוריה</h3></div><div class="tbl-wrap flat"><table class="responsive"><thead><tr><th>חודש</th><th>הכנסה</th><th>עלות AI</th><th>רווח</th></tr></thead><tbody>'+
+    hist.map(h=>'<tr><td data-l="חודש"><b>'+h[0]+'</b></td><td data-l="הכנסה">'+(h[3]?(h[1]?usd(h[1]):'ניסיון'):'-')+'</td><td data-l="AI">'+(h[3]?usd(h[2]):'-')+'</td><td data-l="רווח">'+(h[3]?'<b class="'+(h[1]-h[2]>=0?'pos':'neg')+'">'+usd(h[1]-h[2])+'</b>':'-')+'</td></tr>').join('')+'</tbody></table></div></div>';
+  const h=_aorgR9.call(this);const at=h.indexOf('</div>',h.indexOf('<div class="tabs">'))+6;
+  return h.slice(0,at)+panel;
+};
+
+/* revenue board */
+SCREENS.a_revenue={
+  nav:{t:'הכנסות',i:'chart'},
+  render(){
+    const paying=ORGS.filter(o=>orgRevM(o)>0),trial=ORGS.filter(o=>o.st==='trial'),paused=ORGS.filter(o=>o.st==='paused');
+    const mrr=paying.reduce((s,o)=>s+orgRevM(o),0),exp=vendorsIls()+monthAi(MK_NOW);
+    const soon=trial.filter(o=>o.agr&&o.agr.trialEnd&&daysTo(o.agr.trialEnd)<=30).sort((a,b)=>daysTo(a.agr.trialEnd)-daysTo(b.agr.trialEnd));
+    const renew=ORGS.filter(o=>o.agr&&o.agr.endIso&&daysTo(o.agr.endIso)<=60&&daysTo(o.agr.endIso)>=0);
+    const K12=mkeysBack(12);
+    const rows=ORGS.slice().sort((a,b)=>orgRevM(b)-orgRevM(a)||a.n.localeCompare(b.n,'he'));
+    const byPlan=Object.entries(PLANS).map(([k,p])=>{const n=paying.filter(o=>o.plan===k).length;return {k,p,n,sum:n*p.cost};});
+    return pageHead({title:'הכנסות',desc:'כמה המערכת מכניסה: לפי חודש, לפי מסלול ולפי לקוח. מחירים לפני מע״מ.',actions:'<button class="btn" data-act="toastInfo:הקובץ ירד בפורמט CSV (הדגמה)">'+ic('down',16)+' ייצוא</button><button class="btn" data-act="asTabGo:money">'+ic('gear',16)+' מחירים</button>'})+
+    '<div class="grid g-4" style="margin-bottom:16px">'+
+      stat({l:'הכנסה חודשית (MRR)',n:usd(mrr),s:paying.length+' לקוחות משלמים',i:'chart',nav:'a_revenue',f:'scheduled'})+
+      stat({l:'הכנסה שנתית (ARR)',n:usd(mrr*12),s:'כולל מע״מ: '+usd(withVat(mrr*12)),i:'spark',nav:'a_revenue',f:'published'})+
+      stat({l:'בתקופת ניסיון',n:trial.length,s:soon.length+' מסתיימים ב־30 הימים הקרובים · שווי '+usd(trial.reduce((s,o)=>s+PLANS[o.plan].cost,0))+' לחודש',i:'clock',nav:'a_orgs',f:'pending'})+
+      stat({l:'רווח החודש',n:usd(mrr-exp),s:'הכנסות '+usd(mrr)+' · הוצאות '+usd(exp),i:'refresh',nav:'a_finance',f:'draft'})+
+    '</div>'+
+    '<div class="card" style="margin-bottom:16px"><div class="card-head">'+ic('chart',18)+'<h3>12 חודשים</h3></div><div class="card-pad" style="padding-top:12px">'+moneyChart(1100,K12)+'</div></div>'+
+    '<div class="split-wide" style="margin-bottom:16px">'+
+      '<div class="card"><div class="card-head">'+ic('deck',18)+'<h3>לפי מסלול</h3></div><div class="plan-split">'+
+        byPlan.map(x=>'<div class="ps-row" style="--pc:'+x.p.c+'"><span class="ps-dot"></span><span class="grow"><b>'+x.p.t+'</b><span class="t-sub">'+x.n+' לקוחות × '+usd(x.p.cost)+'</span></span><b class="ps-sum">'+usd(x.sum)+'</b></div>').join('')+
+        '<div class="ps-bar">'+byPlan.map(x=>'<span style="flex:'+(x.sum||0.001)+';background:'+x.p.c+'"></span>').join('')+'</div>'+
+        '<div class="ps-row"><span class="grow"><b>חבילות הרחבה</b><span class="t-sub">'+PACKS.map(p=>p.n+(p.price?' · '+usd(p.price):' · מחיר ייקבע')).join(' · ')+'</span></span><b class="ps-sum">'+usd(0)+'</b></div></div></div>'+
+      '<div class="card"><div class="card-head">'+ic('clock',18)+'<h3>ניסיונות שמסתיימים וחידושים</h3></div>'+
+        (soon.length||renew.length?'<div class="row-list">'+soon.map(o=>'<div class="rowi" data-act="aOrg:'+o.id+'"><span class="ic-box warn">'+ic('clock',17)+'</span><span class="grow"><span class="nm">'+esc(o.n)+'</span><br><span class="mt">הניסיון מסתיים ב־'+heDate(o.agr.trialEnd)+' · בעוד '+daysTo(o.agr.trialEnd)+' ימים · '+usd(PLANS[o.plan].cost)+' לחודש</span></span></div>').join('')+
+          renew.map(o=>'<div class="rowi" data-act="aOrg:'+o.id+'"><span class="ic-box info">'+ic('refresh',17)+'</span><span class="grow"><span class="nm">'+esc(o.n)+'</span><br><span class="mt">חידוש שנתי ב־'+heDate(o.agr.endIso)+' · בעוד '+daysTo(o.agr.endIso)+' ימים</span></span></div>').join('')+'</div>':'<div class="card-pad t-sub">אין ניסיונות שמסתיימים או חידושים ב־60 הימים הקרובים.</div>')+'</div>'+
+    '</div>'+
+    '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>לקוח</th><th>מסלול</th><th>סטטוס</th><th>תחילת מנוי</th><th>תחילת חיוב</th><th>לחודש</th><th>לשנה</th><th>עלות AI</th><th>רווח לחודש</th></tr></thead><tbody>'+
+    (rows.length?rows.map(o=>{const r=orgRevM(o),ai=aiShare(o);return '<tr data-act="aOrg:'+o.id+'"><td data-l="לקוח"><span class="org-cell">'+orgAv(o)+'<b>'+esc(o.n)+'</b></span></td><td data-l="מסלול">'+planBadge(o.plan)+'</td><td data-l="סטטוס">'+orgBadge(o.st)+'</td>'+
+      '<td data-l="תחילה">'+(o.agr&&o.agr.start?esc(o.agr.start):o.since)+'</td><td data-l="חיוב">'+(o.agr&&o.agr.trial&&o.agr.trialEnd?heDate(o.agr.trialEnd):(o.agr&&o.agr.start?esc(o.agr.start):o.since))+'</td>'+
+      '<td data-l="לחודש"><b class="'+(r?'pos':'')+'">'+(r?usd(r):'ניסיון')+'</b></td><td data-l="לשנה">'+usd((r||PLANS[o.plan].cost)*12)+'</td><td data-l="AI"><b class="neg">'+usd(ai)+'</b></td><td data-l="רווח"><b class="'+(r-ai>=0?'pos':'neg')+'">'+usd(r-ai)+'</b></td></tr>';}).join(''):'<tr><td colspan="9" class="t-sub">עדיין אין לקוחות.</td></tr>')+
+    '<tr class="tot-row"><td data-l="">סה״כ</td><td></td><td>'+paying.length+' משלמים</td><td></td><td></td><td data-l="לחודש"><b>'+usd(mrr)+'</b></td><td data-l="לשנה"><b>'+usd(mrr*12)+'</b></td><td data-l="AI"><b>'+usd(monthAi(MK_NOW))+'</b></td><td data-l="רווח"><b>'+usd(mrr-monthAi(MK_NOW))+'</b></td></tr></tbody></table></div>';
+  }
+};
+
+/* settings: vendors, prices, packages */
+const _asR9=SCREENS.a_settings.render;
+SCREENS.a_settings.render=function(){
+  const h=_asR9.call(this);
+  const tabs='<div class="tabs">'+[['access','מנהלים והרשאות'],['me','הפרופיל שלי'],['money','ספקים ומחירים']].map(t=>'<button class="'+(S.asTab===t[0]?'on':'')+'" data-act="asTab:'+t[0]+'">'+t[1]+'</button>').join('')+'</div>';
+  const at=h.indexOf('<div class="tabs">');const head=h.slice(0,at);
+  if(S.asTab!=='money')return head+tabs+h.slice(h.indexOf('</div>',at)+6);
+  const num=(id,v,step)=>'<input type="text" inputmode="decimal" id="'+id+'" dir="ltr" style="text-align:right;max-width:140px" value="'+v+'">';
+  const panel='<div class="grid g-2">'+
+    '<div class="card"><div class="card-head">'+ic('refresh',18)+'<h3>מנויי ספקים</h3><span class="t-sub" style="margin-inline-start:auto;display:inline">לחודש, בדולר</span></div><div class="card-pad" style="display:flex;flex-direction:column;gap:12px">'+
+      VENDORS.map(v=>'<div class="field" style="display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center"><label style="margin:0">'+esc(v.n)+' <span class="hint">'+esc(v.note||'')+' · '+usd(v.usd*FX.usd)+'</span></label>'+num('vd-'+v.k,v.usd)+'</div>').join('')+
+      '<div class="field" style="display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center"><label style="margin:0">שער דולר <span class="hint">₪ לדולר</span></label>'+num('fx-usd',FX.usd)+'</div>'+
+      '<div class="tot" style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--line-2);padding-top:10px"><span>סה״כ ספקים לחודש</span><span>'+usd(vendorsIls())+'</span></div></div></div>'+
+    '<div class="card"><div class="card-head">'+ic('bot',18)+'<h3>תעריפי שימוש AI</h3><span class="t-sub" style="margin-inline-start:auto;display:inline">בדולר, נצבר לפי יצירות</span></div><div class="card-pad" style="display:flex;flex-direction:column;gap:12px">'+
+      [['cin','Claude · מיליון טוקנים קלט'],['cout','Claude · מיליון טוקנים פלט'],['img_low','ChatGPT · תמונה באיכות נמוכה'],['img_med','ChatGPT · תמונה באיכות בינונית'],['img_high','ChatGPT · תמונה באיכות גבוהה']].map(r=>'<div class="field" style="display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center"><label style="margin:0">'+r[1]+'</label>'+num('rt-'+r[0],RATES[r[0]])+'</div>').join('')+'</div></div>'+
+    '<div class="card"><div class="card-head">'+ic('deck',18)+'<h3>מסלולים</h3><span class="t-sub" style="margin-inline-start:auto;display:inline">₪ לחודש, לפני מע״מ, מנוי שנתי</span></div><div class="card-pad" style="display:flex;flex-direction:column;gap:12px">'+
+      Object.entries(PLANS).map(([k,p])=>'<div class="field" style="display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center"><label style="margin:0">'+esc(p.t)+' <span class="hint">כולל מע״מ: '+usd(withVat(p.cost))+'</span></label>'+num('pl-'+k,p.cost)+'</div>').join('')+
+      '<div class="note">'+ic('help',14)+'<span>מחיר חדש חל על לקוחות חדשים. ללקוח קיים המחיר נשאר לפי ההסכם.</span></div></div></div>'+
+    '<div class="card"><div class="card-head">'+ic('library',18)+'<h3>חבילות הרחבה</h3><span class="t-sub" style="margin-inline-start:auto;display:inline">רכישה חודשית</span></div><div class="card-pad" style="display:flex;flex-direction:column;gap:12px">'+
+      PACKS.map(p=>'<div class="field" style="display:grid;grid-template-columns:1fr 1fr 140px;gap:10px;align-items:center"><input type="text" id="pk-n-'+p.k+'" value="'+esc(p.n)+'"><input type="text" id="pk-q-'+p.k+'" value="'+esc(p.q||'')+'" placeholder="כמויות (לדוגמה: 100 גרפיקות)">'+num('pk-p-'+p.k,p.price==null?'':p.price)+'</div>').join('')+
+      '<div class="note">'+ic('help',14)+'<span>המחירים ייקבעו אחרי בדיקת עלויות היצירה. עד אז החבילות מוצגות עם „מחיר ייקבע”.</span></div></div></div>'+
+    '</div><div style="margin-top:16px"><button class="btn btn-primary" data-act="moneySave">'+ic('save',15)+' שמירת שינויים</button></div>';
+  return head+tabs+panel;
+};
+ACT.moneySave=()=>{const v=id=>{const e=$('#'+id);return e?e.value.trim():null;};const n=(x,d)=>{const r=parseFloat(String(x).replace(/[^\d.]/g,''));return isNaN(r)?d:r;};
+  VENDORS.forEach(x=>{x.usd=n(v('vd-'+x.k),x.usd);});FX.usd=n(v('fx-usd'),FX.usd)||FX.usd;
+  Object.keys(RATES).forEach(k=>{RATES[k]=n(v('rt-'+k),RATES[k]);});
+  Object.keys(PLANS).forEach(k=>{PLANS[k].cost=n(v('pl-'+k),PLANS[k].cost);});
+  PACKS.forEach(p=>{p.n=v('pk-n-'+p.k)||p.n;p.q=v('pk-q-'+p.k)||'';const pr=v('pk-p-'+p.k);p.price=pr===''?null:n(pr,null);});
+  toast('נשמר','ספקים, תעריפים ומחירים עודכנו.');render();};
+ADMIN_NAV.splice(0,ADMIN_NAV.length,'a_dash','a_orgs','a_users','a_reqs','a_meet','a_revenue','a_finance','a_purch');
+
+
 renderAuth();
 </script>
 </body></html>

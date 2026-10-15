@@ -101,10 +101,44 @@
   const ADMIN_KEYS = {
     ORGS: () => ORGS, AUSERS: () => AUSERS, PURCH: () => PURCH, REQS: () => REQS, MEETINGS: () => MEETINGS,
     MEET_CFG: () => MEET_CFG, ADMINS: () => ADMINS, PLAN_OF: () => PLAN_OF, PLANS: () => PLANS, PRICE: () => PRICE, QUOTA: () => QUOTA,
+    VENDORS: () => VENDORS, FX: () => FX, RATES: () => RATES, PACKS: () => PACKS,
   };
   function adminStateObj() { const o = {}; for (const k in ADMIN_KEYS) o[k] = ADMIN_KEYS[k](); return o; }
   function hydrateAdmin(st) { for (const k in ADMIN_KEYS) if (st[k] !== undefined) restore(ADMIN_KEYS[k](), st[k]); }
 
+  // 'דוברות' is the mockup's main department; a client may call it שיווק, תקשורת...
+  function renameMainDept(name) {
+    name = String(name || '').trim();
+    const old = DEPTS.find((d) => DEPT_INFO[d] && DEPT_INFO[d].isMain) || 'דוברות';
+    if (!name || name === old) return;
+    const i = DEPTS.indexOf(old); if (i >= 0) DEPTS[i] = name; else DEPTS.unshift(name);
+    DEPT_C[name] = DEPT_C[old] || '#0124C7'; delete DEPT_C[old];
+    DEPT_INFO[name] = Object.assign({}, DEPT_INFO[old] || {}, { isMain: true }); delete DEPT_INFO[old];
+    if (typeof TOPICS !== 'undefined' && TOPICS[old]) { TOPICS[name] = TOPICS[old]; }
+    if (typeof TAG_BANK !== 'undefined' && TAG_BANK[old]) { TAG_BANK[name] = TAG_BANK[old]; }
+    users.forEach((u) => { if (u.d === old) u.d = name; });
+    if (S.user && S.user.dept === old) S.user.dept = name;
+    ROUTES.forEach((r) => { r.t = r.t.split(old).join(name); r.steps.forEach((st) => { st[0] = st[0].split(old).join(name); }); });
+  }
+  // a new organisation starts with the departments the admin opened in the wizard, not the demo's
+  function seedDepts(list) {
+    if (!Array.isArray(list)) return;
+    const main = DEPTS.find((d) => DEPT_INFO[d] && DEPT_INFO[d].isMain) || DEPTS[0];
+    const keepC = DEPT_C[main];
+    DEPTS.splice(0, DEPTS.length, main);
+    Object.keys(DEPT_C).forEach((k) => { if (k !== main) delete DEPT_C[k]; });
+    Object.keys(DEPT_INFO).forEach((k) => { if (k !== main) delete DEPT_INFO[k]; });
+    DEPT_C[main] = keepC || DEPT_COLORS[5];
+    list.forEach((d, i) => {
+      const n = String(d && d.n || '').trim();
+      if (!n || DEPTS.includes(n)) return;
+      DEPTS.push(n);
+      DEPT_C[n] = DEPT_COLORS[i % DEPT_COLORS.length] === DEPT_C[main] ? DEPT_COLORS[(i + 1) % DEPT_COLORS.length] : DEPT_COLORS[i % DEPT_COLORS.length];
+      DEPT_INFO[n] = { lead: d.ap || '', route: 'full', phones: d.ph ? [d.ph] : [], mails: [], appr: d.ap ? { n: d.ap, ph: d.ph || '' } : null };
+      if (typeof TOPICS !== 'undefined' && !TOPICS[n]) TOPICS[n] = TOPICS[main] || TOPICS['דוברות'];
+      if (typeof TAG_BANK !== 'undefined' && !TAG_BANK[n]) TAG_BANK[n] = ['עדכון_לתושבים'];
+    });
+  }
   /* a brand-new organisation starts empty, not with the demo municipality's data */
   function freshClient() {
     items = [];
@@ -117,6 +151,8 @@
     Object.keys(DEPT_INFO).forEach((d) => { DEPT_INFO[d].lead = ''; DEPT_INFO[d].phones = []; DEPT_INFO[d].mails = []; if (!DEPT_INFO[d].isMain) DEPT_INFO[d].appr = null; });
     BRAND.docs = [];
     S.docqDone = false;
+    renameMainDept(L.org && L.org.settings && L.org.settings.main_dept);
+    seedDepts(L.org && L.org.settings && L.org.settings.depts);
     // the main approver is the organisation user, not the demo's spokesperson
     const mgr = L.me && L.me.role !== 'member' ? L.me : null;
     replaceObj(MAIN_APPR, { n: mgr ? mgr.name : 'משתמש הארגון', r: 'משתמש ארגון', ph: (mgr && mgr.phone) || '', mail: (mgr && mgr.email) || '' });
@@ -373,8 +409,39 @@
     if (w.kind === 'admin') await bootAdmin();
     else await bootClient();
   }
+  /* ---------------- /sign: the client reads the agreement and signs it inside PrimeOS ---------------- */
+  async function bootSign(t) {
+    const root = $('#authRoot');
+    const wrap = (inner) => '<div style="position:relative;z-index:50;min-height:100vh;background:var(--bg,#F4F6FB);padding:28px 16px;font-family:Heebo,sans-serif"><div style="max-width:760px;margin:0 auto">' + inner + '</div></div>';
+    root.innerHTML = wrap('<div class="card card-pad">טוען את ההסכם...</div>');
+    L.ready = true;
+    let d;
+    try { d = await call('sign.load', { t }); } catch (e) { root.innerHTML = wrap('<div class="card card-pad"><h2 style="margin:0 0 8px">הקישור אינו בתוקף</h2><p class="t-sub">פנו לנציג PrimeOS לקבלת קישור חדש.</p></div>'); return; }
+    const a = d.agr || {};
+    const basic = d.org.plan === 'basic';
+    const fake = { n: d.org.name, type: d.org.type || '', plan: basic ? 'solo' : 'appr', uLim: a.uLim || (basic ? 1 : 5), dLim: a.dLim || (basic ? 0 : 5), ch: a.ch || 1, xch: 0, contact: d.org.contact || '', agr: a };
+    const doc = () => agrDoc(fake, { start: a.start || (a.startIso ? heDate(a.startIso) : ''), startIso: a.startIso, term: 'שנתי', trial: !!a.trial, signed: !!a.signed, signedAt: a.signedAt, signer: a.signer || d.org.contact });
+    const form = a.signed
+      ? '<div class="note" style="margin-top:16px">' + ic('checkc', 16) + '<span><b>ההסכם נחתם</b> על ידי ' + esc(a.signer || '') + ' · ' + esc(a.signedAt || '') + '</span></div>'
+      : '<div class="card card-pad" style="margin-top:16px"><h3 style="margin:0 0 6px">חתימה דיגיטלית</h3><p class="t-sub" style="margin:0 0 14px">הקלידו שם מלא ואשרו. החתימה נשמרת עם תאריך ושעה ומהווה הסכמה לתנאי ההסכם.</p>' +
+        '<div class="field"><label for="sgName">שם מלא של החותם/ת</label><input type="text" id="sgName" value="' + esc(d.org.contact || '') + '"></div>' +
+        '<label class="checkline" style="margin:12px 0;gap:10px;display:flex;align-items:center"><input type="checkbox" id="sgOk"> <span>קראתי את ההסכם ואני מאשר/ת אותו בשם ' + esc(d.org.name) + '</span></label>' +
+        '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-primary btn-lg" id="sgBtn">' + ic('sign', 16) + ' חתימה על ההסכם</button><button class="btn" id="sgPrint">' + ic('down', 16) + ' הדפסה / PDF</button></div></div>';
+    root.innerHTML = wrap('<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><b style="font-size:22px;color:#4A1BE8">PrimeOS</b><span class="t-sub">הסכם מנוי · ' + esc(d.org.name) + '</span></div><div class="card card-pad agr-page">' + doc() + '</div>' + form);
+    const pr = $('#sgPrint'); if (pr) pr.onclick = () => window.print();
+    const btn = $('#sgBtn');
+    if (btn) btn.onclick = async () => {
+      const name = ($('#sgName').value || '').trim();
+      if (name.length < 2) { toast('חסר שם', 'הקלידו שם מלא.', 'err'); return; }
+      if (!$('#sgOk').checked) { toast('חסר אישור', 'סמנו שקראתם ואישרתם את ההסכם.', 'err'); return; }
+      btn.disabled = true; btn.textContent = 'חותמים...';
+      try { const r = await call('sign.submit', { t, name, accept: true }); Object.assign(a, r.agr || {}); bootSign(t); toast('ההסכם נחתם', 'תודה. עותק נשמר במערכת.'); }
+      catch (e) { btn.disabled = false; btn.textContent = 'חתימה על ההסכם'; toast('החתימה נכשלה', 'נסו שוב בעוד רגע.', 'err'); }
+    };
+  }
   L.boot = async function () {
     const u = new URL(location.href);
+    if (u.pathname.replace(/\/+$/, '') === '/sign') { $('#app').classList.remove('on'); bootSign(u.searchParams.get('t') || ''); return; }
     const k = u.searchParams.get('k');
     if (k) {
       u.searchParams.delete('k');
@@ -418,15 +485,27 @@
         contact: r.contact || ((r.members || [])[0] || {}).name || '', phone: r.phone || '', mail: r.mail || '', c: '#4A1BE8', uLim: ext ? 5 : 1, dLim: ext ? 5 : 0,
         agr: { start: String(cd.getDate()) + '.' + (cd.getMonth() + 1) + '.' + cd.getFullYear(), term: 'חודשי', signed: false, signedAt: '', signer: r.contact || '' } };
       keep.forEach((k) => { if (prev[k] !== undefined) o[k] = prev[k]; });
-      o.live = { id: r.id, token: r.token };
+      o.live = { id: r.id, token: r.token, sign_token: r.agr && r.agr.sign_token || null };
       o.members = r.members || [];
+      o.mainDept = r.main_dept || 'דוברות';
+      o.role = r.role || '';
+      if (r.agr) {
+        const a = r.agr;
+        o.agr = { start: a.start || (a.startIso ? heDate(a.startIso) : o.agr.start), startIso: a.startIso || '', endIso: a.endIso || '', term: 'שנתי', trial: !!a.trial, trialEnd: a.trialEnd || '', signed: !!a.signed, signedAt: a.signedAt || '', signer: a.signer || r.contact || '', sign: a.sign || 'digital' };
+        const payIso = a.trial && a.trialEnd ? a.trialEnd : (a.startIso || '');
+        if (payIso) o.payFrom = +payIso.slice(0, 7).replace('-', '');
+        // the trial ends by the calendar unless the admin paused the account
+        if (o.st !== 'paused') o.st = a.trial && a.trialEnd && new Date(a.trialEnd) > new Date() ? 'trial' : 'active';
+      }
+      o.use = r.use || null;
+      o.useM = r.useM || {};
       return o;
     });
     replaceAll(ORGS, list);
     Object.keys(PLAN_OF).forEach((k) => delete PLAN_OF[k]);
     list.forEach((o) => { PLAN_OF[o.id] = o.plan; });
     const au = [];
-    list.forEach((o) => o.members.forEach((m) => au.push({ id: au.length, org: o.id, n: m.name, r: (m.view === 'dept' ? ROLE_A.member : ROLE_A[m.role]) || m.role, dept: m.dept || '', items: 0, logins: 0, last: '-', st: 'פעיל', gfx: 0, docs: 0, decks: 0, vids: 0, ai: 0 })));
+    list.forEach((o) => o.members.forEach((m) => au.push({ id: au.length, org: o.id, use: m.use || null, n: m.name, r: (m.view === 'dept' ? ROLE_A.member : (o.role || ROLE_A[m.role])) || m.role, dept: m.dept || '', items: 0, logins: 0, last: '-', st: 'פעיל', gfx: 0, docs: 0, decks: 0, vids: 0, ai: 0 })));
     replaceAll(AUSERS, au);
     const ids = new Set(list.map((o) => o.id));
     replaceAll(PURCH, PURCH.filter((x) => ids.has(x.org)));
@@ -437,11 +516,29 @@
     replaceAll(ADMINS, ADMINS.filter((a, i) => i === 0 || a.id !== 'ad2'));
   }
   const linkOf = (o) => location.origin + '/?k=' + encodeURIComponent(o.live.token);
+  const signLinkOf = (o) => (o.live && o.live.sign_token ? location.origin + '/sign?t=' + encodeURIComponent(o.live.sign_token) : '');
+  const waNum = (ph) => { let d = String(ph || '').replace(/\D/g, ''); if (d.startsWith('0')) d = '972' + d.slice(1); return d; };
+  const waWhy = (st) => (st && st.startsWith('failed:whatsapp') ? (/24-hour|template/i.test(st) ? 'WhatsApp לא נשלח: הודעה יזומה דורשת תבנית מאושרת. שלחו דרך כפתור WhatsApp.' : 'WhatsApp נכשל. שלחו דרך כפתור WhatsApp.') : '');
+  ACT.agrSend = async (id) => {
+    const o = ORGS.find((x) => x.id === id);
+    if (!o || !o.live) { toast('אין קישור', 'הלקוח עדיין לא נשמר בשרת.', 'err'); return; }
+    const st = await call('admin.invite.send', { org_id: o.live.id, mail: true, wa: true }).catch(() => null);
+    if (!st) { toast('השליחה נכשלה', 'נסו שוב בעוד רגע.', 'err'); return; }
+    const ok = [st.mail === 'sent' ? 'מייל' : '', st.wa === 'sent' ? 'WhatsApp' : ''].filter(Boolean).join(' + ');
+    toast(ok ? 'נשלח ב' + ok : 'לא נשלח', (ok ? 'קישור הכניסה וההסכם לחתימה נשלחו ל' + o.contact + '. ' : '') + (waWhy(st.wa) || (ok ? '' : 'חסרים דוא״ל או טלפון ללקוח, או שהשליחה נכשלה.')), ok ? '' : 'err');
+  };
+  ACT.agrLink = (id) => {
+    const o = ORGS.find((x) => x.id === id);
+    const l = o && signLinkOf(o);
+    if (!l) { toast('אין קישור לחתימה', 'ההסכם כבר נחתם או שהלקוח לא נשמר בשרת.', 'err'); return; }
+    navigator.clipboard.writeText(l).then(() => toast('הקישור הועתק', 'קישור החתימה של ' + o.n + '.'), () => prompt('קישור לחתימה', l));
+  };
   function linkBox(o) {
     return '<div class="card card-pad" style="margin-top:14px;text-align:start"><b style="font-size:13.5px">קישור כניסה ללקוח</b>' +
       '<div class="t-sub" style="margin:4px 0 10px">שולחים את הקישור לאיש הקשר. הכניסה ישירה, בלי סיסמה.</div>' +
       '<div style="display:flex;gap:8px;align-items:center"><input type="text" readonly value="' + esc(linkOf(o)) + '" style="flex:1;direction:ltr;font-size:12.5px" onclick="this.select()">' +
-      '<button class="btn btn-sm btn-primary" data-act="liveCopy:' + o.id + '">' + ic('copy', 14) + ' העתקה</button></div>' +
+      '<button class="btn btn-sm btn-primary" data-act="liveCopy:' + o.id + '">' + ic('copy', 14) + ' העתקה</button>' +
+      '<a class="btn btn-sm" target="_blank" rel="noopener" href="https://wa.me/' + waNum(o.phone) + '?text=' + encodeURIComponent('שלום ' + (o.contact || '') + ', נפתח עבור ' + o.n + ' חשבון במערכת PrimeOS.\nקישור הכניסה האישי שלך (בלי סיסמה):\n' + linkOf(o) + (signLinkOf(o) && !(o.agr && o.agr.signed) ? '\n\nהסכם המנוי לחתימה דיגיטלית:\n' + signLinkOf(o) : '') + '\n\nהקישורים אישיים, לא להעביר הלאה.') + '">' + ic('send', 14) + ' WhatsApp</a></div>' +
       ((o.members || []).length ? '<div class="t-sub" style="margin-top:10px">משתמשים: ' + o.members.map((m) => esc(m.name) + (m.dept ? ' (' + esc(m.dept) + ')' : '')).join(', ') + '</div>' : '') +
       '<div style="margin-top:14px;display:flex;justify-content:flex-end"><button class="btn btn-sm btn-quiet-bad" data-act="liveDelete:' + o.id + '">' + ic('x', 14) + ' מחיקת הלקוח לצמיתות</button></div></div>';
   }
@@ -494,9 +591,12 @@
   const _nwNext = ACT.nwNext;
   ACT.nwNext = () => {
     const before = ORGS.length;
+    const w0 = S.nw ? JSON.parse(JSON.stringify(S.nw)) : null;
     _nwNext();
     if (ORGS.length <= before || L.kind !== 'admin') return;
     const o = ORGS[ORGS.length - 1];
+    o.mainDept = (w0 && w0.depts && w0.depts[0] && w0.depts[0].n.trim()) || 'דוברות';
+    o.role = (w0 && w0.admin && w0.admin.role) || '';
     // a unique ui id: the mockup counts rows, live clients keep their own numbers
     const used = ORGS.map((x) => +String(x.id).replace(/^o/, '') || 0);
     const nid = 'o' + (Math.max(0, ...used.filter((n, i) => ORGS[i] !== o)) + 1);
@@ -512,13 +612,23 @@
     const d = new Date();
     o.since = String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
     if (o.agr && o.agr.signed) o.agr.signedAt = d.getDate() + '.' + (d.getMonth() + 1) + '.' + d.getFullYear();
-    call('admin.org.create', { name: o.n, plan: o.plan === 'solo' ? 'basic' : 'extended', contact: o.contact, mail: o.mail, phone: o.phone, otype: o.type, ui_id: o.id })
-      .then((r) => {
-        o.live = { id: r.org_id, token: r.token };
+    const agr = Object.assign({}, o.agr, { sign: w0 && w0.agr ? w0.agr.sign : 'digital', uLim: o.uLim, dLim: o.dLim, ch: o.ch, plan: o.plan });
+    const depts = (w0 && w0.depts || []).filter((d, i) => i > 0 && d.n && d.n.trim()).map((d) => ({ n: d.n.trim(), ap: (d.ap || '').trim(), ph: (d.ph || '').trim() }));
+    call('admin.org.create', { name: o.n, plan: o.plan === 'solo' ? 'basic' : 'extended', contact: o.contact, mail: o.mail, phone: o.phone, otype: o.type, ui_id: o.id, main_dept: o.mainDept, role: o.role, agr, depts })
+      .then(async (r) => {
+        o.live = { id: r.org_id, token: r.token, sign_token: r.sign_token || null };
         const mb = $('#modalBox .mb');
         if (mb) mb.insertAdjacentHTML('beforeend', linkBox(o));
         if (S.route === 'a_org') render();
         flush();
+        const send = (w0 && w0.send) || {};
+        if (send.mail || send.wa) {
+          const st = await call('admin.invite.send', { org_id: r.org_id, mail: !!send.mail, wa: !!send.wa }).catch(() => ({ mail: 'failed', wa: 'failed' }));
+          const line = (k, t) => (st[k] ? '<div>' + (st[k] === 'sent' ? ic('checkc', 14) + ' ' + t + ' נשלח' : st[k].startsWith('skipped') ? ic('alert', 14) + ' ' + t + ' לא נשלח: חסר ' + (k === 'mail' ? 'דוא״ל' : 'טלפון') : ic('alert', 14) + ' ' + (waWhy(st[k]) || t + ' נכשל')) + '</div>' : '');
+          const box = $('#modalBox .mb');
+          if (box) box.insertAdjacentHTML('beforeend', '<div class="note" style="margin-top:12px;flex-direction:column;align-items:flex-start;gap:4px">' + line('mail', 'המייל') + line('wa', 'ה-WhatsApp') + '</div>');
+          else toast('ההזמנה', (st.mail === 'sent' ? 'מייל נשלח. ' : '') + (st.wa === 'sent' ? 'WhatsApp נשלח.' : ''));
+        }
       })
       .catch(() => toast('הלקוח נשמר', 'יצירת קישור הכניסה נכשלה. נסו שוב מעמוד הלקוח.', 'err'));
   };
@@ -2442,6 +2552,13 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         closeDrawer();
         render();
         linkModal(m);
+        if (email || phone) {
+          call('members.send', { id: r.id, mail: !!email, wa: !!phone }).then((st) => {
+            const ok = [st.mail === 'sent' ? 'מייל' : '', st.wa === 'sent' ? 'WhatsApp' : ''].filter(Boolean).join(' + ');
+            const box = $('#modalBox .mb');
+            if (box) box.insertAdjacentHTML('beforeend', '<div class="note" style="margin-top:12px">' + ic(ok ? 'checkc' : 'alert', 14) + '<span>' + (ok ? 'הקישור נשלח גם ב' + ok + '.' : 'השליחה האוטומטית נכשלה. אפשר לשלוח ידנית.') + '</span></div>');
+          }).catch(() => {});
+        }
       } catch (e) { done(); toast('הפתיחה נכשלה', e.message === 'forbidden' ? 'אין לך הרשאה לפתוח משתמשים.' : 'נסו שוב בעוד רגע.', 'err'); }
     };
     function linkModal(m) {
@@ -2696,15 +2813,16 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       w.document.close();
     };
     // the mockup's fixed action labels become real actions after every render
-    const _render = render;
-    render = function () {
-      const r = _render.apply(this, arguments);
+    const fixActs = () => {
       try {
         document.querySelectorAll('[data-act^="toastInfo:הקובץ ירד בפורמט CSV"]').forEach((e) => e.setAttribute('data-act', 'exportCsv'));
         document.querySelectorAll('[data-act^="toastInfo:ההסכם ירד כ־PDF"]').forEach((e) => { e.setAttribute('data-act', 'agrPrint'); e.textContent = 'הדפסה / שמירה כ־PDF'; });
       } catch (e) { /* no DOM yet */ }
-      return r;
     };
+    const _render = render;
+    render = function () { const r = _render.apply(this, arguments); fixActs(); return r; };
+    const _openModal = openModal;
+    openModal = function () { const r = _openModal.apply(this, arguments); fixActs(); return r; };
     {
       // purchases: the current month, not the demo's September
       if (SCREENS.a_purch) {
@@ -2715,7 +2833,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           const fix = (label, n) => { h = h.replace(new RegExp('(' + label + '</span><span class="num">)[^<]*'), '$1' + n); };
           fix('מנויים חדשים החודש', tm.filter((x) => x.type === 'new' || x.type === 'trial').length);
           fix('רכישות החודש', tm.length);
-          fix('עלות החודש', usd(tm.reduce((a, x) => a + (+x.cost || 0), 0)));
+          fix('הכנסה חדשה החודש', usd(tm.reduce((a, x) => a + (+x.cost || 0), 0)));
           return h;
         };
       }

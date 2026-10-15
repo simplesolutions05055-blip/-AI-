@@ -1,7 +1,8 @@
 // PrimeOS v2-api - data gateway for the live system (client + admin).
 // POST { action, payload }   header x-primeos-token
 // client: live.load | items.upsert | items.remove | state.save | state.patch | inbox.add | members.list | members.create | members.update | members.remove | members.relink | upload.sign
-// admin: admin.load | admin.state.save | admin.org.create | admin.org.delete
+// admin: admin.load | admin.state.save | admin.org.create | admin.org.delete | admin.invite.send | admin.org.update
+// open (sign token): sign.load | sign.submit
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
@@ -66,7 +67,7 @@ async function membersOf(d: DB, orgId: string, withLinks: boolean) {
 
 async function liveLoad(d: DB, orgId: string, memberId: string | null) {
   const [org, me, its, st] = await Promise.all([
-    d.from('organizations').select('id,name,plan,org_type,status').eq('id', orgId).single(),
+    d.from('organizations').select('id,name,plan,org_type,status,settings').eq('id', orgId).single(),
     memberId ? d.from('org_members').select('id,name,email,role,dept,view,perms').eq('id', memberId).maybeSingle() : Promise.resolve({ data: null }),
     d.from('content_items').select('id,meta,updated_at').eq('org_id', orgId).not('ui_id', 'is', null),
     d.from('org_state').select('data,updated_at').eq('org_id', orgId).maybeSingle(),
@@ -235,6 +236,19 @@ async function adminLoad(d: DB, adminId: string) {
   const { data: cnt } = ids.length ? await d.from('content_items').select('org_id').in('org_id', ids).not('ui_id', 'is', null) : { data: [] };
   const items: Record<string, number> = {};
   for (const c of cnt ?? []) items[c.org_id] = (items[c.org_id] ?? 0) + 1;
+  // AI usage: this month per org and per member, and the last 12 months per org
+  const since = new Date(); since.setMonth(since.getMonth() - 11); since.setDate(1); since.setHours(0, 0, 0, 0);
+  const { data: us } = ids.length ? await d.from('v2_usage').select('org_id,member_id,cin,cout,img_low,img_med,img_high,created_at').in('org_id', ids).gte('created_at', since.toISOString()) : { data: [] };
+  const now = new Date(); const curKey = now.getFullYear() * 100 + now.getMonth() + 1;
+  const usage: Record<string, { use: any; useM: Record<string, any>; members: Record<string, any> }> = {};
+  const addTo = (t: any, r: any) => { t.cin += r.cin ?? 0; t.cout += r.cout ?? 0; t.img_low += r.img_low ?? 0; t.img_med += r.img_med ?? 0; t.img_high += r.img_high ?? 0; };
+  const zero = () => ({ cin: 0, cout: 0, img_low: 0, img_med: 0, img_high: 0 });
+  for (const r of us ?? []) {
+    const dt = new Date(r.created_at); const key = String(dt.getFullYear() * 100 + dt.getMonth() + 1);
+    const u = usage[r.org_id] ??= { use: zero(), useM: {}, members: {} };
+    addTo(u.useM[key] ??= zero(), r);
+    if (+key === curKey) { addTo(u.use, r); if (r.member_id) addTo(u.members[r.member_id] ??= zero(), r); }
+  }
   return {
     admin: a.data,
     state: st?.data ?? null,
@@ -242,7 +256,9 @@ async function adminLoad(d: DB, adminId: string) {
     realOrgs: (orgs.data ?? []).map((o: any) => ({
       id: o.id, name: o.name, plan: o.plan, status: o.status, ui_id: o.settings?.ui_id ?? null, otype: o.settings?.otype ?? null, token: tokOf[o.id] ?? null, created: o.created_at,
       contact: o.contact_name ?? null, mail: o.contact_email ?? null, phone: o.contact_phone ?? null, items: items[o.id] ?? 0,
-      members: (mems ?? []).filter((m: any) => m.org_id === o.id).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone, role: m.role, dept: m.dept, view: m.view })),
+      main_dept: o.settings?.main_dept ?? null, role: o.settings?.role ?? null, agr: o.settings?.agr ?? null,
+      use: usage[o.id]?.use ?? null, useM: usage[o.id]?.useM ?? null,
+      members: (mems ?? []).filter((m: any) => m.org_id === o.id).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone, role: m.role, dept: m.dept, view: m.view, use: usage[o.id]?.members?.[m.id] ?? null })),
     })),
   };
 }
@@ -282,18 +298,135 @@ async function adminOrgCreate(d: DB, p: Record<string, any>) {
     contact_name: p.contact ?? null,
     contact_email: p.mail ?? null,
     contact_phone: p.phone ?? null,
-    settings: { ui_id: p.ui_id ?? null, otype: p.otype ?? null },
+    settings: {
+      ui_id: p.ui_id ?? null, otype: p.otype ?? null,
+      main_dept: p.main_dept ? String(p.main_dept).slice(0, 80) : null, role: p.role ? String(p.role).slice(0, 80) : null,
+      depts: Array.isArray(p.depts) ? p.depts.slice(0, 30).map((d: any) => ({ n: String(d?.n ?? '').slice(0, 80), ap: String(d?.ap ?? '').slice(0, 80), ph: String(d?.ph ?? '').slice(0, 40) })) : [],
+      agr: { ...(p.agr && typeof p.agr === 'object' ? p.agr : {}), signed: !!(p.agr && p.agr.signed), sign_token: newToken() },
+    },
   }).select('id').single();
   if (error) throw error;
   const { data: mem, error: e2 } = await d.from('org_members').insert({
-    org_id: org.id, name: p.contact || 'מנהל המערכת', email: p.mail ?? null, role: 'admin', view: p.plan === 'basic' ? 'basic' : 'ext',
+    org_id: org.id, name: p.contact || 'מנהל המערכת', email: p.mail ?? null, phone: p.phone ?? null, role: 'admin', view: p.plan === 'basic' ? 'basic' : 'ext',
   }).select('id').single();
   if (e2) throw e2;
   const token = newToken();
   const { error: e3 } = await d.from('api_tokens').insert({ token, org_id: org.id, member_id: mem.id });
   if (e3) throw e3;
   await d.from('org_state').upsert({ org_id: org.id, data: { fresh: true }, updated_at: new Date().toISOString() });
-  return { org_id: org.id, token };
+  const { data: back } = await d.from('organizations').select('settings').eq('id', org.id).single();
+  return { org_id: org.id, token, sign_token: back?.settings?.agr?.sign_token ?? null };
+}
+
+// ---------------- sending: e-mail (Resend) and WhatsApp (SmartSend) ----------------
+const APP = 'https://app.primeos.co.il';
+async function sendMail(to: string, subject: string, html: string) {
+  const key = Deno.env.get('RESEND_API_KEY'); const from = Deno.env.get('RESEND_FROM_EMAIL');
+  if (!key || !from) throw new Error('mail_not_configured');
+  const r = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ from: `PrimeOS <${from}>`, to, subject, html, reply_to: Deno.env.get('RESEND_REPLY_TO') || undefined }) });
+  if (!r.ok) throw new Error('mail_failed:' + (await r.text()).slice(0, 200));
+  return (await r.json()).id ?? '';
+}
+async function sendWa(phone: string, message: string) {
+  const key = (Deno.env.get('SMARTSEND_ORGANIZATION_ID') || Deno.env.get('SMARTSEND_API_KEY') || '').trim();
+  if (!key) throw new Error('whatsapp_not_configured');
+  let digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('0')) digits = '972' + digits.slice(1);
+  const base = (Deno.env.get('SMARTSEND_API_URL') || 'https://api.smartsend.co.il').replace(/\/$/, '');
+  const r = await fetch(base + '/integrations/make/messages/send-text', { method: 'POST', headers: { 'content-type': 'application/json', 'x-organization-id': key }, body: JSON.stringify({ phoneNumber: digits, message }) });
+  const txt = await r.text();
+  if (!r.ok) throw new Error('whatsapp_failed:' + txt.slice(0, 200));
+  try { const j = JSON.parse(txt); if (j && j.success === false) throw new Error('whatsapp_rejected:' + String(j.message ?? '').slice(0, 200)); } catch (e) { if (e instanceof Error && e.message.startsWith('whatsapp_rejected')) throw e; }
+  return true;
+}
+const escH = (x: unknown) => String(x ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+function inviteHtml(p: { name: string; org: string; login: string; sign: string | null }) {
+  return `<!doctype html><html dir="rtl" lang="he"><body style="margin:0;background:#F4F6FB;font-family:Arial,Helvetica,sans-serif;color:#1B2238"><div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;padding:28px 28px 22px;border:1px solid #E6E9F2">
+<div style="font-size:22px;font-weight:700;color:#4A1BE8;margin-bottom:6px">PrimeOS</div><div style="font-size:13px;color:#6B7390;margin-bottom:22px">ניהול סושיאל חכם לרשויות</div>
+<p style="font-size:16px;line-height:1.7;margin:0 0 14px">שלום ${escH(p.name)},</p>
+<p style="font-size:15px;line-height:1.7;margin:0 0 18px">נפתח עבור <b>${escH(p.org)}</b> חשבון במערכת PrimeOS. הכניסה היא בקישור אישי, בלי סיסמה.</p>
+<p style="margin:0 0 22px"><a href="${escH(p.login)}" style="display:inline-block;background:#4A1BE8;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:12px;font-size:15px">כניסה למערכת</a></p>
+${p.sign ? `<p style="font-size:15px;line-height:1.7;margin:0 0 10px">הסכם המנוי ממתין לחתימה דיגיטלית:</p><p style="margin:0 0 22px"><a href="${escH(p.sign)}" style="display:inline-block;background:#fff;color:#4A1BE8;border:1.5px solid #4A1BE8;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:12px;font-size:14px">צפייה וחתימה על ההסכם</a></p>` : ''}
+<p style="font-size:12.5px;line-height:1.6;color:#6B7390;margin:0;border-top:1px solid #E6E9F2;padding-top:14px">הקישור אישי. לא להעביר אותו הלאה. אם לא ציפיתם להודעה הזו, אפשר להתעלם ממנה.</p></div></body></html>`;
+}
+async function adminInviteSend(d: DB, p: Record<string, any>) {
+  const id = String(p.org_id ?? '');
+  const { data: org } = await d.from('organizations').select('id,name,contact_name,contact_email,contact_phone,settings').eq('id', id).maybeSingle();
+  if (!org) throw new Error('not_found');
+  const { data: tok } = await d.from('api_tokens').select('token').eq('org_id', id).order('created_at').limit(1).maybeSingle();
+  if (!tok) throw new Error('no_token');
+  const login = `${APP}/?k=${encodeURIComponent(tok.token)}`;
+  const agr = org.settings?.agr ?? {};
+  const sign = agr.sign_token && !agr.signed && agr.sign !== 'upload' ? `${APP}/sign?t=${encodeURIComponent(agr.sign_token)}` : null;
+  const name = org.contact_name || 'שלום';
+  const out: Record<string, string> = {};
+  if (p.mail) {
+    if (!org.contact_email) out.mail = 'skipped:no_email';
+    else { try { await sendMail(org.contact_email, `הכניסה שלך ל-PrimeOS · ${org.name}`, inviteHtml({ name, org: org.name, login, sign })); out.mail = 'sent'; } catch (e) { out.mail = 'failed:' + (e instanceof Error ? e.message : 'error'); } }
+  }
+  if (p.wa) {
+    if (!org.contact_phone) out.wa = 'skipped:no_phone';
+    else {
+      const msg = `שלום ${name}, נפתח עבור ${org.name} חשבון במערכת PrimeOS.\nקישור הכניסה האישי שלך (בלי סיסמה):\n${login}` + (sign ? `\n\nהסכם המנוי לחתימה דיגיטלית:\n${sign}` : '') + `\n\nהקישורים אישיים, לא להעביר הלאה.`;
+      try { await sendWa(org.contact_phone, msg); out.wa = 'sent'; } catch (e) { out.wa = 'failed:' + (e instanceof Error ? e.message : 'error'); }
+    }
+  }
+  await d.from('organizations').update({ settings: { ...(org.settings ?? {}), invite: { at: new Date().toISOString(), ...out } } }).eq('id', id);
+  return { ok: true, ...out, sign };
+}
+// a department user gets the invitation to its own mail / phone
+async function memberSend(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
+  if (!isManager(me)) throw new Error('forbidden');
+  const { data: m } = await d.from('org_members').select('id,name,email,phone').eq('id', String(p.id ?? '')).eq('org_id', orgId).maybeSingle();
+  if (!m) throw new Error('not_found');
+  const { data: org } = await d.from('organizations').select('name').eq('id', orgId).single();
+  const { data: tok } = await d.from('api_tokens').select('token').eq('member_id', m.id).limit(1).maybeSingle();
+  if (!tok) throw new Error('no_token');
+  const login = `${APP}/?k=${encodeURIComponent(tok.token)}`;
+  const out: Record<string, string> = {};
+  if (p.mail) { if (!m.email) out.mail = 'skipped:no_email'; else { try { await sendMail(m.email, `הכניסה שלך ל-PrimeOS · ${org?.name ?? ''}`, inviteHtml({ name: m.name, org: org?.name ?? '', login, sign: null })); out.mail = 'sent'; } catch (e) { out.mail = 'failed:' + (e instanceof Error ? e.message : 'error'); } } }
+  if (p.wa) { if (!m.phone) out.wa = 'skipped:no_phone'; else { try { await sendWa(m.phone, `שלום ${m.name}, זה קישור הכניסה האישי שלך למערכת PrimeOS של ${org?.name ?? ''}:\n${login}\nהקישור אישי, לא להעביר הלאה.`); out.wa = 'sent'; } catch (e) { out.wa = 'failed:' + (e instanceof Error ? e.message : 'error'); } } }
+  return { ok: true, ...out };
+}
+
+// ---------------- digital signature inside PrimeOS ----------------
+async function orgBySign(d: DB, t: string) {
+  if (!/^[0-9a-f]{36}$/.test(t)) throw new Error('bad_token');
+  const { data: org } = await d.from('organizations').select('id,name,plan,org_type,contact_name,contact_email,settings').eq('settings->agr->>sign_token', t).maybeSingle();
+  if (!org) throw new Error('not_found');
+  return org;
+}
+async function signLoad(d: DB, p: Record<string, any>) {
+  const org = await orgBySign(d, String(p.t ?? ''));
+  const s = org.settings ?? {};
+  return { org: { name: org.name, plan: org.plan, type: s.otype ?? org.org_type, contact: org.contact_name, main_dept: s.main_dept ?? null }, agr: s.agr ?? null };
+}
+async function signSubmit(d: DB, p: Record<string, any>, req: Request) {
+  const org = await orgBySign(d, String(p.t ?? ''));
+  const name = String(p.name ?? '').trim().slice(0, 120);
+  if (name.length < 2 || !p.accept) throw new Error('missing_fields');
+  const s = org.settings ?? {}; const agr = s.agr ?? {};
+  if (agr.signed) return { ok: true, already: true, agr };
+  const signed = { ...agr, signed: true, signer: name, signedAt: new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' }), signed_iso: new Date().toISOString(), ip: req.headers.get('x-forwarded-for') ?? '', ua: (req.headers.get('user-agent') ?? '').slice(0, 200) };
+  const { error } = await d.from('organizations').update({ settings: { ...s, agr: signed } }).eq('id', org.id);
+  if (error) throw error;
+  return { ok: true, agr: signed };
+}
+async function adminOrgUpdate(d: DB, p: Record<string, any>) {
+  const id = String(p.org_id ?? '');
+  const { data: org } = await d.from('organizations').select('id,settings').eq('id', id).maybeSingle();
+  if (!org) throw new Error('not_found');
+  const row: Record<string, any> = {};
+  if (typeof p.name === 'string' && p.name.trim()) row.name = p.name.trim().slice(0, 200);
+  if (p.plan === 'basic' || p.plan === 'extended') row.plan = p.plan;
+  if (typeof p.contact === 'string') row.contact_name = p.contact.slice(0, 120);
+  if (typeof p.mail === 'string') row.contact_email = p.mail.slice(0, 200);
+  if (typeof p.phone === 'string') row.contact_phone = p.phone.slice(0, 40);
+  if (p.settings && typeof p.settings === 'object') row.settings = { ...(org.settings ?? {}), ...p.settings, agr: { ...(org.settings?.agr ?? {}), ...(p.settings.agr ?? {}) } };
+  const { error } = await d.from('organizations').update(row).eq('id', id);
+  if (error) throw error;
+  return { ok: true };
 }
 
 // ---------------- auth ----------------
@@ -343,6 +476,8 @@ Deno.serve(async (req) => {
   const d = db();
   try {
     if (action === 'login') return json(req, await login(d, p));
+    if (action === 'sign.load') return json(req, await signLoad(d, p));
+    if (action === 'sign.submit') return json(req, await signSubmit(d, p, req));
     const token = req.headers.get('x-primeos-token')?.trim() ?? '';
     const s = token ? await resolve(d, token) : null;
     if (!s) return json(req, { error: 'invalid_token' }, 401);
@@ -367,6 +502,7 @@ Deno.serve(async (req) => {
       if (action === 'members.relink') return json(req, await memberRelink(d, s.orgId, s.memberId, String(p.id ?? '')));
       if (action === 'members.update') return json(req, await memberUpdate(d, s.orgId, s.memberId, p));
       if (action === 'state.patch') return json(req, await statePatch(d, s.orgId, s.memberId, p.data ?? {}));
+      if (action === 'members.send') return json(req, await memberSend(d, s.orgId, s.memberId, p));
     } else {
       if (action === 'admin.load') return json(req, await adminLoad(d, s.adminId));
       if (action === 'admin.state.save') {
@@ -376,6 +512,9 @@ Deno.serve(async (req) => {
       }
       if (action === 'admin.org.create') return json(req, await adminOrgCreate(d, p));
       if (action === 'admin.org.delete') return json(req, await adminOrgDelete(d, p));
+      if (action === 'admin.invite.send') return json(req, await adminInviteSend(d, p));
+      if (action === 'admin.org.update') return json(req, await adminOrgUpdate(d, p));
+      if (action === 'admin.env') return json(req, { mail: !!(Deno.env.get('RESEND_API_KEY') && Deno.env.get('RESEND_FROM_EMAIL')), wa: !!(Deno.env.get('SMARTSEND_ORGANIZATION_ID') || Deno.env.get('SMARTSEND_API_KEY')) });
     }
     return json(req, { error: 'unknown_action' }, 400);
   } catch (e) {
