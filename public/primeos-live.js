@@ -3180,4 +3180,272 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     ACT.insPer = (p) => { S.insPer = +p; render(); };
     ACT.insRefresh = () => { if (L.pub && L.pub.on) { load(true); toast('מרעננים את הנתונים', CH[S.insCh] ? CH[S.insCh].t : ''); } else if (_pc) render(); };
   })();
+
+  /* ---------- video v3: director brief -> approval -> production (Remotion in a sandbox) ----------
+   * Step 0 details (+ length, narration, music, voice), step 1 style, step 2 the director's brief
+   * for approval or change, step 3 production: visuals, narration, music, render. */
+  (function () {
+    const VID = '/api/video';
+    const STEPS4 = ['פרטי הסרטון', 'סגנון', 'בריף', 'הפקה'];
+    const TS_HE = { headline: 'כותרת עולה', pop: 'מילים קופצות', box: 'פסי צבע', typewriter: 'מכונת כתיבה', stamp: 'חותמת', lowerThird: 'פס שם', stat: 'מספר רץ', quote: 'ציטוט', list: 'רשימה', cinematic: 'קולנועי', outline: 'מתאר מתמלא', split: 'חשיפה', neon: 'ניאון' };
+    const TR_HE = { cut: 'חיתוך', fade: 'עמעום', slide: 'החלקה', wipe: 'מחיקה', push: 'דחיפה', iris: 'עדשה', clockWipe: 'שעון', flip: 'היפוך', flash: 'הבזק', zoom: 'זום', whip: 'סחרור' };
+    const MOOD_HE = { energetic: 'אנרגטי', emotional: 'רגשי', informative: 'מידעי', festive: 'חגיגי', solemn: 'ממלכתי', calm: 'רגוע', luxury: 'יוקרתי' };
+    let CAPS = null;
+    // director, narration and music calls can run past the default 95s client limit
+    const genLong = (payload) => post(GEN, Object.assign(aiCtx(), payload), 170000);
+    const capsLoad = () => CAPS ? Promise.resolve(CAPS) : gen({ mode: 'vcaps' }).then((r) => (CAPS = r)).catch(() => (CAPS = { caps: {}, voices: [] }));
+    const ttsOn = () => !!(CAPS && CAPS.caps && (CAPS.caps.eleven || CAPS.caps.google));
+    const musicOn = () => !!(CAPS && CAPS.caps && CAPS.caps.eleven);
+    css.textContent += `
+.vd-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.vd-dur{display:flex;align-items:center;gap:14px}.vd-dur input{flex:1;accent-color:var(--brand,#0E3B6B)}.vd-dur b{min-width:64px;text-align:center;font-size:18px}
+.vd-tg{display:grid;grid-template-columns:1fr 1fr;gap:10px}.vd-tg .checkline{border:1.5px solid var(--line,#DDE3EC);border-radius:14px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.vd-tg small{display:block;color:var(--ink-3,#6B7890);font-size:12.5px;font-weight:500}
+.vd-voices{display:flex;flex-wrap:wrap;gap:8px}.vd-voices .tagc small{opacity:.7;font-weight:500}
+.vb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.vb-cell{background:var(--bg-2,#F4F6FA);border-radius:14px;padding:12px 14px}.vb-cell span{display:block;font-size:12.5px;color:var(--ink-3,#6B7890);margin-bottom:3px}.vb-cell b{font-size:14.5px;line-height:1.45;font-weight:600}
+.vb-idea{font-size:17px;font-weight:700;line-height:1.5;margin:0 0 14px}
+.vb-sc{width:100%;border-collapse:collapse;font-size:13.5px}.vb-sc th{text-align:start;font-weight:700;color:var(--ink-3,#6B7890);padding:8px 6px;border-bottom:1.5px solid var(--line,#DDE3EC);font-size:12.5px}
+.vb-sc td{padding:10px 6px;border-bottom:1px solid var(--line,#E6EAF1);vertical-align:top;line-height:1.45}.vb-sc td small{display:block;color:var(--ink-3,#6B7890)}
+.vb-wrap{overflow-x:auto}
+.vb-chg{display:flex;gap:8px;margin-top:14px}.vb-chg input{flex:1}
+.vp-list{list-style:none;padding:0;margin:18px auto 0;max-width:420px;display:grid;gap:8px}.vp-list li{display:flex;align-items:center;gap:10px;font-weight:600;color:var(--ink-3,#6B7890)}.vp-list li.done{color:var(--ok,#1F8A4C)}.vp-list li.on{color:var(--ink,#13213A)}
+.vp-bar{height:8px;border-radius:99px;background:var(--bg-2,#EEF1F6);overflow:hidden;max-width:420px;margin:14px auto 0}.vp-bar i{display:block;height:100%;background:var(--brand,#0E3B6B);transition:width .6s}
+@media(max-width:640px){.vd-tg,.vb-grid{grid-template-columns:1fr}.vb-sc th:nth-child(5),.vb-sc td:nth-child(5){display:none}}`;
+
+    // brand palette -> engine colours (deep must stay dark enough for white text)
+    function vidBrand() {
+      const b = brandFor(S.vd && S.vd.dept);
+      const cols = (b.colors || []).filter(Boolean);
+      let main = cols[0] || '#1F5FBF';
+      let deep = cols.slice().sort((x, y) => lum(x) - lum(y))[0] || '#0B1F3A';
+      for (let t = 0; lum(deep) > 0.06 && t < 14; t++) deep = mix(deep, '#000000', 0.15);
+      // accent: the most colourful brand colour that is not the main one (greys and near-white never qualify)
+      const chroma = (h) => { const c = rgbOf(h); return (Math.max(...c) - Math.min(...c)) / 255; };
+      let acc = cols.filter((c) => c !== main && chroma(c) > 0.28 && lum(c) > 0.08).sort((x, y) => chroma(y) - chroma(x))[0] || '#FFC93C';
+      if (lum(acc) < 0.12) acc = mix(acc, '#ffffff', 0.45);
+      return { org: b.org || aiCtx().org || '', dept: b.dept || '', logo: b.logo || undefined, colors: { deep, main, accent: acc, light: mix(main, '#ffffff', 0.72) } };
+    }
+    const fmtK = (f) => ({ '9:16': '9x16', '1:1': '1x1', '4:5': '4x5', '16:9': '16x9' }[f] || '9x16');
+    const tsec = (n) => (Math.round(n * 10) / 10).toString().replace(/\.0$/, '');
+
+    // ---- step 0 additions: length, narration, music, voice ----
+    function extras(w) {
+      const vs = (CAPS && CAPS.voices) || [];
+      const vbtn = (v) => '<button class="tagc ' + (w.voiceId === v.id ? 'on' : '') + '" data-act="vdVoice:' + v.id + '" title="' + esc(v.tone) + '">' + (w.voiceId === v.id ? ic('check', 13, 2.4) : '') + esc(v.n) + ' <small>' + esc(v.tone.split(',')[0]) + '</small></button>';
+      return '<div class="field full"><label for="vdDur">אורך הסרטון <span class="hint">עד 90 שניות</span></label><div class="vd-dur"><input type="range" id="vdDur" min="10" max="90" step="5" value="' + w.dur + '" aria-label="אורך בשניות"><b><span id="vdDurV">' + w.dur + '</span> שנ׳</b></div></div>' +
+        '<div class="field full"><label>שמע</label><div class="vd-tg">' +
+        '<div class="checkline"><span>קריינות בעברית<small>' + (ttsOn() ? 'קול מקצועי שמקריא את התסריט' : 'יופעל כשיחובר ספק קריינות') + '</small></span><button class="sw ' + (w.voice ? 'on' : '') + '" data-act="vdTg:voice" role="switch" aria-checked="' + w.voice + '" aria-label="קריינות"></button></div>' +
+        '<div class="checkline"><span>מוזיקת רקע<small>' + (musicOn() ? 'מוזיקה מקורית שמותאמת לתוכן ולאורך' : 'תופעל כשיחובר ספק מוזיקה') + '</small></span><button class="sw ' + (w.music ? 'on' : '') + '" data-act="vdTg:music" role="switch" aria-checked="' + w.music + '" aria-label="מוזיקת רקע"></button></div>' +
+        '</div></div>' +
+        (w.voice && vs.length ? '<div class="field full"><label>קול הקריין</label><div class="vd-voices"><button class="tagc ' + (w.voiceId === 'auto' ? 'on' : '') + '" data-act="vdVoice:auto">' + (w.voiceId === 'auto' ? ic('check', 13, 2.4) : ic('spark', 13, 2)) + 'Claude יבחר</button>' +
+          vs.filter((v) => v.g === 'm').map(vbtn).join('') + vs.filter((v) => v.g === 'f').map(vbtn).join('') + '</div></div>' : '');
+    }
+    const _r0 = SCREENS.vidWiz.render;
+    SCREENS.vidWiz.render = function () {
+      const w = S.vd;
+      if (!w) return _r0.call(this);
+      if (w.dur == null) { w.dur = 30; w.voice = true; w.music = true; w.voiceId = 'auto'; capsLoad().then(() => { if (S.vd === w && S.route === 'vidWiz') render(); }); }
+      let h = _r0.call(this);
+      h = h.replace(/<div class="flow-steps">[\s\S]*?<\/div>/, stepsBar(STEPS4, w.prod ? 3 : w.step));
+      if (w.prod) return headOnly(h) + prodView(w);
+      if (w.step === 2 && w.brief) return headOnly(h) + briefView(w);
+      if (w.step === 0) h = h.replace('<div class="field full"><label>פלטפורמות לפרסום</label>', extras(w) + '<div class="field full"><label>פלטפורמות לפרסום</label>');
+      if (w.step === 1) h = h.replace(/data-act="vdGen">[\s\S]*?<\/button>/, 'data-act="vdGen">' + ic('spark', 17) + ' בניית בריף לסרטון</button>');
+      return h;
+    };
+    const headOnly = (h) => { const i = h.indexOf('<div class="card'); return i > 0 ? h.slice(0, i) : h; };
+    const _m0 = SCREENS.vidWiz.mount;
+    SCREENS.vidWiz.mount = function () {
+      _m0 && _m0.call(this);
+      const r = $('#vdDur');
+      if (r) r.addEventListener('input', () => { const v = $('#vdDurV'); if (v) v.textContent = r.value; if (S.vd) S.vd.dur = +r.value; });
+    };
+    ACT.vdTg = (k) => { vdCollect(); S.vd[k] = !S.vd[k]; render(); };
+    ACT.vdVoice = (id) => { vdCollect(); S.vd.voiceId = id; render(); };
+
+    // ---- the director ----
+    function briefReq(v, change) {
+      const media = (v.imgs || []).filter((m) => m.url).map((m) => ({ url: m.url, name: m.name || '', v: !!m.v }));
+      return {
+        mode: 'vbrief', title: v.name, desc: v.desc, goal: v.goal, aud: [...(v.audQ || []), v.aud].filter(Boolean).join(', '), format: fmtK(v.fmt), duration: v.dur,
+        style: v.style, voice: v.voice, music: v.music, voiceId: v.voiceId, media, clipSec: v.clip && v.clip.sec, dept: v.dept,
+        change: change || undefined, prev: change ? v.brief : undefined,
+      };
+    }
+    async function runBrief(v, change) {
+      v.gen = true; render();
+      try {
+        await capsLoad();
+        const r = await genLong(briefReq(v, change));
+        if (S.vd !== v) return;
+        v.brief = r; v.step = 2; v.gen = false; render(); window.scrollTo({ top: 0 });
+      } catch (e) { v.gen = false; render(); aiFail(e); }
+    }
+    ACT.vdGen = () => {
+      const v = S.vd;
+      if (!v.style) { toast('לא נבחר סגנון', 'בחרו: אנימציה, סרטון קיים או סרטון מחומרי גלם.', 'err'); return; }
+      if (v.style === 'existing' && !(v.clip && v.clip.url)) { toast('לא הועלה סרטון', 'העלו את הסרטון לעריכה.', 'err'); return; }
+      runBrief(v);
+    };
+    ACT.vbChange = () => { const el = $('#vbChg'); const q = (el && el.value || '').trim(); if (!q) { toast('מה לשנות?', 'לדוגמה: קצב רגוע יותר, קול של אישה, פחות טקסט על המסך.', 'err'); return; } runBrief(S.vd, q); };
+    ACT.vbBack = () => { S.vd.step = 1; render(); };
+
+    function visDesc(src, v) {
+      const s = String(src || '');
+      if (/^upload:(\d+)/.test(s)) { const m = (v.imgs || [])[+RegExp.$1]; return (m && m.v ? 'קטע שהעליתם' : 'תמונה שהעליתם') + (m && m.name ? '<small>' + esc(m.name) + '</small>' : ''); }
+      if (/^clip:/.test(s)) return 'מהסרטון שלכם<small>משנייה ' + esc(s.slice(5)) + '</small>';
+      if (/^ai:/.test(s)) return 'תמונת AI<small dir="ltr">' + esc(s.slice(3, 90)) + '</small>';
+      if (/^stockv:/.test(s)) return 'וידאו סטוק<small dir="ltr">' + esc(s.slice(7, 60)) + '</small>';
+      if (/^stock:/.test(s)) return 'צילום סטוק<small dir="ltr">' + esc(s.slice(6, 60)) + '</small>';
+      return s === 'color' ? 'רקע צבע' : 'רקע מונפש';
+    }
+    function briefView(v) {
+      const b = v.brief, x = b.brief || {};
+      let t = 0;
+      const rows = (b.scenes || []).map((s, i) => {
+        const a = t; t += s.dur;
+        const tx = s.text ? '<b>' + esc((s.text.lines || []).join(' / ')) + '</b><small>' + (TS_HE[s.text.style] || s.text.style) + '</small>' : '<small>בלי טקסט</small>';
+        return '<tr><td>' + (i + 1) + '<small>' + tsec(a) + '-' + tsec(t) + '</small></td><td>' + visDesc(s.visual && s.visual.src, v) + '</td><td>' + tx + '</td><td>' + (s.say ? esc(s.say) : '<small>-</small>') + '</td><td>' + (s.transition ? (TR_HE[s.transition.kind] || s.transition.kind) : '-') + '</td></tr>';
+      }).join('');
+      const total = t + 3;
+      const warn = [];
+      if (v.voice && !ttsOn()) warn.push('קריינות: ספק הקריינות עוד לא מחובר, הסרטון ייצא עם כתוביות בלבד.');
+      if (v.music && !musicOn()) warn.push('מוזיקה: ספק המוזיקה עוד לא מחובר, הסרטון ייצא בלי מוזיקה.');
+      return '<div class="card brief-card">' +
+        '<p class="vb-idea">' + esc(x.idea || '') + '</p>' +
+        '<div class="vb-grid">' +
+        '<div class="vb-cell"><span>סגנון</span><b>' + esc(x.style || '') + (b.mood ? ' · ' + (MOOD_HE[b.mood] || '') : '') + '</b></div>' +
+        '<div class="vb-cell"><span>אורך ופורמט</span><b>' + Math.round(total) + ' שניות · ' + esc(v.fmt) + '</b></div>' +
+        '<div class="vb-cell"><span>שפה חזותית</span><b>' + esc(x.look || '') + '</b></div>' +
+        '<div class="vb-cell"><span>קצב</span><b>' + esc(x.pace || '') + '</b></div>' +
+        '<div class="vb-cell"><span>מוזיקה</span><b>' + (v.music ? esc(x.music || '') : 'בלי מוזיקה') + '</b></div>' +
+        '<div class="vb-cell"><span>קריינות</span><b>' + (v.voice && b.voice ? esc(b.voice.n) + ' (' + (b.voice.g === 'm' ? 'גבר' : 'אישה') + ') - ' + esc(x.voiceWhy || b.voice.tone) : 'בלי קריינות') + '</b></div>' +
+        '</div>' +
+        '<div class="field full"><label>תסריט סצנה אחר סצנה</label><div class="vb-wrap"><table class="vb-sc"><thead><tr><th>#</th><th>ויזואל</th><th>טקסט על המסך</th><th>קריינות</th><th>מעבר</th></tr></thead><tbody>' + rows +
+        '<tr><td>סיום<small>' + tsec(t) + '-' + tsec(total) + '</small></td><td>כרטיס לוגו</td><td><b>' + esc((b.outro && b.outro.cta) || '') + '</b><small>' + esc(((b.outro && b.outro.details) || []).map((d) => d.text).join(' · ')) + '</small></td><td></td><td></td></tr></tbody></table></div></div>' +
+        (warn.length ? '<div class="note">' + ic('info', 15) + '<span>' + warn.join('<br>') + '</span></div>' : '') +
+        '<div class="vb-chg"><input type="text" id="vbChg" placeholder="רוצים לשנות משהו בבריף? כתבו כאן"><button class="btn" data-act="vbChange">' + ic('spark', 15) + ' עדכון הבריף</button></div>' +
+        '<div class="brief-foot"><button class="btn" data-act="vbBack">' + ic('fwd', 16) + ' לסגנון</button><button class="btn btn-primary btn-lg" data-act="vbGo">' + ic('check', 17, 2.4) + ' אישור ויצירת הסרטון</button></div></div>';
+    }
+
+    // ---- production ----
+    const PSTAGES = [['vis', 'מכינים תמונות וקטעים'], ['voice', 'מקליטים קריינות'], ['music', 'מלחינים מוזיקה'], ['render', 'מרנדרים את הסרטון']];
+    function prodView(v) {
+      const p = v.prod;
+      return '<div class="card gen-mini">' + thinkBox() + '<div class="vp-bar"><i style="width:' + Math.round((p.pct || 0) * 100) + '%"></i></div><ul class="vp-list">' +
+        PSTAGES.filter((s) => !p.skip || !p.skip.includes(s[0])).map((s) => '<li class="' + (p.done.includes(s[0]) ? 'done' : p.on.includes(s[0]) ? 'on' : '') + '">' + ic(p.done.includes(s[0]) ? 'check' : 'clock', 15, 2.2) + s[1] + (s[0] === 'render' && p.on.includes('render') && p.rp ? ' ' + Math.round(p.rp * 100) + '%' : '') + '</li>').join('') + '</ul></div>';
+    }
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function resolveVisuals(v, scenes, fmt) {
+      const media = (v.imgs || []).filter((m) => m.url);
+      const out = scenes.map(() => ({ kind: 'gradient' }));
+      const stockQ = [];
+      const ai = [];
+      scenes.forEach((s, i) => {
+        const src = String((s.visual && s.visual.src) || 'gradient');
+        const base = { motion: s.visual && s.visual.motion, tint: s.visual && s.visual.tint != null ? s.visual.tint : 0.35 };
+        let m;
+        if ((m = /^upload:(\d+)/.exec(src)) && media[+m[1]]) { const u = media[+m[1]]; out[i] = Object.assign(base, { kind: u.v ? 'video' : 'image', src: u.url }); }
+        else if ((m = /^clip:([\d.]+)/.exec(src)) && v.clip && v.clip.url) out[i] = Object.assign(base, { kind: 'video', src: v.clip.url, trimStart: +m[1] });
+        else if (/^stockv?:/.test(src)) stockQ.push({ i, q: src.replace(/^stockv?:/, ''), v: /^stockv:/.test(src), base });
+        else if (/^ai:/.test(src)) ai.push({ i, q: src.slice(3), base });
+        else out[i] = Object.assign(base, { kind: src === 'color' ? 'color' : 'gradient' });
+      });
+      const jobs = [];
+      if (stockQ.length) jobs.push(gen({ mode: 'vstock', format: fmt, queries: stockQ.map((x) => ({ q: x.q, v: x.v })) }).then((r) => {
+        stockQ.forEach((x, k) => { const it = (r.items || [])[k]; if (it && it.src) out[x.i] = Object.assign(x.base, { kind: it.v ? 'video' : 'image', src: it.src }); else ai.push({ i: x.i, q: x.q, base: x.base }); });
+      }).catch(() => stockQ.forEach((x) => ai.push({ i: x.i, q: x.q, base: x.base }))));
+      await Promise.all(jobs);
+      let at = 0;
+      const size = IMG_SIZE(v.fmt);
+      const worker = async () => { while (at < ai.length) { const x = ai[at++]; try { const u = await aiImage({ title: v.name, brief: x.q + '\nהקשר: ' + v.desc, size, quality: 'high' }); if (u) out[x.i] = Object.assign(x.base, { kind: 'image', src: u }); } catch (e) { /* that scene keeps the animated background */ } } };
+      await Promise.all(Array.from({ length: Math.min(4, ai.length) }, worker));
+      return out;
+    }
+    async function renderPlan(plan, onP) {
+      const slot = await call('upload.sign', { name: 'video.mp4' });
+      const st = await post(VID, { action: 'start', plan, upload: slot.upload, url: slot.url }, 295000);
+      const t0 = Date.now();
+      for (;;) {
+        await sleep(6000);
+        let r;
+        try { r = await post(VID, { action: 'status', sandboxId: st.sandboxId, cmdId: st.cmdId, upload: slot.upload, url: slot.url }, 120000); } catch (e) { if (Date.now() - t0 > 25 * 60000) throw e; continue; }
+        if (r.stage === 'done') return r.url;
+        if (r.stage === 'error' || r.stage === 'expired') throw new Error('render_' + r.stage);
+        onP(r.progress || 0);
+        if (Date.now() - t0 > 25 * 60000) throw new Error('render_timeout');
+      }
+    }
+    ACT.vbGo = async () => {
+      const v = S.vd, b = v.brief;
+      if (!b || v.prod) return;
+      const fmt = fmtK(v.fmt);
+      const wantVoice = v.voice && b.voice && ttsOn() && (b.scenes || []).some((s) => s.say);
+      const wantMusic = v.music && musicOn() && b.musicPrompt;
+      const p = (v.prod = { on: ['vis'], done: [], pct: 0.04, skip: [] });
+      if (!wantVoice) p.skip.push('voice'); if (!wantMusic) p.skip.push('music');
+      if (wantVoice) p.on.push('voice'); if (wantMusic) p.on.push('music');
+      render();
+      const tick = () => { if (S.vd === v && S.route === 'vidWiz') render(); };
+      const fin = (k, pct) => { p.on = p.on.filter((x) => x !== k); p.done.push(k); p.pct = Math.max(p.pct, pct); tick(); };
+      try {
+        const est = (b.scenes || []).reduce((a, s) => a + s.dur, 0) + 3;
+        const [vis, voice, music] = await Promise.all([
+          resolveVisuals(v, b.scenes, fmt).then((r) => (fin('vis', 0.35), r)),
+          wantVoice ? genLong({ mode: 'vvoice', voiceId: b.voice.id, says: b.scenes.map((s) => s.say || '') }).then((r) => (fin('voice', 0.3), r.clips || [])).catch(() => (fin('voice', 0.3), [])) : Promise.resolve([]),
+          wantMusic ? genLong({ mode: 'vmusic', prompt: b.musicPrompt, seconds: Math.min(95, est + 4) }).then((r) => (fin('music', 0.3), r)).catch(() => (fin('music', 0.3), null)) : Promise.resolve(null),
+        ]);
+        const scenes = b.scenes.map((s, i) => {
+          const c = voice[i];
+          const sc = { dur: c ? Math.max(s.dur, c.sec + 0.55) : s.dur, visual: vis[i], text: s.text, transition: s.transition, fx: s.fx };
+          if (c) sc.voice = { src: c.src, words: c.words, at: 0.25 };
+          return sc;
+        });
+        const plan = { format: fmt, fps: 30, brand: vidBrand(), font: b.font, mood: b.mood, fx: b.fx, scenes, outro: Object.assign({ dur: 3.2 }, b.outro), captions: { style: b.captions || 'karaoke', words: [] }, audio: music && music.src ? { music: { src: music.src } } : {}, showLogo: true };
+        p.on = ['render']; p.pct = Math.max(p.pct, 0.4); tick();
+        const url = await renderPlan(plan, (x) => { p.rp = x; p.pct = 0.4 + 0.58 * x; tick(); });
+        fin('render', 1);
+        openStudio(v, url, vis.find((x) => x.kind === 'image') ? vis.find((x) => x.kind === 'image').src : '');
+      } catch (e) {
+        v.prod = null; render();
+        toast('יצירת הסרטון לא הושלמה', 'הבריף נשמר. נסו שוב בעוד רגע.', 'err');
+      }
+    };
+    function openStudio(v, url, thumb) {
+      if (S.vd !== v) return;
+      const b = v.brief;
+      v.prod = null; S.vd = null;
+      startWiz('video', { brief: { title: v.name, free: v.desc }, content: { title: v.name, body: b.caption || v.desc }, ch: [...v.ch] });
+      const w = S.wiz;
+      w.fmts = [v.fmt]; w.fmt = v.fmt; w.vmeta = v;
+      const tags = (b.tags || []).slice(0, 6);
+      w.sugg = [...new Set([...tags, ...suggestTags(w.t, w.brief.dept)])].slice(0, 7);
+      w.tags = tags.slice(0, 4);
+      w.media = { kind: 'video', eng: 'v3', url, ready: true, thumb, scenes: (b.scenes || []).map((s) => ({ t: (s.text && s.text.lines || []).join(' '), s: s.say || '' })), cta: (b.outro && b.outro.cta) || '', details: [], images: thumb ? [thumb] : [], fmt: v.fmt, ar: AR[v.fmt] || '9/16' };
+      render();
+      toast('הסרטון מוכן', 'אפשר לצפות, להוריד ולפרסם.');
+    }
+    // studio: changes to a v3 video go back to the brief with the request
+    const _aiBox3 = aiBox;
+    aiBox = function (prefix) {
+      const w = S.wiz;
+      if (prefix !== 'w' || S.route !== 'wizard' || !w || !w.media || w.media.eng !== 'v3') return _aiBox3(prefix);
+      const m = w.media;
+      return '<div class="ai-box"><span class="ai-ic">' + ic('spark', 16, 2) + '</span><input type="text" id="wAi" placeholder="מה לשנות בסרטון?"><button class="btn btn-primary btn-sm" data-act="wAi">לבריף מעודכן</button></div>' +
+        '<div class="real-acts">' + (m.url ? '<a class="btn btn-sm" href="' + esc(m.url) + '" target="_blank" rel="noopener" download>' + ic('down', 14) + ' הורדת הסרטון</a>' : '') + '</div>';
+    };
+    const _wAi3 = ACT.wAi;
+    ACT.wAi = () => {
+      const w = S.wiz;
+      if (!w || !w.media || w.media.eng !== 'v3' || !w.vmeta) return _wAi3();
+      const el = $('#wAi'); const q = (el && el.value || '').trim();
+      if (!q) { toast('מה לשנות?', 'לדוגמה: סיום עם קריאה להרשמה, או קצב מהיר יותר.', 'err'); return; }
+      const v = w.vmeta;
+      S.dirty = false; S.wiz = null; S.vd = v; v.step = 2; go('vidWiz');
+      runBrief(v, q);
+    };
+    const _wFmt3 = ACT.wFmt;
+    ACT.wFmt = (k) => { const w = S.wiz; if (w && w.media && w.media.eng === 'v3') { toast('הגודל נקבע בבריף', 'כדי לשנות גודל חזרו לבריף ובקשו פורמט אחר.'); return; } _wFmt3(k); };
+  })();
 })();

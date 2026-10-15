@@ -5,7 +5,7 @@
 // The finished mp4 goes from the sandbox straight to storage; nothing large passes through this function.
 import path from 'node:path';
 import { Sandbox } from '@vercel/sandbox';
-import { addBundleToSandbox, createSandbox, getRenderProgress, renderMediaOnVercel } from '@remotion/vercel';
+import { addBundleToSandbox, createSandbox, getRenderProgress } from '@remotion/vercel';
 
 const SUPA_URL = process.env.VITE_SUPABASE_URL || 'https://tgropjisnheppsxejfdn.supabase.co';
 const SUPA_ANON = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_uwGM_HAjV28gchyFZHqZGg_9LjXwIJ-';
@@ -78,11 +78,21 @@ async function start(body: any) {
     // the library creates the bundle's sub folders but not the bundle root itself
     await sandbox.mkDir('remotion-bundle').catch(() => {});
     await addBundleToSandbox({ sandbox, bundleDir: path.join(process.cwd(), 'api/_video/bundle') });
-    // detached render without Vercel Blob: the mp4 stays in the sandbox and status() uploads it to storage
-    const r = await (renderMediaOnVercel as any)({
-      sandbox, compositionId: 'Prime', inputProps: { plan }, outputFile: OUT, codec: 'h264', crf: 18, x264Preset: 'medium',
-      audioBitrate: '192k', jpegQuality: 92, detached: true, detachedSandboxTimeoutInMilliseconds: 40 * 60 * 1000, timeoutInMilliseconds: 120000,
-    });
+    // detached render without Vercel Blob (the library insists on Blob for detached mode): run its own
+    // render script with the same config it would build; status() uploads the mp4 to storage afterwards
+    const cfg = {
+      serveUrl: '/vercel/sandbox/remotion-bundle', compositionId: 'Prime', inputProps: { plan }, outputLocation: OUT, codec: 'h264',
+      crf: 18, imageFormat: null, pixelFormat: null, envVariables: {}, frameRange: null, everyNthFrame: 1, proResProfile: null, chromiumOptions: {},
+      scale: 1, preferLossless: false, enforceAudioTrack: true, disallowParallelEncoding: false, disableSharedMemoryCapture: false, concurrency: null,
+      metadata: null, licenseKey: null, videoBitrate: null, audioBitrate: '192k', encodingMaxRate: null, encodingBufferSize: null, muted: false,
+      numberOfGifLoops: null, x264Preset: 'medium', gopSize: null, colorSpace: 'default', jpegQuality: 92, audioCodec: null, logLevel: 'info',
+      timeoutInMilliseconds: 120000, forSeamlessAacConcatenation: false, separateAudioTo: null, hardwareAcceleration: 'disable',
+      offthreadVideoCacheSizeInBytes: null, mediaCacheSizeInBytes: null, offthreadVideoThreads: null, chromeMode: 'headless-shell',
+      browserExecutable: null, binariesDirectory: null, repro: false, sampleRate: 48000, vercelBlob: null,
+    };
+    const cmd = await sandbox.runCommand({ cmd: 'node', args: ['render-video.mjs', JSON.stringify(cfg)], detached: true });
+    await sandbox.extendTimeout(40 * 60 * 1000).catch(() => {});
+    const r = { sandboxId: sandbox.sandboxId, cmdId: cmd.cmdId };
     return json({ ok: true, sandboxId: r.sandboxId, cmdId: r.cmdId });
   } catch (e: any) {
     await sandbox.stop().catch(() => {});

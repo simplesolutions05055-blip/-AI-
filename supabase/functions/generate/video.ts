@@ -104,7 +104,7 @@ export const DIRECTOR_SYS = `אתה במאי ועורך וידאו בכיר שמ
 התוצר שלך הוא תוכנית הפקה מדויקת שמנוע רינדור מבצע אחד לאחד.`;
 
 // ---- director plan -> engine plan (src references resolved later by the client) ----
-const strip = (s: string) => s.replace(/[֑-ׇ]/g, '');
+const strip = (s: string) => s.replace(/[\u0591-\u05C7]/g, '');
 export function sanitizeBrief(j: any, p: Record<string, any>, voices: Voice[]) {
   const scenes = (Array.isArray(j.scenes) ? j.scenes : []).slice(0, 30).map((s: any) => ({
     dur: Math.max(1.2, Math.min(8, +s.dur || 3)),
