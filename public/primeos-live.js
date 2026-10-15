@@ -117,12 +117,16 @@
     Object.keys(DEPT_INFO).forEach((d) => { DEPT_INFO[d].lead = ''; DEPT_INFO[d].phones = []; DEPT_INFO[d].mails = []; if (!DEPT_INFO[d].isMain) DEPT_INFO[d].appr = null; });
     BRAND.docs = [];
     S.docqDone = false;
+    // the main approver is the organisation user, not the demo's spokesperson
+    const mgr = L.me && L.me.role !== 'member' ? L.me : null;
+    replaceObj(MAIN_APPR, { n: mgr ? mgr.name : 'משתמש הארגון', r: 'משתמש ארגון', ph: (mgr && mgr.phone) || '', mail: (mgr && mgr.email) || '' });
   }
 
   /* ---------------- sync engine ---------------- */
   const SY = { items: new Map(), state: '', inbox: new Set(), busy: false, fail: 0, on: false };
   const itemsSnap = () => { const m = new Map(); for (const it of items) m.set(it.id, JSON.stringify(it)); return m; };
   function baseline() {
+    if (L.memberPatch && L.me && L.me.role === 'member') SY.mstate = JSON.stringify(L.memberPatch());
     // what the server already holds counts as saved; anything else is pushed on the first flush
     SY.items = L.kind === 'client' ? itemsSnap() : new Map();
     if (L.kind === 'client' && !L.srvHadItems) SY.items = new Map();
@@ -134,6 +138,7 @@
     SY.busy = true;
     try {
       if (L.kind === 'client') {
+        if (L.trackItems) L.trackItems(SY.items);
         const cur = itemsSnap();
         const ch = [];
         const rm = [];
@@ -145,8 +150,13 @@
           part.forEach((j) => SY.items.set(JSON.parse(j).id, j));
         }
         if (rm.length) { await call('items.remove', { ids: rm }); rm.forEach((id) => SY.items.delete(id)); }
-        const st = JSON.stringify(clientState());
-        if (st !== SY.state) { await call('state.save', { data: JSON.parse(st) }); SY.state = st; }
+        if (L.memberPatch && L.me && L.me.role === 'member') {
+          const mp = JSON.stringify(L.memberPatch());
+          if (mp !== SY.mstate) { await call('state.patch', { data: JSON.parse(mp) }); SY.mstate = mp; }
+        } else {
+          const st = JSON.stringify(clientState());
+          if (st !== SY.state) { await call('state.save', { data: JSON.parse(st) }); SY.state = st; }
+        }
         const nr = REQS.filter((r) => !SY.inbox.has('r:' + r.id));
         const nm = MEETINGS.filter((m) => !SY.inbox.has('m:' + m.id));
         if (nr.length || nm.length) {
@@ -204,7 +214,8 @@
     }
     if (d.state && !d.state.fresh) {
       const sj = JSON.stringify(Object.assign(clientState(), d.state));
-      if (JSON.stringify(clientState()) === SY.state && sj !== SY.state) { hydrateClient(d.state); SY.state = JSON.stringify(clientState()); changed = true; }
+      if (L.me && L.me.role === 'member') { const mp = JSON.stringify(L.memberPatch()); hydrateClient(d.state); if (mp === SY.mstate) SY.mstate = JSON.stringify(L.memberPatch()); changed = true; }
+      else if (JSON.stringify(clientState()) === SY.state && sj !== SY.state) { hydrateClient(d.state); SY.state = JSON.stringify(clientState()); changed = true; }
     }
     const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
     const overlay = $('#drawer').classList.contains('on') || !$('#modal').classList.contains('hidden');
@@ -317,16 +328,18 @@
     L.srvHadItems = !!(d.items && d.items.length);
     L.srvHadState = !!(d.state && !d.state.fresh);
     const fresh = !d.state || d.state.fresh;
+    // a real organisation never starts from the demo data: empty first, then whatever the server holds
+    if (!L.demo) freshClient();
     if (d.state && !d.state.fresh) hydrateClient(d.state);
-    else if (!L.demo) freshClient();
     if (d.items && d.items.length) items = d.items.map((r) => r.ui).sort((a, b) => b.id - a.id);
     else if (!L.demo || !fresh) items = [];
     S.seq = items.reduce((m, i) => Math.max(m, +i.id || 0), 100);
     S.org = L.org.name;
     if (Array.isArray(d.members) && d.members.length && L.applyMembers) L.applyMembers(d.members);
+    if (L.memberSlices) L.memberSlices(d.state && !d.state.fresh ? d.state : null);
     if (L.me) {
       const demoUser = L.demo && L.me.name === 'יעל כהן';
-      S.user = { name: L.me.name, role: demoUser ? 'מנהלת תקשורת' : (L.me.role === 'admin' ? 'מנהל/ת מערכת' : 'משתמש מערכת'), init: initials(L.me.name), dept: L.me.dept || S.user.dept || DEPTS[0] };
+      S.user = { name: L.me.name, role: demoUser ? 'מנהלת תקשורת' : (L.me.role === 'member' ? 'משתמש יחיד' : 'משתמש ארגון'), init: initials(L.me.name), dept: L.me.dept || S.user.dept || DEPTS[0] };
       if (!L.members && !users.some((u) => u.n === L.me.name)) users.unshift({ n: L.me.name, r: S.user.role, d: S.user.dept, st: 'פעיל', last: 'עכשיו', i: S.user.init, direct: true });
     }
     if (!L.demo) {
@@ -392,7 +405,7 @@
     });
   }
   /* the console shows the real organisations only: the demo municipalities of the mockup never appear */
-  const ROLE_A = { owner: 'מנהל/ת מערכת', admin: 'מנהל/ת תקשורת', member: 'משתמש/ת מחלקה' };
+  const ROLE_A = { owner: 'משתמש ארגון', admin: 'משתמש ארגון', member: 'משתמש יחיד' };
   function liveAdmin(real) {
     const keep = ['uLim', 'dLim', 'agr', 'add', 'c', 'type', 'ch', 'xch', 'xu', 'st'];
     const list = real.map((r) => {
@@ -2343,11 +2356,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   /* ---------------- team: real members with their own login links ----------------
    * The spokesperson (owner/admin) opens users here. A department user gets a link that opens the department interface only. */
   (function () {
-    const ROLE_T = { owner: 'מנהל/ת מערכת', admin: 'דובר/ת · מנהל/ת', member: 'משתמש/ת מחלקה' };
+    const ROLE_T = { owner: 'משתמש ארגון', admin: 'משתמש ארגון', member: 'משתמש יחיד' };
     const linkOfTok = (t) => location.origin + '/?k=' + encodeURIComponent(t);
     const waShare = (name, link) => 'https://wa.me/?text=' + encodeURIComponent('שלום ' + name + ', זה קישור הכניסה האישי שלך למערכת PrimeOS של ' + (L.org ? L.org.name : '') + ':\n' + link + '\nהקישור אישי, לא להעביר הלאה.');
     function rowOf(m) {
-      return { n: m.name, r: ROLE_T[m.role] || m.role, d: m.view === 'dept' ? (m.dept || '') : 'דוברות', st: 'פעיל', last: m.id === (L.me && L.me.id) ? 'עכשיו' : '-', i: initials(m.name), mid: m.id, view: m.view || 'ext', tok: m.token || '', phone: m.phone || '', mail: m.email || '', role: m.role, direct: true };
+      return { n: m.name, r: ROLE_T[m.role] || m.role, d: m.view === 'dept' ? (m.dept || '') : 'דוברות', st: 'פעיל', last: m.id === (L.me && L.me.id) ? 'עכשיו' : '-', i: initials(m.name), mid: m.id, view: m.view || 'ext', tok: m.token || '', phone: m.phone || '', mail: m.email || '', role: m.role, direct: m.role !== 'member' || !!(m.perms && m.perms.direct) };
     }
     L.applyMembers = function (list) {
       if (!Array.isArray(list)) return;
@@ -2357,9 +2370,10 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const canManage = () => !L.me || L.me.role === 'owner' || L.me.role === 'admin';
     function usersTable() {
       const me = L.me && L.me.id;
-      return '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>שם</th><th>תפקיד</th><th>מחלקה</th><th>קישור כניסה</th><th></th></tr></thead><tbody>' +
+      return '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>שם</th><th>תפקיד</th><th>מחלקה</th><th>פרסום</th><th>קישור כניסה</th><th></th></tr></thead><tbody>' +
         users.map((u) => '<tr><td data-l="שם"><span style="display:flex;align-items:center;gap:9px"><span class="avatar">' + esc(u.i) + '</span><span><b>' + esc(u.n) + '</b>' + (u.phone ? '<div class="t-sub" dir="ltr" style="text-align:start">' + esc(u.phone) + '</div>' : '') + '</span></span></td>' +
           '<td data-l="תפקיד">' + esc(u.r) + (u.mid === me ? ' <span class="badge s-approved">את/ה</span>' : '') + '</td><td data-l="מחלקה">' + esc(u.d) + '</td>' +
+          '<td data-l="פרסום">' + (u.role === 'member' ? '<button class="chip" data-act="userDirect:' + esc(u.mid) + '" title="לחיצה משנה">' + (u.direct ? ic('checkc', 13) + ' פרסום ישיר' : ic('clock', 13) + ' דרוש אישור') + '</button>' : '<span class="t-sub">ישיר</span>') + '</td>' +
           '<td data-l="קישור כניסה">' + (u.tok ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" data-act="userLink:' + esc(u.mid) + '">' + ic('copy', 14) + ' העתקה</button><a class="btn btn-sm" target="_blank" rel="noopener" href="' + waShare(u.n, linkOfTok(u.tok)) + '">' + ic('send', 14) + ' WhatsApp</a></span>' : '<span class="t-sub">-</span>') + '</td>' +
           '<td>' + (u.mid && u.mid !== me && u.role !== 'owner' ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" data-act="userRelink:' + esc(u.mid) + '">קישור חדש</button><button class="btn btn-sm btn-quiet-bad" data-act="userRemove:' + esc(u.mid) + '">הסרה</button></span>' : '') + '</td></tr>').join('') +
         '</tbody></table></div>' +
@@ -2382,14 +2396,16 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         '<button class="icon-btn" style="margin-inline-start:auto" data-act="closeDrawer" aria-label="סגירה">' + ic('x', 17) + '</button></div>' +
         '<div class="drawer-body">' +
         '<div class="field"><label for="ivName">שם מלא</label><input type="text" id="ivName" placeholder="לדוגמה: דנה לוי"></div>' +
-        '<div class="field"><label for="ivKind">סוג משתמש</label><select id="ivKind"><option value="dept">משתמש מחלקה (יצירה ושליחה לאישור בלבד)</option><option value="ext">דובר / מנהל (כל המערכת ואישורים)</option></select></div>' +
+        '<div class="field"><label for="ivKind">סוג משתמש</label><select id="ivKind"><option value="dept">משתמש יחיד (המחלקה שלו בלבד)</option><option value="ext">משתמש ארגון (כל המערכת, מחלקות ואישורים)</option></select></div>' +
         '<div class="field" id="ivDeptWrap"><label for="ivDept">מחלקה</label><select id="ivDept">' + DEPTS.map((d) => '<option>' + esc(d) + '</option>').join('') + '</select></div>' +
         '<div class="field"><label for="ivPhone">טלפון נייד</label><input type="text" id="ivPhone" inputmode="tel" dir="ltr" placeholder="050-0000000"></div>' +
         '<div class="field"><label for="ivMail">דוא״ל (לא חובה)</label><input type="text" id="ivMail" inputmode="email" dir="ltr" placeholder="name@example.muni.il"></div>' +
-        '<div class="note">' + ic('shield', 16) + '<span>משתמש מחלקה רואה רק את התוכן של המחלקה שלו ואינו יכול לפרסם. הפרסום רק לאחר אישור.</span></div></div>' +
+        '<label class="chk" id="ivDirectWrap" style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" id="ivDirect"> רשאי לפרסם ישירות, בלי אישור של משתמש הארגון</label>' +
+        '<div class="note">' + ic('shield', 16) + '<span>משתמש יחיד רואה רק את התוכן של המחלקה שלו. בלי ההרשאה שלמעלה, כל תוכן שלו עובר אישור של משתמש הארגון לפני פרסום.</span></div></div>' +
         '<div class="drawer-foot"><button class="btn btn-primary" data-act="doInvite">פתיחת משתמש וקבלת קישור</button><button class="btn" data-act="closeDrawer">ביטול</button></div>');
       const k = $('#ivKind'), w = $('#ivDeptWrap');
-      if (k && w) k.onchange = () => { w.style.display = k.value === 'dept' ? '' : 'none'; };
+      const dw = $('#ivDirectWrap');
+      if (k && w) k.onchange = () => { w.style.display = k.value === 'dept' ? '' : 'none'; if (dw) dw.style.display = k.value === 'dept' ? '' : 'none'; };
     };
     const _doInvite = ACT.doInvite;
     ACT.doInvite = async () => {
@@ -2400,10 +2416,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const dept = $('#ivDept') ? $('#ivDept').value : '';
       const phone = ($('#ivPhone') && $('#ivPhone').value || '').trim();
       const email = ($('#ivMail') && $('#ivMail').value || '').trim();
+      const direct = view !== 'dept' || !!($('#ivDirect') && $('#ivDirect').checked);
       const done = busyBtn('[data-act="doInvite"]', 'פותחים...');
       try {
-        const r = await call('members.create', { name, view, dept, phone, email });
-        const m = { id: r.id, name, role: view === 'dept' ? 'member' : 'admin', dept: view === 'dept' ? dept : null, view, phone, email, token: r.token };
+        const r = await call('members.create', { name, view, dept, phone, email, direct });
+        const m = { id: r.id, name, role: view === 'dept' ? 'member' : 'admin', dept: view === 'dept' ? dept : null, view, phone, email, perms: { direct }, token: r.token };
         L.applyMembers([...(L.members || []), m]);
         closeDrawer();
         render();
@@ -2422,6 +2439,12 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const u = users.find((x) => x.mid === mid); if (!u || !u.tok) return;
       const t = linkOfTok(u.tok);
       (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('הקישור הועתק', u.n), () => toast('העתקה ידנית', t));
+    };
+    ACT.userDirect = async (mid) => {
+      const m = (L.members || []).find((x) => x.id === mid); if (!m || !canManage()) return;
+      const direct = !(m.perms && m.perms.direct);
+      try { await call('members.update', { id: mid, perms: { direct } }); m.perms = Object.assign({}, m.perms, { direct }); L.applyMembers(L.members); render(); toast(direct ? 'פרסום ישיר הופעל' : 'הפרסום דורש אישור', m.name); }
+      catch (e) { toast('העדכון נכשל', 'נסו שוב בעוד רגע.', 'err'); }
     };
     ACT.userRelink = (mid) => {
       const u = users.find((x) => x.mid === mid); if (!u) return;
@@ -2526,5 +2549,217 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         return h.replace(/<div class="week-mini">[\s\S]*?<\/div><\/div>(?=<\/div>)/, strip);
       };
     }
+  })();
+
+  /* ---------------- item log: real history, versions and notes ----------------
+   * every item carries log[] = { k, w, t, x }: what happened, who, when (ms), text. */
+  (function () {
+    if (L.demo) return;
+    const who = () => (S.user && S.user.name) || (L.me && L.me.name) || '';
+    const now = () => Date.now();
+    const fmt = (t) => { const d = new Date(t); return d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' }) + ' ' + d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }); };
+    const rel = (t) => {
+      const m = Math.round((now() - t) / 60000);
+      if (m < 1) return 'עכשיו';
+      if (m < 60) return 'לפני ' + m + ' דק׳';
+      const h = Math.round(m / 60);
+      if (h < 24) return 'לפני ' + h + ' שע׳';
+      const d = Math.round(h / 24);
+      return d === 1 ? 'אתמול' : d < 7 ? 'לפני ' + d + ' ימים' : fmt(t);
+    };
+    const LBL = { created: 'נוצר', draft: 'נשמר כטיוטה', pending: 'נשלח לאישור', fix: 'הוחזר לתיקון', rejected: 'נדחה', approved: 'אושר', scheduled: 'תוזמן', published: 'פורסם', failed: 'הפרסום נכשל', archived: 'הועבר לארכיון', edit: 'עודכן', note: 'הערה' };
+    const ICON = { created: 'edit', edit: 'edit', pending: 'send', fix: 'undo', rejected: 'x', approved: 'check', scheduled: 'cal', published: 'send', failed: 'alert', note: 'msg' };
+    const TONE = { pending: 'warn', fix: 'warn', rejected: 'bad', approved: 'ok', scheduled: 'ok', published: 'ok', failed: 'bad' };
+    const logOf = (it) => (Array.isArray(it.log) ? it.log : (it.log = []));
+    const add = (it, k, x) => { logOf(it).push({ k, w: who(), t: now(), x: x || '' }); it.at = now(); };
+    L.itemLog = add;
+    // called by the sync engine before every save: status changes and edits become log lines
+    L.trackItems = function (prev) {
+      for (const it of items) {
+        if (typeof it.id !== 'number') continue;
+        const pj = prev.get(it.id);
+        if (!pj) { if (!logOf(it).length) add(it, 'created', it.t); continue; }
+        let p = null; try { p = JSON.parse(pj); } catch (e) { continue; }
+        if (p.s !== it.s) add(it, it.s, it.s === 'fix' ? it.fixnote : it.s === 'rejected' ? it.rej : it.s === 'failed' ? it.err : (it.s === 'scheduled' ? it.pub : ''));
+        else if (p.t !== it.t || p.body !== it.body || p.cta !== it.cta || p.pub !== it.pub) add(it, 'edit', '');
+      }
+    };
+    // "updated" shown everywhere is relative to the real time
+    const _render = render;
+    render = function () { for (const it of items) if (it.at) it.u = rel(it.at); return _render.apply(this, arguments); };
+    // the item screen tabs are built from the log
+    const _itemR = SCREENS.item.render;
+    SCREENS.item.render = function () {
+      let h = _itemR.apply(this, arguments);
+      const it = items.find((x) => x.id === S.itemId) || items[0];
+      if (!it) return h;
+      const tab = S.tab.item || 'content';
+      const log = logOf(it);
+      if (tab === 'history') {
+        const rows = (log.length ? log : [{ k: 'created', w: it.o || '', t: it.at || now(), x: '' }]).slice().reverse().map((e) => '<div class="tl-i"><span class="tl-dot ' + (TONE[e.k] || '') + '">' + ic(ICON[e.k] || 'edit', 13, 2) + '</span><span class="tl-tx"><b>' + esc(LBL[e.k] || e.k) + (e.x && e.k !== 'created' ? ' · ' + esc(e.x) : '') + '</b><br><span class="tl-time">' + esc(e.w) + ' · ' + esc(fmt(e.t)) + '</span></span></div>').join('');
+        h = h.replace(/(<div class="tl" style="padding:14px 18px">)[\s\S]*?(<\/div><\/div>)/, '$1' + rows + '$2');
+      } else if (tab === 'versions') {
+        const ed = log.filter((e) => e.k === 'created' || e.k === 'edit');
+        const rows = ed.length ? ed.slice().reverse().map((e, i) => '<tr><td data-l="גרסה"><b>' + (ed.length - i) + (i === 0 ? ' (נוכחית)' : '') + '</b></td><td data-l="שינוי">' + (e.k === 'created' ? 'נוסח ראשוני' : 'עדכון תוכן') + '</td><td data-l="מי">' + esc(e.w) + '</td><td data-l="מתי" class="t-sub">' + esc(fmt(e.t)) + '</td><td>' + (i ? '' : '<span class="chip">מוצגת עכשיו</span>') + '</td></tr>').join('')
+          : '<tr><td colspan="5" class="t-sub">עדיין אין גרסאות קודמות.</td></tr>';
+        h = h.replace(/<tbody>[\s\S]*?<\/tbody>/, '<tbody>' + rows + '</tbody>');
+      } else if (tab === 'notes') {
+        const ns = log.filter((e) => e.k === 'note' || ((e.k === 'fix' || e.k === 'rejected') && e.x));
+        const cards = ns.length ? ns.map((n) => '<div class="card card-pad" style="box-shadow:none;padding:14px 16px"><div style="display:flex;gap:10px;align-items:center;margin-bottom:7px"><span class="avatar">' + esc(initials(n.w)) + '</span><span><b style="font-size:13.5px">' + esc(n.w) + '</b> <span class="t-sub">' + esc(n.k === 'note' ? 'הערה' : LBL[n.k]) + ' · ' + esc(fmt(n.t)) + '</span></span></div><div style="font-size:14px;line-height:1.6">' + esc(n.x) + '</div></div>').join('')
+          : '<div class="note">' + ic('msg', 15) + '<span>עדיין אין הערות על הפריט.</span></div>';
+        h = h.replace(/(<div style="display:flex;flex-direction:column;gap:12px;max-width:760px">)[\s\S]*?(<div class="card card-pad" style="box-shadow:none;padding:14px 16px"><div class="field"><label for="noteIn">)/, '$1' + cards + '$2');
+      }
+      return h;
+    };
+    ACT.addNote = () => {
+      const t = $('#noteIn');
+      const x = t ? t.value.trim() : '';
+      if (!x) { toast('ההערה ריקה', 'יש לכתוב טקסט לפני השליחה.', 'err'); return; }
+      const it = items.find((i) => i.id === S.itemId);
+      if (!it) return;
+      add(it, 'note', x);
+      render();
+      flush();
+      toast('ההערה נוספה', 'ההערה נשמרה בפריט.');
+    };
+  })();
+
+  /* ---------------- live polish: no mockup-only notes, archive works, no dead routes ---------------- */
+  (function () {
+    if (L.demo) return;
+    // onboarding: there is no demo to skip to
+    if (SCREENS.onboard) { const _o = SCREENS.onboard.render; SCREENS.onboard.render = function () { return _o.apply(this, arguments).replace('>דילוג להדגמה<', '>דילוג בינתיים<'); }; }
+    // item: archiving is a real action
+    const _it = SCREENS.item.render;
+    SCREENS.item.render = function () {
+      const it = items.find((x) => x.id === S.itemId) || items[0];
+      let h = _it.apply(this, arguments);
+      if (!it) return h;
+      const btn = it.s === 'archived'
+        ? '<button class="btn btn-sm btn-block" data-act="unarchiveItem:' + it.id + '">' + ic('undo', 15) + ' החזרה מהארכיון</button>'
+        : '<button class="btn btn-sm btn-block" data-act="archiveItem:' + it.id + '">' + ic('arch', 15) + ' העברה לארכיון</button>';
+      return h.replace(/<button class="btn btn-sm btn-block is-disabled" disabled>[\s\S]*?<\/button>\s*<div class="t-sub" style="margin-top:7px">[^<]*<\/div>/, btn + '<div class="t-sub" style="margin-top:7px">פריט בארכיון יורד מהלוח ומהספרייה הפעילה ונשמר להיסטוריה.</div>');
+    };
+    ACT.archiveItem = (id) => {
+      const it = items.find((i) => i.id === +id); if (!it) return;
+      confirmModal({ title: 'להעביר לארכיון?', body: 'הפריט „' + esc(it.t) + '” יועבר לארכיון. אפשר להחזיר אותו בכל רגע.', ok: 'העברה לארכיון', icon: 'arch',
+        onOk: () => { it.prevS = it.s; it.s = 'archived'; it.at = Date.now(); toast('הועבר לארכיון', esc(it.t)); go('library'); } });
+    };
+    ACT.unarchiveItem = (id) => { const it = items.find((i) => i.id === +id); if (!it) return; it.s = it.prevS && it.prevS !== 'archived' ? it.prevS : 'draft'; delete it.prevS; it.at = Date.now(); toast('הוחזר מהארכיון', esc(it.t)); render(); };
+    // the bulk screens need a campaign in progress
+    ['bulkGen', 'bulkReview'].forEach((k) => {
+      if (!SCREENS[k]) return;
+      const _r = SCREENS[k].render;
+      SCREENS[k].render = function () { if (k === 'bulkGen' ? !S.genCamp : !S.bulk) { setTimeout(() => go('bulk', { force: true }), 0); return '<div class="note">' + ic('help', 15) + '<span>אין סדרת תוכן פתוחה. חוזרים ליצירת סדרה.</span></div>'; } return _r.apply(this, arguments); };
+    });
+  })();
+
+  /* ---------------- reports: live figures, never the demo's ---------------- */
+  (function () {
+    if (L.demo) return;
+    const conn = () => channels.filter((c) => c.st === 'מחובר').length;
+    const chTxt = (n) => (n === 0 ? 'אין ערוצים מחוברים' : n === 1 ? 'בערוץ מחובר אחד' : 'ב־' + n + ' ערוצים מחוברים');
+    if (SCREENS.reports) {
+      const _r = SCREENS.reports.render;
+      SCREENS.reports.render = function () {
+        let h = _r.apply(this, arguments);
+        const pend = items.filter((i) => i.s === 'pending').length;
+        const byD = {};
+        items.forEach((i) => { if (i.d) byD[i.d] = (byD[i.d] || 0) + 1; });
+        const active = Object.keys(byD).length;
+        const top = Object.keys(byD).sort((a, b) => byD[b] - byD[a])[0];
+        h = h.replace('זמן ממוצע לאישור', 'ממתינים לאישור').replace('3.4 שעות', String(pend)).replace('ירידה מ־5.1 בחודש שעבר', pend ? 'תכנים שמחכים להחלטה' : 'אין תכנים בהמתנה');
+        h = h.replace('>5<', '>' + active + '<').replace('דוברות מובילה ב־4 פריטים', top ? esc(top) + ' מובילה ב־' + byD[top] + ' פריטים' : 'עדיין אין פעילות');
+        h = h.replace('בארבעה ערוצים', chTxt(conn()));
+        return h;
+      };
+    }
+    if (SCREENS.dashboard) {
+      const _d = SCREENS.dashboard.render;
+      SCREENS.dashboard.render = function () { return _d.apply(this, arguments).replace('בארבעה ערוצים מחוברים', chTxt(conn())); };
+    }
+  })();
+
+  /* ---------------- "משתמש יחיד": a department user ----------------
+   * Sees only its department. Own channels. Brand: the organisation's (read-only) or a brand of its own.
+   * Approvals: view and edit only; publishing needs the organisation user's approval unless allowed directly. */
+  (function () {
+    const isSingle = () => !!(L.me && L.me.role === 'member');
+    NAV_V.dept = ['dashboard', 'create', 'library', 'calendar', 'approvals', 'channels', 'brand', 'reports', 'settings'];
+    const deepCopy = (o) => JSON.parse(JSON.stringify(o));
+    const emptyChannels = () => (L.orgChannels || channels).map((c) => ({ k: c.k, st: 'לא מחובר', acc: '-', sync: '-', fol: '-' }));
+    // direct publishing is a permission the organisation user grants; the mockup's department view had none
+    const _canDirect = canDirect, _curUser = curUser;
+    canDirect = function () { return isSingle() ? !!(L.me.perms && L.me.perms.direct) : _canDirect(); };
+    curUser = function () { return isSingle() ? { n: L.me.name, direct: canDirect() } : _curUser(); };
+    // the member's department always exists locally, even if the organisation renamed its departments
+    function ensureDept() {
+      const d = L.me.dept || S.dept;
+      if (!d) return;
+      if (!DEPTS.includes(d)) DEPTS.push(d);
+      if (!DEPT_C[d]) DEPT_C[d] = DEPT_COLORS[(DEPTS.length - 1) % DEPT_COLORS.length];
+      if (!DEPT_INFO[d]) DEPT_INFO[d] = { lead: L.me.name, route: 'full', phones: [], mails: [], appr: null };
+      else if (!DEPT_INFO[d].lead) DEPT_INFO[d].lead = L.me.name;
+      S.dept = d;
+    }
+    // the member's slices come from the organisation state, under its own id
+    L.memberSlices = function (st) {
+      if (!isSingle()) return;
+      ensureDept();
+      const mid = L.me.id;
+      if (!L.orgBrand) L.orgBrand = deepCopy(BRAND);
+      if (!L.orgChannels) L.orgChannels = deepCopy(channels);
+      const mb = st && st.memberBrand && st.memberBrand[mid];
+      const mc = st && st.memberChannels && st.memberChannels[mid];
+      S.ownBrand = !!(mb && mb.own && mb.brand);
+      replaceObj(BRAND, S.ownBrand ? mb.brand : L.orgBrand);
+      // saved slice by channel key, so channels added to the system later still appear
+      const base = emptyChannels();
+      if (Array.isArray(mc)) for (const c of mc) { const i = base.findIndex((b) => b.k === c.k); if (i >= 0) base[i] = { ...base[i], ...c }; }
+      replaceAll(channels, base);
+    };
+    L.memberPatch = function () {
+      if (!isSingle()) return null;
+      const mid = L.me.id;
+      return { memberBrand: { [mid]: { own: !!S.ownBrand, brand: S.ownBrand ? BRAND : null } }, memberChannels: { [mid]: channels } };
+    };
+    // when the organisation state arrives from the server, the member keeps its own slices
+    const _hyd = hydrateClient;
+    hydrateClient = function (st) { _hyd(st); if (isSingle()) L.memberSlices(st); };
+
+    // the brand screen: the organisation's brand, or the member's own
+    if (SCREENS.brand) {
+      const _bR = SCREENS.brand.render;
+      SCREENS.brand.render = function () {
+        const h = _bR.apply(this, arguments);
+        if (!isSingle()) return h;
+        const bar = S.ownBrand
+          ? '<div class="note" style="margin-bottom:14px;align-items:center">' + ic('palette', 16) + '<span><b>נכסי מותג משלך.</b> הגרפיקות של המחלקה נבנות לפי המותג הזה.</span><button class="btn btn-sm" style="margin-inline-start:auto" data-act="brandUseOrg">חזרה למותג הארגון</button></div>'
+          : '<div class="note" style="margin-bottom:14px;align-items:center">' + ic('shield', 16) + '<span><b>שימוש במותג הראשי של הארגון.</b> המיתוג מנוהל על ידי משתמש הארגון ואינו ניתן לשינוי מכאן.</span><button class="btn btn-sm btn-primary" style="margin-inline-start:auto" data-act="brandOwn">בניית נכסי מותג משלי</button></div>';
+        if (S.ownBrand) return bar + h;
+        return bar + '<div class="brand-locked" style="pointer-events:none;opacity:.72">' + h + '</div>';
+      };
+    }
+    ACT.brandOwn = () => {
+      confirmModal({ title: 'לבנות נכסי מותג משלך?', body: 'המחלקה תקבל מותג משלה, בנפרד מהמותג הראשי. מתחילים מעותק של מותג הארגון ומשנים מה שרוצים. אפשר לחזור למותג הארגון בכל רגע.', ok: 'בניית נכסי מותג משלי', icon: 'palette',
+        onOk: () => { S.ownBrand = true; replaceObj(BRAND, deepCopy(L.orgBrand || BRAND)); render(); flush(); toast('נכסי מותג משלך', 'כל שינוי כאן נשמר למחלקה בלבד.'); } });
+    };
+    ACT.brandUseOrg = () => {
+      confirmModal({ title: 'לחזור למותג הארגון?', body: 'נכסי המותג שלך יימחקו והמחלקה תשתמש שוב במותג הראשי.', ok: 'חזרה למותג הארגון', tone: 'warn', icon: 'alert',
+        onOk: () => { S.ownBrand = false; replaceObj(BRAND, deepCopy(L.orgBrand || BRAND)); render(); flush(); toast('מותג הארגון', 'המחלקה משתמשת במותג הראשי.'); } });
+    };
+
+    // approvals and the item screen: view and edit only, no approve / reject
+    const strip = (h) => h.replace(/<button[^>]*data-act="(approve|askfix|reject|cApproveAll|cReturn):[^"]*"[^>]*>[\s\S]*?<\/button>/g, '').replace(/<button[^>]*data-act="(cApproveAll|cReturn)"[^>]*>[\s\S]*?<\/button>/g, '');
+    ['approvals', 'item'].forEach((k) => {
+      if (!SCREENS[k]) return;
+      const _r = SCREENS[k].render;
+      SCREENS[k].render = function () { const h = _r.apply(this, arguments); return isSingle() ? strip(h) : h; };
+    });
+    const _od = openDrawer;
+    openDrawer = function (h) { return _od(isSingle() && typeof h === 'string' ? strip(h) : h); };
+    ['approve', 'askfix', 'reject', 'cApproveAll'].forEach((k) => { const f = ACT[k]; ACT[k] = (...a) => { if (isSingle()) { toast('אישור תוכן', 'את התוכן מאשר משתמש הארגון.', ''); return; } return f.apply(null, a); }; });
+    // publishing without the direct-publish permission: the content goes to approval instead
+    ['wizPublish', 'sched', 'cPublish', 'publish'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => { if (isSingle() && !canDirect()) { toast('הפרסום דורש אישור', 'התוכן נשלח לאישור של משתמש הארגון.', ''); return ACT.wizSend ? ACT.wizSend() : undefined; } return f.apply(null, a); }; });
   })();
 })();

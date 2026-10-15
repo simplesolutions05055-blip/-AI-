@@ -1,6 +1,6 @@
 // PrimeOS v2-api - data gateway for the live system (client + admin).
 // POST { action, payload }   header x-primeos-token
-// client: live.load | items.upsert | items.remove | state.save | inbox.add | members.list | members.create | members.remove | members.relink | upload.sign
+// client: live.load | items.upsert | items.remove | state.save | state.patch | inbox.add | members.list | members.create | members.update | members.remove | members.relink | upload.sign
 // admin: admin.load | admin.state.save | admin.org.create | admin.org.delete
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
@@ -56,18 +56,18 @@ function itemRow(orgId: string, ui: Record<string, any>) {
 const isManager = (m: any) => !m || m.role === 'owner' || m.role === 'admin';
 // every member of the organisation; login links only for managers (owner/admin), never for a department user
 async function membersOf(d: DB, orgId: string, withLinks: boolean) {
-  const { data: ms } = await d.from('org_members').select('id,name,email,phone,role,dept,view,created_at').eq('org_id', orgId).order('created_at');
+  const { data: ms } = await d.from('org_members').select('id,name,email,phone,role,dept,view,perms,created_at').eq('org_id', orgId).order('created_at');
   const ids = (ms ?? []).map((m: any) => m.id);
   const { data: toks } = withLinks && ids.length ? await d.from('api_tokens').select('member_id,token').in('member_id', ids) : { data: [] };
   const tokOf: Record<string, string> = {};
   for (const t of toks ?? []) if (t.member_id && !tokOf[t.member_id]) tokOf[t.member_id] = t.token;
-  return (ms ?? []).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone ?? null, role: m.role, dept: m.dept, view: m.view, token: withLinks ? tokOf[m.id] ?? null : null }));
+  return (ms ?? []).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone ?? null, role: m.role, dept: m.dept, view: m.view, perms: m.perms ?? {}, token: withLinks ? tokOf[m.id] ?? null : null }));
 }
 
 async function liveLoad(d: DB, orgId: string, memberId: string | null) {
   const [org, me, its, st] = await Promise.all([
     d.from('organizations').select('id,name,plan,org_type,status').eq('id', orgId).single(),
-    memberId ? d.from('org_members').select('id,name,email,role,dept,view').eq('id', memberId).maybeSingle() : Promise.resolve({ data: null }),
+    memberId ? d.from('org_members').select('id,name,email,role,dept,view,perms').eq('id', memberId).maybeSingle() : Promise.resolve({ data: null }),
     d.from('content_items').select('id,meta,updated_at').eq('org_id', orgId).not('ui_id', 'is', null),
     d.from('org_state').select('data,updated_at').eq('org_id', orgId).maybeSingle(),
   ]);
@@ -93,7 +93,7 @@ async function memberCreate(d: DB, orgId: string, memberId: string | null, p: Re
   const role = view === 'dept' ? 'member' : 'admin';
   const { data: mem, error } = await d.from('org_members').insert({
     org_id: orgId, name, email: p.email ? String(p.email).trim().toLowerCase().slice(0, 200) : null, phone: p.phone ? String(p.phone).slice(0, 40) : null,
-    role, dept: view === 'dept' ? String(p.dept ?? '').slice(0, 120) || null : null, view,
+    role, dept: view === 'dept' ? String(p.dept ?? '').slice(0, 120) || null : null, view, perms: { direct: view === 'dept' ? !!p.direct : true },
   }).select('id').single();
   if (error) throw error;
   const token = newToken();
@@ -110,6 +110,37 @@ async function memberRemove(d: DB, orgId: string, memberId: string | null, id: s
   if (m.role === 'owner') throw new Error('owner_protected');
   await d.from('api_tokens').delete().eq('member_id', id);
   const { error } = await d.from('org_members').delete().eq('id', id);
+  if (error) throw error;
+  return { ok: true };
+}
+// the spokesperson changes a member's details or permissions
+async function memberUpdate(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
+  if (!isManager(me)) throw new Error('forbidden');
+  const id = String(p.id ?? '');
+  const { data: m } = await d.from('org_members').select('id,role,perms').eq('id', id).eq('org_id', orgId).maybeSingle();
+  if (!m) throw new Error('not_found');
+  const row: Record<string, any> = {};
+  if (typeof p.name === 'string' && p.name.trim()) row.name = p.name.trim().slice(0, 120);
+  if (typeof p.dept === 'string') row.dept = p.dept.slice(0, 120) || null;
+  if (typeof p.phone === 'string') row.phone = p.phone.slice(0, 40) || null;
+  if (p.perms && typeof p.perms === 'object') row.perms = { ...(m.perms ?? {}), ...p.perms };
+  const { error } = await d.from('org_members').update(row).eq('id', id);
+  if (error) throw error;
+  return { ok: true };
+}
+// a department user saves only its own slice of the organisation state (brand of its own, its channels)
+async function statePatch(d: DB, orgId: string, memberId: string | null, patch: Record<string, any>) {
+  const { data: st } = await d.from('org_state').select('data').eq('org_id', orgId).maybeSingle();
+  const cur: Record<string, any> = (st?.data && typeof st.data === 'object') ? { ...st.data } : {};
+  for (const k of ['memberBrand', 'memberChannels']) {
+    if (!patch[k] || typeof patch[k] !== 'object') continue;
+    const slot: Record<string, any> = (cur[k] && typeof cur[k] === 'object') ? { ...cur[k] } : {};
+    for (const mid of Object.keys(patch[k])) if (!memberId || mid === memberId) slot[mid] = patch[k][mid];
+    cur[k] = slot;
+  }
+  if (cur.fresh) delete cur.fresh;
+  const { error } = await d.from('org_state').upsert({ org_id: orgId, data: cur, updated_at: new Date().toISOString() });
   if (error) throw error;
   return { ok: true };
 }
@@ -159,7 +190,12 @@ async function itemsRemove(d: DB, orgId: string, ids: number[]) {
 }
 
 async function stateSave(d: DB, orgId: string, data: unknown) {
-  const { error } = await d.from('org_state').upsert({ org_id: orgId, data, updated_at: new Date().toISOString() });
+  // the organisation blob never wipes the department users' own slices
+  const next: Record<string, any> = (data && typeof data === 'object') ? { ...(data as Record<string, any>) } : {};
+  const { data: st } = await d.from('org_state').select('data').eq('org_id', orgId).maybeSingle();
+  const cur: Record<string, any> = (st?.data && typeof st.data === 'object') ? st.data : {};
+  for (const k of ['memberBrand', 'memberChannels']) if (cur[k] && !next[k]) next[k] = cur[k];
+  const { error } = await d.from('org_state').upsert({ org_id: orgId, data: next, updated_at: new Date().toISOString() });
   if (error) throw error;
   return { ok: true };
 }
@@ -195,7 +231,7 @@ async function adminLoad(d: DB, adminId: string) {
   const { data: toks } = ids.length ? await d.from('api_tokens').select('org_id,token').in('org_id', ids) : { data: [] };
   const tokOf: Record<string, string> = {};
   for (const t of toks ?? []) if (!tokOf[t.org_id]) tokOf[t.org_id] = t.token;
-  const { data: mems } = ids.length ? await d.from('org_members').select('id,org_id,name,email,phone,role,dept,view,created_at').in('org_id', ids).order('created_at') : { data: [] };
+  const { data: mems } = ids.length ? await d.from('org_members').select('id,org_id,name,email,phone,role,dept,view,perms,created_at').in('org_id', ids).order('created_at') : { data: [] };
   const { data: cnt } = ids.length ? await d.from('content_items').select('org_id').in('org_id', ids).not('ui_id', 'is', null) : { data: [] };
   const items: Record<string, number> = {};
   for (const c of cnt ?? []) items[c.org_id] = (items[c.org_id] ?? 0) + 1;
@@ -318,12 +354,19 @@ Deno.serve(async (req) => {
       if (action === 'live.load') return json(req, await liveLoad(d, s.orgId, s.memberId));
       if (action === 'items.upsert') return json(req, await itemsUpsert(d, s.orgId, p.items ?? []));
       if (action === 'items.remove') return json(req, await itemsRemove(d, s.orgId, p.ids ?? []));
-      if (action === 'state.save') return json(req, await stateSave(d, s.orgId, p.data ?? {}));
+      if (action === 'state.save') {
+        // the whole organisation state is written by organisation users only; a department user patches its own slice
+        const { data: me } = s.memberId ? await d.from('org_members').select('role').eq('id', s.memberId).maybeSingle() : { data: null };
+        if (!isManager(me)) return json(req, { error: 'forbidden' }, 403);
+        return json(req, await stateSave(d, s.orgId, p.data ?? {}));
+      }
       if (action === 'inbox.add') return json(req, await inboxAdd(d, s.orgId, p));
       if (action === 'members.list') return json(req, { members: await membersOf(d, s.orgId, isManager(s.memberId ? (await d.from('org_members').select('role').eq('id', s.memberId).maybeSingle()).data : null)) });
       if (action === 'members.create') return json(req, await memberCreate(d, s.orgId, s.memberId, p));
       if (action === 'members.remove') return json(req, await memberRemove(d, s.orgId, s.memberId, String(p.id ?? '')));
       if (action === 'members.relink') return json(req, await memberRelink(d, s.orgId, s.memberId, String(p.id ?? '')));
+      if (action === 'members.update') return json(req, await memberUpdate(d, s.orgId, s.memberId, p));
+      if (action === 'state.patch') return json(req, await statePatch(d, s.orgId, s.memberId, p.data ?? {}));
     } else {
       if (action === 'admin.load') return json(req, await adminLoad(d, s.adminId));
       if (action === 'admin.state.save') {
