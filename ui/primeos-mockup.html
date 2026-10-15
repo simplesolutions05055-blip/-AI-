@@ -1301,6 +1301,13 @@ body.is-admin .top-actions .tip:has(#btnHelp),body.is-admin .side-foot .nav-item
 .gen-mini{display:flex;flex-direction:column;align-items:center;gap:10px;padding:56px 20px;text-align:center}
 .gm-spin{width:46px;height:46px;border-radius:50%;border:4px solid var(--brand-100);border-top-color:var(--brand);animation:spin 0.9s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+.pth{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center}
+.pth-orb{--s:84px;width:var(--s);height:var(--s);border-radius:50%;padding:4px;flex:none;background:conic-gradient(from 0deg,#0124C7,#01B6FD,#6AFC01,#FE07C7,#FF0012,#7501F6,#0124C7);animation:spin 2.4s linear infinite;display:inline-block}
+.pth-orb i{display:block;width:100%;height:100%;border-radius:50%;background:#fff var(--plogo) center/60% no-repeat;animation:spin 2.4s linear infinite reverse}
+.pth-ph{display:block;font-weight:700;font-size:15px;line-height:1.5;min-height:1.5em;max-width:320px;transition:opacity .35s ease,transform .35s ease}
+.pth-ph.out{opacity:0;transform:translateY(4px)}
+.pth.sm{flex-direction:row;gap:10px;text-align:start}.pth.sm .pth-orb{--s:30px;padding:2.5px}.pth.sm .pth-ph{font-size:13.5px;max-width:none}
+@media (prefers-reduced-motion:reduce){.pth-orb,.pth-orb i{animation:none}.pth-ph{transition:none}}
 .fx-wrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:var(--gap);align-items:start}
 .fx-pv{min-width:0}
 .fx-pages{display:flex;flex-direction:column;align-items:center;gap:18px;max-height:calc(100vh - 210px);overflow:auto;padding:6px 4px 20px;background:var(--surface-2);border-radius:18px}
@@ -3480,7 +3487,7 @@ ACT.bGen=()=>{const b=S.bulk;if(!b.ch.length){toast('לא נבחרה פלטפו�
     const bar=$('#genBar'),num=$('#genNum');if(bar){bar.style.width=S.genP+'%';num.textContent=Math.round(camp.items.length*S.genP/100);}
     if(S.genP>=100){clearInterval(tick);setTimeout(()=>{S.campId=camp.id;S.campMode='edit';go('bulkReview');},250);}},140);};
 SCREENS.bulkGen={hidden:true,render(){const c=S.genCamp;
-  return '<div class="gen-screen card"><div class="gen-orb"><img src="'+document.querySelector('.logo-img').src+'" alt=""></div><h2>יוצרים <span id="genNum">0</span> מתוך '+c.items.length+'</h2>'+
+  return '<div class="gen-screen card"><div class="gen-orb"><img src="'+document.querySelector('.logo-img').src+'" alt=""></div><h2>יוצרים <span id="genNum">0</span> מתוך '+c.items.length+'</h2><b class="pth-ph">'+thinkPh()+'</b>'+
   '<div class="gen-bar"><span id="genBar" style="width:0%"></span></div><div class="gen-steps"><span>'+ic('edit',14)+' טקסט</span><span>'+ic('img',14)+' גרפיקה</span><span>'+ic('cal',14)+' תזמון</span></div></div>';}};
 
 /* ---------- review carousel ---------- */
@@ -5459,7 +5466,14 @@ function styThumb(k){
 function stylePick(sel,act){
   return '<div class="sty-pick" role="radiogroup" aria-label="סגנון">'+DSTYLES.map(s=>'<button class="sty'+(sel===s.k?' on':'')+'" role="radio" aria-checked="'+(sel===s.k)+'" data-act="'+act+':'+s.k+'">'+styThumb(s.k)+
     '<span class="sty-tx"><b>'+s.t+'</b><span>'+s.d+'</span></span><span class="rt-radio"></span></button>').join('')+'</div>';}
-function genBusy(txt){return '<div class="card gen-mini"><span class="gm-spin"></span><b>'+txt+'</b><span class="t-sub">עם נכסי המותג, מסמכי הייחוס והתבניות של הארגון</span></div>';}
+/* thinking screen: the PrimeOS logo + friendly lines that change while the AI works */
+const THINK=['עוד רגע הקסם קורה ✨','אנחנו יוצרים לך את התוכן הכי איכותי שאפשר!','אפשר להציע לך אימוג׳י של קפה בינתיים? ☕','כמה רגעים ואני שולח לך','מלטשים את הפרטים האחרונים...'];
+function thinkPh(){return THINK[Math.floor(Date.now()/3200)%THINK.length];}
+function thinkBox(sm){return '<div class="pth'+(sm?' sm':'')+'" role="status" aria-label="המערכת עובדת על זה"><span class="pth-orb" aria-hidden="true"><i></i></span><b class="pth-ph" aria-hidden="true">'+thinkPh()+'</b></div>';}
+(function(){const lg=document.querySelector('.logo-img');if(lg)document.documentElement.style.setProperty('--plogo','url("'+lg.src+'")');
+  setInterval(()=>{const els=document.querySelectorAll('.pth-ph');if(!els.length)return;const t=thinkPh();
+    els.forEach(el=>{if(el.textContent===t||el.classList.contains('out'))return;el.classList.add('out');setTimeout(()=>{el.textContent=t;el.classList.remove('out');},350);});},400);})();
+function genBusy(){return '<div class="card gen-mini">'+thinkBox()+'</div>';}
 function fileChip(f,xAct){return '<div class="file-chip"><span class="fi '+f.k+'">'+f.k.toUpperCase()+'</span><b>'+esc(f.n)+'</b>'+(f.sub?'<span class="t-sub">'+esc(f.sub)+'</span>':'')+'<button class="icon-btn" data-act="'+xAct+'" aria-label="הסרה">'+ic('x',14)+'</button></div>';}
 function mkItem(o){const it={id:++S.seq,t:o.t||'ללא כותרת',ty:o.ty,d:o.d||S.user.dept,s:o.s,o:curUser().n,u:'עכשיו',pub:o.pub||'',ch:o.ch||['web'],th:GV[(o.g||0)%GV.length],body:o.body||'',cta:'',tags:o.tags||[],wait:'דקה'};
   if(o.fmts)it.fmts=o.fmts;items.unshift(it);return it;}

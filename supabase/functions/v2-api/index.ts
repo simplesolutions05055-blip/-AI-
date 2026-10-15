@@ -347,7 +347,7 @@ async function sendWa(phone: string, message: string) {
 const escH = (x: unknown) => String(x ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 function inviteHtml(p: { name: string; org: string; login: string; sign: string | null }) {
   return `<!doctype html><html dir="rtl" lang="he"><body style="margin:0;background:#F4F6FB;font-family:Arial,Helvetica,sans-serif;color:#1B2238"><div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;padding:28px 28px 22px;border:1px solid #E6E9F2">
-<div style="font-size:22px;font-weight:700;color:#4A1BE8;margin-bottom:6px">PrimeOS</div><div style="font-size:13px;color:#6B7390;margin-bottom:22px">ניהול סושיאל חכם לרשויות</div>
+<div style="margin-bottom:6px"><img src="${APP}/logo.png" width="40" height="38" alt="" style="vertical-align:middle;border:0"> <span style="font-size:22px;font-weight:700;color:#4A1BE8;vertical-align:middle">PrimeOS</span></div><div style="font-size:13px;color:#6B7390;margin-bottom:22px">ניהול סושיאל חכם לרשויות</div>
 <p style="font-size:16px;line-height:1.7;margin:0 0 14px">שלום ${escH(p.name)},</p>
 <p style="font-size:15px;line-height:1.7;margin:0 0 18px">נפתח עבור <b>${escH(p.org)}</b> חשבון במערכת PrimeOS. הכניסה היא בקישור אישי, בלי סיסמה.</p>
 <p style="margin:0 0 22px"><a href="${escH(p.login)}" style="display:inline-block;background:#4A1BE8;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:12px;font-size:15px">כניסה למערכת</a></p>

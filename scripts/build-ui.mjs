@@ -8,7 +8,7 @@ const must = (cond, what) => { if (!cond) { console.error('build-ui: pattern not
 
 // title + icons
 must(/<title>[^<]*<\/title>/.test(h), 'title');
-h = h.replace(/<title>[^<]*<\/title>/, '<title>PrimeOS</title>\n<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3">\n<link rel="icon" href="/favicon.ico?v=3" sizes="any">\n<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3">\n<meta name="robots" content="noindex">');
+h = h.replace(/<title>[^<]*<\/title>/, '<title>PrimeOS</title>\n<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4">\n<link rel="icon" href="/favicon.ico?v=4" sizes="any">\n<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=4">\n<meta name="robots" content="noindex">');
 
 // standing design rule: no Frank Ruhl Libre anywhere
 h = h.split("'Frank Ruhl Libre'").join("'Varela Round'");

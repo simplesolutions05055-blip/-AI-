@@ -944,7 +944,7 @@
 .sp-real{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 video.sp-real{object-fit:contain;background:#0A2C51}
 .sp-mb{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(10,44,81,.62);color:#fff;font-weight:700;font-size:14px;text-align:center;padding:16px}
-.sp-mb .gm-spin{width:26px;height:26px;border-width:3px}
+.sp-mb .pth-orb{--s:68px}.sp-mb .pth-ph{color:#fff;font-size:14px;max-width:260px}
 .lay-pick{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:10px}
 .lay-pick button{border:1.5px solid var(--line,#DDE3EC);background:#fff;border-radius:10px;padding:8px 4px;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2,#41506A);cursor:pointer;line-height:1.25}
 .lay-pick button.on{border-color:var(--brand,#0E3B6B);background:var(--brand,#0E3B6B);color:#fff}
@@ -970,7 +970,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const w = S.route === 'wizard' && S.wiz ? S.wiz : null;
     const m = o.media || (w && w.media) || (S.route === 'bulkReview' && typeof campMediaNow === 'function' ? campMediaNow() : null);
     if (!m || (!realTag(m) && !m.busy)) return h;
-    const busy = m.busy ? '<span class="sp-mb"><span class="gm-spin"></span>' + esc(m.busy) + '</span>' : '';
+    const busy = m.busy ? '<span class="sp-mb">' + thinkBox() + '</span>' : '';
     return h.replace(/<div class="sp-img thumb([^"]*)" id="spImg">/, '<div class="sp-img thumb$1 has-real" id="spImg">' + realTag(m) + busy);
   };
   const _pp = postPreview;
@@ -1307,7 +1307,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (!w || w.step !== 1 || !w.media) return h;
     const m = w.media;
     const real = m.busy
-      ? '<div class="rd-busy"><span class="sp-mb"><span class="gm-spin"></span>' + esc(m.busy) + '</span></div>'
+      ? '<div class="rd-busy"><span class="sp-mb">' + thinkBox() + '</span></div>'
       : m.url ? '<iframe src="' + esc(m.url) + '#view=FitH&toolbar=0" title="' + esc(docTitle(w)) + '"></iframe><a href="' + esc(m.url) + '" target="_blank" rel="noopener"><img src="' + esc(m.thumb) + '" alt="עמוד ראשון"></a>' : '';
     h = h.replace(/<div class="fx-pages">[\s\S]*?<\/div><\/div><div class="studio-ed">/, '<div class="fx-pages real"><div class="real-doc">' + real + '</div></div></div><div class="studio-ed">');
     return h;
@@ -1417,7 +1417,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   const _slideHtmlL = slideHtml;
   slideHtml = function (w, s, i, mini) {
     const m = S.route === 'deckWiz' && S.dk === w && w.media;
-    if (m && m.busy && !mini) return '<div class="slide real"><span class="sp-mb"><span class="gm-spin"></span>' + esc(m.busy) + '</span></div>';
+    if (m && m.busy && !mini) return '<div class="slide real"><span class="sp-mb">' + thinkBox() + '</span></div>';
     if (m && m.slides && m.slides[i]) return '<div class="slide real' + (mini ? ' mini' : '') + '"><img src="' + esc(m.slides[i]) + '" alt="שקף ' + (i + 1) + '" loading="lazy"></div>';
     return _slideHtmlL(w, s, i, mini);
   };
@@ -2045,7 +2045,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       : '<div class="lo-prev"><div class="lo-l" style="background:var(--surface-2,#F3F5F9)"><span class="t-sub">עוד לא הועלה לוגו</span></div><div class="lo-d" style="background:#0E3B6B"><span style="color:#fff;font-size:13px">גרסה לרקע כהה</span></div></div>';
     const panel = '<div class="card card-pad logo-one">' + prev + '<div class="lo-info"><h3>הלוגו של הארגון</h3>' +
       '<span class="t-sub">מעלים לוגו אחד. המערכת מסירה רקע אם צריך, חותכת שוליים, יוצרת גרסה לבנה לרקע כהה ומחלצת ממנו את צבעי המותג.</span>' +
-      (S.logoBusy ? '<div class="lo-busy"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(S.logoBusy) + '</div>' : '') +
+      (S.logoBusy ? '<div class="lo-busy">' + thinkBox(1) + '</div>' : '') +
       (l && info.colors ? '<div class="lo-pal' + (S.logoFresh && Date.now() - S.logoFresh < 8000 ? ' fresh' : '') + '"><b style="font-size:13.5px">צבעי המותג, נשלפו מהלוגו</b><div class="lo-sw">' + (b.colors || []).slice(0, 6).map((c) => '<span title="' + esc(c[0]) + '"><i style="background:' + esc(c[1]) + '"></i><em>' + esc(c[0].replace(/ \(מהלוגו\)/, '')) + '</em><small dir="ltr">' + esc(c[1]) + '</small></span>').join('') + '</div></div>' : '') +
       (l && info.colors ? '<div><b style="font-size:13.5px">הצבעים שזוהו בלוגו</b><div class="lo-chips" style="margin-top:6px">' + info.colors.map((c) => '<span><i style="background:' + c + '"></i>' + c + '</span>').join('') + '</div></div>' +
         '<div class="note">' + ic('palette', 15) + '<span>הוחלו על צבעי המותג' + (info.removed ? ' · הרקע הוסר אוטומטית' : info.hadAlpha ? ' · הלוגו הגיע שקוף' : '') + '. <button class="link-btn" data-act="tab:brand:colors" style="background:none;border:0;padding:0;font:inherit;color:var(--brand);font-weight:700;cursor:pointer">לצבעים ופונטים</button></span></div>' : '') +
@@ -2082,7 +2082,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       : '<button class="upload" data-act="tplPick" style="width:100%"' + (u.busy ? ' disabled' : '') + '><div class="ui">' + ic('upload', 18) + '</div><div style="font-weight:600;font-size:13.5px">העלאת העיצוב של התבנית</div><div class="t-sub">PNG או JPG של העיצוב המלא, כמו שהוא אמור להתפרסם</div></button>';
     return '<div class="drawer-head"><div><h3>תבנית אישית חדשה</h3><p>מעלים עיצוב שנבנה לארגון. המערכת שומרת על המבנה ומחליפה רק טקסטים ותמונה לפי כל בקשה.</p></div><button class="icon-btn" style="margin-inline-start:auto" data-act="closeDrawer" aria-label="סגירה">' + ic('x', 17) + '</button></div>' +
       '<div class="drawer-body">' + prev +
-      (u.busy ? '<div class="lo-busy" style="margin-top:12px"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(u.busy) + '</div>' : '') +
+      (u.busy ? '<div class="lo-busy" style="margin-top:12px">' + thinkBox(1) + '</div>' : '') +
       (u.url && !u.busy ? '<div class="real-acts" style="margin-top:10px"><button class="btn btn-sm" data-act="tplPick">' + ic('upload', 14) + ' החלפת הקובץ</button></div>' : '') +
       (u.scan ? '<div class="note" style="margin-top:12px">' + ic('checkc', 15) + '<span>' + esc(u.scan.summary || 'התבנית נקראה.') + '</span></div>' +
         ((u.scan.slots || []).length ? '<div class="field" style="margin-top:12px"><label>אזורי הטקסט שזוהו</label><div class="tplu-slots">' + u.scan.slots.map((x) => '<span class="chip">' + esc(x.he || x.role) + (x.fixed ? ' · קבוע' : ' · מתחלף') + '</span>').join('') + '</div></div>' : '') : '') +
@@ -2179,7 +2179,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const logoField = '<div class="field"><label>לוגו הארגון</label>' + (l
       ? '<div class="ob-logo"><div class="lo-l"><img src="' + esc(l.url) + '" alt="הלוגו"></div><div><b style="font-size:13.5px">הלוגו נקלט</b><div class="t-sub">' + (info.removed ? 'הרקע הוסר אוטומטית. ' : '') + (info.colors && info.colors.length ? 'צבעי המותג נשלפו מהלוגו.' : '') + '</div><button class="btn btn-sm" data-act="logoUp" style="margin-top:8px"' + (S.logoBusy ? ' disabled' : '') + '>' + ic('upload', 14) + ' החלפת לוגו</button></div></div>'
       : '<button class="upload" data-act="logoUp" style="width:100%"' + (S.logoBusy ? ' disabled' : '') + '><div class="ui">' + ic('upload', 18) + '</div><div style="font-weight:600;font-size:13.5px">העלאת קובץ לוגו</div><div class="t-sub">קובץ אחד מספיק. הרקע מוסר אוטומטית וצבעי המותג נשלפים מהלוגו.</div></button>') +
-      (S.logoBusy ? '<div class="lo-busy" style="margin-top:8px"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(S.logoBusy) + '</div>' : '') + '</div>';
+      (S.logoBusy ? '<div class="lo-busy" style="margin-top:8px">' + thinkBox(1) + '</div>' : '') + '</div>';
     h = h.replace(/<div class="field"><label>לוגו הארגון<\/label><div class="upload" data-act="fakeUpload">[\s\S]*?ברקע שקוף<\/div><\/div><\/div>/, logoField);
     h = h.replace(/(<div class="field"><label>צבעי המותג<\/label><div class="grid g-4" style="gap:10px">)[\s\S]*?(<\/div><\/div><div class="field"><label>סגנון השפה)/,
       '$1' + cols.map((c) => '<div><div class="swatch" style="background:' + esc(c[1]) + '"></div><div style="font-size:12.5px;font-weight:600;margin-top:5px">' + esc(c[0]) + '</div><div class="t-sub" dir="ltr" style="text-align:right">' + esc(c[1]) + '</div></div>').join('') + '$2');
@@ -2237,7 +2237,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const rows = [['טלפון', f.phone], ['מוקד', f.hotline], ['דוא"ל', f.email], ['כתובת', f.address], ['קבלת קהל', f.hours], ['ראש הארגון', f.mayor]].filter((x) => x[1]);
     return '<div class="card card-pad site-card"><div class="sc-head"><div><h3>אתר הארגון</h3><span class="t-sub">המערכת קוראת את האתר הרשמי, בונה ממנו את כללי הכתיבה ומשתמשת בפרטים המעודכנים שבו בכל תוכן. נקרא מחדש אוטומטית כל יומיים.</span></div></div>' +
       '<div class="sc-row"><input type="text" inputmode="url" autocomplete="url" id="siteUrl" dir="ltr" placeholder="www.example.muni.il" value="' + esc(st.url || '') + '"' + (S.siteBusy ? ' disabled' : '') + '><button class="btn btn-primary" data-act="siteScan"' + (S.siteBusy ? ' disabled' : '') + '>' + ic('refresh', 15) + ' ' + (st.at ? 'קריאה מחדש' : 'קריאת האתר') + '</button></div>' +
-      (S.siteBusy ? '<div class="lo-busy"><span class="gm-spin" style="width:18px;height:18px;border-width:2px"></span>' + esc(S.siteBusy) + '</div>' : '') +
+      (S.siteBusy ? '<div class="lo-busy">' + thinkBox(1) + '</div>' : '') +
       (st.at ? '<div class="note">' + ic('checkc', 15) + '<span>נקרא ' + ago(st.at) + ((st.pages || []).length ? ' · ' + st.pages.length + ' עמודים' : '') + (st.summary ? ' · ' + esc(st.summary) : '') + '</span></div>' : '') +
       (st.err && !st.at ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>הקריאה האחרונה נכשלה. בדקו את הכתובת ונסו שוב.</span></div>' : '') +
       (rows.length ? '<div class="sc-facts">' + rows.map((x) => '<div><small>' + x[0] + '</small><b>' + esc(x[1]) + '</b></div>').join('') + '</div>' : '') +
@@ -2415,10 +2415,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     flush();
     S.campId = camp.id; S.campMode = 'edit'; go('bulkReview');
     camp.items.forEach((x) => queueGraphic(camp, x));
-    toast('הטקסטים מוכנים', 'ChatGPT מעצב עכשיו את הגרפיקות, שתיים במקביל. אפשר לעבור על הפוסטים בינתיים.');
+    toast('הטקסטים מוכנים', 'מעצבים עכשיו את הגרפיקות, שתיים במקביל. אפשר לעבור על הפוסטים בינתיים.');
   };
-  const _genR = SCREENS.bulkGen.render;
-  SCREENS.bulkGen.render = function () { return _genR.call(this).replace('<div class="gen-steps">', '<p class="t-sub" style="margin:6px 0 0">Claude כותב את הפוסטים. אחר כך ChatGPT מעצב את הגרפיקות.</p><div class="gen-steps">'); };
   // review: real thumbnails in the strip, design status and actions in the graphic box
   function paintStrip() {
     const c = campById(S.campId); if (!c) return;
@@ -2435,7 +2433,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       else if (m.busy) h = h.replace(re, '$1 data-busy="1">');
     });
     const n = c.items.filter((x) => x.media && x.media.url).length, busy = c.items.filter((x) => x.media && x.media.busy).length;
-    if (busy) h = h.replace('<div class="rv">', '<div class="note camp-prog">' + '<span class="gm-spin" style="width:15px;height:15px;border-width:2px"></span><span>ChatGPT מעצב את הגרפיקות: ' + n + ' מתוך ' + c.items.length + ' מוכנות.</span></div><div class="rv">');
+    if (busy) h = h.replace('<div class="rv">', '<div class="note camp-prog">' + '<span class="pth-orb" style="--s:22px;padding:2px" aria-hidden="true"><i></i></span><span>מעצבים את הגרפיקות: ' + n + ' מתוך ' + c.items.length + ' מוכנות.</span></div><div class="rv">');
     return h;
   };
   const _rvMount = SCREENS.bulkReview.mount;
