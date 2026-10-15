@@ -1,7 +1,7 @@
 // PrimeOS generate - all AI text generation through the Claude API.
 // POST { mode, ...input }   header x-primeos-token
 // modes: post | alt | revise | assistant | doc | deck | graphic | video | doc2 | deck2 | brand | site | series
-//        vcaps | vbrief | vvoice | vmusic | vstock (video director and media, see video.ts)
+//        vcaps | vbrief | vvoice | vmusic | vstock | vsample | vapprove (video director and media, see video.ts)
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import JSZip from 'https://esm.sh/jszip@3.10.1';
 import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES } from './video.ts';
@@ -200,12 +200,14 @@ Deno.serve(async (req) => {
   const { data: t } = await database.from('api_tokens').select('org_id,member_id').eq('token', token).maybeSingle();
   CUR = { org: t?.org_id ?? null, member: t?.member_id ?? null };
   let orgName = '';
+  let isAdmin = false;
   if (t) {
     const { data: o } = await database.from('organizations').select('name').eq('id', t.org_id).maybeSingle();
     orgName = o?.name ?? '';
   } else {
     const { data: a } = await database.from('admin_tokens').select('admin_id').eq('token', token).maybeSingle();
     if (!a) return json(req, { error: 'invalid_token' }, 401);
+    isAdmin = true;
   }
 
   let p: Record<string, any>;
@@ -364,7 +366,11 @@ ${brief}
       const c = caps();
       const { data: vs } = await database.from('admin_state').select('data').eq('id', 'voices').maybeSingle();
       const voices = voicesFor(c, (vs?.data as any)?.approved);
-      if (mode === 'vcaps') return json(req, { ok: true, caps: c, voices: voices.map(({ id, n, g, tone }) => ({ id, n, g, tone })) });
+      if (mode === 'vcaps') {
+        // the owner's audition page sees every available voice and the approved list
+        const list = p.all && isAdmin ? voicesFor(c) : voices;
+        return json(req, { ok: true, caps: c, approved: (vs?.data as any)?.approved ?? [], voices: list.map(({ id, n, g, tone, eng }) => ({ id, n, g, tone, eng })) });
+      }
       if (mode === 'vvoice') {
         if (!voices.some((v) => v.id === p.voiceId) && !VOICES.some((v) => v.id === p.voiceId)) return json(req, { error: 'unknown_voice' }, 400);
         const clips = await voiceScenes(database, CUR.org ?? '', String(p.voiceId), (p.says ?? []) as string[]);
@@ -373,6 +379,17 @@ ${brief}
       const imgs = await fileBlocks(((p.media ?? []) as any[]).filter((m) => !m.v).map((m) => ({ url: m.url, name: m.name || m.url })));
       const raw = await claude(key, DIRECTOR_SYS + '\n' + s, directorPrompt(p, c, voices), 6000, [...imgs, ...fb]);
       return json(req, { ok: true, caps: c, ...sanitizeBrief(parseJson(raw), p, voices) });
+    }
+    if (mode === 'vsample') {
+      const text = String(p.text || 'שלום, אני הקול של PrimeOS. ביום חמישי הקרוב מחכה לכם פסטיבל הסתיו בפארק העירוני, עם הופעות, אוכל ופינת ילדים. נתראה שם!').slice(0, 300);
+      const [clip] = await voiceScenes(database, CUR.org ?? 'samples', String(p.voiceId), [text]);
+      return json(req, { ok: true, src: clip?.src, sec: clip?.sec });
+    }
+    if (mode === 'vapprove') {
+      if (!isAdmin) return json(req, { error: 'forbidden' }, 403);
+      const ids = ((p.approved ?? []) as string[]).filter((id) => VOICES.some((v) => v.id === id)).slice(0, 8);
+      await database.from('admin_state').upsert({ id: 'voices', data: { approved: ids, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+      return json(req, { ok: true, approved: ids });
     }
     if (mode === 'vmusic') return json(req, { ok: true, ...(await musicTrack(database, CUR.org ?? '', String(p.prompt ?? ''), +p.seconds || 30)) });
     if (mode === 'vstock') return json(req, { ok: true, items: await stock((p.queries ?? []) as any[], String(p.format ?? '9x16')) });

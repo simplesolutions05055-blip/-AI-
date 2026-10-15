@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>בחירת קולות קריינות · PrimeOS</title>
+<link rel="icon" href="/favicon.svg?v=4">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#13213A;--ink3:#6B7890;--line:#DDE3EC;--bg:#F4F6FA;--brand:#0E3B6B;--ok:#1F8A4C;--err:#C0392B}
+*{box-sizing:border-box}
+body{margin:0;font-family:Heebo,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+.wrap{max-width:980px;margin:0 auto;padding:28px 16px 120px}
+h1{font-size:26px;margin:0 0 6px}
+p.sub{color:var(--ink3);margin:0 0 22px;line-height:1.55}
+h2{font-size:18px;margin:26px 0 10px;display:flex;align-items:center;gap:10px}
+h2 small{font-weight:600;color:var(--ink3);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.v{background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.v.on{border-color:var(--brand);box-shadow:0 0 0 3px rgba(14,59,107,.12)}
+.v .top{display:flex;align-items:center;gap:10px}
+.v b{font-size:17px}
+.tag{font-size:11.5px;font-weight:700;padding:3px 8px;border-radius:99px;background:var(--bg);color:var(--ink3)}
+.v .tone{color:var(--ink3);font-size:13.5px;line-height:1.45}
+.row{display:flex;gap:8px;align-items:center}
+button{font:inherit;cursor:pointer;border-radius:10px;border:1.5px solid var(--line);background:#fff;padding:7px 12px;font-weight:600;color:var(--ink)}
+button.pick{margin-inline-start:auto}
+.v.on button.pick{background:var(--brand);border-color:var(--brand);color:#fff}
+button:disabled{opacity:.55;cursor:default}
+audio{width:100%;height:34px}
+.bar{position:fixed;bottom:0;inset-inline:0;background:#fff;border-top:1px solid var(--line);padding:12px 16px}
+.bar .in{max-width:980px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.bar .msg{color:var(--ink3);font-size:14px;flex:1;min-width:200px}
+.bar .save{background:var(--brand);border-color:var(--brand);color:#fff;padding:10px 20px}
+.note{background:#FFF7E6;border:1px solid #F5D9A8;border-radius:12px;padding:12px 14px;line-height:1.55;font-size:14px;margin-bottom:16px}
+.err{color:var(--err)}.ok{color:var(--ok)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>בחירת קולות קריינות</h1>
+  <p class="sub">שמעו כל קול ובחרו 2 עד 4 קולות גבר ו-2 עד 4 קולות אישה. רק הקולות שתבחרו יוצעו ללקוחות ביצירת סרטון.</p>
+  <div id="note"></div>
+  <div id="list">טוען...</div>
+</div>
+<div class="bar"><div class="in"><span class="msg" id="msg"></span><button class="save" id="save" disabled>שמירת הבחירה</button></div></div>
+<script>
+(function () {
+  'use strict';
+  var GEN = 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/generate';
+  var tok = '';
+  try { tok = localStorage.getItem('primeos_tok_admin') || ''; } catch (e) {}
+  var $ = function (s) { return document.querySelector(s); };
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+  var voices = [], picked = {};
+  function gen(body) {
+    return fetch(GEN, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': tok }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok || j.error) throw new Error(j.error || 'http_' + r.status); return j; }); });
+  }
+  function count(g) { return voices.filter(function (v) { return v.g === g && picked[v.id]; }).length; }
+  function status() {
+    var m = count('m'), f = count('f');
+    var ok = m >= 2 && m <= 4 && f >= 2 && f <= 4;
+    $('#msg').innerHTML = 'נבחרו ' + m + ' קולות גבר ו-' + f + ' קולות אישה' + (ok ? '' : ' <span class="err">(צריך 2-4 מכל מין)</span>');
+    $('#save').disabled = !ok;
+  }
+  function card(v) {
+    return '<div class="v' + (picked[v.id] ? ' on' : '') + '" data-id="' + esc(v.id) + '"><div class="top"><b>' + esc(v.n) + '</b><span class="tag">' + (v.eng === 'eleven' ? 'ElevenLabs' : 'Google') + '</span>' +
+      '<button class="pick" data-pick="' + esc(v.id) + '">' + (picked[v.id] ? 'נבחר ✓' : 'בחירה') + '</button></div><div class="tone">' + esc(v.tone) + '</div>' +
+      '<div class="row"><button data-play="' + esc(v.id) + '">▶ השמעה</button><span class="tone" data-st="' + esc(v.id) + '"></span></div><div data-au="' + esc(v.id) + '"></div></div>';
+  }
+  function draw() {
+    var m = voices.filter(function (v) { return v.g === 'm'; }), f = voices.filter(function (v) { return v.g === 'f'; });
+    $('#list').innerHTML = '<h2>קולות גבר <small>' + m.length + ' זמינים</small></h2><div class="grid">' + m.map(card).join('') + '</div>' +
+      '<h2>קולות אישה <small>' + f.length + ' זמינים</small></h2><div class="grid">' + f.map(card).join('') + '</div>';
+    status();
+  }
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('button'); if (!t) return;
+    if (t.dataset.pick) { picked[t.dataset.pick] = !picked[t.dataset.pick]; draw(); return; }
+    if (t.dataset.play) {
+      var id = t.dataset.play, st = document.querySelector('[data-st="' + id + '"]');
+      t.disabled = true; st.textContent = 'מקליט דוגמה...';
+      gen({ mode: 'vsample', voiceId: id }).then(function (r) {
+        document.querySelector('[data-au="' + id + '"]').innerHTML = '<audio controls autoplay src="' + esc(r.src) + '"></audio>'; st.textContent = '';
+      }).catch(function (er) { st.innerHTML = '<span class="err">' + (er.message === 'voice_not_configured' ? 'הספק לא מחובר' : 'נכשל, נסו שוב') + '</span>'; })
+        .then(function () { t.disabled = false; });
+      return;
+    }
+    if (t.id === 'save') {
+      t.disabled = true;
+      gen({ mode: 'vapprove', approved: Object.keys(picked).filter(function (k) { return picked[k]; }) })
+        .then(function () { $('#msg').innerHTML = '<span class="ok">הבחירה נשמרה. הקולות האלה יוצעו מעכשיו ביצירת סרטון.</span>'; })
+        .catch(function () { $('#msg').innerHTML = '<span class="err">השמירה נכשלה. נסו שוב.</span>'; t.disabled = false; });
+    }
+  });
+  if (!tok) { $('#list').innerHTML = '<div class="note">צריך להיות מחוברים לממשק הניהול. היכנסו קודם ל-<a href="/admin">ממשק הניהול</a> ואז חזרו לעמוד הזה.</div>'; return; }
+  gen({ mode: 'vcaps', all: true }).then(function (r) {
+    voices = r.voices || [];
+    (r.approved || []).forEach(function (id) { picked[id] = true; });
+    var c = r.caps || {};
+    if (!c.eleven || !c.google) $('#note').innerHTML = '<div class="note">' + (!c.eleven && !c.google ? 'עדיין לא חובר אף ספק קריינות. אחרי שמפתחות ElevenLabs ו-Google יישמרו ב-Supabase, הקולות יופיעו כאן.' : !c.eleven ? 'ElevenLabs עדיין לא מחובר: מוצגים רק קולות Google.' : 'Google עדיין לא מחובר: מוצגים רק קולות ElevenLabs.') + '</div>';
+    if (!voices.length) { $('#list').innerHTML = ''; status(); return; }
+    draw();
+  }).catch(function (e) { $('#list').innerHTML = '<div class="note err">' + (e.message === 'invalid_token' ? 'החיבור לממשק הניהול פג. היכנסו מחדש ל-<a href="/admin">ממשק הניהול</a>.' : 'הטעינה נכשלה. רעננו את העמוד.') + '</div>'; });
+})();
+</script>
+</body>
+</html>
