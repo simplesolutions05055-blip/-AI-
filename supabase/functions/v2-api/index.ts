@@ -1,9 +1,11 @@
 // PrimeOS v2-api - data gateway for the live system (client + admin).
 // POST { action, payload }   header x-primeos-token
 // client: live.load | items.upsert | items.remove | state.save | state.patch | inbox.add | members.list | members.create | members.update | members.remove | members.relink | upload.sign
+// client publishing: ch.list | ch.connect | ch.disconnect (posts go out from items.upsert when an item is scheduled / published)
 // admin: admin.load | admin.state.save | admin.org.create | admin.org.delete | admin.invite.send | admin.org.update
 // open (sign token): sign.load | sign.submit
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, NEEDS_VIDEO, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
@@ -68,6 +70,7 @@ async function membersOf(d: DB, orgId: string, withLinks: boolean) {
 }
 
 async function liveLoad(d: DB, orgId: string, memberId: string | null) {
+  try { await Promise.race([pubPoll(d, orgId), new Promise((r) => setTimeout(r, 4000))]); } catch (_) { /* never blocks loading */ }
   const [org, me, its, st] = await Promise.all([
     d.from('organizations').select('id,name,plan,org_type,status,settings').eq('id', orgId).single(),
     memberId ? d.from('org_members').select('id,name,email,role,dept,view,perms').eq('id', memberId).maybeSingle() : Promise.resolve({ data: null }),
@@ -111,6 +114,7 @@ async function memberRemove(d: DB, orgId: string, memberId: string | null, id: s
   const { data: m } = await d.from('org_members').select('id,role').eq('id', id).eq('org_id', orgId).maybeSingle();
   if (!m) throw new Error('not_found');
   if (m.role === 'owner') throw new Error('owner_protected');
+  try { await dropProfiles(d, orgId, id); } catch (_) { /* best effort */ }
   await d.from('api_tokens').delete().eq('member_id', id);
   const { error } = await d.from('org_members').delete().eq('id', id);
   if (error) throw error;
@@ -162,10 +166,12 @@ async function memberRelink(d: DB, orgId: string, memberId: string | null, id: s
 
 async function itemsUpsert(d: DB, orgId: string, list: Record<string, any>[]) {
   const out: Record<string, string> = {};
+  const moved: { ui: Record<string, any>; prev: string | null }[] = [];
   for (const ui of list.slice(0, 200)) {
     if (typeof ui?.id !== 'number') continue;
     const row = itemRow(orgId, ui);
-    const { data: ex } = await d.from('content_items').select('id').eq('org_id', orgId).eq('ui_id', ui.id).maybeSingle();
+    const { data: ex } = await d.from('content_items').select('id,meta').eq('org_id', orgId).eq('ui_id', ui.id).maybeSingle();
+    moved.push({ ui, prev: ex?.meta?.ui?.s ?? null });
     if (ex) {
       const { error } = await d.from('content_items').update(row).eq('id', ex.id);
       if (error) throw error;
@@ -176,11 +182,209 @@ async function itemsUpsert(d: DB, orgId: string, list: Record<string, any>[]) {
       out[ui.id] = data.id;
     }
   }
+  // publishing never blocks saving
+  try { await pubSync(d, orgId, moved); } catch (e) { console.error('pubSync', e instanceof Error ? e.message : e); }
   return { ids: out };
+}
+
+/* ---------------- publishing (provider layer in publish.ts) ---------------- */
+const CH_HE: Record<string, string> = { fb: 'פייסבוק', ig: 'אינסטגרם', x: 'X', yt: 'יוטיוב', li: 'לינקדאין', tk: 'טיקטוק' };
+const roleOf = async (d: DB, memberId: string | null) => memberId ? (await d.from('org_members').select('role').eq('id', memberId).maybeSingle()).data : null;
+// organisation channels belong to the organisation; a department user connects channels of its own
+const scopeOf = async (d: DB, memberId: string | null) => (isManager(await roleOf(d, memberId)) ? null : memberId);
+async function pubProfile(d: DB, pv: Provider, orgId: string, memberId: string | null, create: boolean): Promise<string | null> {
+  let q = d.from('v2_pub_profiles').select('profile_id').eq('org_id', orgId).eq('provider', pv.name);
+  q = memberId ? q.eq('member_id', memberId) : q.is('member_id', null);
+  const { data } = await q.maybeSingle();
+  if (data) return data.profile_id;
+  if (!create) return null;
+  const { data: org } = await d.from('organizations').select('name').eq('id', orgId).single();
+  let name = org?.name ?? 'PrimeOS';
+  if (memberId) { const { data: m } = await d.from('org_members').select('name,dept').eq('id', memberId).maybeSingle(); name += ' · ' + (m?.dept || m?.name || ''); }
+  const pid = await pv.ensureProfile((memberId ? 'm:' : 'o:') + (memberId ?? orgId), name);
+  await d.from('v2_pub_profiles').insert({ org_id: orgId, member_id: memberId, provider: pv.name, profile_id: pid });
+  return pid;
+}
+// the provider tells PrimeOS when a post went out or failed
+async function ensureHook(d: DB, pv: Provider) {
+  const { data } = await d.from('admin_state').select('data').eq('id', 'pub').maybeSingle();
+  if (data?.data?.secret && data.data.provider === pv.name) return data.data.secret as string;
+  const secret = Array.from(crypto.getRandomValues(new Uint8Array(24))).map((b) => b.toString(16).padStart(2, '0')).join('');
+  const hook = await pv.registerWebhook(Deno.env.get('SUPABASE_URL')! + '/functions/v1/v2-api', secret);
+  await d.from('admin_state').upsert({ id: 'pub', data: { provider: pv.name, secret, hook, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+  return secret;
+}
+async function chList(d: DB, orgId: string, memberId: string | null) {
+  const pv = provider();
+  if (!pv) return { configured: false, accounts: [] };
+  const pid = await pubProfile(d, pv, orgId, await scopeOf(d, memberId), false);
+  return { configured: true, provider: pv.name, accounts: pid ? await pv.accounts(pid) : [] };
+}
+async function chConnect(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const pv = provider();
+  if (!pv) throw new Error('publishing_not_configured');
+  const ch = String(p.ch ?? '') as ChKey;
+  if (!CH_KEYS.includes(ch)) throw new Error('bad_channel');
+  try { await ensureHook(d, pv); } catch (e) { console.error('hook', e instanceof Error ? e.message : e); }
+  const pid = await pubProfile(d, pv, orgId, await scopeOf(d, memberId), true);
+  return { url: await pv.connectUrl(pid!, ch, `${APP}/?chcb=${ch}`) };
+}
+async function chDisconnect(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const pv = provider();
+  if (!pv) throw new Error('publishing_not_configured');
+  const pid = await pubProfile(d, pv, orgId, await scopeOf(d, memberId), false);
+  if (!pid) return { ok: true, removed: 0 };
+  const acc = (await pv.accounts(pid)).filter((a) => a.ch === p.ch);
+  for (const a of acc) await pv.disconnect(a.id);
+  return { ok: true, removed: acc.length };
+}
+// a server-side change to an item (published / failed), merged into what the UI keeps
+async function setUi(d: DB, orgId: string, uiId: number, fn: (ui: Record<string, any>) => void) {
+  const { data: row } = await d.from('content_items').select('id,meta').eq('org_id', orgId).eq('ui_id', uiId).maybeSingle();
+  if (!row?.meta?.ui) return;
+  const ui = { ...row.meta.ui };
+  fn(ui);
+  await d.from('content_items').update({ meta: { ...row.meta, ui }, status: ST_MAP[ui.s] ?? 'draft', status_note: ui.err ?? null, updated_at: new Date().toISOString() }).eq('id', row.id);
+}
+const logLine = (ui: Record<string, any>, k: string, x = '') => { ui.log = [...(Array.isArray(ui.log) ? ui.log : []), { k, w: 'PrimeOS', t: Date.now(), x }]; ui.at = Date.now(); };
+async function pubApply(d: DB, rec: any, status: string, per: PostOut['perTarget'], error?: string | null) {
+  if (!FINAL.includes(status)) { await d.from('v2_pub_posts').update({ status, result: per, updated_at: new Date().toISOString() }).eq('id', rec.id); return; }
+  await d.from('v2_pub_posts').update({ status, result: per, error: error ?? null, updated_at: new Date().toISOString() }).eq('id', rec.id);
+  if (status === 'cancelled') return;
+  const bad = per.filter((t) => t.status === 'failed');
+  const links: Record<string, string> = {};
+  for (const t of per) if (t.url) links[t.ch] = t.url;
+  await setUi(d, rec.org_id, Number(rec.ui_id), (ui) => {
+    if (status === 'failed') {
+      const why = error || bad.map((t) => t.error).filter(Boolean).join(' · ');
+      ui.s = 'failed';
+      ui.err = 'הפרסום נכשל' + (bad.length ? ' ב' + bad.map((t) => CH_HE[t.ch] ?? t.ch).join(', ') : '') + (why ? ': ' + String(why).slice(0, 180) : '');
+      logLine(ui, 'failed', ui.err);
+    } else {
+      const was = ui.s;
+      ui.s = 'published';
+      delete ui.err;
+      ui.links = { ...(ui.links ?? {}), ...links };
+      ui.pubWarn = bad.length ? 'לא פורסם ב' + bad.map((t) => CH_HE[t.ch] ?? t.ch).join(', ') + (bad[0].error ? ': ' + String(bad[0].error).slice(0, 160) : '') : undefined;
+      if (was !== 'published' || !(ui.log ?? []).some((l: any) => l.k === 'published' && l.w === 'PrimeOS')) logLine(ui, 'published', Object.keys(links).map((k) => CH_HE[k] ?? k).join(', '));
+    }
+  });
+}
+async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; prev: string | null }[]) {
+  const pv = provider();
+  if (!pv || !moved.length) return;
+  const { data: recs } = await d.from('v2_pub_posts').select('*').eq('org_id', orgId).in('ui_id', moved.map((m) => m.ui.id));
+  const recOf = new Map<number, any>((recs ?? []).map((r: any) => [Number(r.ui_id), r]));
+  let profs: any[] | null = null, mems: any[] | null = null;
+  const accCache = new Map<string, Awaited<ReturnType<Provider['accounts']>>>();
+  const accOf = async (pid: string) => { if (!accCache.has(pid)) accCache.set(pid, await pv.accounts(pid)); return accCache.get(pid)!; };
+  for (const { ui, prev } of moved) {
+    const rec = recOf.get(ui.id);
+    const out = (ui.s === 'scheduled' || ui.s === 'published') && (ui.ty === 'graphic' || ui.ty === 'video') && Array.isArray(ui.ch) && ui.ch.length > 0;
+    const open = rec && rec.post_id && !FINAL.includes(rec.status);
+    if (!out) {
+      // taken back from the schedule (draft / archive / back to approval)
+      if (open && ui.s !== 'failed') { try { await pv.cancelPost(rec.post_id); } catch (_) { /* already gone */ } await d.from('v2_pub_posts').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', rec.id); }
+      continue;
+    }
+    if (!rec && prev === ui.s) continue; // saved again without a status change (items from before publishing existed)
+    if (rec && (rec.status === 'published' || rec.status === 'partial')) continue; // already out; later edits stay in PrimeOS
+    const media = mediaOf(ui);
+    const when = ui.s === 'published' ? null : whenOf(ui.pub);
+    const sig = await sigOf({ t: textOf(ui), m: media, ch: [...ui.ch].sort(), w: when ?? 'now' });
+    const retry = rec && rec.status === 'failed' && prev === 'failed';
+    if (rec && rec.sig === sig && !retry && rec.status !== 'cancelled') continue;
+    if (open) { try { await pv.cancelPost(rec.post_id); } catch (_) { /* gone */ } }
+    // where to publish: a department's own channels first, then the organisation's
+    profs ??= (await d.from('v2_pub_profiles').select('member_id,profile_id').eq('org_id', orgId).eq('provider', pv.name)).data ?? [];
+    mems ??= (await d.from('org_members').select('id,dept,view').eq('org_id', orgId)).data ?? [];
+    const deptMem = new Set(mems!.filter((m: any) => m.view === 'dept' && ui.d && m.dept === ui.d).map((m: any) => m.id));
+    const order = [...profs!.filter((x: any) => x.member_id && deptMem.has(x.member_id)), ...profs!.filter((x: any) => !x.member_id)];
+    let pick: { pid: string; targets: { ch: ChKey; accountId: string }[] } | null = null;
+    for (const pr of order) {
+      const acc = (await accOf(pr.profile_id)).filter((a) => a.active);
+      const targets = (ui.ch as string[]).map((c) => acc.find((a) => a.ch === c)).filter(Boolean).map((a) => ({ ch: a!.ch, accountId: a!.id }));
+      if (targets.length) { pick = { pid: pr.profile_id, targets }; break; }
+    }
+    const skipped: string[] = [];
+    if (pick) {
+      pick.targets = pick.targets.filter((t) => {
+        const ok = (!NEEDS_MEDIA.includes(t.ch) || media.length > 0) && (!NEEDS_VIDEO.includes(t.ch) || media.some((m) => m.type === 'video'));
+        if (!ok) skipped.push(t.ch);
+        return ok;
+      });
+    }
+    const base = { org_id: orgId, ui_id: ui.id, provider: pv.name, sig, updated_at: new Date().toISOString() };
+    const missing = (ui.ch as string[]).filter((c) => !pick || ![...pick.targets.map((t) => t.ch), ...skipped].includes(c as ChKey));
+    if (!pick || !pick.targets.length) {
+      const why = !pick ? 'הערוצים שנבחרו לא מחוברים' : 'הרשתות שנבחרו דורשות תמונה או סרטון';
+      const { data: r2 } = await d.from('v2_pub_posts').upsert({ ...base, post_id: null, status: 'failed', targets: [], error: why }, { onConflict: 'org_id,ui_id' }).select('*').single();
+      await pubApply(d, r2, 'failed', [], why);
+      continue;
+    }
+    try {
+      const res = await pv.createPost({ profileId: pick.pid, text: textOf(ui), targets: pick.targets, media, when, tz: 'Asia/Jerusalem', key: `primeos-${orgId}-${ui.id}-${sig}` });
+      const note = [...missing.map((c) => (CH_HE[c] ?? c) + ' לא מחובר'), ...skipped.map((c) => (CH_HE[c] ?? c) + ' דורש תמונה או סרטון')].join(' · ') || null;
+      const { data: r2 } = await d.from('v2_pub_posts').upsert({ ...base, post_id: res.id, status: res.status, targets: pick.targets, result: res.perTarget, error: note }, { onConflict: 'org_id,ui_id' }).select('*').single();
+      if (FINAL.includes(res.status)) await pubApply(d, r2, res.status, res.perTarget, res.error);
+      else if (note) await setUi(d, orgId, ui.id, (u) => { u.pubWarn = note; });
+    } catch (e) {
+      const why = e instanceof Error ? e.message.replace(/^provider_\d+:?/, '') : 'error';
+      const { data: r2 } = await d.from('v2_pub_posts').upsert({ ...base, post_id: null, status: 'failed', targets: pick.targets, error: why }, { onConflict: 'org_id,ui_id' }).select('*').single();
+      await pubApply(d, r2, 'failed', [], why);
+    }
+  }
+}
+// webhook missed? ask the provider about posts still on their way
+async function pubPoll(d: DB, orgId: string) {
+  const pv = provider();
+  if (!pv) return;
+  const { data: recs } = await d.from('v2_pub_posts').select('*').eq('org_id', orgId).eq('provider', pv.name).not('post_id', 'is', null)
+    .not('status', 'in', '(' + FINAL.join(',') + ')').lt('updated_at', new Date(Date.now() - 90_000).toISOString()).limit(5);
+  for (const r of recs ?? []) {
+    try { const p = await pv.getPost(r.post_id); await pubApply(d, r, p.status, p.perTarget, p.error); } catch (_) { await d.from('v2_pub_posts').update({ updated_at: new Date().toISOString() }).eq('id', r.id); }
+  }
+}
+async function pubWebhook(req: Request) {
+  const pv = provider();
+  const raw = await req.text();
+  if (!pv) return new Response('not configured', { status: 503 });
+  const d = db();
+  const { data } = await d.from('admin_state').select('data').eq('id', 'pub').maybeSingle();
+  if (!(await pv.verify(raw, req.headers, data?.data?.secret ?? ''))) return new Response('bad signature', { status: 401 });
+  let body: any = null;
+  try { body = JSON.parse(raw); } catch { return new Response('bad json', { status: 400 }); }
+  const ev = pv.parseEvent(body);
+  if (ev.eventId) { const { error } = await d.from('v2_pub_events').insert({ id: ev.eventId }); if (error) return new Response('ok'); }
+  if (ev.kind === 'post' && ev.postId) {
+    const { data: rec } = await d.from('v2_pub_posts').select('*').eq('provider', pv.name).eq('post_id', ev.postId).maybeSingle();
+    if (rec) await pubApply(d, rec, ev.status, ev.perTarget, ev.error);
+  }
+  return new Response('ok');
+}
+async function cancelPub(d: DB, orgId: string, uiIds: number[]) {
+  const pv = provider();
+  if (!pv || !uiIds.length) return;
+  const { data: recs } = await d.from('v2_pub_posts').select('*').eq('org_id', orgId).in('ui_id', uiIds).not('post_id', 'is', null);
+  for (const r of recs ?? []) if (!FINAL.includes(r.status)) { try { await pv.cancelPost(r.post_id); } catch (_) { /* gone */ } }
+  await d.from('v2_pub_posts').delete().eq('org_id', orgId).in('ui_id', uiIds);
+}
+// closing an organisation or a department user frees its connected accounts at the provider
+async function dropProfiles(d: DB, orgId: string, memberId?: string) {
+  const pv = provider();
+  if (!pv) return;
+  let q = d.from('v2_pub_profiles').select('id,profile_id').eq('org_id', orgId).eq('provider', pv.name);
+  if (memberId) q = q.eq('member_id', memberId);
+  const { data } = await q;
+  for (const pr of data ?? []) {
+    try { for (const a of await pv.accounts(pr.profile_id)) await pv.disconnect(a.id); } catch (e) { console.error('drop', e instanceof Error ? e.message : e); }
+    await d.from('v2_pub_profiles').delete().eq('id', pr.id);
+  }
 }
 
 async function itemsRemove(d: DB, orgId: string, ids: number[]) {
   if (!ids?.length) return { ok: true };
+  try { await cancelPub(d, orgId, ids); } catch (e) { console.error('cancelPub', e instanceof Error ? e.message : e); }
   const { data: rows } = await d.from('content_items').select('id').eq('org_id', orgId).in('ui_id', ids);
   const dbids = (rows ?? []).map((r: any) => r.id);
   if (dbids.length) {
@@ -275,6 +479,7 @@ async function adminOrgDelete(d: DB, p: Record<string, any>) {
   if (id === DEMO_ORG && !p.force) throw new Error('demo_protected');
   const { data: org } = await d.from('organizations').select('id').eq('id', id).maybeSingle();
   if (!org) throw new Error('not_found');
+  try { await dropProfiles(d, id); } catch (_) { /* best effort */ }
   await d.from('api_tokens').delete().eq('org_id', id);
   await d.from('org_members').delete().eq('org_id', id);
   await d.from('org_state').delete().eq('org_id', id);
@@ -469,6 +674,7 @@ async function uploadSign(d: any, s: any, p: Record<string, any>) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
   if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
+  if (req.headers.get('x-zernio-signature') || req.headers.get('x-late-signature')) return await pubWebhook(req);
   let action = '';
   let p: Record<string, any> = {};
   try {
@@ -508,6 +714,9 @@ Deno.serve(async (req) => {
       if (action === 'members.update') return json(req, await memberUpdate(d, s.orgId, s.memberId, p));
       if (action === 'state.patch') return json(req, await statePatch(d, s.orgId, s.memberId, p.data ?? {}));
       if (action === 'members.send') return json(req, await memberSend(d, s.orgId, s.memberId, p));
+      if (action === 'ch.list') return json(req, await chList(d, s.orgId, s.memberId));
+      if (action === 'ch.connect') return json(req, await chConnect(d, s.orgId, s.memberId, p));
+      if (action === 'ch.disconnect') return json(req, await chDisconnect(d, s.orgId, s.memberId, p));
     } else {
       if (action === 'admin.load') return json(req, await adminLoad(d, s.adminId));
       if (action === 'admin.state.save') {
@@ -519,7 +728,7 @@ Deno.serve(async (req) => {
       if (action === 'admin.org.delete') return json(req, await adminOrgDelete(d, p));
       if (action === 'admin.invite.send') return json(req, await adminInviteSend(d, p));
       if (action === 'admin.org.update') return json(req, await adminOrgUpdate(d, p));
-      if (action === 'admin.env') return json(req, { mail: !!(Deno.env.get('RESEND_API_KEY') && Deno.env.get('RESEND_FROM_EMAIL')), wa: !!(Deno.env.get('SMARTSEND_ORGANIZATION_ID') || Deno.env.get('SMARTSEND_API_KEY')) });
+      if (action === 'admin.env') return json(req, { mail: !!(Deno.env.get('RESEND_API_KEY') && Deno.env.get('RESEND_FROM_EMAIL')), wa: !!(Deno.env.get('SMARTSEND_ORGANIZATION_ID') || Deno.env.get('SMARTSEND_API_KEY')), pub: provider()?.name ?? null });
     }
     return json(req, { error: 'unknown_action' }, 400);
   } catch (e) {

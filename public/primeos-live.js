@@ -394,6 +394,7 @@
     enterApp('dashboard');
     startSync();
     L.ready = true;
+    if (L.pubBoot) L.pubBoot();
   }
   async function bootAdmin() {
     const d = await call('admin.load');
@@ -2966,5 +2967,125 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     ['approve', 'askfix', 'reject', 'cApproveAll'].forEach((k) => { const f = ACT[k]; ACT[k] = (...a) => { if (isSingle()) { toast('אישור תוכן', 'את התוכן מאשר משתמש הארגון.', ''); return; } return f.apply(null, a); }; });
     // publishing without the direct-publish permission: the content goes to approval instead
     ['wizPublish', 'sched', 'cPublish', 'publish'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => { if (isSingle() && !canDirect()) { toast('הפרסום דורש אישור', 'התוכן נשלח לאישור של משתמש הארגון.', ''); return ACT.wizSend ? ACT.wizSend() : undefined; } return f.apply(null, a); }; });
+  })();
+  /* ---------------- publishing: real channels and real posts through the provider layer ----------------
+   * The server talks to the publishing provider (Zernio today, replaceable). The UI only knows:
+   * ch.list / ch.connect / ch.disconnect, and that a scheduled or published item goes out by itself. */
+  (function () {
+    const CHK = ['fb', 'ig', 'x', 'yt', 'li', 'tk'];
+    L.pub = { on: null, acc: [] };
+    const hm = () => new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+    const chName = (k) => (CH[k] ? CH[k].t : k);
+    function applyAcc(list) {
+      CHK.forEach((k) => {
+        let c = channels.find((x) => x.k === k);
+        const a = list.find((x) => x.ch === k);
+        if (!c) { if (!a) return; c = { k, acc: '-', st: 'לא מחובר', sync: '-', fol: '-' }; channels.push(c); }
+        if (a) Object.assign(c, { st: a.active ? 'מחובר' : 'דורש חידוש הרשאה', acc: a.name || chName(k), accId: a.id, sync: 'היום, ' + hm(), fol: a.followers != null ? Number(a.followers).toLocaleString('he-IL') : '-' });
+        else Object.assign(c, { st: 'לא מחובר', acc: '-', accId: null, sync: '-', fol: '-' });
+      });
+    }
+    async function refresh(quiet) {
+      try {
+        const r = await call('ch.list');
+        L.pub.on = !!r.configured;
+        if (r.configured) { L.pub.acc = r.accounts || []; applyAcc(L.pub.acc); }
+      } catch (e) {
+        // a server without the publishing layer yet answers unknown_action: same as not configured
+        if (/unknown_action|publishing_not_configured/.test(String(e.message || ''))) { L.pub.on = false; if (S.route === 'channels') render(); return true; }
+        if (!quiet) toast('בדיקת הערוצים נכשלה', 'נסו שוב בעוד רגע.', 'err'); return false;
+      }
+      if (S.route === 'channels' && !$('#drawer').classList.contains('on')) render();
+      return true;
+    }
+    L.pubRefresh = refresh;
+    const CB_KEYS = ['chcb', 'connected', 'profileId', 'accountId', 'username', 'request_id', 'stage', 'error', 'error_message', 'platform', 'is_user_fixable', 'error_reason', 'platform_error', 'platform_error_reason', 'platform_error_description', 'step', 'tempToken', 'userProfile', 'connect_token'];
+    L.pubBoot = async function () {
+      const u = new URL(location.href);
+      const cb = u.searchParams.get('chcb');
+      if (!cb) { refresh(true); return; }
+      const err = u.searchParams.get('error'), em = u.searchParams.get('error_message');
+      CB_KEYS.forEach((k) => u.searchParams.delete(k));
+      history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+      go('channels');
+      await refresh(true);
+      const c = channels.find((x) => x.k === cb);
+      if (err) toast('החיבור לא הושלם', chName(cb) + (em ? ': ' + em : '. אפשר לנסות שוב.'), 'err');
+      else if (c && c.st === 'מחובר') toast('הערוץ חובר', chName(cb) + ' מחובר. פרסומים מתוזמנים יוצאים אליו מעכשיו.');
+      else toast('החיבור בבדיקה', 'אם הערוץ לא מופיע כמחובר, לחצו על „בדיקת חיבור” בעוד רגע.');
+    };
+    const notReady = () => openModal('<div class="mb"><div class="m-ic warn">' + ic('plug', 20) + '</div><h3>חיבור ערוצים</h3><p>חיבור הרשתות ייפתח ברגע שמנהל המערכת ישלים את הגדרת ספק הפרסום. עד אז התוכן נשמר ומתוזמן במערכת.</p></div><div class="modal-foot"><button class="btn btn-primary" data-act="closeModal">הבנתי</button></div>');
+    ACT.chGo = async (k) => {
+      if (L.pub.on === false) { notReady(); return; }
+      try {
+        toast('פותחים את חלון ההרשאות', chName(k) + '. אחרי האישור חוזרים לכאן.');
+        const r = await call('ch.connect', { ch: k });
+        location.href = r.url;
+      } catch (e) {
+        if (/publishing_not_configured|unknown_action/.test(String(e.message || ''))) { L.pub.on = false; notReady(); }
+        else toast('החיבור לא נפתח', 'נסו שוב בעוד רגע.', 'err');
+      }
+    };
+    ACT.connectCh = (k) => {
+      closeDrawer();
+      if (k) { ACT.chGo(k); return; }
+      if (L.pub.on === false) { notReady(); return; }
+      const free = CHK.filter((x) => CH[x] && !channels.some((c) => c.k === x && c.st === 'מחובר'));
+      openModal('<div class="mb"><div class="m-ic">' + ic('link', 20) + '</div><h3>חיבור ערוץ</h3><p>בוחרים רשת. נפתח חלון ההרשאות שלה, ואחרי האישור חוזרים לכאן.</p>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:12px">' +
+        (free.length ? free.map((x) => '<button class="btn" style="justify-content:flex-start;gap:10px" data-act="chGo:' + x + '"><span class="chan-logo" style="background:' + CH[x].b + ';width:28px;height:28px;font-size:12px">' + CH[x].s + '</span>' + CH[x].t + '</button>').join('') : '<span class="t-sub">כל הערוצים כבר מחוברים.</span>') +
+        '</div></div><div class="modal-foot"><button class="btn" data-act="closeModal">סגירה</button></div>');
+    };
+    ACT.reauth = (k) => ACT.chGo(k);
+    ACT.testCh = async (k) => {
+      if (L.pub.on === false) { notReady(); return; }
+      if (!(await refresh())) return;
+      const c = channels.find((x) => x.k === k);
+      if (c && c.st === 'מחובר') toast('החיבור תקין', chName(k) + ' · ' + c.acc);
+      else toast('הערוץ לא מחובר', 'יש לחבר את ' + chName(k) + ' מחדש.', 'err');
+    };
+    ACT.chDisc = (k) => {
+      closeDrawer();
+      confirmModal({ title: 'לנתק את ' + chName(k) + '?', body: 'פרסומים מתוזמנים לערוץ הזה לא ייצאו עד שיחובר שוב.', ok: 'ניתוק', tone: 'bad', icon: 'x',
+        onOk: async () => { try { await call('ch.disconnect', { ch: k }); await refresh(true); toast('הערוץ נותק', chName(k)); } catch (e) { toast('הניתוק נכשל', 'נסו שוב בעוד רגע.', 'err'); } } });
+    };
+    ACT.chManage = (k) => {
+      const c = channels.find((x) => x.k === k); if (!c) return;
+      openDrawer('<div class="drawer-head"><span class="chan-logo" style="background:' + CH[k].b + ';width:40px;height:40px">' + CH[k].s + '</span><div><h3>' + CH[k].t + '</h3><p>' + esc(c.acc) + '</p></div><button class="icon-btn" style="margin-inline-start:auto" data-act="closeDrawer" aria-label="סגירה">' + ic('x', 17) + '</button></div>' +
+        '<div class="drawer-body"><div class="kv">' + [['סטטוס', c.st], ['בדיקה אחרונה', c.sync], ['עוקבים', c.fol]].map((r) => '<div class="r"><span class="k">' + r[0] + '</span><span class="v">' + esc(r[1]) + '</span></div>').join('') + '</div>' +
+        '<button class="btn btn-block" style="justify-content:flex-start" data-act="testCh:' + k + '">' + ic('refresh', 16) + ' בדיקת חיבור</button>' +
+        '<button class="btn btn-block" style="justify-content:flex-start" data-act="chGo:' + k + '">' + ic('link', 16) + ' חיבור מחדש</button>' +
+        '<button class="btn btn-block btn-quiet-bad" style="justify-content:flex-start" data-act="chDisc:' + k + '">' + ic('x', 16) + ' ניתוק הערוץ</button></div>');
+    };
+    // "חיבור" on a row opens that network directly
+    const _chR = SCREENS.channels.render;
+    SCREENS.channels.render = function () {
+      let h = _chR.apply(this, arguments);
+      const free = channels.filter((c) => !(c.st === 'מחובר' || c.st === 'דורש חידוש הרשאה'));
+      let i = 0;
+      h = h.replace(/<button class="btn btn-sm btn-primary" data-act="connectCh">חיבור<\/button>/g, (m) => { const c = free[i++]; return c ? m.replace('data-act="connectCh"', 'data-act="chGo:' + c.k + '"') : m; });
+      if (L.pub.on === false) h = h.replace('<div class="ch-list">', '<div class="note" style="margin-bottom:14px">' + ic('plug', 16) + '<span>חיבור הרשתות ייפתח אחרי הגדרת ספק הפרסום. התוכן נשמר ומתוזמן במערכת בינתיים.</span></div><div class="ch-list">');
+      return h;
+    };
+    // a failed post goes out again
+    ACT.retry = (id) => {
+      const it = itemById(id); if (!it) return;
+      if (L.pub.on === false) { notReady(); return; }
+      const fut = it.pub && Date.parse(it.pub.replace(' ', 'T') + ':00+03:00') > Date.now() + 60000;
+      it.s = fut ? 'scheduled' : 'published'; delete it.err;
+      render(); flush();
+      toast('נשלח שוב לפרסום', fut ? 'יוצא במועד ' + it.pub : 'יוצא עכשיו. הסטטוס יתעדכן כאן.');
+    };
+    // where the post went: links per network, and a warning when part of it did not go out
+    const _itR = SCREENS.item.render;
+    SCREENS.item.render = function () {
+      let h = _itR.apply(this, arguments);
+      const it = items.find((x) => x.id === S.itemId) || items[0];
+      if (!it) return h;
+      const ln = it.links ? Object.keys(it.links).filter((k) => /^https:\/\//.test(it.links[k])) : [];
+      const extra = (ln.length ? '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:-6px 0 16px"><span class="t-sub">צפייה בפוסט:</span>' + ln.map((k) => '<a class="chip" href="' + esc(it.links[k]) + '" target="_blank" rel="noopener">' + ic('link', 13) + ' ' + esc(chName(k)) + '</a>').join('') + '</div>' : '') +
+        (it.pubWarn ? '<div class="note" style="margin:-6px 0 16px">' + ic('alert', 15) + '<span>' + esc(it.pubWarn) + '</span></div>' : '');
+      return extra ? h.replace('<div class="split-wide">', extra + '<div class="split-wide">') : h;
+    };
   })();
 })();
