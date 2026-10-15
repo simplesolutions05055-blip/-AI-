@@ -1,0 +1,11 @@
+{"format":"9x16","fps":30,"brand":{"org":"בדיקת מערכת","colors":{"deep":"#0B1F3A","main":"#C2410C","accent":"#FACC15","light":"#FED7AA"}},"font":{"head":"Rubik","body":"Heebo"},"mood":"festive","fx":["particles"],
+"scenes":[
+{"dur":3,"visual":{"kind":"gradient","motion":"zoomIn","tint":0.3},"text":{"pos":"center","lines":["פסטיבל","הסתיו"],"style":"pop","highlight":["הסתיו"]},"transition":{"dir":"left","dur":0.4,"kind":"whip"},"fx":["shapes"]},
+{"dur":3,"visual":{"kind":"color","motion":"static","tint":0.4},"text":{"pos":"center","lines":["חמישי 20.11"],"style":"stamp","highlight":["20.11"]},"transition":{"dur":0.3,"kind":"flash"}},
+{"dur":3.5,"visual":{"kind":"gradient","motion":"drift","tint":0.4},"text":{"pos":"center","lines":["17:00","הפארק העירוני"],"style":"typewriter","highlight":["17:00"]},"transition":{"dir":"left","dur":0.4,"kind":"slide"}},
+{"dur":3.2,"visual":{"kind":"gradient","motion":"zoomOut","tint":0.35},"text":{"pos":"center","lines":["הופעות","לכל המשפחה"],"style":"headline","highlight":["הופעות"]},"transition":{"dur":0.4,"kind":"zoom"},"fx":["shapes"]},
+{"dur":3.2,"visual":{"kind":"color","motion":"panRight","tint":0.4},"text":{"pos":"center","lines":["דוכני אוכל","לכל המשפחה"],"style":"box","highlight":["אוכל"]},"transition":{"dir":"right","dur":0.4,"kind":"whip"}},
+{"dur":3.2,"visual":{"kind":"gradient","motion":"zoomIn","tint":0.3},"text":{"pos":"center","lines":["פינת","ילדים"],"style":"split","highlight":["ילדים"]},"transition":{"dir":"up","dur":0.4,"kind":"slide"},"fx":["shapes"]},
+{"dur":3.2,"visual":{"kind":"color","motion":"zoomIn","tint":0.4},"text":{"pos":"center","lines":["הכניסה","חופשית"],"style":"outline","highlight":["חופשית"]},"transition":{"dur":0.3,"kind":"flash"}},
+{"dur":4.7,"visual":{"kind":"gradient","motion":"zoomOut","tint":0.3},"text":{"pos":"center","lines":["נתראה","בפארק!"],"style":"pop","highlight":["בפארק!"]},"transition":{"dur":0.5,"kind":"zoom"},"fx":["particles"]}],
+"outro":{"dur":3.2,"cta":"בואו לפסטיבל הסתיו!","details":[{"text":"יום חמישי 20.11, 17:00"},{"text":"הפארק העירוני"},{"text":"הכניסה חופשית"}]},"captions":{"style":"pop","words":[]},"audio":{},"showLogo":true}

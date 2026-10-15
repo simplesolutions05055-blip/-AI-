@@ -29,7 +29,17 @@ export const Background: React.FC<{ v: Visual; plan: Plan; durF: number }> = ({ 
   let layer: React.ReactNode;
   if (v.kind === 'image' && v.src) layer = <Img src={asset(v.src)!} style={media} />;
   else if (v.kind === 'video' && v.src) layer = <OffthreadVideo src={asset(v.src)!} muted playbackRate={v.speed ?? 1} startFrom={Math.round((v.trimStart ?? 0) * fps)} style={media} />;
-  else if (v.kind === 'color') layer = <AbsoluteFill style={{ background: v.tintColor ?? c.deep }} />;
+  else if (v.kind === 'color') {
+    // solid brand card: the main colour when it is dark enough for white text, with a slow light sweep
+    const base = v.tintColor ?? (lumOf(c.main) < 0.3 ? c.main : c.deep);
+    const sweep = interpolate(f, [0, durF], [-60, 160]);
+    layer = (
+      <AbsoluteFill style={{ background: base }}>
+        <AbsoluteFill style={{ background: `linear-gradient(115deg, transparent ${sweep - 30}%, rgba(255,255,255,.10) ${sweep}%, transparent ${sweep + 30}%)` }} />
+        <AbsoluteFill style={{ background: 'radial-gradient(120% 80% at 50% 45%, transparent 40%, rgba(0,0,0,.35) 100%)' }} />
+      </AbsoluteFill>
+    );
+  }
   else {
     // animated brand gradient: slow moving light so a text-only scene still feels alive
     const a = interpolate(f, [0, durF], [0, 40]);
@@ -48,3 +58,8 @@ export const Background: React.FC<{ v: Visual; plan: Plan; durF: number }> = ({ 
   );
 };
 const hex = (a: number) => Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+const lumOf = (h: string) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(h); if (!m) return 0.2;
+  const [r, g, b] = [0, 2, 4].map((i) => { const v = parseInt(m[1].slice(i, i + 2), 16) / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};

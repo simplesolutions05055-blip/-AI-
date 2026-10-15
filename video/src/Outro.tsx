@@ -15,7 +15,7 @@ export const Outro: React.FC<{ plan: Plan; durF: number }> = ({ plan, durF }) =>
   const ring = interpolate(f - logoAt, [0, fps * 0.8], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
   return (
     <AbsoluteFill dir="rtl" style={{ background: `radial-gradient(120% 90% at 80% 10%, ${c.main} 0%, ${c.deep} 60%, #05070d 100%)`, alignItems: 'center', justifyContent: 'center', padding: `0 ${80 * k}px`, gap: 44 * k, textAlign: 'center' }}>
-      {o.cta && <div style={{ transform: `translateY(${(1 - s1) * 60}px)`, opacity: s1, fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: 116 * k, lineHeight: 1.06, color: '#fff' }}>{o.cta}</div>}
+      {o.cta && <div style={{ transform: `translateY(${(1 - s1) * 60}px)`, opacity: s1, fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: Math.max(116 * k, Math.min(150 * k, (width - 160 * k) / (Math.max(1, [...(o.cta ?? '')].length) * 0.56))), lineHeight: 1.06, color: '#fff' }}>{o.cta}</div>}
       {!!o.details?.length && (
         <div style={{ display: 'flex', flexDirection: wide ? 'row' : 'column', gap: 18 * k, alignItems: 'center' }}>
           {o.details.map((d, i) => {

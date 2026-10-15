@@ -13,6 +13,14 @@ function useBase() {
   return { width, height, fps, k, tall, wide: width > height };
 }
 
+// big short lines fill the frame, long lines keep the base size and wrap (Hebrew bold glyph ~0.56em wide)
+function fit(lines: string[], base: number, max = 1.6, cw = 0.62) {
+  const { width, k, wide } = useBase();
+  const n = Math.max(1, ...lines.map((l) => [...l].length));
+  const avail = width - 2 * (wide ? 140 : 80) * k;
+  return Math.max(base * k, Math.min(base * k * max, avail / (n * cw)));
+}
+
 const isHi = (w: string, hi?: string[]) => !!hi && hi.some((h) => h && w.replace(/[.,!?״"׳'-]/g, '').includes(h.replace(/[.,!?״"׳'-]/g, '')));
 
 function Frame({ t, children, pad = 1 }: { t: SceneText; children: React.ReactNode; pad?: number }) {
@@ -51,7 +59,7 @@ const Headline: React.FC<P> = ({ t, plan }) => {
     <Frame t={t}>
       <Kicker t={t} plan={plan} at={t.delay ?? 0.15} />
       {t.lines.map((ln, li) => (
-        <div key={li} style={{ display: 'flex', flexWrap: 'wrap', gap: `0 ${0.26 * 128 * k}px`, justifyContent: t.align === 'center' ? 'center' : 'flex-start', fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: 128 * k * (t.size ?? 1), lineHeight: 1.06, color: '#fff', textShadow: shadow }}>
+        <div key={li} style={{ display: 'flex', flexWrap: 'wrap', gap: `0 ${0.24 * fit(t.lines, 128)}px`, justifyContent: t.align === 'center' ? 'center' : 'flex-start', fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: fit(t.lines, 128) * (t.size ?? 1), lineHeight: 1.06, color: '#fff', textShadow: shadow }}>
           {ln.split(/\s+/).map((w, j) => {
             const s = spring({ frame: f - d - (wi++) * 3.2, fps, config: { damping: 16, mass: 0.7 } });
             return <span key={j} style={{ display: 'inline-block', opacity: s, transform: `translateY(${(1 - s) * 70}px)`, color: isHi(w, t.highlight) ? plan.brand.colors.accent : undefined }}>{w}</span>;
@@ -71,7 +79,7 @@ const Pop: React.FC<P> = ({ t, plan }) => {
     <Frame t={{ ...t, align: t.align ?? 'center' }}>
       <Kicker t={t} plan={plan} at={t.delay ?? 0.1} />
       {t.lines.map((ln, li) => (
-        <div key={li} style={{ display: 'flex', flexWrap: 'wrap', gap: `${14 * k}px ${22 * k}px`, justifyContent: 'center', fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: 116 * k * (t.size ?? 1), lineHeight: 1.1, color: '#fff', textShadow: shadow, marginBottom: 10 * k }}>
+        <div key={li} style={{ display: 'flex', flexWrap: 'wrap', gap: `${14 * k}px ${22 * k}px`, justifyContent: 'center', fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: fit(t.lines, 116) * (t.size ?? 1), lineHeight: 1.1, color: '#fff', textShadow: shadow, marginBottom: 10 * k }}>
           {ln.split(/\s+/).map((w, j) => {
             const s = spring({ frame: f - d - (wi++) * 4, fps, config: { damping: 9, stiffness: 160 } });
             const hi = isHi(w, t.highlight);
@@ -96,7 +104,7 @@ const Box: React.FC<P> = ({ t, plan }) => {
           const tp = interpolate(f - d - i * 7 - 6, [0, 10], [0, 1], clamp);
           const alt = i % 2 === 1;
           return (
-            <div key={i} style={{ position: 'relative', padding: `${10 * k}px ${30 * k}px ${16 * k}px`, fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: 98 * k * (t.size ?? 1), lineHeight: 1.12, color: alt ? '#fff' : plan.brand.colors.deep }}>
+            <div key={i} style={{ position: 'relative', padding: `${10 * k}px ${30 * k}px ${16 * k}px`, fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: fit(t.lines, 98, 1.45, 0.62) * (t.size ?? 1), lineHeight: 1.12, color: alt ? '#fff' : plan.brand.colors.deep }}>
               <div style={{ position: 'absolute', inset: 0, background: alt ? plan.brand.colors.main : '#fff', transformOrigin: 'right', transform: `scaleX(${p})`, borderRadius: 10 * k, boxShadow: '0 14px 40px rgba(0,0,0,.25)' }} />
               <span style={{ position: 'relative', opacity: tp }}>{ln}</span>
             </div>
@@ -118,7 +126,7 @@ const Typewriter: React.FC<P> = ({ t, plan }) => {
   return (
     <Frame t={t}>
       <Kicker t={t} plan={plan} at={t.delay ?? 0.2} />
-      <div style={{ whiteSpace: 'pre-wrap', fontFamily: font(plan.font?.body ?? 'IBM Plex Sans Hebrew'), fontWeight: 700, fontSize: 92 * k * (t.size ?? 1), lineHeight: 1.2, color: '#fff', textShadow: shadow }}>
+      <div style={{ whiteSpace: 'pre-wrap', fontFamily: font(plan.font?.body ?? 'IBM Plex Sans Hebrew'), fontWeight: 700, fontSize: fit(t.lines, 92, 1.4, 0.6) * (t.size ?? 1), lineHeight: 1.2, color: '#fff', textShadow: shadow }}>
         {shown}<span style={{ opacity: caret ? 1 : 0, color: plan.brand.colors.accent }}>|</span>
       </div>
       <Sub t={t} plan={plan} at={(t.delay ?? 0.2) + [...full].length * 1.6 / fps + 0.2} />
@@ -136,7 +144,7 @@ const Stamp: React.FC<P> = ({ t, plan }) => {
     <Frame t={{ ...t, align: 'center' }}>
       <Kicker t={t} plan={plan} at={t.delay ?? 0.15} />
       <div style={{ transform: `translate(${shake}px, ${shake / 2}px) scale(${sc}) rotate(${-3 * (1 - s)}deg)`, opacity: Math.min(1, s * 2), display: 'inline-block', alignSelf: 'center', border: `${10 * k}px solid ${plan.brand.colors.accent}`, borderRadius: 26 * k, padding: `${20 * k}px ${46 * k}px`, background: 'rgba(0,0,0,.28)' }}>
-        {t.lines.map((ln, i) => <div key={i} style={{ fontFamily: font(plan.font?.head ?? 'Secular One'), fontWeight: 900, fontSize: 170 * k * (t.size ?? 1), lineHeight: 1.04, color: '#fff', textAlign: 'center' }}>{ln}</div>)}
+        {t.lines.map((ln, i) => <div key={i} style={{ fontFamily: font(plan.font?.head ?? 'Secular One'), fontWeight: 900, fontSize: fit(t.lines, 150, 1.5, 0.7) * (t.size ?? 1), lineHeight: 1.04, color: '#fff', textAlign: 'center' }}>{ln}</div>)}
       </div>
       <Sub t={{ ...t, align: 'center' }} plan={plan} at={(t.delay ?? 0.15) + 0.5} />
     </Frame>
@@ -228,7 +236,7 @@ const Cinematic: React.FC<P> = ({ t, plan }) => {
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: bar, background: '#000' }} />
       </AbsoluteFill>
       <Frame t={{ ...t, align: 'center' }}>
-        {t.lines.map((ln, i) => <div key={i} style={{ opacity: o, letterSpacing: `${interpolate(o, [0, 1], [0.12, 0.03])}em`, fontFamily: font(plan.font?.head ?? 'Bellefair'), fontWeight: 400, fontSize: 92 * k * (t.size ?? 1), lineHeight: 1.25, color: '#fff', textAlign: 'center', textShadow: shadow }}>{ln}</div>)}
+        {t.lines.map((ln, i) => <div key={i} style={{ opacity: o, letterSpacing: `${interpolate(o, [0, 1], [0.12, 0.03])}em`, fontFamily: font(plan.font?.head ?? 'Bellefair'), fontWeight: 400, fontSize: fit(t.lines, 92, 1.5, 0.62) * (t.size ?? 1), lineHeight: 1.25, color: '#fff', textAlign: 'center', textShadow: shadow }}>{ln}</div>)}
         <Sub t={{ ...t, align: 'center' }} plan={plan} at={(t.delay ?? 0.3) + 0.8} />
       </Frame>
     </>
@@ -244,7 +252,7 @@ const Outline: React.FC<P> = ({ t, plan }) => {
     <Frame t={t}>
       <Kicker t={t} plan={plan} at={t.delay ?? 0.15} />
       {t.lines.map((ln, i) => (
-        <div key={i} style={{ position: 'relative', opacity: o, fontFamily: font(plan.font?.head ?? 'Rubik'), fontWeight: 900, fontSize: 140 * k * (t.size ?? 1), lineHeight: 1.05 }}>
+        <div key={i} style={{ position: 'relative', opacity: o, fontFamily: font(plan.font?.head ?? 'Rubik'), fontWeight: 900, fontSize: fit(t.lines, 140) * (t.size ?? 1), lineHeight: 1.05 }}>
           <span style={{ color: 'transparent', WebkitTextStroke: `${3 * k}px #fff` }}>{ln}</span>
           <span style={{ position: 'absolute', inset: 0, color: isHi(ln, t.highlight) ? plan.brand.colors.accent : '#fff', clipPath: `inset(0 0 0 ${100 - p}%)` }}>{ln}</span>
         </div>
@@ -264,7 +272,7 @@ const Split: React.FC<P> = ({ t, plan }) => {
         const p = interpolate(f - d - i * 6, [0, 16], [100, 0], { ...clamp, easing: Easing.out(Easing.exp) });
         return (
           <div key={i} style={{ overflow: 'hidden', paddingBottom: 8 * k }}>
-            <div style={{ transform: `translateY(${p}%)`, fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: 120 * k * (t.size ?? 1), lineHeight: 1.08, color: i % 2 ? plan.brand.colors.accent : '#fff', textShadow: shadow }}>{ln}</div>
+            <div style={{ transform: `translateY(${p}%)`, fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: fit(t.lines, 120) * (t.size ?? 1), lineHeight: 1.08, color: i % 2 ? plan.brand.colors.accent : '#fff', textShadow: shadow }}>{ln}</div>
           </div>
         );
       })}
@@ -281,7 +289,7 @@ const Neon: React.FC<P> = ({ t, plan }) => {
   const g = plan.brand.colors.accent;
   return (
     <Frame t={{ ...t, align: 'center' }}>
-      {t.lines.map((ln, i) => <div key={i} style={{ opacity: on, textAlign: 'center', fontFamily: font(plan.font?.head ?? 'Varela Round'), fontWeight: 400, fontSize: 118 * k * (t.size ?? 1), lineHeight: 1.15, color: '#fff', textShadow: `0 0 ${8 * k}px #fff, 0 0 ${22 * k}px ${g}, 0 0 ${48 * k}px ${g}, 0 0 ${90 * k}px ${g}` }}>{ln}</div>)}
+      {t.lines.map((ln, i) => <div key={i} style={{ opacity: on, textAlign: 'center', fontFamily: font(plan.font?.head ?? 'Varela Round'), fontWeight: 400, fontSize: fit(t.lines, 118, 1.6, 0.6) * (t.size ?? 1), lineHeight: 1.15, color: '#fff', textShadow: `0 0 ${8 * k}px #fff, 0 0 ${22 * k}px ${g}, 0 0 ${48 * k}px ${g}, 0 0 ${90 * k}px ${g}` }}>{ln}</div>)}
       <Sub t={{ ...t, align: 'center' }} plan={plan} at={(t.delay ?? 0.15) + 0.6} />
     </Frame>
   );
