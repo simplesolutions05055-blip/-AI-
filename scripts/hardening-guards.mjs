@@ -7,12 +7,13 @@
 // ⚠️ Every guard here must be tested BACKWARDS at least once: reintroduce the
 // bug, confirm the guard fails, then restore the fix. A check that never fails
 // is a false sense of safety, not a defence. See docs/hardening.md.
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const errors = [];
 
 function walk(dir, out = []) {
+  if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === 'dist' || entry.startsWith('.')) continue;
     const full = join(dir, entry);
@@ -22,7 +23,8 @@ function walk(dir, out = []) {
   return out;
 }
 
-const files = [...walk('src'), ...walk('supabase/functions'), ...walk('api')];
+// the live system: the edge functions, the Vercel functions and the browser live layer
+const files = [...walk('supabase/functions'), ...walk('api'), 'public/primeos-live.js'].filter((f) => /\.(ts|tsx|js|mjs)$/.test(f));
 const read = (f) => readFileSync(f, 'utf8');
 
 // ── 1. no wildcard CORS ─────────────────────────────────────────────────────
@@ -58,32 +60,8 @@ for (const f of files) {
   }
 }
 
-// ── 4. error boundary + global handlers still wired ─────────────────────────
-if (!/ErrorBoundary/.test(read('src/App.tsx'))) {
-  errors.push('src/App.tsx: no ErrorBoundary. A render throw unmounts the whole tree and the user gets a white screen.');
-}
-if (!/key=\{location\.pathname\}/.test(read('src/App.tsx'))) {
-  errors.push('src/App.tsx: page ErrorBoundary lost its key={location.pathname}. Without it the fallback stays stuck after navigating away.');
-}
-if (!/installGlobalErrorHandlers\(\)/.test(read('src/main.tsx'))) {
-  errors.push('src/main.tsx: global error handlers not installed. Promise rejections and event-handler throws would go unreported.');
-}
-if (!/unhandledrejection/.test(read('src/lib/errorReporting.ts'))) {
-  errors.push('src/lib/errorReporting.ts: unhandledrejection listener gone.');
-}
-// The reporting infra existing but not connected is the failure mode that
-// already happened once — assert it actually ships errors somewhere.
-if (!/functions\.invoke/.test(read('src/lib/errorReporting.ts'))) {
-  errors.push('src/lib/errorReporting.ts: no longer sends anything. A console.error-only reporter logs to a machine you cannot read.');
-}
-
-// ── 5. every setLoading(true) has a matching finally ────────────────────────
-for (const f of files.filter((f) => f.endsWith('.tsx'))) {
-  const src = read(f);
-  if (/setLoading\(true\)/.test(src) && !/finally/.test(src)) {
-    errors.push(`${f}: setLoading(true) with no finally. A thrown request leaves the spinner running until the user gives up.`);
-  }
-}
+// ── 4/5. (React app guards) retired with the React app on 12.10.2026: the UI is
+// now the mockup engine + public/primeos-live.js, which has no ErrorBoundary or setLoading.
 
 // ── 6. body-supplied URLs go through the SSRF guard ─────────────────────────
 const SSRF_SINKS = [
@@ -92,6 +70,7 @@ const SSRF_SINKS = [
   ['api/internal/render-docx.ts', 'logoUrl'],
 ];
 for (const [file, variable] of SSRF_SINKS) {
+  if (!existsSync(file)) continue;
   const src = read(file);
   if (new RegExp(`[^e]fetch\\(${variable.replace('.', '\\.')}`).test(src)) {
     errors.push(`${file}: bare fetch(${variable}). That value comes from a request body — use safeFetch, or the server becomes a proxy into the private network.`);

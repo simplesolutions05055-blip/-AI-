@@ -18,7 +18,9 @@ function cors(req: Request) {
 const json = (req: Request, body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors(req), 'content-type': 'application/json; charset=utf-8' } });
 
-type DB = ReturnType<typeof createClient>;
+// untyped client: the tables have no generated types here, rows are plain JSON
+// deno-lint-ignore no-explicit-any
+type DB = any;
 function db(): DB {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 }

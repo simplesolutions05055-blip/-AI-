@@ -7,7 +7,9 @@
     "dev": "node scripts/build-ui.mjs && vite",
     "build": "node scripts/build-ui.mjs && vite build",
     "preview": "vite preview",
-    "typecheck:api": "tsc -p tsconfig.api.json --noEmit"
+    "typecheck:api": "tsc -p tsconfig.api.json --noEmit",
+    "typecheck": "node --check public/primeos-live.js && node --check scripts/build-ui.mjs",
+    "check:functions": "deno check --config supabase/functions/deno.ci.json --node-modules-dir=auto supabase/functions/v2-api/index.ts supabase/functions/generate/index.ts supabase/functions/image/index.ts supabase/functions/produce/index.ts"
   },
   "dependencies": {
     "@vercel/functions": "^1.5.2",

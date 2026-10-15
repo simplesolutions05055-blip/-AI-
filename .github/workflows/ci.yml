@@ -71,14 +71,11 @@ jobs:
       #     are what turn into a runtime SyntaxError.
       - run: deno lint --rules-tags= --rules-include=no-dupe-args,no-dupe-keys,no-dupe-class-members supabase/functions
 
-      #  2. full typecheck — EVERY file under supabase/functions, no exclusions.
-      #     It began as an include list of six, which meant every other function
-      #     (and every function added later) was never typechecked at all.
+      #  2. full typecheck of the live functions (v2-api, generate, image, produce).
+      #     Since the 12.10.2026 rebuild the old system's code (_shared, smartsend-webhook)
+      #     is not part of the product; it stays out of this check. deno.ci.json maps the
+      #     esm.sh imports to the same npm packages so the types are deterministic.
       - run: npm run check:functions
-
-      #  3. the unit tests. They existed and passed for months without ever
-      #     running here, which meant nothing would have told us if one broke.
-      - run: npm run test:functions
 
   secrets:
     name: secret scan

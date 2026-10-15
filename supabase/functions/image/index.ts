@@ -114,7 +114,7 @@ async function openaiImage(okey: string, prompt: string, size: string, quality: 
       const fd = new FormData();
       fd.append('model', model); fd.append('prompt', prompt); fd.append('size', size); fd.append('quality', quality); fd.append('n', String(n));
       fd.append('output_format', 'jpeg'); fd.append('output_compression', '90');
-      if (mask) fd.append('mask', new Blob([mask], { type: 'image/png' }), 'mask.png');
+      if (mask) fd.append('mask', new Blob([mask as BlobPart], { type: 'image/png' }), 'mask.png');
       for (const [i, u] of refs.entries()) {
         const b = await fetch(u); if (!b.ok) continue;
         const type = b.headers.get('content-type') || 'image/png';
