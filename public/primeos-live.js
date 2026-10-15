@@ -3088,4 +3088,59 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       return extra ? h.replace('<div class="split-wide">', extra + '<div class="split-wide">') : h;
     };
   })();
+  /* ---------------- channel insights from the connected accounts ---------------- */
+  (function () {
+    const C = {};
+    const fmtN = (v) => (v == null ? '-' : v >= 10000 ? (v / 1000).toFixed(1).replace(/\.0$/, '') + 'K' : Number(v).toLocaleString('he-IL'));
+    const key = () => S.insCh + ':' + S.insPer;
+    async function load(force) {
+      const k = key();
+      if (C[k] && !force && (C[k].loading || Date.now() - C[k].at < 10 * 60000)) return;
+      C[k] = { loading: true, at: Date.now(), data: C[k] && C[k].data };
+      if (S.route === 'insights') render();
+      try { C[k] = { at: Date.now(), data: await call('ch.stats', { ch: S.insCh, days: S.insPer === 90 ? 89 : S.insPer }) }; }
+      catch (e) { C[k] = { at: Date.now(), err: true, data: C[k].data }; }
+      if (S.route === 'insights' && key() === k) render();
+    }
+    const _insR = SCREENS.insights.render;
+    SCREENS.insights.render = function () {
+      if (!L.pub || !L.pub.on) return _insR.apply(this, arguments);
+      const live = channels.filter((c) => c.st !== 'לא מחובר');
+      if (!live.find((c) => c.k === S.insCh)) S.insCh = (live[0] || {}).k;
+      const picker = '<div class="ins-pick">' + channels.map((x) => { const on = x.st !== 'לא מחובר'; return '<button class="ins-ch' + (x.k === S.insCh ? ' on' : '') + (on ? '' : ' off') + '" data-act="' + (on ? 'insCh:' + x.k : 'nav:channels') + '"><span class="chan-logo" style="background:' + CH[x.k].b + '">' + CH[x.k].s + '</span><span>' + CH[x.k].t + '</span>' + (on ? '' : '<small>לא מחובר</small>') + '</button>'; }).join('') + '</div>';
+      const head = pageHead({ title: 'נתוני ערוצים', desc: 'הנתונים שכל רשת מאפשרת למשוך, ישירות מהחשבון המחובר.' });
+      const c = channels.find((x) => x.k === S.insCh);
+      if (!c || c.st === 'לא מחובר') return head + picker + emptyState({ i: 'plug', t: 'אין ערוצים מחוברים', d: 'חברו ערוץ בעמוד „ערוצים מחוברים” כדי לראות כאן את הנתונים שלו.' });
+      const st = C[key()];
+      if (!st || (st.loading && !st.data)) { load(); return head + picker + '<div class="card card-pad" style="padding:48px 20px">' + thinkBox() + '</div>'; }
+      const d = st.data || {};
+      if (st.err && !st.data) return head + picker + '<div class="note">' + ic('alert', 15) + '<span>הנתונים לא נטענו כרגע. <button class="lnk" data-act="insRefresh">ניסיון נוסף</button></span></div>';
+      if (d.connected === false) return head + picker + emptyState({ i: 'plug', t: 'הערוץ לא מחובר', d: 'חברו מחדש את ' + CH[c.k].t + ' בעמוד „ערוצים מחוברים”.' });
+      const t = d.totals || {};
+      const vid = c.k === 'tk' || c.k === 'yt';
+      const reachV = vid ? (t.views || t.impressions) : (t.impressions || t.views);
+      const gr = d.growth != null && d.growth !== 0 ? (d.growth > 0 ? '+' : '') + fmtN(d.growth) + ' בתקופה' : 'ללא שינוי בתקופה';
+      const kpi = [['עוקבים', fmtN(d.followers != null ? d.followers : (d.account || {}).followers), gr], [vid ? 'צפיות' : 'חשיפה לתוכן', fmtN(reachV), S.insPer + ' הימים האחרונים'], ['מעורבות', fmtN(t.engagement), 'לייקים, תגובות, שיתופים ושמירות'], ['פרסומים בתקופה', fmtN(t.posts), 'שיצאו לחשבון']];
+      const ser = (d.reachSeries && d.reachSeries.some((p) => p.value)) ? { s: d.reachSeries, l: d.reachLabel || (vid ? 'צפיות' : 'חשיפה') } : (d.followSeries && d.followSeries.length > 1 ? { s: d.followSeries, l: 'עוקבים' } : null);
+      const chart = ser ? lineChart(ser.s.map((p) => p.value).reverse(), 1100, 230, CH[c.k].b) : '<div class="note">' + ic('clock', 15) + '<span>אין עדיין מגמה יומית להצגה. הנתונים נאספים פעם ביום ויופיעו כאן אחרי הימים הראשונים.</span></div>';
+      const top = (d.top || []).length ? d.top.map((p) => '<div class="rowi">' + (p.thumb ? '<span class="thumb ins-th" style="background-image:url(&quot;' + esc(p.thumb) + '&quot;);background-size:cover"></span>' : '<span class="thumb ins-th"></span>') +
+        '<span class="grow"><span class="nm">' + esc((p.text || 'פרסום').slice(0, 70)) + '</span><br><span class="mt">' + esc(p.at ? new Date(p.at).toLocaleDateString('he-IL') : '') + (p.url ? ' · <a href="' + esc(p.url) + '" target="_blank" rel="noopener">לפוסט</a>' : '') + '</span></span>' +
+        '<span class="ins-m"><b>' + fmtN(vid ? (p.views || p.impressions) : (p.impressions || p.views)) + '</b><span>' + (vid ? 'צפיות' : 'חשיפה') + '</span></span><span class="ins-m"><b>' + fmtN(p.engagement) + '</b><span>מעורבות</span></span></div>').join('')
+        : '<div class="card-pad"><div class="note">' + ic('send', 15) + '<span>אין פרסומים בתקופה הזו. פרסומים שיוצאים מהמערכת יופיעו כאן עם הנתונים שלהם.</span></div></div>';
+      const when = st.loading ? 'מתעדכן...' : 'עודכן ' + new Date(st.at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+      return head + picker +
+        '<div class="card ins-head"><span class="chan-logo" style="background:' + CH[c.k].b + '">' + CH[c.k].s + '</span><div><h2>' + CH[c.k].t + '</h2><span class="t-sub">' + esc(c.acc) + '</span></div>' +
+        '<span class="live"><i></i>' + when + '</span>' +
+        '<div class="seg" style="margin-inline-start:auto">' + [[7, '7 ימים'], [28, '28 ימים'], [90, '90 ימים']].map((p) => '<button class="' + (S.insPer === p[0] ? 'on' : '') + '" data-act="insPer:' + p[0] + '">' + p[1] + '</button>').join('') + '</div>' +
+        '<button class="icon-btn" data-act="insRefresh" aria-label="רענון">' + ic('refresh', 17) + '</button></div>' +
+        (d.locked ? '<div class="note" style="margin:12px 0">' + ic('alert', 15) + '<span>חלק מהנתונים לא זמינים בחשבון הפרסום הנוכחי.</span></div>' : '') +
+        '<div class="grid g-4" style="margin:16px 0">' + kpi.map((k) => '<div class="card card-pad kpi"><span class="t-sub">' + k[0] + '</span><b>' + k[1] + '</b><span class="t-sub">' + k[2] + '</span></div>').join('') + '</div>' +
+        '<div class="card" style="margin-bottom:16px"><div class="card-head">' + ic('pulse', 18) + '<h3>' + (ser ? esc(ser.l) : 'מגמה יומית') + '</h3><span class="t-sub" style="margin-inline-start:auto">' + S.insPer + ' הימים האחרונים</span></div><div class="card-pad" style="padding-top:10px">' + chart + '</div></div>' +
+        '<div class="card"><div class="card-head">' + ic('send', 18) + '<h3>הפרסומים המובילים</h3></div><div class="row-list">' + top + '</div></div>' +
+        '<div class="note" style="margin-top:16px">' + ic('shield', 15) + '<span>הנתונים נמשכים ישירות מהחשבון המחובר. חלק מהנתונים מתעדכנים ברשת באיחור של עד יממה.</span></div>';
+    };
+    const _pc = ACT.insPer;
+    ACT.insPer = (p) => { S.insPer = +p; render(); };
+    ACT.insRefresh = () => { if (L.pub && L.pub.on) { load(true); toast('מרעננים את הנתונים', CH[S.insCh] ? CH[S.insCh].t : ''); } else if (_pc) render(); };
+  })();
 })();

@@ -14,8 +14,18 @@ export interface PostIn { profileId: string; text: string; targets: Target[]; me
 export interface PostOut { id: string; status: string; perTarget: { ch: ChKey; status: string; url?: string | null; error?: string | null }[]; error?: string | null }
 export interface PubEvent { postId: string; status: string; perTarget: PostOut['perTarget']; error?: string | null; eventId: string; kind: 'post' | 'account' | 'other' }
 
+export interface Point { date: string; value: number }
+export interface StatPost { id: string; text: string; url: string | null; thumb: string | null; at: string | null; impressions: number; reach: number; views: number; likes: number; comments: number; shares: number; saves: number; engagement: number }
+export interface Stats {
+  followers: number | null; growth: number | null; growthPct: number | null; followSeries: Point[];
+  reachSeries: Point[]; reachLabel: string | null;
+  totals: { impressions: number; reach: number; views: number; engagement: number; posts: number };
+  top: StatPost[]; locked: boolean; notes: string[]; raw?: Record<string, unknown>;
+}
+
 export interface Provider {
   name: string;
+  stats(accountId: string, ch: ChKey, from: string, to: string, debug?: boolean): Promise<Stats>;
   ensureProfile(externalId: string, name: string, existing?: string | null): Promise<string>;
   connectUrl(profileId: string, ch: ChKey, redirect: string): Promise<string>;
   accounts(profileId: string): Promise<Account[]>;
@@ -65,8 +75,55 @@ export function zernio(key: string, base = 'https://zernio.com/api/v1'): Provide
     })),
     error: p?.error?.message ?? (typeof p?.error === 'string' ? p.error : null),
   });
+  const num = (x: unknown) => (typeof x === 'number' && isFinite(x) ? x : Number(x) || 0);
   return {
     name: 'zernio',
+    async stats(accountId, ch, from, to, debug) {
+      const out: Stats = { followers: null, growth: null, growthPct: null, followSeries: [], reachSeries: [], reachLabel: null, totals: { impressions: 0, reach: 0, views: 0, engagement: 0, posts: 0 }, top: [], locked: false, notes: [] };
+      const raw: Record<string, unknown> = {};
+      const soft = async (name: string, path: string) => {
+        try { const j = await req('GET', path); raw[name] = j; return j; }
+        catch (e) { const m = e instanceof Error ? e.message : String(e); raw[name] = m; if (/provider_40[23]/.test(m)) out.locked = true; else out.notes.push(name + ': ' + m.slice(0, 120)); return null; }
+      };
+      const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
+      const [fs, an, pi] = await Promise.all([
+        soft('followers', `/accounts/follower-stats?${q({ accountIds: accountId, fromDate: from, toDate: to, granularity: 'daily' })}`),
+        soft('posts', `/analytics?${q({ accountId, fromDate: from, toDate: to, limit: '50', sortBy: 'date', order: 'desc' })}`),
+        ch === 'fb' ? soft('page', `/analytics/facebook/page-insights?${q({ accountId, fromDate: from, toDate: to, metricType: 'time_series', metrics: 'page_media_view,page_post_engagements,page_follows' })}`) : Promise.resolve(null),
+      ]);
+      if (fs) {
+        const a = (fs.accounts ?? []).find((x: any) => String(x._id ?? x.id) === accountId) ?? (fs.accounts ?? [])[0];
+        if (a) { out.followers = a.currentFollowers ?? null; out.growth = a.growth ?? null; out.growthPct = a.growthPercentage ?? null; }
+        const pts = fs.stats?.[accountId] ?? (a?.dataPoints && Array.isArray(a.dataPoints) ? a.dataPoints : []);
+        out.followSeries = (Array.isArray(pts) ? pts : []).map((p: any) => ({ date: String(p.date ?? '').slice(0, 10), value: num(p.followers ?? p.value) }));
+      }
+      if (an) {
+        const list: any[] = an.posts ?? an.data ?? an.items ?? (Array.isArray(an) ? an : []);
+        for (const p of list) {
+          const a = p.analytics ?? {};
+          const sp: StatPost = {
+            id: String(p.postId ?? p._id ?? p.id ?? ''), text: String(p.content ?? '').slice(0, 140), url: p.platformPostUrl ?? null, thumb: p.thumbnailUrl ?? (p.mediaItems?.[0]?.url ?? null),
+            at: p.publishedAt ?? p.scheduledFor ?? null, impressions: num(a.impressions), reach: num(a.reach), views: num(a.views), likes: num(a.likes), comments: num(a.comments), shares: num(a.shares), saves: num(a.saves), engagement: 0,
+          };
+          sp.engagement = sp.likes + sp.comments + sp.shares + sp.saves;
+          out.top.push(sp);
+          out.totals.impressions += sp.impressions; out.totals.reach += sp.reach; out.totals.views += sp.views; out.totals.engagement += sp.engagement; out.totals.posts++;
+        }
+        out.top.sort((x, y) => (y.impressions || y.views) - (x.impressions || x.views));
+        out.top = out.top.slice(0, 6);
+      }
+      if (pi && pi.metrics) {
+        const m = pi.metrics.page_media_view ?? pi.metrics.page_post_engagements;
+        if (m?.values) { out.reachSeries = m.values.map((v: any) => ({ date: String(v.date ?? '').slice(0, 10), value: num(v.value) })); out.reachLabel = pi.metrics.page_media_view ? 'צפיות בתוכן העמוד' : 'מעורבות בעמוד'; }
+        if (pi.metrics.page_media_view?.total != null) out.totals.impressions = Math.max(out.totals.impressions, num(pi.metrics.page_media_view.total));
+        if (pi.metrics.page_post_engagements?.total != null) out.totals.engagement = Math.max(out.totals.engagement, num(pi.metrics.page_post_engagements.total));
+        // the page's daily follower count fills in until the provider's own daily snapshots build up
+        if (!out.followSeries.length && pi.metrics.page_follows?.values) out.followSeries = pi.metrics.page_follows.values.map((v: any) => ({ date: String(v.date ?? '').slice(0, 10), value: num(v.value) }));
+        if (out.followSeries.length > 1 && !out.growth) { const f = out.followSeries; out.growth = f[f.length - 1].value - f[0].value; out.growthPct = f[0].value ? Math.round((out.growth / f[0].value) * 1000) / 10 : null; }
+      }
+      if (debug) out.raw = raw;
+      return out;
+    },
     async ensureProfile(externalId, name, existing) {
       if (existing) return existing;
       try {

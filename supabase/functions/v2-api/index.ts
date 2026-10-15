@@ -238,6 +238,20 @@ async function chDisconnect(d: DB, orgId: string, memberId: string | null, p: Re
   for (const a of acc) await pv.disconnect(a.id);
   return { ok: true, removed: acc.length };
 }
+// channel insights straight from the connected account
+async function chStats(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const pv = provider();
+  if (!pv) throw new Error('publishing_not_configured');
+  const pid = await pubProfile(d, pv, orgId, await scopeOf(d, memberId), false);
+  if (!pid) return { connected: false };
+  const acc = (await pv.accounts(pid)).find((a) => a.ch === p.ch);
+  if (!acc) return { connected: false };
+  const days = Math.min(89, Math.max(7, Number(p.days) || 28));
+  const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
+  // raw provider answers never go to the browser (the provider account is shared by every organisation)
+  const st = await pv.stats(acc.id, acc.ch, iso(Date.now() - days * 86400000), iso(Date.now()), false);
+  return { connected: true, account: acc, days, ...st };
+}
 // a server-side change to an item (published / failed), merged into what the UI keeps
 async function setUi(d: DB, orgId: string, uiId: number, fn: (ui: Record<string, any>) => void) {
   const { data: row } = await d.from('content_items').select('id,meta').eq('org_id', orgId).eq('ui_id', uiId).maybeSingle();
@@ -716,6 +730,7 @@ Deno.serve(async (req) => {
       if (action === 'members.send') return json(req, await memberSend(d, s.orgId, s.memberId, p));
       if (action === 'ch.list') return json(req, await chList(d, s.orgId, s.memberId));
       if (action === 'ch.connect') return json(req, await chConnect(d, s.orgId, s.memberId, p));
+      if (action === 'ch.stats') return json(req, await chStats(d, s.orgId, s.memberId, p));
       if (action === 'ch.disconnect') return json(req, await chDisconnect(d, s.orgId, s.memberId, p));
     } else {
       if (action === 'admin.load') return json(req, await adminLoad(d, s.adminId));
