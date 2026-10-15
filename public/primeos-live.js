@@ -432,7 +432,9 @@
     replaceAll(PURCH, PURCH.filter((x) => ids.has(x.org)));
     replaceAll(REQS, REQS.filter((x) => x.liveOrg));
     replaceAll(MEETINGS, MEETINGS.filter((x) => x.liveOrg));
-    if (L.admin && ADMINS[0]) { ADMINS[0].n = L.admin.name || ADMINS[0].n; ADMINS[0].mail = L.admin.email || ADMINS[0].mail; }
+    if (L.admin && ADMINS[0]) { ADMINS[0].n = L.admin.name || ADMINS[0].n; ADMINS[0].mail = L.admin.email || ADMINS[0].mail; ADMINS[0].ph = ''; }
+    // the demo's second admin is not part of a live system; admins added here (ids with a timestamp) stay
+    replaceAll(ADMINS, ADMINS.filter((a, i) => i === 0 || a.id !== 'ad2'));
   }
   const linkOf = (o) => location.origin + '/?k=' + encodeURIComponent(o.live.token);
   function linkBox(o) {
@@ -495,6 +497,21 @@
     _nwNext();
     if (ORGS.length <= before || L.kind !== 'admin') return;
     const o = ORGS[ORGS.length - 1];
+    // a unique ui id: the mockup counts rows, live clients keep their own numbers
+    const used = ORGS.map((x) => +String(x.id).replace(/^o/, '') || 0);
+    const nid = 'o' + (Math.max(0, ...used.filter((n, i) => ORGS[i] !== o)) + 1);
+    if (nid !== o.id) {
+      const old = o.id; o.id = nid;
+      AUSERS.forEach((u) => { if (u.org === old) u.org = nid; });
+      PURCH.forEach((x) => { if (x.org === old) x.org = nid; });
+      if (PLAN_OF[old] !== undefined) { PLAN_OF[nid] = PLAN_OF[old]; delete PLAN_OF[old]; }
+      S.orgId = nid;
+      const mb = $('#modalBox .mb');
+      if (mb) document.querySelectorAll('#modalBox [data-act="agrView:' + old + '"]').forEach((b) => b.setAttribute('data-act', 'agrView:' + nid));
+    }
+    const d = new Date();
+    o.since = String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+    if (o.agr && o.agr.signed) o.agr.signedAt = d.getDate() + '.' + (d.getMonth() + 1) + '.' + d.getFullYear();
     call('admin.org.create', { name: o.n, plan: o.plan === 'solo' ? 'basic' : 'extended', contact: o.contact, mail: o.mail, phone: o.phone, otype: o.type, ui_id: o.id })
       .then((r) => {
         o.live = { id: r.org_id, token: r.token };
@@ -2554,7 +2571,6 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   /* ---------------- item log: real history, versions and notes ----------------
    * every item carries log[] = { k, w, t, x }: what happened, who, when (ms), text. */
   (function () {
-    if (L.demo) return;
     const who = () => (S.user && S.user.name) || (L.me && L.me.name) || '';
     const now = () => Date.now();
     const fmt = (t) => { const d = new Date(t); return d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' }) + ' ' + d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }); };
@@ -2626,7 +2642,6 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 
   /* ---------------- live polish: no mockup-only notes, archive works, no dead routes ---------------- */
   (function () {
-    if (L.demo) return;
     // onboarding: there is no demo to skip to
     if (SCREENS.onboard) { const _o = SCREENS.onboard.render; SCREENS.onboard.render = function () { return _o.apply(this, arguments).replace('>דילוג להדגמה<', '>דילוג בינתיים<'); }; }
     // item: archiving is a real action
@@ -2654,9 +2669,65 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     });
   })();
 
+  /* ---------------- live polish, both sides: no "(הדגמה)" labels, real exports and dates ---------------- */
+  (function () {
+    const today = () => new Date().toISOString().slice(0, 10);
+    const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+    const monthT = () => { const d = new Date(); return MONTHS[d.getMonth()] + ' ' + d.getFullYear(); };
+    // toasts never say "demo"
+    const _toast = toast;
+    toast = function (t, sub, type) { const cl = (x) => (typeof x === 'string' ? x.replace(/\s*\(הדגמה\)\.?/g, (m) => (m.endsWith('.') ? '.' : '')) : x); return _toast(cl(t), cl(sub), type); };
+    // CSV of the table on screen (Excel-friendly, UTF-8 BOM)
+    ACT.exportCsv = () => {
+      const tb = $('#view table');
+      if (!tb) { toast('אין טבלה לייצוא', '', 'err'); return; }
+      const rows = [...tb.querySelectorAll('tr')].map((tr) => [...tr.querySelectorAll('th,td')].map((c) => '"' + c.innerText.replace(/\s+/g, ' ').trim().replace(/"/g, '""') + '"').join(','));
+      const blob = new Blob(['\ufeff' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'primeos-' + (S.route || 'export') + '-' + today() + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+      toast('הקובץ ירד', 'CSV עם ' + Math.max(0, rows.length - 1) + ' שורות.');
+    };
+    // the agreement opens for printing / saving as PDF
+    ACT.agrPrint = () => {
+      const mb = $('#modalBox .mb');
+      if (!mb) return;
+      const w = window.open('', '_blank');
+      if (!w) { toast('החלון נחסם', 'יש לאפשר חלונות קופצים לאתר.', 'err'); return; }
+      w.document.write('<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><title>הסכם מנוי</title><style>body{font-family:Heebo,Arial,sans-serif;padding:32px;max-width:800px;margin:auto;line-height:1.6}</style></head><body>' + mb.innerHTML + '<script>setTimeout(()=>print(),300)</script></body></html>');
+      w.document.close();
+    };
+    // the mockup's fixed action labels become real actions after every render
+    const _render = render;
+    render = function () {
+      const r = _render.apply(this, arguments);
+      try {
+        document.querySelectorAll('[data-act^="toastInfo:הקובץ ירד בפורמט CSV"]').forEach((e) => e.setAttribute('data-act', 'exportCsv'));
+        document.querySelectorAll('[data-act^="toastInfo:ההסכם ירד כ־PDF"]').forEach((e) => { e.setAttribute('data-act', 'agrPrint'); e.textContent = 'הדפסה / שמירה כ־PDF'; });
+      } catch (e) { /* no DOM yet */ }
+      return r;
+    };
+    {
+      // purchases: the current month, not the demo's September
+      if (SCREENS.a_purch) {
+        const _pu = SCREENS.a_purch.render;
+        SCREENS.a_purch.render = function () {
+          let h = _pu.apply(this, arguments).replace(/ספטמבר 2026/g, monthT());
+          const cur = today().slice(0, 7), tm = PURCH.filter((x) => String(x.date || '').slice(0, 7) === cur);
+          const fix = (label, n) => { h = h.replace(new RegExp('(' + label + '</span><span class="num">)[^<]*'), '$1' + n); };
+          fix('מנויים חדשים החודש', tm.filter((x) => x.type === 'new' || x.type === 'trial').length);
+          fix('רכישות החודש', tm.length);
+          fix('עלות החודש', usd(tm.reduce((a, x) => a + (+x.cost || 0), 0)));
+          return h;
+        };
+      }
+      const stampNew = (f) => (...a) => { const r = f(...a); const x = PURCH[0]; if (x && typeof x.id === 'number' && Date.now() - x.id < 5000) x.date = today(); return r; };
+      ['nwNext', 'reqOk'].forEach((k) => { if (ACT[k]) ACT[k] = stampNew(ACT[k]); });
+      // a client page without a client goes back to the list
+      if (SCREENS.a_org) { const _ao = SCREENS.a_org.render; SCREENS.a_org.render = function () { if (!ORGS.find((x) => x.id === S.orgId)) { setTimeout(() => go('a_orgs', { force: true }), 0); return ''; } return _ao.apply(this, arguments); }; }
+    }
+  })();
+
   /* ---------------- reports: live figures, never the demo's ---------------- */
   (function () {
-    if (L.demo) return;
     const conn = () => channels.filter((c) => c.st === 'מחובר').length;
     const chTxt = (n) => (n === 0 ? 'אין ערוצים מחוברים' : n === 1 ? 'בערוץ מחובר אחד' : 'ב־' + n + ' ערוצים מחוברים');
     if (SCREENS.reports) {
