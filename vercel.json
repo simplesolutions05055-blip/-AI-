@@ -18,6 +18,11 @@
       "maxDuration": 300,
       "memory": 2048,
       "includeFiles": "{node_modules/ffmpeg-static/ffmpeg,api/_render/**}"
+    },
+    "api/video.ts": {
+      "maxDuration": 300,
+      "memory": 1024,
+      "includeFiles": "api/_video/**"
     }
   }
 }

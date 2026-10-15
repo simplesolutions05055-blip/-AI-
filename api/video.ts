@@ -1,0 +1,125 @@
+// PrimeOS video renderer: renders a director plan (video/src) with Remotion inside a Vercel Sandbox.
+// POST { action:'start', plan, upload, url }            -> { sandboxId, cmdId }
+// POST { action:'status', sandboxId, cmdId, upload, url } -> { stage, progress, url? }
+// header x-primeos-token. `upload` is a signed storage upload URL (v2-api upload.sign), `url` its public URL.
+// The finished mp4 goes from the sandbox straight to storage; nothing large passes through this function.
+import path from 'node:path';
+import { Sandbox } from '@vercel/sandbox';
+import { addBundleToSandbox, createSandbox, getRenderProgress, renderMediaOnVercel } from '@remotion/vercel';
+
+const SUPA_URL = process.env.VITE_SUPABASE_URL || 'https://tgropjisnheppsxejfdn.supabase.co';
+const SUPA_ANON = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_uwGM_HAjV28gchyFZHqZGg_9LjXwIJ-';
+const OUT = '/tmp/prime.mp4';
+const UP_PREFIX = `${SUPA_URL}/storage/v1/object/upload/sign/v2-content/`;
+const PUB_PREFIX = `${SUPA_URL}/storage/v1/object/public/v2-content/`;
+const json = (b: unknown, s = 200) => Response.json(b, { status: s, headers: { 'cache-control': 'no-store' } });
+
+async function whoami(token: string) {
+  const r = await fetch(`${SUPA_URL}/functions/v1/v2-api`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', apikey: SUPA_ANON, authorization: `Bearer ${SUPA_ANON}`, 'x-primeos-token': token },
+    body: JSON.stringify({ action: 'whoami' }),
+  });
+  return r.ok ? ((await r.json()) as { kind: string }).kind : null;
+}
+
+// media the sandbox may fetch: our storage and the stock/AI providers the director uses
+const HOSTS = [new URL(SUPA_URL).host, 'images.pexels.com', 'videos.pexels.com', 'v3.fal.media', 'fal.media', 'cdn.higgsfield.ai'];
+const okSrc = (s: unknown) => {
+  if (typeof s !== 'string' || s.length > 2000) return false;
+  if (/^fonts\/[\w .-]+$/.test(s)) return true;
+  try { const u = new URL(s); return u.protocol === 'https:' && HOSTS.some((h) => u.host === h || u.host.endsWith('.' + h)); } catch { return false; }
+};
+const num = (v: unknown, lo: number, hi: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
+const str = (v: unknown, n = 160) => (typeof v === 'string' ? v.slice(0, n) : undefined);
+
+// keeps the plan inside the engine's limits: 90 seconds, sane sizes, allowed media only
+export function cleanPlan(p: any) {
+  if (!p || typeof p !== 'object' || !Array.isArray(p.scenes) || !p.scenes.length) throw new Error('bad_plan');
+  const scenes = p.scenes.slice(0, 30).map((s: any) => {
+    const v = s?.visual ?? {};
+    const visual = { ...v, kind: ['image', 'video', 'gradient', 'color'].includes(v.kind) ? v.kind : 'gradient' };
+    if (visual.src && !okSrc(visual.src)) { delete visual.src; visual.kind = 'gradient'; }
+    const t = s?.text;
+    const text = t && Array.isArray(t.lines) ? { ...t, lines: t.lines.slice(0, 6).map((l: unknown) => str(l, 90) ?? ''), kicker: str(t.kicker, 60), sub: str(t.sub, 140) } : undefined;
+    return { ...s, dur: num(s?.dur, 0.8, 20, 3), visual, text };
+  });
+  let total = scenes.reduce((a: number, s: any) => a + s.dur, 0) + num(p.outro?.dur, 0, 6, 3.2);
+  if (total > 90) { const k = 88 / total; scenes.forEach((s: any) => (s.dur = Math.max(0.8, s.dur * k))); total = 90; }
+  const audio: any = {};
+  if (okSrc(p.audio?.voice?.src)) audio.voice = { src: p.audio.voice.src, vol: num(p.audio.voice.vol, 0, 1.5, 1), start: num(p.audio.voice.start, 0, 5, 0.3) };
+  if (okSrc(p.audio?.music?.src)) audio.music = { src: p.audio.music.src, vol: p.audio.music.vol == null ? undefined : num(p.audio.music.vol, 0, 1, 0.2) };
+  const words = Array.isArray(p.captions?.words) ? p.captions.words.slice(0, 600).filter((w: any) => typeof w?.w === 'string').map((w: any) => ({ w: w.w.slice(0, 40), s: num(w.s, 0, 95, 0), e: num(w.e, 0, 95, 0) })) : [];
+  const logo = okSrc(p.brand?.logo) ? p.brand.logo : undefined;
+  return {
+    ...p,
+    format: ['9x16', '1x1', '4x5', '16x9'].includes(p.format) ? p.format : '9x16',
+    fps: 30,
+    brand: { ...p.brand, org: str(p.brand?.org, 80) ?? '', logo, colors: { deep: '#0B1F3A', main: '#1F5FBF', accent: '#FFC93C', light: '#BFD7FF', ...(p.brand?.colors ?? {}) } },
+    scenes,
+    audio,
+    captions: words.length ? { ...p.captions, words } : undefined,
+  };
+}
+
+const okUpload = (u: unknown): u is string => typeof u === 'string' && u.startsWith(UP_PREFIX) && u.length < 2000;
+const okUrl = (u: unknown): u is string => typeof u === 'string' && u.startsWith(PUB_PREFIX) && u.length < 600 && !/[\s'"]/.test(u);
+
+async function start(body: any) {
+  if (!okUpload(body.upload) || !okUrl(body.url)) return json({ error: 'bad_target' }, 400);
+  let plan;
+  try { plan = cleanPlan(body.plan); } catch { return json({ error: 'bad_plan' }, 400); }
+  const sandbox = await createSandbox({ resources: { vcpus: 8 } });
+  try {
+    await addBundleToSandbox({ sandbox, bundleDir: path.join(process.cwd(), 'api/_video/bundle') });
+    // detached render without Vercel Blob: the mp4 stays in the sandbox and status() uploads it to storage
+    const r = await (renderMediaOnVercel as any)({
+      sandbox, compositionId: 'Prime', inputProps: { plan }, outputFile: OUT, codec: 'h264', crf: 18, x264Preset: 'medium',
+      audioBitrate: '192k', jpegQuality: 92, detached: true, detachedSandboxTimeoutInMilliseconds: 40 * 60 * 1000, timeoutInMilliseconds: 120000,
+    });
+    return json({ ok: true, sandboxId: r.sandboxId, cmdId: r.cmdId });
+  } catch (e: any) {
+    await sandbox.stop().catch(() => {});
+    return json({ error: 'render_start_failed', detail: String(e?.message || e).slice(0, 300) }, 500);
+  }
+}
+
+async function status(body: any) {
+  const { sandboxId, cmdId } = body;
+  if (typeof sandboxId !== 'string' || typeof cmdId !== 'string' || !okUpload(body.upload) || !okUrl(body.url)) return json({ error: 'bad_request' }, 400);
+  const p: any = await getRenderProgress({ sandboxId, cmdId });
+  if (p.stage === 'done') {
+    const sb = await Sandbox.get({ sandboxId });
+    const up = await sb.runCommand({ cmd: 'curl', args: ['-sS', '-f', '-X', 'PUT', '-H', 'content-type: video/mp4', '-H', 'x-upsert: true', '--data-binary', `@${OUT}`, body.upload] });
+    if (up.exitCode !== 0) return json({ stage: 'error', message: 'upload_failed', detail: (await up.stderr()).slice(0, 200) });
+    await sb.stop().catch(() => {});
+    return json({ stage: 'done', progress: 1, url: body.url, size: p.size });
+  }
+  if (p.stage === 'expired') {
+    // already uploaded by an earlier poll and the sandbox was stopped
+    const h = await fetch(body.url, { method: 'HEAD' }).catch(() => null);
+    return json(h?.ok ? { stage: 'done', progress: 1, url: body.url } : { stage: 'expired' });
+  }
+  if (p.stage === 'error') {
+    await Sandbox.get({ sandboxId }).then((s) => s.stop()).catch(() => {});
+    return json({ stage: 'error', message: String(p.message || '').slice(0, 300) });
+  }
+  return json({ stage: p.stage, progress: p.overallProgress ?? 0, frames: p.progress?.renderedFrames });
+}
+
+export default {
+  async fetch(req: Request): Promise<Response> {
+    if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    const token = req.headers.get('x-primeos-token')?.trim() ?? '';
+    if (!token || !(await whoami(token))) return json({ error: 'invalid_token' }, 401);
+    let body: any;
+    try { body = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
+    try {
+      if (body.action === 'start') return await start(body);
+      if (body.action === 'status') return await status(body);
+      return json({ error: 'unknown_action' }, 400);
+    } catch (e: any) {
+      return json({ error: 'video_failed', detail: String(e?.message || e).slice(0, 300) }, 500);
+    }
+  },
+};

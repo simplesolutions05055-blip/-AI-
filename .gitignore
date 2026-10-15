@@ -45,3 +45,7 @@ yarn-error.log*
 docs/
 supabase/.temp/
 supabase/.branches/
+
+# Remotion bundle (built in npm run build)
+api/_video/
+video/_*.mjs

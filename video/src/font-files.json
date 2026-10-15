@@ -1,0 +1,412 @@
+{
+ "Heebo": [
+  {
+   "file": "fonts/heebo-hebrew-100-normal.woff2",
+   "subset": "hebrew",
+   "weight": "100"
+  },
+  {
+   "file": "fonts/heebo-hebrew-200-normal.woff2",
+   "subset": "hebrew",
+   "weight": "200"
+  },
+  {
+   "file": "fonts/heebo-hebrew-300-normal.woff2",
+   "subset": "hebrew",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/heebo-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/heebo-hebrew-500-normal.woff2",
+   "subset": "hebrew",
+   "weight": "500"
+  },
+  {
+   "file": "fonts/heebo-hebrew-600-normal.woff2",
+   "subset": "hebrew",
+   "weight": "600"
+  },
+  {
+   "file": "fonts/heebo-hebrew-700-normal.woff2",
+   "subset": "hebrew",
+   "weight": "700"
+  },
+  {
+   "file": "fonts/heebo-hebrew-800-normal.woff2",
+   "subset": "hebrew",
+   "weight": "800"
+  },
+  {
+   "file": "fonts/heebo-hebrew-900-normal.woff2",
+   "subset": "hebrew",
+   "weight": "900"
+  },
+  {
+   "file": "fonts/heebo-latin-100-normal.woff2",
+   "subset": "latin",
+   "weight": "100"
+  },
+  {
+   "file": "fonts/heebo-latin-200-normal.woff2",
+   "subset": "latin",
+   "weight": "200"
+  },
+  {
+   "file": "fonts/heebo-latin-300-normal.woff2",
+   "subset": "latin",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/heebo-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/heebo-latin-500-normal.woff2",
+   "subset": "latin",
+   "weight": "500"
+  },
+  {
+   "file": "fonts/heebo-latin-600-normal.woff2",
+   "subset": "latin",
+   "weight": "600"
+  },
+  {
+   "file": "fonts/heebo-latin-700-normal.woff2",
+   "subset": "latin",
+   "weight": "700"
+  },
+  {
+   "file": "fonts/heebo-latin-800-normal.woff2",
+   "subset": "latin",
+   "weight": "800"
+  },
+  {
+   "file": "fonts/heebo-latin-900-normal.woff2",
+   "subset": "latin",
+   "weight": "900"
+  }
+ ],
+ "Rubik": [
+  {
+   "file": "fonts/rubik-hebrew-300-normal.woff2",
+   "subset": "hebrew",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/rubik-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/rubik-hebrew-500-normal.woff2",
+   "subset": "hebrew",
+   "weight": "500"
+  },
+  {
+   "file": "fonts/rubik-hebrew-600-normal.woff2",
+   "subset": "hebrew",
+   "weight": "600"
+  },
+  {
+   "file": "fonts/rubik-hebrew-700-normal.woff2",
+   "subset": "hebrew",
+   "weight": "700"
+  },
+  {
+   "file": "fonts/rubik-hebrew-800-normal.woff2",
+   "subset": "hebrew",
+   "weight": "800"
+  },
+  {
+   "file": "fonts/rubik-hebrew-900-normal.woff2",
+   "subset": "hebrew",
+   "weight": "900"
+  },
+  {
+   "file": "fonts/rubik-latin-300-normal.woff2",
+   "subset": "latin",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/rubik-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/rubik-latin-500-normal.woff2",
+   "subset": "latin",
+   "weight": "500"
+  },
+  {
+   "file": "fonts/rubik-latin-600-normal.woff2",
+   "subset": "latin",
+   "weight": "600"
+  },
+  {
+   "file": "fonts/rubik-latin-700-normal.woff2",
+   "subset": "latin",
+   "weight": "700"
+  },
+  {
+   "file": "fonts/rubik-latin-800-normal.woff2",
+   "subset": "latin",
+   "weight": "800"
+  },
+  {
+   "file": "fonts/rubik-latin-900-normal.woff2",
+   "subset": "latin",
+   "weight": "900"
+  }
+ ],
+ "Assistant": [
+  {
+   "file": "fonts/assistant-hebrew-200-normal.woff2",
+   "subset": "hebrew",
+   "weight": "200"
+  },
+  {
+   "file": "fonts/assistant-hebrew-300-normal.woff2",
+   "subset": "hebrew",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/assistant-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/assistant-hebrew-500-normal.woff2",
+   "subset": "hebrew",
+   "weight": "500"
+  },
+  {
+   "file": "fonts/assistant-hebrew-600-normal.woff2",
+   "subset": "hebrew",
+   "weight": "600"
+  },
+  {
+   "file": "fonts/assistant-hebrew-700-normal.woff2",
+   "subset": "hebrew",
+   "weight": "700"
+  },
+  {
+   "file": "fonts/assistant-hebrew-800-normal.woff2",
+   "subset": "hebrew",
+   "weight": "800"
+  },
+  {
+   "file": "fonts/assistant-latin-200-normal.woff2",
+   "subset": "latin",
+   "weight": "200"
+  },
+  {
+   "file": "fonts/assistant-latin-300-normal.woff2",
+   "subset": "latin",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/assistant-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/assistant-latin-500-normal.woff2",
+   "subset": "latin",
+   "weight": "500"
+  },
+  {
+   "file": "fonts/assistant-latin-600-normal.woff2",
+   "subset": "latin",
+   "weight": "600"
+  },
+  {
+   "file": "fonts/assistant-latin-700-normal.woff2",
+   "subset": "latin",
+   "weight": "700"
+  },
+  {
+   "file": "fonts/assistant-latin-800-normal.woff2",
+   "subset": "latin",
+   "weight": "800"
+  }
+ ],
+ "Secular One": [
+  {
+   "file": "fonts/secular-one-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/secular-one-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  }
+ ],
+ "Suez One": [
+  {
+   "file": "fonts/suez-one-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/suez-one-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  }
+ ],
+ "Karantina": [
+  {
+   "file": "fonts/karantina-hebrew-300-normal.woff2",
+   "subset": "hebrew",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/karantina-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/karantina-hebrew-700-normal.woff2",
+   "subset": "hebrew",
+   "weight": "700"
+  },
+  {
+   "file": "fonts/karantina-latin-300-normal.woff2",
+   "subset": "latin",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/karantina-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/karantina-latin-700-normal.woff2",
+   "subset": "latin",
+   "weight": "700"
+  }
+ ],
+ "Varela Round": [
+  {
+   "file": "fonts/varela-round-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/varela-round-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  }
+ ],
+ "Amatic SC": [
+  {
+   "file": "fonts/amatic-sc-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/amatic-sc-hebrew-700-normal.woff2",
+   "subset": "hebrew",
+   "weight": "700"
+  },
+  {
+   "file": "fonts/amatic-sc-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/amatic-sc-latin-700-normal.woff2",
+   "subset": "latin",
+   "weight": "700"
+  }
+ ],
+ "Bellefair": [
+  {
+   "file": "fonts/bellefair-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/bellefair-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  }
+ ],
+ "IBM Plex Sans Hebrew": [
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-hebrew-100-normal.woff2",
+   "subset": "hebrew",
+   "weight": "100"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-hebrew-200-normal.woff2",
+   "subset": "hebrew",
+   "weight": "200"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-hebrew-300-normal.woff2",
+   "subset": "hebrew",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-hebrew-400-normal.woff2",
+   "subset": "hebrew",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-hebrew-500-normal.woff2",
+   "subset": "hebrew",
+   "weight": "500"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-hebrew-600-normal.woff2",
+   "subset": "hebrew",
+   "weight": "600"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-hebrew-700-normal.woff2",
+   "subset": "hebrew",
+   "weight": "700"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-latin-100-normal.woff2",
+   "subset": "latin",
+   "weight": "100"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-latin-200-normal.woff2",
+   "subset": "latin",
+   "weight": "200"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-latin-300-normal.woff2",
+   "subset": "latin",
+   "weight": "300"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-latin-400-normal.woff2",
+   "subset": "latin",
+   "weight": "400"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-latin-500-normal.woff2",
+   "subset": "latin",
+   "weight": "500"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-latin-600-normal.woff2",
+   "subset": "latin",
+   "weight": "600"
+  },
+  {
+   "file": "fonts/ibm-plex-sans-hebrew-latin-700-normal.woff2",
+   "subset": "latin",
+   "weight": "700"
+  }
+ ]
+}

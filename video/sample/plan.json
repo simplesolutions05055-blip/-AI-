@@ -1,0 +1,27 @@
+{
+  "format": "9x16",
+  "fps": 30,
+  "brand": { "org": "עיריית הדגמה", "dept": "אגף תרבות", "logo": "sample/logo.png", "colors": { "deep": "#0B1F3A", "main": "#1F5FBF", "accent": "#FFC93C", "light": "#BFD7FF" }, "site": "primeos.co.il" },
+  "font": { "head": "Heebo", "body": "Assistant" },
+  "mood": "festive",
+  "fx": ["grain", "vignette"],
+  "scenes": [
+    { "dur": 2.6, "visual": { "kind": "image", "src": "sample/p1.jpg", "motion": "zoomIn", "tint": 0.45 }, "text": { "style": "headline", "kicker": "פסטיבל הקיץ", "lines": ["הלילה העיר", "יוצאת לרקוד"], "highlight": ["לרקוד"], "pos": "bottom" }, "transition": { "kind": "whip", "dir": "left" }, "fx": ["lightLeak"] },
+    { "dur": 2.4, "visual": { "kind": "image", "src": "sample/p2.jpg", "motion": "panLeft", "tint": 0.4 }, "text": { "style": "pop", "lines": ["מוזיקה חיה", "אוכל ושמחה"], "highlight": ["חיה"] }, "transition": { "kind": "flash" } },
+    { "dur": 2.4, "visual": { "kind": "gradient" }, "text": { "style": "box", "lines": ["כניסה חופשית", "לכל המשפחה"], "pos": "center" }, "transition": { "kind": "slide", "dir": "up" }, "fx": ["shapes"] },
+    { "dur": 2.6, "visual": { "kind": "video", "src": "sample/clip.mp4", "tint": 0.35 }, "text": { "style": "typewriter", "lines": ["יום חמישי, 20:00", "בפארק העירוני"] }, "transition": { "kind": "zoom" } },
+    { "dur": 2.2, "visual": { "kind": "image", "src": "sample/p3.jpg", "motion": "zoomOut", "tint": 0.45 }, "text": { "style": "stamp", "lines": ["20.11"], "sub": "שומרים את התאריך" }, "transition": { "kind": "wipe", "dir": "right" } },
+    { "dur": 2.6, "visual": { "kind": "image", "src": "sample/p4.jpg", "motion": "drift", "tint": 0.2 }, "text": { "style": "lowerThird", "lines": ["נועה כהן"], "sub": "מנהלת אגף התרבות" }, "transition": { "kind": "iris" } },
+    { "dur": 2.4, "visual": { "kind": "gradient" }, "text": { "style": "stat", "value": 12000, "lines": ["מבקרים בשנה שעברה"] }, "transition": { "kind": "fade" }, "fx": ["particles"] },
+    { "dur": 2.8, "visual": { "kind": "image", "src": "sample/p1.jpg", "motion": "panRight", "tint": 0.55, "blur": 6 }, "text": { "style": "quote", "lines": ["זה הערב שכל", "השכונה מחכה לו"], "sub": "תושבת העיר" }, "transition": { "kind": "clockWipe" } },
+    { "dur": 2.8, "visual": { "kind": "gradient" }, "text": { "style": "list", "kicker": "מה מחכה לכם", "lines": ["3 במות הופעה", "דוכני אוכל", "פינת ילדים"] }, "transition": { "kind": "flip", "dir": "left" }, "fx": ["bokeh"] },
+    { "dur": 2.4, "visual": { "kind": "image", "src": "sample/p2.jpg", "motion": "zoomIn", "tint": 0.5 }, "text": { "style": "cinematic", "lines": ["ערב אחד", "של קסם"] }, "transition": { "kind": "push", "dir": "left" } },
+    { "dur": 2.2, "visual": { "kind": "image", "src": "sample/p3.jpg", "motion": "panUp", "tint": 0.5 }, "text": { "style": "outline", "lines": ["בואו", "בהמוניכם"], "highlight": ["בהמוניכם"] }, "transition": { "kind": "slide", "dir": "right" } },
+    { "dur": 2.2, "visual": { "kind": "gradient" }, "text": { "style": "split", "lines": ["הקיץ הזה", "קורה אצלנו"] }, "transition": { "kind": "fade" }, "fx": ["scanlines"] },
+    { "dur": 2.4, "visual": { "kind": "color", "tintColor": "#05070d" }, "text": { "style": "neon", "lines": ["נתראה שם"] }, "transition": { "kind": "fade", "dur": 0.5 } }
+  ],
+  "outro": { "cta": "שריינו את הערב", "details": [{ "text": "יום חמישי 20.11" }, { "text": "פארק העירוני" }, { "text": "כניסה חופשית" }], "dur": 3.4 },
+  "audio": { "music": { "src": "sample/music.mp3" } },
+  "captions": { "style": "karaoke", "words": [] },
+  "showLogo": true
+}
