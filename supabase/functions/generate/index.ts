@@ -152,7 +152,11 @@ async function claudeWeb(key: string, system: string, user: string, host: string
 function parseJson(raw: string) {
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('invalid_ai_response');
-  return JSON.parse(m[0]);
+  try { return JSON.parse(m[0]); } catch (e) {
+    // Hebrew abbreviations written with a plain double quote (בע"מ, רח') break the JSON string: use the Hebrew gershayim instead
+    const fixed = m[0].replace(/([\u05d0-\u05ea])"(?=[\u05d0-\u05ea])/g, '$1\u05f4').replace(/,\s*([}\]])/g, '$1');
+    try { return JSON.parse(fixed); } catch { throw e; }
+  }
 }
 
 // second pass: language proofing of short on-screen texts (they are printed on images, so errors are costly)
@@ -378,8 +382,10 @@ ${brief}
         return json(req, { ok: true, clips });
       }
       const imgs = await fileBlocks(((p.media ?? []) as any[]).filter((m) => !m.v).map((m) => ({ url: m.url, name: m.name || m.url })));
-      const raw = await claude(key, DIRECTOR_SYS + '\n' + s, directorPrompt(p, c, voices), 6000, [...imgs, ...fb]);
-      return json(req, { ok: true, caps: c, ...sanitizeBrief(parseJson(raw), p, voices) });
+      const ask = () => claude(key, DIRECTOR_SYS + '\n' + s, directorPrompt(p, c, voices), 6000, [...imgs, ...fb]);
+      let plan: any;
+      try { plan = parseJson(await ask()); } catch { plan = parseJson(await ask()); } // one retry on a broken answer
+      return json(req, { ok: true, caps: c, ...sanitizeBrief(plan, p, voices) });
     }
     if (mode === 'vsample') {
       const text = String(p.text || 'שלום, אני הקול של PrimeOS. ביום חמישי הקרוב מחכה לכם פסטיבל הסתיו בפארק העירוני, עם הופעות, אוכל ופינת ילדים. נתראה שם!').slice(0, 300);
