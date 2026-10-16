@@ -392,7 +392,7 @@ ${brief}
       return json(req, { ok: true, approved: ids });
     }
     if (mode === 'vmusic') return json(req, { ok: true, ...(await musicTrack(database, CUR.org ?? '', String(p.prompt ?? ''), +p.seconds || 30)) });
-    if (mode === 'vstock') return json(req, { ok: true, items: await stock((p.queries ?? []) as any[], String(p.format ?? '9x16')) });
+    if (mode === 'vstock') return json(req, { ok: true, items: await stock(database, CUR.org ?? '', (p.queries ?? []) as any[], String(p.format ?? '9x16')) });
 
     if (mode === 'doc2') {
       const raw = await claude(key, s, `כתוב מסמך רשמי של הרשות בסגנון "${p.styleLabel || 'רשמי'}", באורך עמוד עד שני עמודים.

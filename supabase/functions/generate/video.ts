@@ -1,12 +1,12 @@
 // Video director and media production for the Remotion engine (video/src).
 // vcaps: which providers have keys. vbrief: Claude analyses the request and returns a brief + a scene plan.
 // vvoice: Hebrew narration per scene (ElevenLabs or Google Chirp 3 HD) with word timings for captions.
-// vmusic: instrumental track at the exact length (ElevenLabs Music). vstock: Pexels photos / clips.
+// vmusic: instrumental track at the exact length (ElevenLabs Music). vstock: Pixabay / Pexels photos and clips.
 // Provider keys live only in Supabase secrets; raw provider responses never go back to the browser.
 
 export const env = (k: string) => Deno.env.get(k) ?? '';
 export function caps() {
-  return { eleven: !!env('ELEVENLABS_API_KEY'), google: !!env('GOOGLE_TTS_API_KEY'), pexels: !!env('PEXELS_API_KEY'), higgs: !!env('HIGGSFIELD_API_KEY') };
+  return { eleven: !!env('ELEVENLABS_API_KEY'), google: !!env('GOOGLE_TTS_API_KEY'), pexels: !!(env('PIXABAY_API_KEY') || env('PEXELS_API_KEY')), higgs: !!env('HIGGSFIELD_API_KEY') };
 }
 
 // Hebrew voices. The audition page narrows these to the 2-4 per gender the owner approves (admin_state 'voices').
@@ -47,7 +47,7 @@ export function directorPrompt(p: Record<string, any>, c: ReturnType<typeof caps
   if (p.style === 'existing') src.push('"clip:<שנייה בסרטון המקורי>" - קטע מהסרטון שהמשתמש העלה, מתחיל בשנייה שתבחר (סרטון המקור באורך ' + (p.clipSec || 'לא ידוע') + ' שניות)');
   if ((p.media ?? []).length) src.push('"upload:<מספר>" - חומר שהמשתמש העלה (התמונות מצורפות כדי שתראה אותן)');
   if (p.style !== 'anim' && p.style !== 'existing') src.push('"ai:<English image prompt>" - תמונה שתיווצר ב-AI. תאר צילום ריאליסטי בישראל, בלי טקסט בתמונה');
-  if (c.pexels && p.style !== 'anim') src.push('"stock:<English search query>" - צילום סטוק מ-Pexels', '"stockv:<English search query>" - קטע וידאו סטוק מ-Pexels');
+  if (c.pexels && p.style !== 'anim') src.push('"stock:<English search query>" - צילום סטוק אמיתי (מילות חיפוש קצרות באנגלית, 2-4 מילים)', '"stockv:<English search query>" - קטע וידאו סטוק אמיתי (מילות חיפוש קצרות באנגלית)');
   src.push('"gradient" - רקע מונפש בצבעי המותג (מתאים לטקסט גדול, נתונים, רשימות)', '"color" - רקע צבע אחיד כהה');
   const vlist = voices.map((v) => `${v.id} | ${v.n} | ${v.g === 'm' ? 'גבר' : 'אישה'} | ${v.tone}`).join('\n');
   const user = `בקשת הסרטון:
@@ -233,28 +233,53 @@ export async function musicTrack(d: any, org: string, prompt: string, seconds: n
   return { src: await store(d, org, bytes, 'mp3', 'audio/mpeg'), sec: +mp3Seconds(bytes).toFixed(2) };
 }
 
-// Pexels: best match per query, oriented to the video format
-export async function stock(queries: { q: string; v?: boolean }[], format: string) {
-  const key = env('PEXELS_API_KEY');
-  if (!key) throw new Error('stock_not_configured');
+// Stock: Pixabay (copied into our storage, Pixabay does not allow permanent hotlinking), Pexels when its key exists
+export async function stock(d: any, org: string, queries: { q: string; v?: boolean }[], format: string) {
+  const pix = env('PIXABAY_API_KEY'), pex = env('PEXELS_API_KEY');
+  if (!pix && !pex) throw new Error('stock_not_configured');
   const orient = format === '16x9' ? 'landscape' : format === '1x1' ? 'square' : 'portrait';
   const used = new Set<string>();
+  const copy = async (url: string, video: boolean) => {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const b = new Uint8Array(await r.arrayBuffer());
+    if (b.length > 40_000_000) return null;
+    return await store(d, org, b, video ? 'mp4' : 'jpg', video ? 'video/mp4' : 'image/jpeg');
+  };
   return await Promise.all(queries.slice(0, 20).map(async ({ q, v }) => {
     try {
-      const url = v ? `https://api.pexels.com/videos/search?query=${encodeURIComponent(q)}&orientation=${orient}&per_page=6&size=medium` : `https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&orientation=${orient}&per_page=6`;
-      const r = await fetch(url, { headers: { authorization: key } });
-      if (!r.ok) return null;
-      const j = await r.json();
-      if (v) {
-        for (const x of j.videos ?? []) {
-          const f = (x.video_files ?? []).filter((f: any) => f.file_type === 'video/mp4' && f.width >= 720).sort((a: any, b: any) => Math.abs(a.height - 1920) - Math.abs(b.height - 1920))[0];
-          if (f && !used.has(f.link)) { used.add(f.link); return { src: f.link, v: true, sec: x.duration, credit: x.user?.name ?? '' }; }
+      if (pix) {
+        const url = v
+          ? `https://pixabay.com/api/videos/?key=${pix}&q=${encodeURIComponent(q.slice(0, 95))}&per_page=8&safesearch=true`
+          : `https://pixabay.com/api/?key=${pix}&q=${encodeURIComponent(q.slice(0, 95))}&image_type=photo&per_page=8&safesearch=true${orient === 'portrait' ? '&orientation=vertical' : orient === 'landscape' ? '&orientation=horizontal' : ''}`;
+        const r = await fetch(url);
+        if (r.ok) {
+          const j = await r.json();
+          for (const x of j.hits ?? []) {
+            const src = v ? (x.videos?.large?.url || x.videos?.medium?.url) : (x.largeImageURL || x.webformatURL);
+            if (!src || used.has(src)) continue;
+            used.add(src);
+            const mine = await copy(src, !!v);
+            if (mine) return { src: mine, v: !!v, sec: x.duration, credit: x.user ?? '' };
+          }
         }
-        return null;
       }
-      for (const x of j.photos ?? []) {
-        const s = orient === 'portrait' ? x.src?.portrait : orient === 'landscape' ? x.src?.landscape : x.src?.large2x;
-        if (s && !used.has(s)) { used.add(s); return { src: s.replace(/\?.*$/, '') + '?auto=compress&cs=tinysrgb&w=1600', v: false, credit: x.photographer ?? '' }; }
+      if (pex) {
+        const url = v ? `https://api.pexels.com/videos/search?query=${encodeURIComponent(q)}&orientation=${orient}&per_page=6&size=medium` : `https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&orientation=${orient}&per_page=6`;
+        const r = await fetch(url, { headers: { authorization: pex } });
+        if (!r.ok) return null;
+        const j = await r.json();
+        if (v) {
+          for (const x of j.videos ?? []) {
+            const f = (x.video_files ?? []).filter((f: any) => f.file_type === 'video/mp4' && f.width >= 720).sort((a: any, b: any) => Math.abs(a.height - 1920) - Math.abs(b.height - 1920))[0];
+            if (f && !used.has(f.link)) { used.add(f.link); return { src: f.link, v: true, sec: x.duration, credit: x.user?.name ?? '' }; }
+          }
+          return null;
+        }
+        for (const x of j.photos ?? []) {
+          const s = orient === 'portrait' ? x.src?.portrait : orient === 'landscape' ? x.src?.landscape : x.src?.large2x;
+          if (s && !used.has(s)) { used.add(s); return { src: s.replace(/\?.*$/, '') + '?auto=compress&cs=tinysrgb&w=1600', v: false, credit: x.photographer ?? '' }; }
+        }
       }
       return null;
     } catch { return null; }
