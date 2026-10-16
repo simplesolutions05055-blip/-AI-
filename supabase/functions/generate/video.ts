@@ -284,10 +284,12 @@ export async function musicTrack(d: any, org: string, prompt: string, seconds: n
   const key = env('ELEVENLABS_API_KEY');
   if (!key) throw new Error('music_not_configured');
   const ms = Math.round(Math.max(10, Math.min(95, seconds)) * 1000);
-  const r = await fetch('https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128', {
+  const once = () => fetch('https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128', {
     method: 'POST', headers: { 'xi-api-key': key, 'content-type': 'application/json' },
     body: JSON.stringify({ prompt: String(prompt).slice(0, 900) + ' Instrumental only, no vocals.', music_length_ms: ms, model_id: 'music_v1', force_instrumental: true }),
   });
+  let r = await once();
+  for (let k = 0; r.status === 429 && k < 4; k++) { await wait(3000 * (k + 1)); r = await once(); } // plan concurrency limit
   if (!r.ok) throw new Error('music_failed');
   const bytes = new Uint8Array(await r.arrayBuffer());
   return { src: await store(d, org, bytes, 'mp3', 'audio/mpeg'), sec: +mp3Seconds(bytes).toFixed(2) };

@@ -3408,7 +3408,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           if (c) sc.voice = { src: c.src, words: c.words, at: 0.25 };
           return sc;
         });
-        const plan = { format: fmt, fps: 30, brand: vidBrand(), font: b.font, mood: b.mood, fx: b.fx, scenes, outro: Object.assign({ dur: 3.2 }, b.outro), captions: { style: b.captions || 'karaoke', words: [] }, audio: music && music.src ? { music: { src: music.src } } : {}, showLogo: true };
+        // memorial videos never use bright brand colours: dark slate and muted gold, the org name and logo stay
+        const brand = b.kind === 'memorial' ? Object.assign(vidBrand(), { colors: { deep: '#0A0F1A', main: '#2B3445', accent: '#C9B37E', light: '#D9D4C7' } }) : vidBrand();
+        const plan = { format: fmt, fps: 30, brand, font: b.font, mood: b.mood, fx: b.fx, scenes, outro: Object.assign({ dur: 3.2 }, b.outro), captions: { style: b.captions || 'karaoke', words: [] }, audio: music && music.src ? { music: { src: music.src } } : {}, showLogo: true };
         p.on = ['render']; p.pct = Math.max(p.pct, 0.4); tick();
         const url = await renderPlan(plan, (x) => { p.rp = x; p.pct = 0.4 + 0.58 * x; tick(); });
         fin('render', 1);

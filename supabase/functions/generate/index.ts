@@ -154,9 +154,27 @@ function parseJson(raw: string) {
   if (!m) throw new Error('invalid_ai_response');
   try { return JSON.parse(m[0]); } catch (e) {
     // Hebrew abbreviations written with a plain double quote (בע"מ, רח') break the JSON string: use the Hebrew gershayim instead
-    const fixed = m[0].replace(/([\u05d0-\u05ea])"(?=[\u05d0-\u05ea])/g, '$1\u05f4').replace(/,\s*([}\]])/g, '$1');
+    let fixed = m[0].replace(/([\u05d0-\u05ea])"(?=[\u05d0-\u05ea])/g, '$1\u05f4').replace(/,\s*([}\]])/g, '$1');
+    try { return JSON.parse(fixed); } catch { /* next repair */ }
+    // a quotation mark inside a text value (a quote, a name in quotes): escape every quote that does not close the string
+    fixed = quoteFix(fixed);
     try { return JSON.parse(fixed); } catch { throw e; }
   }
+}
+function quoteFix(t: string) {
+  let out = '', inStr = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (!inStr) { out += c; if (c === '"') inStr = true; continue; }
+    if (c === '\\') { out += c + (t[i + 1] ?? ''); i++; continue; }
+    if (c === '"') {
+      let j = i + 1; while (j < t.length && /\s/.test(t[j])) j++;
+      if (j >= t.length || ',:}]'.includes(t[j])) { out += c; inStr = false; } else out += '\\"';
+      continue;
+    }
+    out += c === '\n' ? '\\n' : c;
+  }
+  return out;
 }
 
 // second pass: language proofing of short on-screen texts (they are printed on images, so errors are costly)
