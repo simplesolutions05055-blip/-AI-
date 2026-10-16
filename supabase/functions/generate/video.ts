@@ -179,20 +179,21 @@ function fromChars(text: string, a: any) {
   return out.filter((w) => w.w).length ? out.filter((w) => w.w) : spread(text, 0.05, (en[en.length - 1] ?? 1) - 0.05);
 }
 
+// Eleven v4 first (Hebrew, most natural), v3 as fallback; timestamps when the model returns them
 async function ttsEleven(id: string, text: string) {
   const key = env('ELEVENLABS_API_KEY');
-  const model = env('ELEVENLABS_MODEL') || 'eleven_v3';
-  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}/with-timestamps?output_format=mp3_44100_128`, {
+  const models = [...new Set([env('ELEVENLABS_MODEL') || 'eleven_v4', 'eleven_v4', 'eleven_v3'])];
+  const call = (path: string, model: string) => fetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}${path}?output_format=mp3_44100_128`, {
     method: 'POST', headers: { 'xi-api-key': key, 'content-type': 'application/json' },
     body: JSON.stringify({ text, model_id: model, language_code: 'he' }),
   });
-  if (r.ok) { const j = await r.json(); return { bytes: b64(j.audio_base64), words: (sec: number) => (j.alignment ? fromChars(text, j.alignment) : spread(text, 0.05, sec - 0.05)) }; }
-  const r2 = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}?output_format=mp3_44100_128`, {
-    method: 'POST', headers: { 'xi-api-key': key, 'content-type': 'application/json' },
-    body: JSON.stringify({ text, model_id: model, language_code: 'he' }),
-  });
-  if (!r2.ok) throw new Error('tts_failed');
-  return { bytes: new Uint8Array(await r2.arrayBuffer()), words: (sec: number) => spread(text, 0.05, sec - 0.05) };
+  for (const model of models) {
+    const r = await call('/with-timestamps', model);
+    if (r.ok) { const j = await r.json(); return { model, bytes: b64(j.audio_base64), words: (sec: number) => (j.alignment ? fromChars(text, j.alignment) : spread(text, 0.05, sec - 0.05)) }; }
+    const r2 = await call('', model);
+    if (r2.ok) return { model, bytes: new Uint8Array(await r2.arrayBuffer()), words: (sec: number) => spread(text, 0.05, sec - 0.05) };
+  }
+  throw new Error('tts_failed');
 }
 async function ttsGoogle(name: string, text: string) {
   const r = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${env('GOOGLE_TTS_API_KEY')}`, {
@@ -215,7 +216,7 @@ export async function voiceScenes(d: any, org: string, voiceId: string, says: st
     if (!text) return null;
     const a = v.eng === 'eleven' ? await ttsEleven(raw, text) : await ttsGoogle(raw, text);
     const sec = mp3Seconds(a.bytes) || text.split(/\s+/).length / 2.4;
-    return { src: await store(d, org, a.bytes, 'mp3', 'audio/mpeg'), sec: +sec.toFixed(2), words: a.words(sec) };
+    return { src: await store(d, org, a.bytes, 'mp3', 'audio/mpeg'), sec: +sec.toFixed(2), words: a.words(sec), model: (a as { model?: string }).model ?? 'google' };
   }));
 }
 

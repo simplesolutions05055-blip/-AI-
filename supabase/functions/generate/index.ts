@@ -383,7 +383,7 @@ ${brief}
     if (mode === 'vsample') {
       const text = String(p.text || 'שלום, אני הקול של PrimeOS. ביום חמישי הקרוב מחכה לכם פסטיבל הסתיו בפארק העירוני, עם הופעות, אוכל ופינת ילדים. נתראה שם!').slice(0, 300);
       const [clip] = await voiceScenes(database, CUR.org ?? 'samples', String(p.voiceId), [text]);
-      return json(req, { ok: true, src: clip?.src, sec: clip?.sec });
+      return json(req, { ok: true, src: clip?.src, sec: clip?.sec, model: clip?.model, words: clip?.words?.length ?? 0 });
     }
     if (mode === 'vapprove') {
       if (!isAdmin) return json(req, { error: 'forbidden' }, 403);
