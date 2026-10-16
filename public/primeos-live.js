@@ -1204,7 +1204,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     v.gen = true;
     render();
     try {
-      const goal = v.goal === 'marketing' ? 'סרטון שיווקי שמניע לפעולה' : 'סרטון ראווה שמציג עשייה ואווירה';
+      const goal = ({ official: 'סרטון רשמי, ברור ומכובד', marketing: 'סרטון שיווקי שמניע לפעולה', event: 'סרטון הזמנה לאירוע, חגיגי ומזמין', showcase: 'סרטון ראווה שמציג עשייה ואווירה', greeting: 'סרטון ברכה חם ולבבי', memorial: 'סרטון ממלכתי, שקט ומכובד' })[v.goal] || 'סרטון שיווקי שמניע לפעולה';
       const brief = v.desc + '\nמטרה: ' + goal + '\nקהל יעד: ' + [...v.audQ, v.aud].filter(Boolean).join(', ');
       const [r, imgs] = await Promise.all([
         gen({ mode: 'video', title: v.name, brief }),
@@ -3300,13 +3300,19 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (/^stock:/.test(s)) return 'צילום סטוק<small dir="ltr">' + esc(s.slice(6, 60)) + '</small>';
       return s === 'color' ? 'רקע צבע' : 'רקע מונפש';
     }
+    // narration line in the brief: direction tags shown as a small Hebrew label, not as raw English
+    const EMO_HE = { calm: 'רגוע', confident: 'בטוח', serious: 'רציני', clearly: 'ברור', excited: 'נלהב', inviting: 'מזמין', energetic: 'אנרגטי', cheerful: 'עליז', warmly: 'חם', proud: 'גאה', inspired: 'מעורר השראה', softly: 'רך', gently: 'עדין', solemnly: 'מכובד', slowly: 'איטי', quietly: 'שקט' };
+    const sayView = (t) => {
+      const tags = []; const txt = String(t).replace(/\[([a-z ]+)\]/g, (_, k) => { if (EMO_HE[k]) tags.push(EMO_HE[k]); return ' '; }).replace(/\s{2,}/g, ' ').trim();
+      return esc(txt) + (tags.length ? '<small>טון: ' + esc(tags.join(', ')) + '</small>' : '');
+    };
     function briefView(v) {
       const b = v.brief, x = b.brief || {};
       let t = 0;
       const rows = (b.scenes || []).map((s, i) => {
         const a = t; t += s.dur;
         const tx = s.text ? '<b>' + esc((s.text.lines || []).join(' / ')) + '</b><small>' + (TS_HE[s.text.style] || s.text.style) + '</small>' : '<small>בלי טקסט</small>';
-        return '<tr><td>' + (i + 1) + '<small>' + tsec(a) + '-' + tsec(t) + '</small></td><td>' + visDesc(s.visual && s.visual.src, v) + '</td><td>' + tx + '</td><td>' + (s.say ? esc(s.say) : '<small>-</small>') + '</td><td>' + (s.transition ? (TR_HE[s.transition.kind] || s.transition.kind) : '-') + '</td></tr>';
+        return '<tr><td>' + (i + 1) + '<small>' + tsec(a) + '-' + tsec(t) + '</small></td><td>' + visDesc(s.visual && s.visual.src, v) + '</td><td>' + tx + '</td><td>' + (s.say ? sayView(s.say) : '<small>-</small>') + '</td><td>' + (s.transition ? (TR_HE[s.transition.kind] || s.transition.kind) : '-') + '</td></tr>';
       }).join('');
       const total = t + 3;
       const warn = [];
@@ -3315,12 +3321,12 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       return '<div class="card brief-card">' +
         '<p class="vb-idea">' + esc(x.idea || '') + '</p>' +
         '<div class="vb-grid">' +
-        '<div class="vb-cell"><span>סגנון</span><b>' + esc(x.style || '') + (b.mood ? ' · ' + (MOOD_HE[b.mood] || '') : '') + '</b></div>' +
+        '<div class="vb-cell"><span>סוג וסגנון</span><b>' + ({ official: 'רשמי', marketing: 'שיווקי', event: 'אירוע', showcase: 'ראווה', greeting: 'ברכה וחג', memorial: 'ממלכתי וזיכרון' }[b.kind] || '') + (b.kind ? ' · ' : '') + esc(x.style || '') + (b.mood ? ' · ' + (MOOD_HE[b.mood] || '') : '') + '</b></div>' +
         '<div class="vb-cell"><span>אורך ופורמט</span><b>' + Math.round(total) + ' שניות · ' + esc(v.fmt) + '</b></div>' +
         '<div class="vb-cell"><span>שפה חזותית</span><b>' + esc(x.look || '') + '</b></div>' +
         '<div class="vb-cell"><span>קצב</span><b>' + esc(x.pace || '') + '</b></div>' +
         '<div class="vb-cell"><span>מוזיקה</span><b>' + (v.music ? esc(x.music || '') : 'בלי מוזיקה') + '</b></div>' +
-        '<div class="vb-cell"><span>קריינות</span><b>' + (v.voice && b.voice ? esc(b.voice.n) + ' (' + (b.voice.g === 'm' ? 'גבר' : 'אישה') + ') - ' + esc(x.voiceWhy || b.voice.tone) : 'בלי קריינות') + '</b></div>' +
+        '<div class="vb-cell"><span>קריינות</span><b>' + (v.voice && b.voice ? esc(b.voice.n) + ' (' + (b.voice.g === 'm' ? 'גבר' : 'אישה') + ') - ' + esc(x.delivery || x.voiceWhy || b.voice.tone) : 'בלי קריינות') + '</b></div>' +
         '</div>' +
         '<div class="field full"><label>תסריט סצנה אחר סצנה</label><div class="vb-wrap"><table class="vb-sc"><thead><tr><th>#</th><th>ויזואל</th><th>טקסט על המסך</th><th>קריינות</th><th>מעבר</th></tr></thead><tbody>' + rows +
         '<tr><td>סיום<small>' + tsec(t) + '-' + tsec(total) + '</small></td><td>כרטיס לוגו</td><td><b>' + esc((b.outro && b.outro.cta) || '') + '</b><small>' + esc(((b.outro && b.outro.details) || []).map((d) => d.text).join(' · ')) + '</small></td><td></td><td></td></tr></tbody></table></div></div>' +
@@ -3393,7 +3399,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         const est = (b.scenes || []).reduce((a, s) => a + s.dur, 0) + 3;
         const [vis, voice, music] = await Promise.all([
           resolveVisuals(v, b.scenes, fmt).then((r) => (fin('vis', 0.35), r)),
-          wantVoice ? genLong({ mode: 'vvoice', voiceId: b.voice.id, says: b.scenes.map((s) => s.say || '') }).then((r) => (fin('voice', 0.3), r.clips || [])).catch(() => (fin('voice', 0.3), [])) : Promise.resolve([]),
+          wantVoice ? genLong({ mode: 'vvoice', voiceId: b.voice.id, stab: b.stab, says: b.scenes.map((s) => s.say || '') }).then((r) => (fin('voice', 0.3), r.clips || [])).catch(() => (fin('voice', 0.3), [])) : Promise.resolve([]),
           wantMusic ? genLong({ mode: 'vmusic', prompt: b.musicPrompt, seconds: Math.min(95, est + 4) }).then((r) => (fin('music', 0.3), r)).catch(() => (fin('music', 0.3), null)) : Promise.resolve(null),
         ]);
         const scenes = b.scenes.map((s, i) => {

@@ -882,11 +882,11 @@ input[type=text],input[type=email],input[type=password],input[type=date],input[t
 .oh-money div{display:flex;flex-direction:column;align-items:center;padding:8px 16px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line-2);min-width:92px}
 .oh-money span{font-size:12px;color:var(--ink-3)}.oh-money b{font-family:var(--fd);font-size:22px;line-height:1.2}
 .oh-money + .oh-acts{margin-inline-start:0}
-.plan-pick{display:grid;grid-template-columns:1fr 1fr;gap:12px}.plan-pick.col{grid-template-columns:1fr}
+.plan-pick{display:grid;grid-template-columns:1fr 1fr;gap:12px}.plan-pick.vk-pick{grid-template-columns:repeat(3,1fr)}.plan-pick.col{grid-template-columns:1fr}
 .plan-tile{gap:6px}.plan-tile .pt-cost{margin-inline-start:auto;font-family:var(--fd);font-size:20px}.plan-tile .pt-cost small{font-size:11px;color:var(--ink-3);font-weight:500;font-family:var(--f)}
 .plan-tile.on .rt-radio{border-color:var(--p-blue)}.plan-tile.on .rt-radio:after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--grad)}
 .ubar.pk span{background:linear-gradient(270deg,#E0069F,#FF3A55)}
-@media(max-width:900px){.plan-pick{grid-template-columns:1fr}.oh-money{margin-inline-start:0;width:100%}.oh-money div{flex:1}}
+@media(max-width:900px){.plan-pick,.plan-pick.vk-pick{grid-template-columns:1fr 1fr}.oh-money{margin-inline-start:0;width:100%}.oh-money div{flex:1}}
 body.is-admin .row-acts .btn-ghost{font-size:0;gap:0;padding:0 9px}
 .ubar.pu.hot span{background:linear-gradient(270deg,#7501F6,#A45BFF)}
 .ubar.pk.hot span{background:linear-gradient(270deg,#E0069F,#FF3A55)}
@@ -5627,7 +5627,7 @@ ACT.dkDone=st=>{const w=S.dk;const it=mkItem({t:dkTitle(w),ty:'deck',s:st,body:(
   doneModal(it,st==='approved'?'המצגת אושרה':'נשלח לאישור',it.t?w.slides.length+' עמודים':'');};
 
 /* ===================== 3. וידאו ===================== */
-const VGOALS=[['marketing','שיווקי','מקדם פעולה: הרשמה, הגעה, השתתפות'],['showcase','ראווה','מציג ומרשים: עשייה, הישגים, אווירה']];
+const VGOALS=[['official','רשמי','הודעה, עדכון או הנחיה לתושבים'],['marketing','שיווקי','מניע לפעולה: הרשמה, רכישה, השתתפות'],['event','אירוע','הזמנה לאירוע, פסטיבל או מופע'],['showcase','ראווה','מציג עשייה, הישגים ואווירה'],['greeting','ברכה וחג','ברכה לחג, למועד או לציון דרך'],['memorial','ממלכתי וזיכרון','יום זיכרון, טקס או הודעת אבל']];
 const VSTYLES=[['anim','אנימציה','גרפיקה מונפשת, טקסטים ואייקונים בתנועה','spark'],['existing','סרטון קיים','מעלים סרטון, ה-AI עורך, מוסיף כתוביות ומיתוג','vid'],['ai','סרטון AI מחומרי גלם','מעלים תמונות וקטעים, ה-AI בונה מהם סרטון','img']];
 const AUD_Q=['כלל התושבים','הורים לילדים','צעירים','גיל שלישי','בעלי עסקים','קהל מחוץ לעיר'];
 const VFMTS=['9:16','1:1','4:5','16:9'];
@@ -5640,7 +5640,7 @@ SCREENS.vidWiz={hidden:true,render(){
   if(w.step===0)return head+'<div class="card brief-card"><div class="brief-grid">'+
     '<div class="field full"><label for="vdN">שם הסרטון</label><input type="text" id="vdN" value="'+esc(w.name)+'" placeholder="פסטיבל הסתיו 2026"></div>'+
     '<div class="field full"><label for="vdD">תיאור קצר</label><textarea id="vdD" rows="3" placeholder="מה רואים בסרטון ומה המסר העיקרי">'+esc(w.desc)+'</textarea></div>'+
-    '<div class="field full"><label>מטרת הסרטון</label><div class="plan-pick">'+VGOALS.map(g=>'<button class="tile plan-tile '+(w.goal===g[0]?'on':'')+'" data-act="vdGoal:'+g[0]+'"><span class="rt-head"><span class="rt-radio"></span><span class="tn">'+g[1]+'</span></span><span class="t-sub">'+g[2]+'</span></button>').join('')+'</div></div>'+
+    '<div class="field full"><label>סוג הסרטון <span class="hint">קובע את הטון, הקריינות והמוזיקה</span></label><div class="plan-pick vk-pick">'+VGOALS.map(g=>'<button class="tile plan-tile '+(w.goal===g[0]?'on':'')+'" data-act="vdGoal:'+g[0]+'"><span class="rt-head"><span class="rt-radio"></span><span class="tn">'+g[1]+'</span></span><span class="t-sub">'+g[2]+'</span></button>').join('')+'</div></div>'+
     '<div class="field full"><label for="vdA">מי קהל היעד?</label><div class="tag-ed" style="margin-bottom:8px">'+AUD_Q.map(a=>'<button class="tagc '+(w.audQ.includes(a)?'on':'')+'" data-act="vdAud:'+a+'">'+(w.audQ.includes(a)?ic('check',13,2.4):ic('create',13,2.4))+a+'</button>').join('')+'</div>'+
       '<input type="text" id="vdA" value="'+esc(w.aud)+'" placeholder="או תיאור חופשי: משפחות עם ילדים צעירים בשכונות החדשות"></div>'+
     '<div class="field full"><label>פורמט (גודל הסרטון) <span class="hint">גודל אחד</span></label>'+vfmtPick(w.fmt)+'</div>'+
@@ -5661,7 +5661,7 @@ ACT.vdCh=k=>{vdCollect();const a=S.vd.ch,i=a.indexOf(k);i<0?a.push(k):a.splice(i
 ACT.vdNext=()=>{vdCollect();const w=S.vd;
   if(!w.name.trim()){toast('חסר שם','תנו שם לסרטון.','err');return;}
   if(!w.desc.trim()){toast('חסר תיאור','כתבו תיאור קצר: מה רואים ומה המסר.','err');return;}
-  if(!w.goal){toast('לא נבחרה מטרה','בחרו: שיווקי או ראווה.','err');return;}
+  if(!w.goal){toast('לא נבחר סוג סרטון','בחרו: רשמי, שיווקי, אירוע, ראווה, ברכה או ממלכתי.','err');return;}
   if(!w.aud.trim()&&!w.audQ.length){toast('חסר קהל יעד','בחרו קהל או כתבו תיאור.','err');return;}
   if(!w.ch.length){toast('לא נבחרה פלטפורמה','בחרו לפחות פלטפורמה אחת.','err');return;}
   w.step=1;render();window.scrollTo({top:0});};
@@ -5684,7 +5684,7 @@ SCREENS.wizard.render=function(){let h=_wizR9.call(this);const w=S.wiz;if(!w||!w
   h=h.replace(/<div class="flow-steps">[\s\S]*?<\/div>/,stepsBar(['פרטי הסרטון','סגנון','עריכה ופרסום'],2));
   h=h.replace(/(<section class="ed-sec"><h4><svg[\s\S]*?<\/svg> גודל הפוסט<\/h4>)<div class="fmt-pick"[\s\S]*?<\/div>(<div class="t-sub">)/,(m,a,b)=>a+vfmtPick(w.fmt).replace(/vdFmt/g,'wFmt')+b);
   const st=VSTYLES.find(s=>s[0]===v.style);
-  const note='<section class="ed-sec vd-meta"><h4>'+ic('vid',15)+' פרטי הסרטון</h4><div class="vm-rows"><span>מטרה</span><b>'+VGOALS.find(g=>g[0]===v.goal)[1]+'</b><span>קהל יעד</span><b>'+esc([...v.audQ,v.aud].filter(Boolean).join(', '))+'</b><span>סגנון</span><b>'+st[1]+'</b></div></section>';
+  const note='<section class="ed-sec vd-meta"><h4>'+ic('vid',15)+' פרטי הסרטון</h4><div class="vm-rows"><span>סוג</span><b>'+((VGOALS.find(g=>g[0]===v.goal)||[0,''])[1])+'</b><span>קהל יעד</span><b>'+esc([...v.audQ,v.aud].filter(Boolean).join(', '))+'</b><span>סגנון</span><b>'+st[1]+'</b></div></section>';
   h=h.replace(' לבריף</button>',' לסגנון הסרטון</button>').replace(' גודל הפוסט</h4>',' גודל הסרטון</h4>');
   return h.replace('<div class="studio-ed">','<div class="studio-ed">'+note);};
 const _wizBack9=ACT.wizBack;

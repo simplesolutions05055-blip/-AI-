@@ -373,7 +373,8 @@ ${brief}
       }
       if (mode === 'vvoice') {
         if (!voices.some((v) => v.id === p.voiceId) && !VOICES.some((v) => v.id === p.voiceId)) return json(req, { error: 'unknown_voice' }, 400);
-        const clips = await voiceScenes(database, CUR.org ?? '', String(p.voiceId), (p.says ?? []) as string[]);
+        const stab = p.stab == null ? undefined : Math.max(0, Math.min(1, +p.stab || 0.5));
+        const clips = await voiceScenes(database, CUR.org ?? '', String(p.voiceId), (p.says ?? []) as string[], stab);
         return json(req, { ok: true, clips });
       }
       const imgs = await fileBlocks(((p.media ?? []) as any[]).filter((m) => !m.v).map((m) => ({ url: m.url, name: m.name || m.url })));
@@ -382,7 +383,7 @@ ${brief}
     }
     if (mode === 'vsample') {
       const text = String(p.text || 'שלום, אני הקול של PrimeOS. ביום חמישי הקרוב מחכה לכם פסטיבל הסתיו בפארק העירוני, עם הופעות, אוכל ופינת ילדים. נתראה שם!').slice(0, 300);
-      const [clip] = await voiceScenes(database, CUR.org ?? 'samples', String(p.voiceId), [text]);
+      const [clip] = await voiceScenes(database, CUR.org ?? 'samples', String(p.voiceId), [text], p.stab == null ? undefined : +p.stab);
       return json(req, { ok: true, src: clip?.src, sec: clip?.sec, model: clip?.model, words: clip?.words?.length ?? 0 });
     }
     if (mode === 'vapprove') {

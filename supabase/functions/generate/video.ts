@@ -36,12 +36,39 @@ export function voicesFor(c = caps(), approved?: string[]) {
   return approved?.length ? ok.filter((v) => approved.includes(v.id)) : ok;
 }
 
+// ---- video kinds: each one sets the voice delivery, music, pace and visual grammar ----
+// tags: ElevenLabs audio tags the director may put in front of a narration line (v3/v4 read them as direction, not words)
+// stab: voice stability (low = more expressive and varied, high = steady and even)
+export const KINDS: Record<string, { he: string; brief: string; voice: string; tags: string[]; stab: number; music: string; edit: string; avoid: string }> = {
+  official: { he: 'רשמי', brief: 'הודעה רשמית, עדכון או הנחיה לתושבים', voice: 'סמכותי, רגוע וברור, קצב מדוד, בלי התלהבות', tags: ['calm', 'confident', 'serious', 'clearly'], stab: 0.7,
+    music: 'עדינה וברקע, פסנתר או אמביינט מקצועי, בלי מקצב בולט', edit: 'מעברים נקיים (fade, push, slide), סגנונות headline / lowerThird / list / typewriter / stat, כתוביות clean, אפקטים מינימליים', avoid: 'neon, pop, flash, whip, particles, שפה שיווקית' },
+  marketing: { he: 'שיווקי', brief: 'מניע לפעולה: הרשמה, רכישה, השתתפות', voice: 'אנרגטי, משכנע ובטוח, מדגיש את התועלת ואת הקריאה לפעולה', tags: ['excited', 'confident', 'inviting', 'energetic'], stab: 0.4,
+    music: 'קצבית ומודרנית, בונה אנרגיה לקראת הקריאה לפעולה', edit: 'חיתוכים מהירים, flash / whip / zoom / slide, סגנונות pop / box / stamp / split, כתוביות pop', avoid: 'קצב איטי, טקסט ארוך' },
+  event: { he: 'אירוע', brief: 'הזמנה לאירוע, פסטיבל או מופע', voice: 'חגיגי, שמח ומזמין, כמו הזמנה אישית', tags: ['excited', 'cheerful', 'warmly', 'inviting'], stab: 0.35,
+    music: 'שמחה וחגיגית, מתאימה לאופי האירוע, שיא בסיום', edit: 'קצב ער, whip / zoom / slide / flash, stamp לתאריך, typewriter למקום ושעה, particles / shapes', avoid: 'אווירה כבדה' },
+  showcase: { he: 'ראווה', brief: 'מציג עשייה, הישגים ואווירה', voice: 'גאה, מעורר השראה וחם', tags: ['proud', 'warmly', 'confident', 'inspired'], stab: 0.5,
+    music: 'מעוררת השראה, בנייה הדרגתית, מיתרים או אלקטרוני רך', edit: 'תנועות מצלמה רחבות, fade / push / iris, stat להישגים, cinematic לרגעי שיא, lightLeak', avoid: 'עומס טקסט' },
+  greeting: { he: 'ברכה וחג', brief: 'ברכה לחג, למועד או לציון דרך', voice: 'חם, אישי ולבבי, חיוך בקול', tags: ['warmly', 'softly', 'cheerful', 'gently'], stab: 0.45,
+    music: 'חמה ומשפחתית, בהשראת אופי החג', edit: 'רך וזורם, fade / iris / push, quote / cinematic / headline, bokeh / lightLeak', avoid: 'מכירה, פרטים טכניים' },
+  memorial: { he: 'ממלכתי וזיכרון', brief: 'יום זיכרון, טקס או הודעת אבל', voice: 'שקט, מכובד ואיטי, עם הפסקות, בלי שום התלהבות', tags: ['solemnly', 'softly', 'slowly', 'quietly'], stab: 0.8,
+    music: 'פסנתר או מיתרים שקטים מאוד, או בלי מוזיקה', edit: 'איטי, fade בלבד, סצנות ארוכות, cinematic / quote / headline, צבעים מאופקים, letterbox / grain עדין', avoid: 'pop, neon, stamp, flash, whip, zoom, particles, shapes, צבעים צעקניים, סימני קריאה' },
+};
+export const kindOf = (g: unknown) => KINDS[String(g)] ? String(g) : 'marketing';
+const ALL_TAGS = [...new Set(Object.values(KINDS).flatMap((k) => k.tags))];
+// keeps only known direction tags, at most 2 per line; anything else in brackets is dropped so it is never spoken
+export function cleanSay(t: string) {
+  let n = 0;
+  return String(t ?? '').replace(/\[([^\]]{0,30})\]/g, (_, x) => { const k = String(x).trim().toLowerCase(); return ALL_TAGS.includes(k) && n++ < 2 ? `[${k}]` : ''; }).replace(/\s{2,}/g, ' ').trim();
+}
+const untag = (t: string) => String(t ?? '').replace(/\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+
 export const TEXT_STYLES = ['headline', 'pop', 'box', 'typewriter', 'stamp', 'lowerThird', 'stat', 'quote', 'list', 'cinematic', 'outline', 'split', 'neon'];
 const FONTS = ['Heebo', 'Rubik', 'Assistant', 'Secular One', 'Suez One', 'Karantina', 'Varela Round', 'Amatic SC', 'Bellefair', 'IBM Plex Sans Hebrew'];
 
 // ---- the director: deep read of the request -> brief for approval + full scene plan ----
 export function directorPrompt(p: Record<string, any>, c: ReturnType<typeof caps>, voices: Voice[]) {
   const dur = Math.max(10, Math.min(90, Math.round(+p.duration || 30)));
+  const K = KINDS[kindOf(p.goal)];
   const uploads = ((p.media ?? []) as any[]).map((m, i) => `upload:${i} = ${m.v ? 'קטע וידאו' : 'תמונה'} "${m.name ?? ''}"`).join('\n');
   const src: string[] = [];
   if (p.style === 'existing') src.push('"clip:<שנייה בסרטון המקורי>" - קטע מהסרטון שהמשתמש העלה, מתחיל בשנייה שתבחר (סרטון המקור באורך ' + (p.clipSec || 'לא ידוע') + ' שניות)');
@@ -53,7 +80,7 @@ export function directorPrompt(p: Record<string, any>, c: ReturnType<typeof caps
   const user = `בקשת הסרטון:
 שם: ${p.title || ''}
 תיאור: ${p.desc || ''}
-מטרה: ${p.goal === 'marketing' ? 'שיווקי - להניע לפעולה' : p.goal === 'showcase' ? 'ראווה - להציג עשייה ואווירה' : p.goal || ''}
+סוג הסרטון: ${K.he} - ${K.brief}
 קהל יעד: ${p.aud || 'כלל התושבים'}
 פורמט: ${p.format || '9x16'}
 אורך מבוקש: ${dur} שניות (כולל כרטיס סיום של כ-3 שניות)
@@ -76,7 +103,7 @@ headline - כותרת גדולה, מילים עולות אחת אחרי השני
 ${p.voice !== false ? `קולות זמינים (id | שם | מין | אופי):\n${vlist || '(אין ספק קריינות מחובר - כתוב את הקריינות בכל זאת)'}` : ''}
 
 החזר JSON בלבד במבנה:
-{"brief":{"idea":"הקונספט במשפט אחד","style":"שם הסגנון בשתיים-שלוש מילים","look":"השפה החזותית: צבעים, טיפוגרפיה, תנועה ואפקטים - 1-2 משפטים","pace":"קצב העריכה ולמה","music":"איזו מוזיקה ולמה, בעברית","voiceWhy":"למה הקול שנבחר מתאים"},
+{"brief":{"idea":"הקונספט במשפט אחד","style":"שם הסגנון בשתיים-שלוש מילים","look":"השפה החזותית: צבעים, טיפוגרפיה, תנועה ואפקטים - 1-2 משפטים","pace":"קצב העריכה ולמה","music":"איזו מוזיקה ולמה, בעברית","voiceWhy":"למה הקול שנבחר מתאים","delivery":"איך הקריינות נשמעת: טון, רגש וקצב, במשפט אחד"},
 "mood":"energetic|emotional|informative|festive|solemn|calm|luxury",
 "voice":"id של קול מהרשימה או ריק",
 "musicPrompt":"English prompt for an instrumental track: genre, instruments, tempo BPM, energy curve, no vocals",
@@ -92,7 +119,13 @@ ${p.voice !== false ? `קולות זמינים (id | שם | מין | אופי):\
 - כל סצנה שונה מקודמתה בסגנון הטקסט או במעבר. סגנון אחד לא יותר מפעמיים ברצף. בחר סגנונות שמתאימים לתוכן ולא את כולם.
 - המעברים לפי האופי: אנרגטי - flash, whip, zoom, slide; רגשי/רשמי - fade, iris, push איטי. עקביות בתוך הסרטון.
 - טקסט על המסך קצר: עד 6 מילים בשורה, עד 3 שורות. אסור לשכפל את הקריינות למסך.
-${p.voice !== false ? '- say: עברית מדוברת וטבעית, לכל היותר dur*2.2 מילים לסצנה. הוסף ניקוד רק למילים שהקריין עלול לקרוא לא נכון (למשל: ספר/סֵפֶר, עיר שמות). מספרים ותאריכים במילים. אפשר say ריק בסצנה שקטה.' : '- say ריק בכל הסצנות.'}
+- הסרטון מסוג "${K.he}". הכל נגזר מזה:
+  קריינות: ${K.voice}.
+  מוזיקה: ${K.music}.
+  עריכה: ${K.edit}.
+  להימנע: ${K.avoid}.
+${p.voice !== false ? `- רגש בקריינות: אפשר לפתוח שורת say בתג כיוון אחד באנגלית בסוגריים מרובעים, רק מהרשימה: ${K.tags.map((t) => '[' + t + ']').join(' ')}. התג משנה את הטון ולא נקרא בקול. בחר תג לפי הרגש של כל סצנה, ושנה בין סצנות כשהרגש משתנה. בלי תגים אחרים.
+` : ''}${p.voice !== false ? '- say: עברית מדוברת וטבעית, לכל היותר dur*2.2 מילים לסצנה. הוסף ניקוד רק למילים שהקריין עלול לקרוא לא נכון (למשל: ספר/סֵפֶר, עיר שמות). מספרים ותאריכים במילים. אפשר say ריק בסצנה שקטה.' : '- say ריק בכל הסצנות.'}
 - סצנה ראשונה תופסת תשומת לב בשנייה הראשונה.
 - רק פרטים שמופיעים בבקשה או בקבצים. אסור להמציא תאריכים, מקומות, מספרים או שמות.
 - מקף רגיל בלבד.`;
@@ -108,7 +141,7 @@ const strip = (s: string) => s.replace(/[\u0591-\u05C7]/g, '');
 export function sanitizeBrief(j: any, p: Record<string, any>, voices: Voice[]) {
   const scenes = (Array.isArray(j.scenes) ? j.scenes : []).slice(0, 30).map((s: any) => ({
     dur: Math.max(1.2, Math.min(8, +s.dur || 3)),
-    say: p.voice === false ? '' : String(s.say ?? '').slice(0, 300),
+    say: p.voice === false ? '' : cleanSay(String(s.say ?? '').slice(0, 300)),
     visual: { src: String(s.visual?.src ?? 'gradient').slice(0, 400), motion: s.visual?.motion, tint: s.visual?.tint },
     text: s.text && Array.isArray(s.text.lines) ? { ...s.text, style: TEXT_STYLES.includes(s.text.style) ? s.text.style : 'headline' } : undefined,
     transition: s.transition,
@@ -120,6 +153,8 @@ export function sanitizeBrief(j: any, p: Record<string, any>, voices: Voice[]) {
     brief: j.brief ?? {},
     mood: j.mood,
     voice: p.voice === false ? null : voice ? { id: voice.id, n: voice.n, g: voice.g, tone: voice.tone } : null,
+    kind: kindOf(p.goal),
+    stab: KINDS[kindOf(p.goal)].stab,
     musicPrompt: p.music === false ? '' : String(j.musicPrompt ?? '').slice(0, 600),
     font: { head: FONTS.includes(j.font?.head) ? j.font.head : 'Heebo', body: FONTS.includes(j.font?.body) ? j.font.body : 'Assistant' },
     fx: Array.isArray(j.fx) ? j.fx.slice(0, 2) : [],
@@ -168,7 +203,7 @@ export function mp3Seconds(b: Uint8Array) {
 
 // words spread over the clip by length when the provider gives no timings
 function spread(text: string, start: number, end: number) {
-  const ws = strip(text).split(/\s+/).filter(Boolean);
+  const ws = strip(untag(text)).split(/\s+/).filter(Boolean);
   const tot = ws.reduce((a, w) => a + w.length + 1, 0) || 1;
   let t = start;
   return ws.map((w) => { const d = ((w.length + 1) / tot) * (end - start); const o = { w, s: +t.toFixed(2), e: +(t + d).toFixed(2) }; t += d; return o; });
@@ -177,8 +212,11 @@ function spread(text: string, start: number, end: number) {
 function fromChars(text: string, a: any) {
   const ch: string[] = a?.characters ?? [], st: number[] = a?.character_start_times_seconds ?? [], en: number[] = a?.character_end_times_seconds ?? [];
   const out: { w: string; s: number; e: number }[] = [];
-  let cur = '', s0 = 0, e0 = 0;
+  let cur = '', s0 = 0, e0 = 0, inTag = false;
   ch.forEach((c, i) => {
+    // direction tags are not spoken: never shown as caption words
+    if (c === '[') { inTag = true; return; }
+    if (inTag) { if (c === ']') inTag = false; return; }
     if (/\s/.test(c)) { if (cur) out.push({ w: strip(cur), s: s0, e: e0 }); cur = ''; return; }
     if (!cur) s0 = st[i] ?? e0;
     cur += c; e0 = en[i] ?? s0;
@@ -188,16 +226,24 @@ function fromChars(text: string, a: any) {
 }
 
 // Eleven v4 first (Hebrew, most natural), v3 as fallback; timestamps when the model returns them
-async function ttsEleven(id: string, text: string) {
+async function ttsEleven(id: string, text: string, stab?: number) {
   const key = env('ELEVENLABS_API_KEY');
   const models = [...new Set([env('ELEVENLABS_MODEL') || 'eleven_v4', 'eleven_v4', 'eleven_v3'])];
+  // v3 accepts only 0 / 0.5 / 1 for stability; v4 takes the full range
+  const vs = (model: string) => (stab == null ? undefined : { stability: model === 'eleven_v3' ? (stab < 0.35 ? 0 : stab > 0.7 ? 1 : 0.5) : Math.max(0, Math.min(1, stab)), similarity_boost: 0.8 });
+  let plain = false; // set when the provider rejects voice settings: retry without them
   const once = (path: string, model: string) => fetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}${path}?output_format=mp3_44100_128`, {
     method: 'POST', headers: { 'xi-api-key': key, 'content-type': 'application/json' },
-    body: JSON.stringify({ text, model_id: model, language_code: 'he' }),
+    body: JSON.stringify({ text, model_id: model, language_code: 'he', ...(plain || !vs(model) ? {} : { voice_settings: vs(model) }) }),
   });
   // 429 = too many concurrent requests on the plan: wait and retry
   const call = async (path: string, model: string) => {
-    for (let k = 0; ; k++) { const r = await once(path, model); if (r.status !== 429 || k >= 4) return r; await wait(1500 * (k + 1)); }
+    for (let k = 0; ; k++) {
+      const r = await once(path, model);
+      if ((r.status === 400 || r.status === 422) && !plain && stab != null) { plain = true; continue; }
+      if (r.status !== 429 || k >= 4) return r;
+      await wait(1500 * (k + 1));
+    }
   };
   for (const model of models) {
     const r = await call('/with-timestamps', model);
@@ -210,7 +256,7 @@ async function ttsEleven(id: string, text: string) {
 async function ttsGoogle(name: string, text: string) {
   const r = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${env('GOOGLE_TTS_API_KEY')}`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ input: { text }, voice: { languageCode: 'he-IL', name }, audioConfig: { audioEncoding: 'MP3', sampleRateHertz: 44100 } }),
+    body: JSON.stringify({ input: { text: untag(text) }, voice: { languageCode: 'he-IL', name }, audioConfig: { audioEncoding: 'MP3', sampleRateHertz: 44100 } }),
   });
   if (!r.ok) throw new Error('tts_failed');
   const j = await r.json();
@@ -218,16 +264,16 @@ async function ttsGoogle(name: string, text: string) {
 }
 
 // one clip per scene: the scene lasts at least as long as its narration
-export async function voiceScenes(d: any, org: string, voiceId: string, says: string[]) {
+export async function voiceScenes(d: any, org: string, voiceId: string, says: string[], stab?: number) {
   const v = VOICES.find((x) => x.id === voiceId);
   if (!v) throw new Error('unknown_voice');
   if (v.eng === 'eleven' ? !env('ELEVENLABS_API_KEY') : !env('GOOGLE_TTS_API_KEY')) throw new Error('voice_not_configured');
   const raw = v.id.slice(2);
   return await pool(says.slice(0, 30), 2, async (t) => {
-    const text = String(t ?? '').trim().slice(0, 400);
-    if (!text) return null;
-    const a = v.eng === 'eleven' ? await ttsEleven(raw, text) : await ttsGoogle(raw, text);
-    const sec = mp3Seconds(a.bytes) || text.split(/\s+/).length / 2.4;
+    const text = cleanSay(String(t ?? '').slice(0, 400));
+    if (!untag(text)) return null;
+    const a = v.eng === 'eleven' ? await ttsEleven(raw, text, stab) : await ttsGoogle(raw, text);
+    const sec = mp3Seconds(a.bytes) || untag(text).split(/\s+/).length / 2.4;
     return { src: await store(d, org, a.bytes, 'mp3', 'audio/mpeg'), sec: +sec.toFixed(2), words: a.words(sec), model: (a as { model?: string }).model ?? 'google' };
   });
 }
