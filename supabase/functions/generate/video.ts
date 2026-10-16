@@ -139,6 +139,14 @@ async function store(d: any, org: string, bytes: Uint8Array, ext: string, type: 
   return d.storage.from('v2-content').getPublicUrl(path).data.publicUrl as string;
 }
 const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// runs fn over items with at most n in flight (provider concurrency limits, edge memory)
+async function pool<T, R>(items: T[], n: number, fn: (x: T, i: number) => Promise<R>) {
+  const out: R[] = new Array(items.length);
+  let at = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (at < items.length) { const i = at++; out[i] = await fn(items[i], i); } }));
+  return out;
+}
 
 // MP3 length from frame headers (CBR or VBR), no decoder needed
 export function mp3Seconds(b: Uint8Array) {
@@ -183,10 +191,14 @@ function fromChars(text: string, a: any) {
 async function ttsEleven(id: string, text: string) {
   const key = env('ELEVENLABS_API_KEY');
   const models = [...new Set([env('ELEVENLABS_MODEL') || 'eleven_v4', 'eleven_v4', 'eleven_v3'])];
-  const call = (path: string, model: string) => fetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}${path}?output_format=mp3_44100_128`, {
+  const once = (path: string, model: string) => fetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}${path}?output_format=mp3_44100_128`, {
     method: 'POST', headers: { 'xi-api-key': key, 'content-type': 'application/json' },
     body: JSON.stringify({ text, model_id: model, language_code: 'he' }),
   });
+  // 429 = too many concurrent requests on the plan: wait and retry
+  const call = async (path: string, model: string) => {
+    for (let k = 0; ; k++) { const r = await once(path, model); if (r.status !== 429 || k >= 4) return r; await wait(1500 * (k + 1)); }
+  };
   for (const model of models) {
     const r = await call('/with-timestamps', model);
     if (r.ok) { const j = await r.json(); return { model, bytes: b64(j.audio_base64), words: (sec: number) => (j.alignment ? fromChars(text, j.alignment) : spread(text, 0.05, sec - 0.05)) }; }
@@ -211,13 +223,13 @@ export async function voiceScenes(d: any, org: string, voiceId: string, says: st
   if (!v) throw new Error('unknown_voice');
   if (v.eng === 'eleven' ? !env('ELEVENLABS_API_KEY') : !env('GOOGLE_TTS_API_KEY')) throw new Error('voice_not_configured');
   const raw = v.id.slice(2);
-  return await Promise.all(says.slice(0, 30).map(async (t) => {
+  return await pool(says.slice(0, 30), 2, async (t) => {
     const text = String(t ?? '').trim().slice(0, 400);
     if (!text) return null;
     const a = v.eng === 'eleven' ? await ttsEleven(raw, text) : await ttsGoogle(raw, text);
     const sec = mp3Seconds(a.bytes) || text.split(/\s+/).length / 2.4;
     return { src: await store(d, org, a.bytes, 'mp3', 'audio/mpeg'), sec: +sec.toFixed(2), words: a.words(sec), model: (a as { model?: string }).model ?? 'google' };
-  }));
+  });
 }
 
 export async function musicTrack(d: any, org: string, prompt: string, seconds: number) {
@@ -243,10 +255,10 @@ export async function stock(d: any, org: string, queries: { q: string; v?: boole
     const r = await fetch(url);
     if (!r.ok) return null;
     const b = new Uint8Array(await r.arrayBuffer());
-    if (b.length > 40_000_000) return null;
+    if (b.length > 26_000_000) return null;
     return await store(d, org, b, video ? 'mp4' : 'jpg', video ? 'video/mp4' : 'image/jpeg');
   };
-  return await Promise.all(queries.slice(0, 20).map(async ({ q, v }) => {
+  return await pool(queries.slice(0, 20), 1, async ({ q, v }) => {
     try {
       if (pix) {
         const url = v
@@ -256,7 +268,9 @@ export async function stock(d: any, org: string, queries: { q: string; v?: boole
         if (r.ok) {
           const j = await r.json();
           for (const x of j.hits ?? []) {
-            const src = v ? (x.videos?.large?.url || x.videos?.medium?.url) : (x.largeImageURL || x.webformatURL);
+            // biggest rendition that fits the edge memory budget
+            const vf = v ? ['large', 'medium', 'small'].map((k) => x.videos?.[k]).find((f: any) => f?.url && (!f.size || f.size < 24_000_000)) : null;
+            const src = v ? vf?.url : (x.largeImageURL || x.webformatURL);
             if (!src || used.has(src)) continue;
             used.add(src);
             const mine = await copy(src, !!v);
@@ -283,5 +297,5 @@ export async function stock(d: any, org: string, queries: { q: string; v?: boole
       }
       return null;
     } catch { return null; }
-  }));
+  });
 }
