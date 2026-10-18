@@ -391,7 +391,7 @@
     if (d.state && !d.state.fresh) hydrateClient(d.state);
     if (d.items && d.items.length) items = d.items.map((r) => r.ui).sort((a, b) => b.id - a.id);
     else if (!L.demo || !fresh) items = [];
-    S.seq = items.reduce((m, i) => Math.max(m, +i.id || 0), 100);
+    S.seq = items.reduce((m, i) => Math.max(m, (+i.id || 0) < 2e9 ? +i.id || 0 : 0), 100); // ids from 2e9 up are made by the server (WhatsApp bot)
     S.org = L.org.name;
     if (Array.isArray(d.members) && d.members.length && L.applyMembers) L.applyMembers(d.members);
     if (L.memberSlices) L.memberSlices(d.state && !d.state.fresh ? d.state : null);
@@ -411,6 +411,8 @@
     startSync();
     L.ready = true;
     if (L.pubBoot) L.pubBoot();
+    // event videos still rendering on the server: follow them so the cards fill in when ready
+    if (L.evResumeAll) setTimeout(L.evResumeAll, 1200);
   }
   async function bootAdmin() {
     const d = await call('admin.load');
@@ -3657,13 +3659,59 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         const v = (prev && prev.vmeta && o.change) ? JSON.parse(JSON.stringify(prev.vmeta)) : { name: o.name, desc: o.desc, goal: o.goal, aud: '', audQ: [], fmt: '9:16', ch: [...e.ch], style: 'ai', clip: null, imgs: o.imgs, dur: o.dur, voice: true, music: true, voiceId: 'auto', dept: e.dept };
         const b = await genLong(briefReq(v, o.change));
         v.brief = b;
-        const out = await produceV(v, b, (x, t) => { m.pct = x; m.busy = t; evRedraw(e); }, { sting: { logo: e.logo && e.logo.url, motion: e.sting.style, bg: stingBg(e) } });
-        holder[key] = { kind: 'video', eng: 'v3', url: out.url, thumb: out.thumb, ready: true, fmt: '9:16', ar: '9/16', vmeta: slimV(v), cta: (b.outro && b.outro.cta) || '' };
-        if (!out.thumb) window.__vPoster(out.url);
-        if (o.done) o.done();
-        toast('הסרטון מוכן', o.name);
+        // the render runs on the server: the window can close, the card picks the job up again on return
+        const sting = { logo: e.logo && e.logo.url, motion: e.sting.style, bg: stingBg(e) };
+        const j = await call('job.create', { brief: b, title: o.name, desc: o.desc, goal: o.goal, dur: o.dur, imgs: o.imgs, dept: e.dept, outro: { sting } });
+        Object.assign(m, { job: j.id, busy: 'מכינים תמונות, קריינות ומוזיקה', pct: 0.08, vmeta: slimV(v), cta: (b.outro && b.outro.cta) || '', name: o.name });
+        evSave();
+        await evWatch(e, holder, key, o.done);
+        return;
       } catch (err) { holder[key] = prev && prev.url ? prev : Object.assign(m, { busy: '', err: true }); toast('הסרטון לא נוצר', o.name + '. אפשר לנסות שוב מהכרטיס.', 'err'); }
       evRedraw(e);
+    }
+    // follows a server video job until the file is ready (also after a reload: the job id is saved on the card)
+    const evWatching = {};
+    const evSave = () => setTimeout(flush, 300); // the sync engine saves events with the organisation state
+    async function evWatch(e, holder, key, done) {
+      const m = holder[key];
+      if (!m || !m.job || evWatching[m.job]) return;
+      evWatching[m.job] = true;
+      try {
+        for (let n = 0; n < 200; n++) {
+          await new Promise((r) => setTimeout(r, n ? 8000 : 2500));
+          let r;
+          try { r = await call('job.get', { id: m.job }); } catch (x) { continue; }
+          if (holder[key] !== m) return; // replaced meanwhile
+          if (r.state === 'done' && r.result && r.result.url) {
+            holder[key] = { kind: 'video', eng: 'v3', url: r.result.url, thumb: r.result.thumb || '', ready: true, fmt: '9:16', ar: '9/16', vmeta: m.vmeta, cta: m.cta || '' };
+            if (!r.result.thumb) window.__vPoster(r.result.url);
+            if (done) done(); else evSyncAll(e);
+            evSave();
+            toast('הסרטון מוכן', m.name || e.name);
+            evRedraw(e);
+            return;
+          }
+          if (r.state === 'error' || r.state === 'missing') throw new Error('job_' + r.state);
+          m.pct = Math.max(m.pct || 0, r.progress || 0);
+          m.busy = r.step === 'status' || r.step === 'start' ? 'מרנדרים את הסרטון' : 'מכינים תמונות, קריינות ומוזיקה';
+          evRedraw(e);
+        }
+        throw new Error('job_timeout');
+      } catch (err) {
+        if (holder[key] === m) { Object.assign(m, { busy: '', err: true }); evSave(); toast('הסרטון לא נוצר', (m.name || e.name) + '. אפשר לנסות שוב מהכרטיס.', 'err'); evRedraw(e); }
+      } finally { delete evWatching[m.job]; }
+    }
+    L.evResumeAll = () => (S.events || []).forEach((e) => evResume(e));
+    function evSyncAll(e) {
+      (e.posts || []).forEach((p) => evSyncItem(p));
+      const a = e.after;
+      if (a && a.vItem && a.vm && a.vm.url) { const it = itemById(a.vItem); if (it) it.media = JSON.parse(JSON.stringify(a.vm)); }
+    }
+    // cards still rendering on the server when the screen opens are followed again
+    function evResume(e) {
+      if (!e) return;
+      (e.posts || []).forEach((p) => { if (p.mv && p.mv.job && p.mv.busy) evWatch(e, p, 'mv'); });
+      if (e.after && e.after.vm && e.after.vm.job && e.after.vm.busy) evWatch(e, e.after, 'vm');
     }
     function evPostVideo(e, p, change) {
       return evVideo(e, p, 'mv', {
@@ -3698,6 +3746,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     SCREENS.eventKit.render = function () {
       const e = S.ev;
       if (e && e.st === 'scheduled' && evDays(e) < 0) e.st = 'after';
+      evResume(e);
       let h = _evR.call(this);
       if (!e) return h;
       const tile = (m) => m && m.url ? (m.v ? ' ev-vid" style="background:#0A2C51' : ' has-real" style="background-image:url(\'' + esc(m.url) + '\')') : '';
@@ -3833,7 +3882,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     (function fixBusy() {
       if (!L.ready) { setTimeout(fixBusy, 700); return; }
       (S.events || []).forEach((e) => {
-        const mark = (m) => { if (m && m.busy) { m.busy = ''; m.err = true; } };
+        // work that lived in the closed window is lost; a server job keeps going and is followed again
+        const mark = (m) => { if (m && m.busy && !m.job) { m.busy = ''; m.err = true; } };
         (e.posts || []).forEach((p) => { mark(p.mg); mark(p.mv); });
         if (e.after) mark(e.after.vm);
       });
@@ -3847,5 +3897,79 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .ev-prog i{display:block;width:80%;height:5px;border-radius:9px;background:#fff;overflow:hidden}.ev-prog i u{display:block;height:100%;background:var(--brand,#0E3B6B);text-decoration:none}
 .raw.has-real,.raw.ev-vid{background-size:cover;background-position:center;color:#fff}
 .st-logo img{width:78%;height:78%;object-fit:contain}`;
+  })();
+
+  /* =================== WhatsApp requests: the real conversations of the bot =================== */
+  (function () {
+    if (!SCREENS.whatsapp) return;
+    // back in the menu now that it shows the bot's real requests (under "ערוצים")
+    const addNav = (list, after) => { if (list && !list.includes('whatsapp')) { const i = list.indexOf(after); list.splice(i >= 0 ? i + 1 : list.length - 2, 0, 'whatsapp'); } };
+    addNav(NAV_V.ext, 'insights'); addNav(NAV_V.basic, 'insights'); addNav(NAV_V.dept, 'channels');
+    const W = { list: [], at: 0, busy: false, sel: null };
+    const ago = (iso) => {
+      const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+      if (s < 90) return 'עכשיו';
+      if (s < 3600) return 'לפני ' + Math.round(s / 60) + ' דקות';
+      if (s < 86400) return 'לפני ' + Math.round(s / 3600) + ' שעות';
+      const d = new Date(iso);
+      return d.getDate() + '.' + (d.getMonth() + 1) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    };
+    async function waLoad(force) {
+      if (W.busy || (!force && Date.now() - W.at < 20000)) return;
+      W.busy = true;
+      try { const r = await call('wa.list'); W.list = r.requests || []; W.at = Date.now(); } catch (e) { W.at = Date.now(); }
+      W.busy = false;
+      if (S.route === 'whatsapp') render();
+    }
+    const stCls = { 'בעבודה': 's-draft', 'ממתין לאישור בריף': 's-pending', 'נכשל': 's-pending', 'טיוטה נוצרה': 's-scheduled', 'ממתין לאישור': 's-pending', 'תוזמן': 's-scheduled', 'פורסם': 's-published' };
+    const _r = SCREENS.whatsapp.render;
+    SCREENS.whatsapp.nav.count = () => (L.demo ? waRequests.filter((r) => r.st === 'חדש').length : W.list.filter((r) => r.st === 'ממתין לאישור בריף' || r.st === 'ממתין לאישור').length);
+    SCREENS.whatsapp.render = function () {
+      if (L.demo) return _r.call(this);
+      waLoad(false);
+      const head = pageHead({ title: 'בקשות WhatsApp', desc: 'בקשות שהגיעו לבוט ב-WhatsApp: גרפיקות, סרטונים ותזמונים. כל משתמש שהטלפון שלו רשום במערכת יכול לכתוב לבוט.' });
+      if (!W.at) return head + '<div class="card card-pad" style="display:flex;gap:10px;align-items:center"><span class="gm-spin"></span> טוען את הבקשות...</div>';
+      if (!W.list.length) return head + '<div class="card card-pad" style="display:flex;flex-direction:column;gap:8px"><b>עוד אין בקשות מהבוט</b><span style="color:var(--ink-3)">משתמשים כותבים למספר הבוט, 050-646-7554, מהטלפון הרשום אצלם במערכת. הטלפון של כל משתמש נקבע במסך המשתמשים.</span></div>';
+      const sel = W.list.find((r) => r.id === W.sel) || W.list[0];
+      const it = sel.ui != null ? itemById(sel.ui) : null;
+      const prev = sel.url ? (sel.kind === 'video'
+        ? '<video src="' + esc(sel.url) + '" controls playsinline preload="metadata" style="width:100%;max-height:360px;border-radius:12px;background:#0A2C51"></video>'
+        : '<img src="' + esc(sel.url) + '" alt="" style="width:100%;border-radius:12px;display:block">') : '';
+      return head +
+        '<div style="display:grid;grid-template-columns:300px 1fr 300px;gap:16px;align-items:start" class="wa-grid">' +
+          '<div class="card"><div class="card-head"><h3>בקשות</h3><span class="chip" style="margin-inline-start:auto">' + W.list.length + '</span>' +
+            '<button class="icon-btn" data-act="waRefresh" title="רענון">' + ic('refresh', 15) + '</button></div>' +
+            '<div class="row-list">' + W.list.map((r) =>
+              '<button class="rowi" style="width:100%;text-align:start;border:none;background:' + (r.id === sel.id ? 'var(--brand-100)' : 'transparent') + '" data-act="waSel:' + r.id + '">' +
+              '<span class="ic-box">' + ic(r.voice ? 'mic' : r.kind === 'video' ? 'play' : 'msg', 16) + '</span>' +
+              '<span class="grow" style="min-width:0"><span class="nm">' + esc(r.from || 'משתמש') + '</span><br><span class="mt">' + esc((r.kind === 'video' ? 'סרטון' : 'גרפיקה') + (r.dept ? ' · ' + r.dept : '') + ' · ' + ago(r.at)) + '</span></span>' +
+              '<span class="badge ' + (stCls[r.st] || 's-draft') + '" style="height:20px;font-size:11.5px">' + esc(r.st) + '</span></button>').join('') +
+            '</div></div>' +
+          '<div class="card" style="min-width:0"><div class="card-head">' + ic('msg', 17) + '<h3>' + esc(sel.title || (sel.kind === 'video' ? 'סרטון' : 'גרפיקה')) + '</h3>' +
+            '<span class="badge ' + (stCls[sel.st] || 's-draft') + '" style="margin-inline-start:auto">' + esc(sel.st) + '</span></div>' +
+            '<div style="padding:18px;display:flex;flex-direction:column;gap:10px;max-height:520px;overflow:auto">' +
+              (sel.conv.length ? sel.conv.map((m) => '<div class="msg ' + (m.dir === 'in' ? 'in' : 'out') + '" style="white-space:pre-wrap">' + (m.media && !m.body ? '<span style="color:var(--ink-3)">' + ic('mic', 13) + ' קובץ מצורף</span>' : esc(m.body)) + '</div>').join('')
+                : '<div class="msg in" style="white-space:pre-wrap">' + esc(sel.text) + '</div>') +
+            '</div>' +
+            '<div style="padding:14px 18px;border-top:1px solid var(--line-2);display:flex;gap:8px;flex-wrap:wrap">' +
+              (it ? '<button class="btn btn-primary" data-act="open:' + it.id + '">' + ic('eye', 16) + ' פתיחת הפריט במערכת</button>' : '') +
+              (sel.st === 'נכשל' ? '<button class="btn" data-act="waRetry:' + sel.id + '">' + ic('refresh', 16) + ' ניסיון חוזר</button>' : '') +
+            '</div></div>' +
+          '<div class="card" style="min-width:0"><div class="card-head"><h3>פרטים</h3></div>' +
+            (prev ? '<div style="padding:14px 14px 0">' + prev + '</div>' : '') +
+            '<div class="card-pad kv">' +
+            [['שולח', sel.from], ['מחלקה', sel.dept || '-'], ['טלפון', sel.ph || '-'], ['סוג', sel.kind === 'video' ? 'סרטון' : 'גרפיקה'], ['התקבל', ago(sel.at)], ['בקשה', sel.text]]
+              .map((x) => '<div class="r"><span class="k">' + esc(x[0]) + '</span><span class="v" style="white-space:pre-wrap">' + esc(x[1] || '') + '</span></div>').join('') +
+            '</div></div>' +
+        '</div>';
+    };
+    ACT.waSel = (id) => { W.sel = id; render(); };
+    ACT.waRefresh = () => { waLoad(true); toast('מרענן', ''); };
+    ACT.waRetry = async (id) => {
+      try { const r = await call('job.retry', { id }); toast(r.ok ? 'נשלח לניסיון חוזר' : 'הבקשה כבר בטיפול', ''); } catch (e) { toast('הניסיון החוזר נכשל', '', 'err'); }
+      setTimeout(() => waLoad(true), 1500);
+    };
+    // the count in the menu stays fresh while the app is open
+    setInterval(() => { if (L.ready && L.kind === 'client' && !L.demo) waLoad(false); }, 60000);
   })();
 })();

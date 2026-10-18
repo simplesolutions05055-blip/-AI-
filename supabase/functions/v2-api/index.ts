@@ -187,6 +187,78 @@ async function itemsUpsert(d: DB, orgId: string, list: Record<string, any>[]) {
   return { ids: out };
 }
 
+/* ---------------- server jobs (videos made on the server, see smartsend-webhook/jobs.ts) ---------------- */
+async function jobMember(d: DB, orgId: string, memberId: string | null) {
+  if (memberId) return memberId;
+  const { data } = await d.from('org_members').select('id').eq('org_id', orgId).in('role', ['owner', 'admin']).order('created_at').limit(1).maybeSingle();
+  if (!data) throw new Error('no_member');
+  return data.id as string;
+}
+// the browser already has an approved brief; the server renders it, so the window can close
+async function jobCreate(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const b = p.brief;
+  if (!b || !Array.isArray(b.scenes) || !b.scenes.length) throw new Error('bad_brief');
+  const { count } = await d.from('v2_jobs').select('id', { count: 'exact', head: true }).eq('org_id', orgId).eq('src', 'web').gte('created_at', new Date(Date.now() - 86400000).toISOString());
+  if ((count ?? 0) >= 40) throw new Error('daily_jobs');
+  const imgs = (Array.isArray(p.imgs) ? p.imgs : []).filter((m: any) => m && /^https:\/\//.test(String(m.url ?? ''))).slice(0, 12).map((m: any) => ({ url: String(m.url), name: String(m.name ?? '').slice(0, 80), v: !!m.v }));
+  const st = p.outro && p.outro.sting ? p.outro.sting : null;
+  const outro = st ? { sting: { logo: /^https:\/\//.test(String(st.logo ?? '')) ? String(st.logo) : undefined, motion: ['reveal', 'zoom', 'spin'].includes(st.motion) ? st.motion : 'reveal', bg: /^#[0-9a-f]{6}$/i.test(String(st.bg ?? '')) ? st.bg : undefined } } : undefined;
+  const input = { title: String(p.title ?? '').slice(0, 200), desc: String(p.desc ?? '').slice(0, 3000), goal: String(p.goal ?? 'event'), dur: Math.max(10, Math.min(60, +p.dur || 25)), imgs, dept: String(p.dept ?? '').slice(0, 80), outro, auto: true };
+  const { data, error } = await d.from('v2_jobs').insert({ org_id: orgId, member_id: await jobMember(d, orgId, memberId), src: 'web', kind: 'video', step: 'media', input, data: { brief: b } }).select('id').single();
+  if (error) throw error;
+  // wake the runner now instead of at the next cron minute
+  fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/smartsend-webhook?tick=1`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-tick': Deno.env.get('SMARTSEND_WEBHOOK_SECRET') ?? '' }, body: '{}' }).catch(() => {});
+  return { id: data.id };
+}
+async function jobGet(d: DB, orgId: string, id: string) {
+  const { data: j } = await d.from('v2_jobs').select('id,state,step,data,result,error,updated_at').eq('org_id', orgId).eq('id', id).maybeSingle();
+  if (!j) return { state: 'missing' };
+  const pr = j.step === 'media' ? 0.15 : j.step === 'start' ? 0.4 : j.step === 'status' ? 0.42 + 0.56 * (+j.data?.progress || 0) : j.step === 'done' ? 0.99 : 0.05;
+  return { state: j.state, step: j.step, progress: j.state === 'done' ? 1 : pr, result: j.state === 'done' ? j.result : null, error: j.state === 'error' ? 'failed' : null };
+}
+async function jobRetry(d: DB, orgId: string, id: string) {
+  const { data } = await d.from('v2_jobs').update({ state: 'run', pend: {}, tries: 0, error: null, next_at: new Date().toISOString(), lock_until: new Date().toISOString() }).eq('org_id', orgId).eq('id', id).eq('state', 'error').select('id');
+  if (data && data.length) fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/smartsend-webhook?tick=1`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-tick': Deno.env.get('SMARTSEND_WEBHOOK_SECRET') ?? '' }, body: '{}' }).catch(() => {});
+  return { ok: !!(data && data.length) };
+}
+// WhatsApp requests screen: each bot job is one request, with the conversation around it
+async function waList(d: DB, orgId: string, memberId: string | null) {
+  const mine = !isManager(await roleOf(d, memberId));
+  let q = d.from('v2_jobs').select('id,member_id,phone,kind,state,step,input,result,ui_id,created_at,updated_at').eq('org_id', orgId).eq('src', 'wa').order('created_at', { ascending: false }).limit(60);
+  if (mine && memberId) q = q.eq('member_id', memberId);
+  const { data: jobs } = await q;
+  const list = (jobs ?? []).filter((j: any) => !j.input?.dry);
+  if (!list.length) return { requests: [] };
+  const mids = [...new Set(list.map((j: any) => j.member_id))];
+  const { data: mems } = await d.from('org_members').select('id,name,dept,phone').in('id', mids);
+  const mOf = new Map((mems ?? []).map((m: any) => [m.id, m]));
+  const phones = [...new Set(list.map((j: any) => j.phone).filter(Boolean))];
+  const since = list[list.length - 1].created_at;
+  const { data: msgs } = await d.from('v2_wa_msgs').select('phone,dir,body,media,created_at').eq('org_id', orgId).in('phone', phones).gte('created_at', new Date(new Date(since).getTime() - 30 * 60000).toISOString()).order('created_at').limit(1500);
+  const uiIds = list.map((j: any) => j.ui_id).filter((x: any) => x != null);
+  const { data: items } = uiIds.length ? await d.from('content_items').select('ui_id,status,meta').eq('org_id', orgId).in('ui_id', uiIds) : { data: [] };
+  const iOf = new Map((items ?? []).map((r: any) => [Number(r.ui_id), r]));
+  const ST: Record<string, string> = { run: 'בעבודה', await: 'ממתין לאישור בריף', error: 'נכשל' };
+  return {
+    requests: list.map((j: any, i: number) => {
+      const m: any = mOf.get(j.member_id) ?? {};
+      const it: any = j.ui_id != null ? iOf.get(Number(j.ui_id)) : null;
+      const ui = it?.meta?.ui;
+      // the conversation of this request: from a little before it started until the next request of that phone
+      const t0 = new Date(j.created_at).getTime() - 10 * 60000;
+      const next = list.slice(0, i).reverse().find((x: any) => x.phone === j.phone);
+      const t1 = next ? new Date(next.created_at).getTime() - 60000 : Date.now();
+      const conv = (msgs ?? []).filter((x: any) => x.phone === j.phone && new Date(x.created_at).getTime() >= t0 && new Date(x.created_at).getTime() < t1).slice(-30).map((x: any) => ({ dir: x.dir, body: x.body ?? '', media: x.media ? true : false, at: x.created_at }));
+      const st = j.state === 'done' ? (ui && ui.s === 'scheduled' ? 'תוזמן' : ui && ui.s === 'pending' ? 'ממתין לאישור' : ui && ui.s === 'published' ? 'פורסם' : 'טיוטה נוצרה') : ST[j.state] ?? 'בעבודה';
+      return {
+        id: j.id, kind: j.kind, st, from: m.name ?? '', dept: m.dept || j.input?.dept || '', ph: m.phone ?? '',
+        voice: conv.some((x: any) => x.dir === 'in' && x.media), text: j.input?.brief || j.input?.desc || '', title: j.input?.title || '',
+        at: j.created_at, ui: j.ui_id != null ? Number(j.ui_id) : null, url: j.result?.url ?? null, conv,
+      };
+    }),
+  };
+}
+
 /* ---------------- publishing (provider layer in publish.ts) ---------------- */
 const CH_HE: Record<string, string> = { fb: 'פייסבוק', ig: 'אינסטגרם', x: 'X', yt: 'יוטיוב', li: 'לינקדאין', tk: 'טיקטוק', th: 'Threads', gb: 'גוגל לעסקים', tg: 'טלגרם', wa: 'וואטסאפ' };
 const roleOf = async (d: DB, memberId: string | null) => memberId ? (await d.from('org_members').select('role').eq('id', memberId).maybeSingle()).data : null;
@@ -771,6 +843,10 @@ Deno.serve(async (req) => {
       if (action === 'members.update') return json(req, await memberUpdate(d, s.orgId, s.memberId, p));
       if (action === 'state.patch') return json(req, await statePatch(d, s.orgId, s.memberId, p.data ?? {}));
       if (action === 'members.send') return json(req, await memberSend(d, s.orgId, s.memberId, p));
+      if (action === 'job.create') return json(req, await jobCreate(d, s.orgId, s.memberId, p));
+      if (action === 'job.get') return json(req, await jobGet(d, s.orgId, String(p.id ?? '')));
+      if (action === 'job.retry') return json(req, await jobRetry(d, s.orgId, String(p.id ?? '')));
+      if (action === 'wa.list') return json(req, await waList(d, s.orgId, s.memberId));
       if (action === 'ch.list') return json(req, await chList(d, s.orgId, s.memberId));
       if (action === 'ch.connect') return json(req, await chConnect(d, s.orgId, s.memberId, p));
       if (action === 'ch.stats') return json(req, await chStats(d, s.orgId, s.memberId, p));

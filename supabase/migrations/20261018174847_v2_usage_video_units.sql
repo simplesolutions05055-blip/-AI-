@@ -1,0 +1,1 @@
+alter table public.v2_usage add column if not exists tts_chars integer not null default 0, add column if not exists music_sec integer not null default 0, add column if not exists stock integer not null default 0, add column if not exists render_sec integer not null default 0;

@@ -1,281 +1,57 @@
-// Edge Function: smartsend-webhook - inbound WhatsApp adapter for Smart Send.
-//
-// Smart Send receive-message payload (OpenAPI 1.0, ZapierMessage):
-//   { text, senderId, senderName, isGroupMessage, type,
-//     isMyContact, isChatArchived, time }
-//
-// Register this endpoint in Smart Send with the full secret-bearing URL:
-//   https://<project-ref>.supabase.co/functions/v1/smartsend-webhook?secret=<secret>
-//
-// Secret:
-//   SMARTSEND_WEBHOOK_SECRET - authenticates inbound webhook requests.
-import { db } from '../_shared/db.ts';
-import { processRequest } from '../_shared/worker.ts';
-import { findOrCreateConversation, handleInbound } from '../_shared/inbound.ts';
-import { getSettingOr, getTemplates, logEvent } from '../_shared/util.ts';
-import { AbuseGuardError, actorExemption, enforceMessageLimit } from '../_shared/abuseGuard.ts';
-import { matchesEnvSecret } from '../_shared/secrets.ts';
-import { downloadMedia } from '../_shared/smartsend.ts';
-import { processInboundMediaItem } from '../_shared/inbound_media.ts';
-import { describePayloadShape, normalizeSmartSendMessage } from '../_shared/smartsendPayload.ts';
+// PrimeOS WhatsApp bot (SmartSend inbound webhook) + server job runner.
+//   POST ?secret=<SMARTSEND_WEBHOOK_SECRET>   inbound WhatsApp message -> bot.ts
+//   POST ?tick=1  header x-tick                runs graphic / video jobs for ~50 seconds (cron every minute + kicks)
+// Only phones that belong to users of a PrimeOS organisation are served (common.ts whoIs).
+import { db, env } from './common.ts';
+import { DRY, readInbound } from './wa.ts';
+import { handle } from './bot.ts';
+import { tick } from './jobs.ts';
 
-type DB = ReturnType<typeof db>;
-
-function ok(body: Record<string, unknown> = { ok: true }): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+async function same(a: string, b: string) {
+  if (!a || !b) return false;
+  const h = async (x: string) => new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(x)));
+  const [x, y] = await Promise.all([h(a), h(b)]);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
 }
-
-async function scheduleProcessing(database: DB, requestId: string, messageSid: string): Promise<void> {
-  const merge = await getSettingOr<{ debounce_seconds: number }>(
-    database,
-    'message_merge',
-    { debounce_seconds: 6 },
-  );
-  const debounceMs = Math.max(0, (merge.debounce_seconds ?? 6) * 1000);
-  // @ts-ignore EdgeRuntime is provided by the Supabase runtime
-  EdgeRuntime.waitUntil((async () => {
-    if (debounceMs) await new Promise((resolve) => setTimeout(resolve, debounceMs));
-    const { data: latest } = await database
-      .from('messages')
-      .select('message_key')
-      .eq('request_id', requestId)
-      .eq('direction', 'inbound')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (latest && latest.message_key !== messageSid) return;
-    await processRequest(requestId, { trigger: 'message' });
-  })());
-}
-
-// Smart Send re-attaches the LAST media file to messages that carry no new
-// one — a photo sent hours earlier arrives again, byte for byte, glued to a
-// typed "1". Hashing the bytes is the only reliable tell. Returns true the
-// first time these bytes are seen for this number (process them). On a repeat:
-// a voice note is always an echo (WhatsApp cannot re-send the same recording
-// silently), and any file riding along with typed text is an echo too — the
-// text is the message. Only a bare re-send of the same file with no text is
-// treated as deliberate.
-async function claimInboundMedia(
-  database: DB,
-  phone: string,
-  bytes: Uint8Array,
-  opts: { isVoice: boolean; hasText: boolean },
-): Promise<boolean> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(phone));
-  const content = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
-  const fingerprint = [digest, content]
-    .map((buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join(''))
-    .join('-');
-  const { error } = await database
-    .from('inbound_media_seen')
-    .insert({ fingerprint, phone_number: phone });
-  if (!error) return true;
-  // A primary-key conflict means we processed these exact bytes before.
-  if (opts.isVoice || opts.hasText) {
-    await logEvent(database, {
-      action: 'inbound_media_echo_dropped',
-      metadata: { phone, kind: opts.isVoice ? 'voice' : 'file', reason: 'duplicate_bytes' },
-    });
-    return false;
-  }
-  return true;
-}
-
-async function processAcceptedWebhook(raw: unknown, ip: string | null): Promise<void> {
-  const database = db();
-  const message = await normalizeSmartSendMessage(raw);
-  if (!message) return;
-
-  const { data: duplicate } = await database
-    .from('messages')
-    .select('id')
-    .eq('message_key', message.id)
-    .maybeSingle();
-  if (duplicate) return;
-
-  const { data: blocked } = await database
-    .from('blocked_numbers')
-    .select('id')
-    .eq('phone_number', message.phone)
-    .maybeSingle();
-  if (blocked) {
-    await logEvent(database, { action: 'blocked_number', metadata: { phone: message.phone } });
-    return;
-  }
-
-  try {
-    await enforceMessageLimit(database, {
-      phone: message.phone,
-      ip,
-    });
-  } catch (error) {
-    if (error instanceof AbuseGuardError) {
-      await logEvent(database, {
-        severity: 'warning',
-        action: 'rate_limited_message',
-        metadata: { phone: message.phone, code: error.code },
-      });
-      return;
-    }
-    throw error;
-  }
-
-  const limits = await getSettingOr<{ messages_per_24h: number }>(
-    database,
-    'rate_limits',
-    { messages_per_24h: 50 },
-  );
-  // The exemption list applies to this legacy ceiling too, otherwise an exempt
-  // account is still silently cut off after N messages a day.
-  const exempt = (await actorExemption(database, { phone: message.phone })).exempt;
-  if (!exempt && limits.messages_per_24h > 0) {
-    const since = new Date(Date.now() - 86_400_000).toISOString();
-    const { count } = await database
-      .from('rate_limit_events')
-      .select('id', { count: 'exact', head: true })
-      .eq('phone_number', `phone:${message.phone}`)
-      .eq('event_type', 'message_day')
-      .gte('created_at', since);
-    if ((count ?? 0) > limits.messages_per_24h) {
-      return;
-    }
-  }
-
-  // An attachment with no caption in any known field: record the payload's
-  // shape so the next one can be traced to the field that holds it, instead of
-  // silently producing a deliverable from the picture alone.
-  if (message.mediaUrl && !message.isVoice && !message.body.trim()) {
-    await logEvent(database, {
-      severity: 'warning',
-      action: 'inbound_caption_missing',
-      message: 'Media message arrived with no caption in any known field',
-      metadata: { phone: message.phone, payload_shape: describePayloadShape(raw) },
-    });
-  }
-
-  const conversation = await findOrCreateConversation(database, message.from, false);
-  if (!conversation) return;
-
-  const templates = await getTemplates(database);
-  const { requestIdToProcess, background } = await handleInbound(database, {
-    conversation,
-    from: message.from,
-    phone: message.phone,
-    body: message.body,
-    messageSid: message.id,
-    numMedia: message.mediaUrl ? 1 : 0,
-    templates,
-    simulated: false,
-    resolveMedia: async (requestId) => {
-      if (!message.mediaUrl) {
-        return {
-          effectiveBody: message.body,
-          firstStoragePath: null,
-          firstMediaType: null,
-          anyRejected: false,
-        };
-      }
-      try {
-        const { bytes, contentType } = await downloadMedia(message.mediaUrl);
-        const fresh = await claimInboundMedia(database, message.phone, bytes, {
-          isVoice: message.isVoice,
-          hasText: Boolean(message.body.trim()),
-        });
-        if (!fresh) {
-          return {
-            effectiveBody: message.body,
-            firstStoragePath: null,
-            firstMediaType: null,
-            anyRejected: false,
-          };
-        }
-        // Smart Send sends a category such as "image" in media_type, not
-        // always a MIME type. Prefer its value only when it is a real MIME;
-        // otherwise trust the CDN response (for example image/png).
-        const effectiveContentType = message.mediaType?.includes('/')
-          ? message.mediaType
-          : contentType;
-        const result = await processInboundMediaItem(database, {
-          bytes,
-          contentType: effectiveContentType,
-          conversationId: conversation.id,
-          messageSid: message.id,
-          index: 0,
-          requestId,
-        });
-        return {
-          effectiveBody: result.text
-            ? [message.body, result.text].filter(Boolean).join('\n')
-            : message.body,
-          firstStoragePath: result.storagePath,
-          firstMediaType: result.mediaType,
-          anyRejected: result.rejected,
-        };
-      } catch (error) {
-        await logEvent(database, {
-          requestId,
-          severity: 'error',
-          action: 'media_failed',
-          message: String(error),
-        });
-        return {
-          effectiveBody: message.body,
-          firstStoragePath: null,
-          firstMediaType: null,
-          anyRejected: true,
-        };
-      }
-    },
-  });
-
-  if (background) {
-    // @ts-ignore EdgeRuntime is provided by the Supabase runtime
-    EdgeRuntime.waitUntil(background());
-    return;
-  }
-  if (requestIdToProcess) {
-    await scheduleProcessing(database, requestIdToProcess, message.id);
-  }
-}
+const ok = (b: unknown = { ok: true }) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
 
 Deno.serve(async (req) => {
-  if (req.method !== 'POST') {
-    return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'POST' } });
-  }
-
+  if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
   const url = new URL(req.url);
-  const bearer = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-  const querySecret = url.searchParams.get('secret') ?? '';
-  const authorized =
-    (await matchesEnvSecret('SMARTSEND_WEBHOOK_SECRET', bearer)) ||
-    (await matchesEnvSecret('SMARTSEND_WEBHOOK_SECRET', querySecret));
-  if (!authorized) {
-    // Logging is deliberately background work too. The provider should not
-    // wait for a database round trip on the request path.
+  const d = db();
+
+  // test mode (tick secret): the message is handled now and the replies come back in the answer
+  if (url.searchParams.get('dry')) {
+    const given = req.headers.get('x-tick') ?? '';
+    const { data: sec } = await d.from('v2_secrets').select('v').eq('k', 'tick').maybeSingle();
+    if (!(await same(given, sec?.v ?? ''))) return new Response('Forbidden', { status: 403 });
+    const msg = await readInbound(await req.json());
+    if (!msg) return ok({ ok: true, ignored: true });
+    DRY.on = true; DRY.out = [];
+    try { await handle(d, msg); } finally { DRY.on = false; }
+    return ok({ ok: true, replies: DRY.out });
+  }
+
+  if (url.searchParams.get('tick')) {
+    const given = req.headers.get('x-tick') ?? '';
+    const { data: sec } = await d.from('v2_secrets').select('v').eq('k', 'tick').maybeSingle();
+    if (!(await same(given, env('SMARTSEND_WEBHOOK_SECRET'))) && !(await same(given, sec?.v ?? ''))) return new Response('Forbidden', { status: 403 });
     // @ts-ignore EdgeRuntime is provided by the Supabase runtime
-    EdgeRuntime.waitUntil(logEvent(db(), {
-      severity: 'warning',
-      action: 'smartsend_webhook_bad_secret',
-    }));
-    return new Response('Forbidden', { status: 403 });
+    EdgeRuntime.waitUntil(tick(d).catch((e) => console.error('tick', e)));
+    return ok({ ok: true, ticking: true });
   }
 
+  const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const secret = env('SMARTSEND_WEBHOOK_SECRET');
+  if (!(await same(bearer, secret)) && !(await same(url.searchParams.get('secret') ?? '', secret))) return new Response('Forbidden', { status: 403 });
   let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return ok({ ok: false, error: 'bad_json' });
-  }
-
-  const ip = req.headers.get('x-forwarded-for');
-  // Acknowledge immediately. All DB, media and AI work continues after 200.
+  try { raw = await req.json(); } catch { return ok({ ok: false, error: 'bad_json' }); }
+  const msg = await readInbound(raw);
+  if (!msg) return ok({ ok: true, ignored: true });
+  // answer the provider at once, the work continues in the background
   // @ts-ignore EdgeRuntime is provided by the Supabase runtime
-  EdgeRuntime.waitUntil(processAcceptedWebhook(raw, ip).catch((error) => {
-    console.error('[smartsend-webhook] background processing failed', error);
-  }));
+  EdgeRuntime.waitUntil(handle(d, msg).catch((e) => console.error('bot', e)));
   return ok({ ok: true, accepted: true });
 });
