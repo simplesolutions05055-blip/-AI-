@@ -54,7 +54,12 @@
   const shortName = (n) => String(n || '').replace(/^(עיריית|מועצה אזורית|מועצה מקומית|מתנ״ס|מתנ"ס)\s*/, '');
   function replaceAll(arr, list) { arr.splice(0, arr.length, ...(list || [])); }
   function replaceObj(obj, data) { Object.keys(obj).forEach((k) => delete obj[k]); Object.assign(obj, data || {}); }
-  function restore(target, data) { if (data == null) return; Array.isArray(target) ? replaceAll(target, data) : replaceObj(target, data); }
+  // a saved value only replaces a live one of the same shape (a broken save never stops the app from loading)
+  function restore(target, data) {
+    if (data == null || target == null || typeof target !== 'object') return;
+    if (Array.isArray(target)) { if (Array.isArray(data)) replaceAll(target, data); return; }
+    if (typeof data === 'object' && !Array.isArray(data)) replaceObj(target, data);
+  }
   const busyBtn = (sel, txt) => {
     const b = $(sel);
     if (!b) return () => {};
@@ -332,45 +337,110 @@
     if (views) views.remove();
     const nw = $('#lNew');
     if (nw) nw.remove();
-    // passwordless: only the account manager's e-mail (or the master admin's) gets a login link by e-mail
-    const em = $('#lEmail'), pw = $('#lPass');
-    if (em) em.value = '';
+    // entry by e-mail code: only addresses registered on a user (or the master admins) get a code
+    const pw = $('#lPass');
     if (pw) { const f = pw.closest('.field'); if (f) f.remove(); }
     const fg = $('#lForgot'); if (fg && fg.parentElement) fg.parentElement.remove();
-    let adm = isAdminPath();
+    let adm = isAdminPath(), step = 'mail', email = '', wait = 0, timer = null;
     const card = $('.auth-card');
+    const note = card && card.querySelector('.auth-note');
+    // the brand column is hidden on narrow screens, so the card carries the logo there
+    const lgSrc = (document.querySelector('.top-logo .logo-img') || {}).src;
+    if (note) note.innerHTML = ic('shield', 15) + '<span>הכניסה רק לכתובות דוא״ל שרשומות במערכת. כל כניסה נרשמת.</span>';
+    const box = document.createElement('div');
+    box.id = 'authBox';
+    const old = [card.querySelector('h2'), card.querySelector('.sub'), card.querySelector('.field'), $('#lIn')];
+    old.forEach((x) => x && x.remove());
+    const ds2 = card.querySelector('.demo-strip');
+    if (ds2) ds2.after(box); else card.prepend(box);
+    if (card && lgSrc && !card.querySelector('.auth-mlogo')) card.insertAdjacentHTML('afterbegin', '<div class="auth-mlogo"><img src="' + lgSrc + '" alt="PrimeOS"><b>PrimeOS</b></div>');
     const paint = () => {
-      const h = card && card.querySelector('h2'), sub = card && card.querySelector('.sub');
-      if (h) h.textContent = adm ? 'כניסת מנהל מערכת' : 'כניסה למערכת';
-      if (sub) sub.textContent = adm ? 'הזינו את הדוא״ל של מנהל המערכת. קישור כניסה יישלח אליו.' : 'הזינו את הדוא״ל של מנהל החשבון. קישור כניסה אישי יישלח אליו.';
-      const lb = $('label[for="lEmail"]'); if (lb) lb.textContent = adm ? 'דוא״ל מנהל המערכת' : 'דוא״ל מנהל החשבון';
-      $('#lIn').textContent = 'שליחת קישור כניסה';
+      if (timer) { clearInterval(timer); timer = null; }
+      if (step === 'mail') {
+        box.innerHTML = '<h2>' + (adm ? 'כניסת מנהל מערכת' : 'כניסה למערכת') + '</h2>' +
+          '<p class="sub">' + (adm ? 'הזינו את הדוא״ל של מנהל המערכת. קוד כניסה יישלח אליו.' : 'הזינו את כתובת הדוא״ל שרשומה עבורכם במערכת. קוד כניסה יישלח אליה.') + '</p>' +
+          '<form id="aMailF" novalidate><div class="field" style="margin-bottom:16px"><label for="lEmail">כתובת דוא״ל</label>' +
+          '<input type="email" id="lEmail" name="email" autocomplete="email" inputmode="email" dir="ltr" required aria-required="true" value="' + esc(email) + '"></div>' +
+          '<button type="submit" class="btn btn-primary btn-lg btn-block" id="lIn">שליחת קוד כניסה</button></form>';
+        const f = $('#aMailF');
+        f.onsubmit = (e) => { e.preventDefault(); sendCode(); };
+        setTimeout(() => { const i = $('#lEmail'); if (i) i.focus(); }, 30);
+      } else {
+        box.innerHTML = '<h2>הזנת קוד</h2>' +
+          '<p class="sub">שלחנו קוד בן 6 ספרות אל <b dir="ltr">' + esc(email) + '</b>. אפשר גם ללחוץ במייל על „כניסה ישירה”.</p>' +
+          '<form id="aCodeF" novalidate><div class="field" style="margin-bottom:16px"><label for="lCode">קוד כניסה</label>' +
+          '<input type="text" id="lCode" name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" dir="ltr" required aria-required="true" aria-describedby="lCodeHelp" style="font-size:24px;letter-spacing:10px;text-align:center;font-weight:700">' +
+          '<div id="lCodeHelp" class="t-sub" style="margin-top:6px">הקוד תקף ל-10 דקות.</div></div>' +
+          '<button type="submit" class="btn btn-primary btn-lg btn-block" id="lIn">כניסה</button></form>' +
+          '<div style="display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap;margin-top:12px">' +
+          '<button type="button" class="btn btn-sm" id="aResend" disabled>שליחה חוזרת</button>' +
+          '<button type="button" class="btn btn-sm" id="aBack">החלפת כתובת</button></div>';
+        const c = $('#lCode');
+        $('#aCodeF').onsubmit = (e) => { e.preventDefault(); verify(); };
+        c.addEventListener('input', () => { c.value = c.value.replace(/\D/g, '').slice(0, 6); if (c.value.length === 6) verify(); });
+        $('#aBack').onclick = () => { step = 'mail'; paint(); };
+        const rs = $('#aResend');
+        rs.onclick = () => sendCode(true);
+        const tickR = () => { wait--; if (wait <= 0) { rs.disabled = false; rs.textContent = 'שליחה חוזרת'; clearInterval(timer); timer = null; } else rs.textContent = 'שליחה חוזרת (' + wait + ')'; };
+        wait = 30; rs.textContent = 'שליחה חוזרת (30)'; timer = setInterval(tickR, 1000);
+        setTimeout(() => c.focus(), 30);
+      }
       const la = $('#lAdmin'); if (la) la.innerHTML = ic('shield', 14) + (adm ? ' כניסה לחשבון ארגון' : ' כניסת מנהל מערכת PrimeOS');
     };
-    paint();
-    const go = async () => {
-      const email = (em && em.value || '').trim().toLowerCase();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('חסר דוא״ל', 'הזינו כתובת דוא״ל תקינה.', 'err'); return; }
-      const done = busyBtn('#lIn', 'שולחים...');
+    // errors appear next to the field too (read out by screen readers), not only in a toast
+    const fieldErr = (id, msg) => {
+      const i = document.getElementById(id); if (!i) return;
+      const f = i.closest('.field'); let e = f && f.querySelector('.field-err');
+      if (!msg) { i.removeAttribute('aria-invalid'); if (e) e.remove(); return; }
+      if (!e && f) { e = document.createElement('div'); e.className = 'field-err'; e.id = id + 'Err'; e.setAttribute('role', 'alert'); e.style.cssText = 'color:#B00020;font-size:13.5px;font-weight:600;margin-top:6px'; f.appendChild(e); }
+      if (e) e.textContent = msg;
+      i.setAttribute('aria-invalid', 'true'); i.setAttribute('aria-describedby', (id === 'lCode' ? 'lCodeHelp ' : '') + id + 'Err');
+    };
+    const sendCode = async (again) => {
+      const i = $('#lEmail');
+      if (i) email = (i.value || '').trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { fieldErr('lEmail', 'כתובת הדוא״ל לא תקינה. בדקו אותה ונסו שוב.'); if (i) i.focus(); return; }
+      fieldErr('lEmail', '');
+      const done = busyBtn(again ? '#aResend' : '#lIn', 'שולחים...');
       try {
-        await post(API, { action: 'login.link', payload: { email, admin: adm } });
+        await post(API, { action: 'login.code', payload: { email, admin: adm } });
         done();
-        toast('אם הכתובת מורשית, נשלח אליה קישור', 'בדקו את תיבת הדוא״ל. הקישור אישי ותקף לכניסה.', '');
+        step = 'code'; paint();
+        toast('אם הכתובת רשומה במערכת, נשלח אליה קוד', 'בדקו את תיבת הדוא״ל (וגם את תיקיית הספאם).', '');
+      } catch (e) { done(); toast('השליחה נכשלה', 'בעיית חיבור. נסו שוב בעוד רגע.', 'err'); }
+    };
+    let verifying = false;
+    const verify = async () => {
+      const c = $('#lCode'); const code = (c && c.value || '').replace(/\D/g, '');
+      if (code.length !== 6) { fieldErr('lCode', 'הזינו את 6 הספרות שקיבלתם במייל.'); return; }
+      if (verifying) return; verifying = true;
+      const done = busyBtn('#lIn', 'נכנסים...');
+      try {
+        const r = await post(API, { action: 'login.verify', payload: { email, code, admin: adm } });
+        ls.set(SLOT[r.kind], r.token);
+        L.token = r.token;
+        setPath(r.kind === 'admin' ? '/admin' : '/');
+        $('#authRoot').innerHTML = '';
+        await bootWithToken();
       } catch (e) {
-        done();
-        toast('השליחה נכשלה', 'בעיית חיבור. נסו שוב בעוד רגע.', 'err');
+        done(); verifying = false;
+        const m = e.message;
+        toast(m === 'bad_code' ? 'הקוד שגוי' : m === 'too_many_tries' ? 'יותר מדי ניסיונות' : m === 'code_expired' ? 'הקוד פג תוקף' : 'הכניסה נכשלה',
+          m === 'bad_code' ? 'בדקו את הספרות ונסו שוב.' : m === 'too_many_tries' || m === 'code_expired' ? 'בקשו קוד חדש.' : 'נסו שוב בעוד רגע.', 'err');
+        fieldErr('lCode', m === 'bad_code' ? 'הקוד שגוי. בדקו את הספרות ונסו שוב.' : m === 'too_many_tries' ? 'יותר מדי ניסיונות. בקשו קוד חדש.' : m === 'code_expired' ? 'הקוד פג תוקף. בקשו קוד חדש.' : 'הכניסה נכשלה. נסו שוב בעוד רגע.');
+        if (c) { c.value = ''; c.focus(); }
       }
     };
-    $('#lIn').onclick = go;
-    if (em) em.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-    $('#lAdmin').onclick = () => { adm = !adm; paint(); };
+    paint();
+    $('#lAdmin').onclick = () => { adm = !adm; step = 'mail'; setPath(adm ? '/admin' : '/'); paint(); };
   };
 
   /* logout clears this interface's link */
   const _logout = ACT.logout;
-  ACT.logout = () => {
+  ACT.logout = async () => {
+    try { await call('logout'); } catch (e) { /* the session ends locally anyway */ }
     ls.del(L.kind === 'admin' ? SLOT.admin : SLOT.client);
-    location.href = '/';
+    location.href = L.kind === 'admin' ? '/admin' : '/';
   };
 
   /* ---------------- boot ---------------- */
@@ -478,6 +548,23 @@
   L.boot = async function () {
     const u = new URL(location.href);
     if (u.pathname.replace(/\/+$/, '') === '/sign') { $('#app').classList.remove('on'); bootSign(u.searchParams.get('t') || ''); return; }
+    const lc = u.searchParams.get('lc');
+    if (lc) {
+      u.searchParams.delete('lc');
+      history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+      loader('נכנסים...');
+      try {
+        const r = await post(API, { action: 'login.use', payload: { t: lc.trim() } });
+        ls.set(SLOT[r.kind], r.token);
+        L.token = r.token;
+        if (r.kind === 'admin') setPath('/admin');
+        await bootWithToken();
+      } catch (e) {
+        $('#authRoot').innerHTML = '';
+        renderAuth(e.status === 400 || e.status === 500 || e.message === 'link_invalid' ? 'הקישור כבר נוצל או שפג תוקפו. הזינו את כתובת הדוא״ל וקבלו קוד כניסה.' : 'אין חיבור לשרת כרגע. רעננו את העמוד בעוד רגע.');
+      }
+      return;
+    }
     const k = u.searchParams.get('k');
     if (k) {
       u.searchParams.delete('k');
@@ -492,8 +579,9 @@
     } catch (e) {
       if (e.status === 401) {
         ls.del(isAdminPath() ? SLOT.admin : SLOT.client);
-        renderAuth('הקישור אינו בתוקף. פנו למנהל המערכת לקבלת קישור חדש.');
+        renderAuth('פג תוקף הכניסה. הזינו את כתובת הדוא״ל וקבלו קוד כניסה.');
       } else {
+        console.error('boot failed', e);
         $('#authRoot').innerHTML = '';
         renderAuth('אין חיבור לשרת כרגע. רעננו את העמוד בעוד רגע.');
       }
@@ -559,10 +647,13 @@
     const n = ($('#apN') && $('#apN').value || '').trim();
     _apSave();
     if (L.kind !== 'admin') return;
-    try { await call('admin.profile.save', { name: n, email: m }); if (L.admin) { if (n) L.admin.name = n; if (m) L.admin.email = m; } toast('נשמר', 'כניסה לממשק הניהול תישלח רק לכתובת ' + (m || L.admin.email) + '.'); }
-    catch (e) { toast('השמירה בשרת נכשלה', 'נסו שוב בעוד רגע.', 'err'); }
+    try { await call('admin.profile.save', { name: n, email: m }); if (L.admin) { if (n) L.admin.name = n; if (m) L.admin.email = m; } toast('נשמר', 'קוד הכניסה לממשק הניהול יישלח לכתובת ' + (m || L.admin.email) + '.'); }
+    catch (e) { if (e.message === 'email_not_allowed') toast('הכתובת לא מורשית', 'לממשק הניהול נכנסים רק מכתובות מנהלי PrimeOS.', 'err'); else toast('השמירה בשרת נכשלה', 'נסו שוב בעוד רגע.', 'err'); }
   };
-  const linkOf = (o) => location.origin + '/?k=' + encodeURIComponent(o.live.token);
+  // links are made by the server when asked: a short entry for the admin, a one-time first-entry link for the client
+  const enterLink = async (o, mid) => (await call('admin.enter', { org_id: o.live.id, member_id: mid || undefined })).link;
+  const firstLink = async (o, mid) => (await call('admin.invite.link', { org_id: o.live.id, member_id: mid || undefined })).link;
+  const copyText = (t, what) => (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('הקישור הועתק', what || ''), () => openModal('<div class="mb"><h3>העתקה ידנית</h3><input type="text" readonly value="' + esc(t) + '" style="width:100%;direction:ltr" onclick="this.select()"></div><div class="modal-foot"><button class="btn" data-act="closeModal">סגירה</button></div>'));
   const signLinkOf = (o) => (o.live && o.live.sign_token ? location.origin + '/sign?t=' + encodeURIComponent(o.live.sign_token) : '');
   const waNum = (ph) => { let d = String(ph || '').replace(/\D/g, ''); if (d.startsWith('0')) d = '972' + d.slice(1); return d; };
   const waWhy = (st) => (st && st.startsWith('failed:whatsapp') ? (/24-hour|template/i.test(st) ? 'WhatsApp לא נשלח: הודעה יזומה דורשת תבנית מאושרת. שלחו דרך כפתור WhatsApp.' : 'WhatsApp נכשל. שלחו דרך כפתור WhatsApp.') : '');
@@ -580,27 +671,47 @@
     if (!l) { toast('אין קישור לחתימה', 'ההסכם כבר נחתם או שהלקוח לא נשמר בשרת.', 'err'); return; }
     navigator.clipboard.writeText(l).then(() => toast('הקישור הועתק', 'קישור החתימה של ' + o.n + '.'), () => prompt('קישור לחתימה', l));
   };
-  // every user of the client with a personal login link: the organisation user and each department user
-  const tokLink = (t) => location.origin + '/?k=' + encodeURIComponent(t);
+  // every user of the client: enter as that user, or copy a one-time first-entry link for them
   function memberLinks(o) {
     const ms = o.members || [];
     const dept = ms.filter((m) => m.role === 'member');
     const rows = ms.map((m) => '<div class="ml-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line-2)">' +
-      '<span style="flex:1;min-width:160px"><b>' + esc(m.name) + '</b> <span class="t-sub">' + (m.role === 'member' ? 'משתמש יחיד' + (m.dept ? ' · ' + esc(m.dept) : '') : 'משתמש ארגון') + '</span></span>' +
-      (m.token ? '<button class="btn btn-sm" data-act="liveCopyTok:' + esc(m.token) + '">' + ic('copy', 14) + ' העתקת קישור</button><a class="btn btn-sm" target="_blank" rel="noopener" href="' + esc(tokLink(m.token)) + '">' + ic('eye', 14) + ' כניסה</a>' : '<span class="t-sub">אין קישור</span>') + '</div>').join('');
-    return '<div style="margin-top:14px"><b style="font-size:13.5px">משתמשים וקישורי כניסה</b>' + rows +
-      (dept.length ? '' : '<div class="note" style="margin-top:8px">' + ic('help', 14) + '<span>עדיין אין משתמשי מחלקה. משתמש הארגון פותח אותם מתוך הממשק שלו: צוות והרשאות -> הזמנת משתמש -> סוג "משתמש יחיד". הקישור שנוצר מופיע גם כאן.</span></div>') + '</div>';
+      '<span style="flex:1;min-width:160px"><b>' + esc(m.name) + '</b> <span class="t-sub">' + (m.role === 'member' ? 'משתמש יחיד' + (m.dept ? ' · ' + esc(m.dept) : '') : 'משתמש ארגון') + '</span>' + (m.email ? '<br><span class="t-sub" dir="ltr">' + esc(m.email) + '</span>' : '<br><span class="t-sub">אין דוא״ל: המשתמש לא יוכל להיכנס בקוד</span>') + '</span>' +
+      '<button class="btn btn-sm" data-act="liveFirst:' + o.id + ':' + esc(m.id) + '">' + ic('copy', 14) + ' קישור כניסה ראשונה</button>' +
+      '<button class="btn btn-sm" data-act="liveOpenM:' + o.id + ':' + esc(m.id) + '">' + ic('eye', 14) + ' כניסה כמשתמש</button></div>').join('');
+    return '<div style="margin-top:14px"><b style="font-size:13.5px">משתמשים</b>' + rows +
+      (dept.length ? '' : '<div class="note" style="margin-top:8px">' + ic('help', 14) + '<span>עדיין אין משתמשי מחלקה. משתמש הארגון פותח אותם מתוך הממשק שלו: צוות והרשאות -> הזמנת משתמש.</span></div>') + '</div>';
   }
-  ACT.liveCopyTok = (t) => { const l = tokLink(t); navigator.clipboard.writeText(l).then(() => toast('הקישור הועתק', ''), () => prompt('קישור כניסה', l)); };
   function linkBox(o) {
-    return '<div class="card card-pad" style="margin-top:14px;text-align:start"><b style="font-size:13.5px">קישור כניסה ללקוח</b>' +
-      '<div class="t-sub" style="margin:4px 0 10px">שולחים את הקישור לאיש הקשר. הכניסה ישירה, בלי סיסמה.</div>' +
-      '<div style="display:flex;gap:8px;align-items:center"><input type="text" readonly value="' + esc(linkOf(o)) + '" style="flex:1;direction:ltr;font-size:12.5px" onclick="this.select()">' +
-      '<button class="btn btn-sm btn-primary" data-act="liveCopy:' + o.id + '">' + ic('copy', 14) + ' העתקה</button>' +
-      '<a class="btn btn-sm" target="_blank" rel="noopener" href="https://wa.me/' + waNum(o.phone) + '?text=' + encodeURIComponent('שלום ' + (o.contact || '') + ', נפתח עבור ' + o.n + ' חשבון במערכת PrimeOS.\nקישור הכניסה האישי שלך (בלי סיסמה):\n' + linkOf(o) + (signLinkOf(o) && !(o.agr && o.agr.signed) ? '\n\nהסכם המנוי לחתימה דיגיטלית:\n' + signLinkOf(o) : '') + '\n\nהקישורים אישיים, לא להעביר הלאה.') + '">' + ic('send', 14) + ' WhatsApp</a></div>' +
+    return '<div class="card card-pad" style="margin-top:14px;text-align:start"><b style="font-size:13.5px">כניסה ללקוח</b>' +
+      '<div class="t-sub" style="margin:4px 0 10px">הלקוח נכנס בכתובת הדוא״ל הרשומה (' + esc(o.mail || 'לא הוזנה') + ') ומקבל קוד. לכניסה הראשונה שולחים קישור חד-פעמי, בתוקף 7 ימים.</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="btn btn-sm btn-primary" data-act="agrSend:' + o.id + '">' + ic('send', 14) + ' שליחת הזמנה (מייל + WhatsApp)</button>' +
+      '<button class="btn btn-sm" data-act="liveCopy:' + o.id + '">' + ic('copy', 14) + ' העתקת קישור כניסה ראשונה</button>' +
+      '<button class="btn btn-sm" data-act="liveWa:' + o.id + '">' + ic('send', 14) + ' WhatsApp</button>' +
+      '<button class="btn btn-sm" data-act="liveOpen:' + o.id + '">' + ic('eye', 14) + ' כניסה למערכת הלקוח</button></div>' +
       memberLinks(o) +
       '<div style="margin-top:14px;display:flex;justify-content:flex-end"><button class="btn btn-sm btn-quiet-bad" data-act="liveDelete:' + o.id + '">' + ic('x', 14) + ' מחיקת הלקוח לצמיתות</button></div></div>';
   }
+  ACT.liveFirst = async (arg) => {
+    const [id, mid] = String(arg).split(':'); const o = ORGS.find((x) => x.id === id); if (!o || !o.live) return;
+    try { copyText(await firstLink(o, mid), 'קישור חד-פעמי, בתוקף 7 ימים'); } catch (e) { toast('לא הצלחנו ליצור קישור', 'נסו שוב בעוד רגע.', 'err'); }
+  };
+  ACT.liveOpenM = async (arg) => {
+    const [id, mid] = String(arg).split(':'); const o = ORGS.find((x) => x.id === id); if (!o || !o.live) return;
+    const w = window.open('about:blank', '_blank');
+    try { const l = await enterLink(o, mid); if (w) w.location.href = l; else location.href = l; } catch (e) { if (w) w.close(); toast('הכניסה נכשלה', 'נסו שוב בעוד רגע.', 'err'); }
+  };
+  ACT.liveWa = async (id) => {
+    const o = ORGS.find((x) => x.id === id); if (!o || !o.live) return;
+    const w = window.open('about:blank', '_blank');
+    try {
+      const l = await firstLink(o);
+      const txt = 'שלום ' + (o.contact || '') + ', נפתח עבור ' + o.n + ' חשבון במערכת PrimeOS.\nקישור לכניסה הראשונה (אישי, לכניסה אחת, בתוקף 7 ימים):\n' + l + (signLinkOf(o) && !(o.agr && o.agr.signed) ? '\n\nהסכם המנוי לחתימה דיגיטלית:\n' + signLinkOf(o) : '') + '\n\nבכניסות הבאות: app.primeos.co.il, מזינים את כתובת הדוא״ל ומקבלים קוד.';
+      const u = 'https://wa.me/' + waNum(o.phone) + '?text=' + encodeURIComponent(txt);
+      if (w) w.location.href = u; else location.href = u;
+    } catch (e) { if (w) w.close(); toast('לא הצלחנו ליצור קישור', 'נסו שוב בעוד רגע.', 'err'); }
+  };
   ACT.liveDelete = (id) => {
     const o = ORGS.find((x) => x.id === id);
     if (!o || !o.live) return;
@@ -622,13 +733,16 @@
       } catch (e) { done(); toast('המחיקה נכשלה', e.message === 'demo_protected' ? 'ארגון ההדגמה מוגן.' : 'נסו שוב בעוד רגע.', 'err'); }
     };
   };
-  ACT.liveCopy = (id) => {
+  ACT.liveCopy = async (id) => {
     const o = ORGS.find((x) => x.id === id);
     if (!o || !o.live) return;
-    const t = linkOf(o);
-    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('הקישור הועתק', o.n), () => toast('העתקה ידנית', t));
+    try { copyText(await firstLink(o), o.n + ' · קישור חד-פעמי, בתוקף 7 ימים'); } catch (e) { toast('לא הצלחנו ליצור קישור', 'נסו שוב בעוד רגע.', 'err'); }
   };
-  ACT.liveOpen = (id) => { const o = ORGS.find((x) => x.id === id); if (o && o.live) window.open(linkOf(o), '_blank', 'noopener'); };
+  ACT.liveOpen = async (id) => {
+    const o = ORGS.find((x) => x.id === id); if (!o || !o.live) return;
+    const w = window.open('about:blank', '_blank');
+    try { const l = await enterLink(o); if (w) w.location.href = l; else location.href = l; } catch (e) { if (w) w.close(); toast('הכניסה נכשלה', 'נסו שוב בעוד רגע.', 'err'); }
+  };
 
   const _imp = ACT.imp;
   ACT.imp = (id) => { const o = ORGS.find((x) => x.id === id); if (o && o.live) { ACT.liveOpen(id); return; } _imp(id); };
@@ -919,8 +1033,8 @@
   /* =====================================================================
    * REAL PRODUCTION: AI images (ChatGPT) + the render engine (graphic / doc / deck / video)
    * ===================================================================== */
-  const FX = 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/';
-  const fx = (name, body, ms) => post(FX + name, body, ms || 150000);
+  const FN_URL = 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/';
+  const fx = (name, body, ms) => post(FN_URL + name, body, ms || 150000);
   // period content (many graphics at once) uses OpenAI's fast model; single graphics use the server default (the precision model)
   const FAST_IMG = 'gpt-image-2.5-flare';
   const FMT_K = { '1:1': '1x1', '4:5': '4x5', '9:16': '9x16', '16:9': '16x9', '1.91:1': '191x1' };
@@ -980,6 +1094,18 @@
   }
   const css = document.createElement('style');
   css.textContent = `
+.auth-mlogo{display:none;align-items:center;gap:10px;margin-bottom:18px}.auth-mlogo img{width:44px;height:auto}.auth-mlogo b{font-size:22px;font-weight:800;font-style:italic;color:#0124C7}
+@media(max-width:900px){.auth-mlogo{display:flex}}
+.chan-logo:has(>svg.chi){background:#fff!important;border:1px solid #E3E8F0;box-shadow:0 6px 14px -8px rgba(9,36,101,.35)}
+.chan-logo>svg.chi{width:62%;height:62%;display:block}
+.ch-dot>svg.chi{width:70%;height:70%;display:block}
+.ch-dot:has(>svg.chi){background:#fff}
+.ch-row.off .chan-logo:has(>svg.chi){filter:none}
+.brief-grid{grid-template-columns:minmax(0,1fr)}.brief-grid>*{min-width:0}
+@media (max-width:420px){#view .sup-meet,#view div:has(>[data-act^="apprAdd"]),#view div:has(>[data-act^="toastInfo:לכל מחלקה"]){flex-wrap:wrap}#view .sup-meet>.btn{margin-inline-start:0}}
+@media (max-width:420px){.brief-card{padding:18px 14px}.plat-pick{grid-template-columns:repeat(2,minmax(0,1fr))!important}.plat-pick .plat{min-width:0;padding:0 8px;gap:6px;font-size:13px}.plat-pick .plat span:not(.chan-logo):not(.pk){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.fmt-pick{grid-template-columns:repeat(2,minmax(0,1fr))!important}.fmt-pick .fmt{min-width:0}}
+@media (max-width:1320px){.wa-grid{grid-template-columns:minmax(220px,280px) minmax(0,1fr)!important}.wa-grid>:nth-child(3){grid-column:1/-1}}
+@media (max-width:900px){.wa-grid{grid-template-columns:1fr!important}}
 .sp-img.has-real,.pimg.has-real{position:relative;overflow:hidden;background:#E6EBF2;padding:0}
 .sp-img.has-real>*:not(.sp-real):not(.sp-mb),.pimg.has-real>*:not(.sp-real){display:none!important}
 .sp-real{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
@@ -1904,8 +2030,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const t = await file.text(), m = t.match(/<svg[^>]*>/i);
     if (!m) return file;
     const vb = /viewBox=["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(m[0]);
-    let W = 1200, H = 1200;
-    if (vb && +vb[1] && +vb[2]) { const a = +vb[1], b = +vb[2]; if (a >= b) H = Math.round(1200 * b / a); else W = Math.round(1200 * a / b); }
+    // vector: drawn large so the result stays sharp everywhere
+    let W = 2400, H = 2400;
+    if (vb && +vb[1] && +vb[2]) { const a = +vb[1], b = +vb[2]; if (a >= b) H = Math.round(2400 * b / a); else W = Math.round(2400 * a / b); }
     const tag = m[0].replace(/\s(width|height)=["'][^"']*["']/gi, '').replace(/<svg/i, '<svg width="' + W + '" height="' + H + '"');
     return new Blob([t.replace(m[0], tag)], { type: 'image/svg+xml' });
   }
@@ -1914,9 +2041,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     try {
       const img = await loadImg(src);
       let w = img.naturalWidth || 1000, h = img.naturalHeight || 1000;
-      const k = Math.max(w, h) > 1400 ? 1400 / Math.max(w, h) : Math.max(w, h) < 700 ? 1000 / Math.max(w, h) : 1;
+      // never enlarge a raster (enlarging only blurs it); very large files come down to 2400px
+      const k = Math.max(w, h) > 2400 ? 2400 / Math.max(w, h) : 1;
       w = Math.round(w * k); h = Math.round(h * k);
       const c = canvasOf(w, h), x = c.getContext('2d', { willReadFrequently: true });
+      x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
       x.drawImage(img, 0, 0, w, h);
       const im = x.getImageData(0, 0, w, h), d = im.data, N = w * h;
       let clear = 0; for (let i = 3; i < d.length; i += 4) if (d[i] < 245) clear++;
@@ -1979,7 +2108,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         if (hit) { hit.n += e[3]; } else clusters.push({ c: col, n: e[3] });
       });
       const colors = clusters.filter((cl) => cl.n > tot * 0.015).slice(0, 6).map((cl) => hex(...cl.c));
-      return { png: await blobOf(out), light: await blobOf(lt), colors, removed, hadAlpha, w: tw, h: th };
+      // a logo smaller than ~600px on its long side cannot look sharp in graphics and videos
+      const low = Math.max(x1 - x0 + 1, y1 - y0 + 1) < 600 && !/svg/i.test(file.type || '') && !/\.svg$/i.test(file.name || '');
+      return { png: await blobOf(out), light: await blobOf(lt), colors, removed, hadAlpha, w: tw, h: th, low };
     } finally { URL.revokeObjectURL(src); }
   }
   // brand palette from the logo colours (white text must stay readable on the main colour)
@@ -2022,7 +2153,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const apply = (b) => {
         b.logos = [{ n: 'לוגו הארגון', c: pal[0][1], url }];
         b.logoLight = light;
-        b.logoInfo = { colors: r.colors, removed: r.removed, hadAlpha: r.hadAlpha, name: file.name, at: new Date().toLocaleDateString('he-IL') };
+        b.logoInfo = { colors: r.colors, removed: r.removed, hadAlpha: r.hadAlpha, name: file.name, at: new Date().toLocaleDateString('he-IL'), w: r.w, h: r.h, low: !!r.low };
         b.colors = pal;
       };
       apply(BRAND);
@@ -2031,7 +2162,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       S.logoFresh = Date.now();
       render();
       flush();
-      if (r.colors.length) toast('הלוגו עודכן וצבעי המותג הוחלפו', (r.removed ? 'הרקע הוסר אוטומטית. ' : '') + r.colors.length + ' צבעים זוהו בלוגו. הצבע הראשי החדש: \u200E' + pal[0][1]);
+      if (r.low) toast('הלוגו ברזולוציה נמוכה (' + r.w + '×' + r.h + ')', 'כדי שיופיע חד בגרפיקות ובסרטונים, העלו קובץ גדול יותר (לפחות 1000 פיקסלים ברוחב) או קובץ SVG.', 'err');
+      else if (r.colors.length) toast('הלוגו עודכן וצבעי המותג הוחלפו', (r.removed ? 'הרקע הוסר אוטומטית. ' : '') + r.colors.length + ' צבעים זוהו בלוגו. הצבע הראשי החדש: \u200E' + pal[0][1]);
       else toast('הלוגו עודכן', 'לא זוהו בלוגו צבעים ברורים, נשארו צבעי ברירת המחדל. אפשר לשנות אותם בלשונית צבעים ופונטים.', 'err');
     } catch (e) {
       S.logoBusy = '';
@@ -2062,10 +2194,10 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   brandFor = function (dept) { const b = _brandFor2(dept); if (BRAND.logoLight && b.logo) b.logoLight = BRAND.logoLight; return b; };
   css.textContent += `
 .logo-one{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:22px;align-items:center;margin-bottom:16px}
-.lo-prev{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.lo-prev>div{aspect-ratio:4/3;border-radius:14px;display:grid;place-items:center;padding:18px;border:1px solid var(--line,#DDE3EC)}
+.lo-prev{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;min-width:0}
+.lo-prev>div{position:relative;aspect-ratio:4/3;min-width:0;overflow:hidden;border-radius:14px;display:grid;place-items:center;padding:18px;border:1px solid var(--line,#DDE3EC)}
 .lo-prev .lo-l{background:repeating-conic-gradient(#EEF1F6 0 25%,#fff 0 50%) 50%/18px 18px}
-.lo-prev img{max-width:100%;max-height:100%;object-fit:contain}
+.lo-prev img{position:absolute;inset:14%;width:72%;height:72%;object-fit:contain}
 .lo-prev small{display:block;text-align:center;font-size:12px;color:var(--ink-3,#5A6386);margin-top:6px}
 .lo-info{display:flex;flex-direction:column;gap:10px}.lo-info h3{margin:0;font-size:17px}
 .lo-chips{display:flex;flex-wrap:wrap;gap:8px}.lo-chips span{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;direction:ltr;border:1px solid var(--line,#DDE3EC);border-radius:999px;padding:4px 10px 4px 5px}
@@ -2085,7 +2217,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const l = (b.logos || []).find((x) => x.url), info = b.logoInfo || {};
     if (l && !BRAND.logoInfo && !S.logoBusy) setTimeout(migrateLogo, 0);
     const prev = l
-      ? '<div class="lo-prev"><div class="lo-l"><img src="' + esc(l.url) + '" alt="הלוגו"></div><div class="lo-d" style="background:' + esc((b.colors[0] || [])[1] || '#0E3B6B') + '"><img src="' + esc(b.logoLight || l.url) + '" alt="הלוגו על רקע כהה"></div></div>'
+      ? '<div class="lo-prev"><div class="lo-l"><img src="' + esc(l.url) + '" alt="הלוגו" onload="if(Math.max(this.naturalWidth,this.naturalHeight)<600){var n=document.getElementById(\'loLow\');if(n)n.hidden=false}"></div><div class="lo-d" style="background:' + esc((b.colors[0] || [])[1] || '#0E3B6B') + '"><img src="' + esc(b.logoLight || l.url) + '" alt="הלוגו על רקע כהה"></div></div>'
       : '<div class="lo-prev"><div class="lo-l" style="background:var(--surface-2,#F3F5F9)"><span class="t-sub">עוד לא הועלה לוגו</span></div><div class="lo-d" style="background:#0E3B6B"><span style="color:#fff;font-size:13px">גרסה לרקע כהה</span></div></div>';
     const panel = '<div class="card card-pad logo-one">' + prev + '<div class="lo-info"><h3>הלוגו של הארגון</h3>' +
       '<span class="t-sub">מעלים לוגו אחד. המערכת מסירה רקע אם צריך, חותכת שוליים, יוצרת גרסה לבנה לרקע כהה ומחלצת ממנו את צבעי המותג.</span>' +
@@ -2093,8 +2225,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       (l && info.colors ? '<div class="lo-pal' + (S.logoFresh && Date.now() - S.logoFresh < 8000 ? ' fresh' : '') + '"><b style="font-size:13.5px">צבעי המותג, נשלפו מהלוגו</b><div class="lo-sw">' + (b.colors || []).slice(0, 6).map((c) => '<span title="' + esc(c[0]) + '"><i style="background:' + esc(c[1]) + '"></i><em>' + esc(c[0].replace(/ \(מהלוגו\)/, '')) + '</em><small dir="ltr">' + esc(c[1]) + '</small></span>').join('') + '</div></div>' : '') +
       (l && info.colors ? '<div><b style="font-size:13.5px">הצבעים שזוהו בלוגו</b><div class="lo-chips" style="margin-top:6px">' + info.colors.map((c) => '<span><i style="background:' + c + '"></i>' + c + '</span>').join('') + '</div></div>' +
         '<div class="note">' + ic('palette', 15) + '<span>הוחלו על צבעי המותג' + (info.removed ? ' · הרקע הוסר אוטומטית' : info.hadAlpha ? ' · הלוגו הגיע שקוף' : '') + '. <button class="link-btn" data-act="tab:brand:colors" style="background:none;border:0;padding:0;font:inherit;color:var(--brand);font-weight:700;cursor:pointer">לצבעים ופונטים</button></span></div>' : '') +
+      (l ? '<div class="note warn" id="loLow" role="status"' + (info.low ? '' : ' hidden') + '>' + ic('alert', 15) + '<span><b>הלוגו ברזולוציה נמוכה</b> ולכן עלול להיראות מטושטש בגרפיקות ובסרטונים. העלו את קובץ המקור: SVG, או PNG ברוחב 1000 פיקסלים לפחות.</span></div>' : '') +
       '<div><button class="btn btn-primary" data-act="logoUp"' + (S.logoBusy ? ' disabled' : '') + '>' + ic('upload', 16) + ' ' + (l ? 'החלפת לוגו' : 'העלאת לוגו') + '</button></div>' +
-      '<span class="t-sub">PNG, JPG או SVG. רקע אחיד מוסר אוטומטית.</span></div></div>';
+      '<span class="t-sub">מומלץ SVG, או PNG ברוחב 1000 פיקסלים לפחות. רקע אחיד מוסר אוטומטית.</span></div></div>';
     return h.replace(/<div class="grid g-4">[\s\S]*?(<div class="card card-pad lp-card">)/, panel + '$1');
   };
   // the logo position preview shows the real logo
@@ -2544,8 +2677,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
    * The spokesperson (owner/admin) opens users here. A department user gets a link that opens the department interface only. */
   (function () {
     const ROLE_T = { owner: 'משתמש ארגון', admin: 'משתמש ארגון', member: 'משתמש יחיד' };
-    const linkOfTok = (t) => location.origin + '/?k=' + encodeURIComponent(t);
-    const waShare = (name, link) => 'https://wa.me/?text=' + encodeURIComponent('שלום ' + name + ', זה קישור הכניסה האישי שלך למערכת PrimeOS של ' + (L.org ? L.org.name : '') + ':\n' + link + '\nהקישור אישי, לא להעביר הלאה.');
+    const waText = (name, link) => 'שלום ' + name + ', נפתח לך משתמש במערכת PrimeOS של ' + (L.org ? L.org.name : '') + '.\nקישור לכניסה הראשונה (אישי, לכניסה אחת, בתוקף 7 ימים):\n' + link + '\n\nבכניסות הבאות: app.primeos.co.il, מזינים את כתובת הדוא״ל ומקבלים קוד.';
+    const inviteLink = async (mid) => (await call('members.invite.link', { id: mid })).link;
     function rowOf(m) {
       return { n: m.name, r: ROLE_T[m.role] || m.role, d: m.view === 'dept' ? (m.dept || '') : 'דוברות', st: 'פעיל', last: m.id === (L.me && L.me.id) ? 'עכשיו' : '-', i: initials(m.name), mid: m.id, view: m.view || 'ext', tok: m.token || '', phone: m.phone || '', mail: m.email || '', role: m.role, direct: m.role !== 'member' || !!(m.perms && m.perms.direct) };
     }
@@ -2557,14 +2690,15 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const canManage = () => !L.me || L.me.role === 'owner' || L.me.role === 'admin';
     function usersTable() {
       const me = L.me && L.me.id;
-      return '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>שם</th><th>תפקיד</th><th>מחלקה</th><th>פרסום</th><th>קישור כניסה</th><th></th></tr></thead><tbody>' +
+      return '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>שם</th><th>תפקיד</th><th>מחלקה</th><th>פרסום</th><th>כניסה</th><th></th></tr></thead><tbody>' +
         users.map((u) => '<tr><td data-l="שם"><span style="display:flex;align-items:center;gap:9px"><span class="avatar">' + esc(u.i) + '</span><span><b>' + esc(u.n) + '</b>' + (u.phone ? '<div class="t-sub" dir="ltr" style="text-align:start">' + esc(u.phone) + '</div>' : '') + '</span></span></td>' +
           '<td data-l="תפקיד">' + esc(u.r) + (u.mid === me ? ' <span class="badge s-approved">את/ה</span>' : '') + '</td><td data-l="מחלקה">' + esc(u.d) + '</td>' +
           '<td data-l="פרסום">' + (u.role === 'member' ? '<button class="chip" data-act="userDirect:' + esc(u.mid) + '" title="לחיצה משנה">' + (u.direct ? ic('checkc', 13) + ' פרסום ישיר' : ic('clock', 13) + ' דרוש אישור') + '</button>' : '<span class="t-sub">ישיר</span>') + '</td>' +
-          '<td data-l="קישור כניסה">' + (u.tok ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" data-act="userLink:' + esc(u.mid) + '">' + ic('copy', 14) + ' העתקה</button><a class="btn btn-sm" target="_blank" rel="noopener" href="' + waShare(u.n, linkOfTok(u.tok)) + '">' + ic('send', 14) + ' WhatsApp</a></span>' : '<span class="t-sub">-</span>') + '</td>' +
-          '<td>' + (u.mid && u.mid !== me && u.role !== 'owner' ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" data-act="userRelink:' + esc(u.mid) + '">קישור חדש</button><button class="btn btn-sm btn-quiet-bad" data-act="userRemove:' + esc(u.mid) + '">הסרה</button></span>' : '') + '</td></tr>').join('') +
+          '<td data-l="כניסה">' + (u.mail ? '<div class="t-sub" dir="ltr" style="text-align:start;margin-bottom:6px">' + esc(u.mail) + '</div>' : '<div class="t-sub" style="margin-bottom:6px">אין דוא״ל: לא יוכל להיכנס</div>') +
+            (u.mid && u.mid !== me && canManage() ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap">' + (u.mail ? '<button class="btn btn-sm" data-act="userSend:' + esc(u.mid) + '">' + ic('send', 14) + ' שליחת הזמנה</button>' : '') + '<button class="btn btn-sm" data-act="userLink:' + esc(u.mid) + '">' + ic('copy', 14) + ' קישור כניסה ראשונה</button><button class="btn btn-sm" data-act="userWa:' + esc(u.mid) + '">' + ic('send', 14) + ' WhatsApp</button></span>' : '') + '</td>' +
+          '<td>' + (u.mid && u.mid !== me && u.role !== 'owner' && canManage() ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" data-act="userRelink:' + esc(u.mid) + '">ניתוק כניסות</button><button class="btn btn-sm btn-quiet-bad" data-act="userRemove:' + esc(u.mid) + '">הסרה</button></span>' : '') + '</td></tr>').join('') +
         '</tbody></table></div>' +
-        (users.length <= 1 ? '<div class="note" style="margin-top:14px">' + ic('users', 15) + '<span>עדיין אין משתמשי מחלקה. בלחיצה על „הזמנת משתמש” נפתח משתמש ומתקבל קישור כניסה אישי לשליחה.</span></div>' : '');
+        (users.length <= 1 ? '<div class="note" style="margin-top:14px">' + ic('users', 15) + '<span>עדיין אין משתמשים נוספים. בלחיצה על „הזמנת משתמש” נפתח משתמש, והוא מקבל במייל קישור לכניסה הראשונה. בכניסות הבאות הוא מזין את הדוא״ל ומקבל קוד.</span></div>' : '');
     }
     if (SCREENS.team) {
       const _teamR = SCREENS.team.render;
@@ -2579,17 +2713,17 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!L.members) return _invite();
       if (!canManage()) { toast('אין הרשאה', 'רק מנהל המערכת או הדובר פותחים משתמשים.', 'err'); return; }
       if (L.org && L.org.plan === 'basic') { toast('המסלול הבסיסי כולל משתמש אחד', 'למחלקות ולמשתמשים נוספים עוברים למסלול המורחב.', ''); return; }
-      openDrawer('<div class="drawer-head"><div><h3>הזמנת משתמש</h3><p>המשתמש מקבל קישור כניסה אישי. בלי סיסמה.</p></div>' +
+      openDrawer('<div class="drawer-head"><div><h3>הזמנת משתמש</h3><p>המשתמש נכנס עם כתובת הדוא״ל שלו וקוד שנשלח אליה. בלי סיסמה.</p></div>' +
         '<button class="icon-btn" style="margin-inline-start:auto" data-act="closeDrawer" aria-label="סגירה">' + ic('x', 17) + '</button></div>' +
         '<div class="drawer-body">' +
         '<div class="field"><label for="ivName">שם מלא</label><input type="text" id="ivName" placeholder="לדוגמה: דנה לוי"></div>' +
         '<div class="field"><label for="ivKind">סוג משתמש</label><select id="ivKind"><option value="dept">משתמש יחיד (המחלקה שלו בלבד)</option><option value="ext">משתמש ארגון (כל המערכת, מחלקות ואישורים)</option></select></div>' +
         '<div class="field" id="ivDeptWrap"><label for="ivDept">מחלקה</label><select id="ivDept">' + DEPTS.map((d) => '<option>' + esc(d) + '</option>').join('') + '</select></div>' +
-        '<div class="field"><label for="ivPhone">טלפון נייד</label><input type="text" id="ivPhone" inputmode="tel" dir="ltr" placeholder="050-0000000"></div>' +
-        '<div class="field"><label for="ivMail">דוא״ל (לא חובה)</label><input type="text" id="ivMail" inputmode="email" dir="ltr" placeholder="name@example.muni.il"></div>' +
+        '<div class="field"><label for="ivPhone">טלפון נייד (לבוט ה-WhatsApp)</label><input type="text" id="ivPhone" inputmode="tel" dir="ltr" placeholder="050-0000000"></div>' +
+        '<div class="field"><label for="ivMail">דוא״ל (לכניסה למערכת)</label><input type="email" id="ivMail" inputmode="email" autocomplete="off" dir="ltr" required aria-required="true" placeholder="name@example.muni.il"></div>' +
         '<label class="chk" id="ivDirectWrap" style="display:flex;gap:8px;align-items:center;margin:4px 0 10px"><input type="checkbox" id="ivDirect"> רשאי לפרסם ישירות, בלי אישור של משתמש הארגון</label>' +
         '<div class="note">' + ic('shield', 16) + '<span>משתמש יחיד רואה רק את התוכן של המחלקה שלו. בלי ההרשאה שלמעלה, כל תוכן שלו עובר אישור של משתמש הארגון לפני פרסום.</span></div></div>' +
-        '<div class="drawer-foot"><button class="btn btn-primary" data-act="doInvite">פתיחת משתמש וקבלת קישור</button><button class="btn" data-act="closeDrawer">ביטול</button></div>');
+        '<div class="drawer-foot"><button class="btn btn-primary" data-act="doInvite">פתיחת משתמש ושליחת הזמנה</button><button class="btn" data-act="closeDrawer">ביטול</button></div>');
       const k = $('#ivKind'), w = $('#ivDeptWrap');
       const dw = $('#ivDirectWrap');
       if (k && w) k.onchange = () => { w.style.display = k.value === 'dept' ? '' : 'none'; if (dw) dw.style.display = k.value === 'dept' ? '' : 'none'; };
@@ -2599,6 +2733,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!L.members) return _doInvite();
       const name = ($('#ivName') && $('#ivName').value || '').trim();
       if (!name) { toast('חסר שם', 'כתבו את שם המשתמש.', 'err'); return; }
+      const em0 = ($('#ivMail') && $('#ivMail').value || '').trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em0)) { toast('חסר דוא״ל', 'הכניסה למערכת היא לפי כתובת הדוא״ל. הזינו כתובת תקינה.', 'err'); return; }
+      if ((L.members || []).some((x) => (x.email || '').toLowerCase() === em0)) { toast('הכתובת כבר רשומה', 'לכל משתמש כתובת דוא״ל משלו.', 'err'); return; }
       const view = $('#ivKind') ? $('#ivKind').value : 'dept';
       const dept = $('#ivDept') ? $('#ivDept').value : '';
       const phone = ($('#ivPhone') && $('#ivPhone').value || '').trim();
@@ -2607,32 +2744,38 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const done = busyBtn('[data-act="doInvite"]', 'פותחים...');
       try {
         const r = await call('members.create', { name, view, dept, phone, email, direct });
-        const m = { id: r.id, name, role: view === 'dept' ? 'member' : 'admin', dept: view === 'dept' ? dept : null, view, phone, email, perms: { direct }, token: r.token };
+        const m = { id: r.id, name, role: view === 'dept' ? 'member' : 'admin', dept: view === 'dept' ? dept : null, view, phone, email: email.toLowerCase(), perms: { direct }, token: null };
         L.applyMembers([...(L.members || []), m]);
         closeDrawer();
         render();
         linkModal(m);
-        if (email || phone) {
-          call('members.send', { id: r.id, mail: !!email, wa: !!phone }).then((st) => {
-            const ok = [st.mail === 'sent' ? 'מייל' : '', st.wa === 'sent' ? 'WhatsApp' : ''].filter(Boolean).join(' + ');
-            const box = $('#modalBox .mb');
-            if (box) box.insertAdjacentHTML('beforeend', '<div class="note" style="margin-top:12px">' + ic(ok ? 'checkc' : 'alert', 14) + '<span>' + (ok ? 'הקישור נשלח גם ב' + ok + '.' : 'השליחה האוטומטית נכשלה. אפשר לשלוח ידנית.') + '</span></div>');
-          }).catch(() => {});
-        }
+        call('members.send', { id: r.id, mail: true, wa: false }).then((st) => {
+          const box = $('#modalBox .mb');
+          if (box) box.insertAdjacentHTML('beforeend', '<div class="note" style="margin-top:12px">' + ic(st.mail === 'sent' ? 'checkc' : 'alert', 14) + '<span>' + (st.mail === 'sent' ? 'ההזמנה נשלחה אל ' + esc(email) + '.' : 'שליחת המייל נכשלה. אפשר להעתיק קישור ולשלוח ידנית.') + '</span></div>');
+        }).catch(() => {});
       } catch (e) { done(); toast('הפתיחה נכשלה', e.message === 'forbidden' ? 'אין לך הרשאה לפתוח משתמשים.' : 'נסו שוב בעוד רגע.', 'err'); }
     };
     function linkModal(m) {
-      const link = linkOfTok(m.token);
       openModal('<div class="mb"><div class="m-ic ok">' + ic('checkc', 20) + '</div><h3>המשתמש נפתח</h3><p>„' + esc(m.name) + '” · ' + esc(ROLE_T[m.role] || '') + (m.dept ? ' · ' + esc(m.dept) : '') + '</p>' +
-        '<div style="display:flex;gap:8px;align-items:center;margin-top:14px"><input type="text" readonly value="' + esc(link) + '" style="flex:1;direction:ltr;font-size:12.5px" onclick="this.select()"><button class="btn btn-sm btn-primary" data-act="userLink:' + esc(m.id) + '">' + ic('copy', 14) + ' העתקה</button></div>' +
-        '<p class="t-sub" style="margin-top:10px">הקישור אישי. מי שמחזיק בו נכנס למערכת בשם המשתמש הזה. אפשר להנפיק קישור חדש בכל רגע מטבלת הצוות.</p></div>' +
-        '<div class="modal-foot"><a class="btn btn-primary" target="_blank" rel="noopener" href="' + waShare(m.name, link) + '">' + ic('send', 16) + ' שליחה ב-WhatsApp</a><button class="btn" data-act="closeModal">סגירה</button></div>');
+        '<p class="t-sub" style="margin-top:10px">הכניסה לפי הדוא״ל <b dir="ltr">' + esc(m.email || '') + '</b>. לכניסה הראשונה נשלח קישור חד-פעמי (בתוקף 7 ימים). אחר כך: מזינים את הדוא״ל באתר ומקבלים קוד.</p></div>' +
+        '<div class="modal-foot"><button class="btn btn-primary" data-act="userWa:' + esc(m.id) + '">' + ic('send', 16) + ' שליחת קישור ב-WhatsApp</button><button class="btn" data-act="userLink:' + esc(m.id) + '">' + ic('copy', 16) + ' העתקת קישור</button><button class="btn" data-act="closeModal">סגירה</button></div>');
     }
     ACT.closeModal = ACT.closeModal || (() => closeModal());
-    ACT.userLink = (mid) => {
-      const u = users.find((x) => x.mid === mid); if (!u || !u.tok) return;
-      const t = linkOfTok(u.tok);
-      (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('הקישור הועתק', u.n), () => toast('העתקה ידנית', t));
+    const copyT = (t, what) => (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('הקישור הועתק', what || ''), () => openModal('<div class="mb"><h3>העתקה ידנית</h3><input type="text" readonly value="' + esc(t) + '" style="width:100%;direction:ltr" onclick="this.select()"></div><div class="modal-foot"><button class="btn" data-act="closeModal">סגירה</button></div>'));
+    ACT.userLink = async (mid) => {
+      const u = users.find((x) => x.mid === mid) || (L.members || []).map(rowOf).find((x) => x.mid === mid); if (!u) return;
+      try { copyT(await inviteLink(mid), u.n + ' · לכניסה אחת, בתוקף 7 ימים'); } catch (e) { toast('לא הצלחנו ליצור קישור', 'נסו שוב בעוד רגע.', 'err'); }
+    };
+    ACT.userWa = async (mid) => {
+      const u = users.find((x) => x.mid === mid) || (L.members || []).map(rowOf).find((x) => x.mid === mid); if (!u) return;
+      const w = window.open('about:blank', '_blank');
+      try { const l = await inviteLink(mid); const url = 'https://wa.me/' + (u.phone ? String(u.phone).replace(/\D/g, '').replace(/^0/, '972') : '') + '?text=' + encodeURIComponent(waText(u.n, l)); if (w) w.location.href = url; else location.href = url; }
+      catch (e) { if (w) w.close(); toast('לא הצלחנו ליצור קישור', 'נסו שוב בעוד רגע.', 'err'); }
+    };
+    ACT.userSend = async (mid) => {
+      const u = users.find((x) => x.mid === mid); if (!u) return;
+      try { const st = await call('members.send', { id: mid, mail: true, wa: false }); toast(st.mail === 'sent' ? 'ההזמנה נשלחה' : 'השליחה נכשלה', st.mail === 'sent' ? u.mail : 'נסו שוב או העתיקו קישור.', st.mail === 'sent' ? '' : 'err'); }
+      catch (e) { toast('השליחה נכשלה', 'נסו שוב בעוד רגע.', 'err'); }
     };
     ACT.userDirect = async (mid) => {
       const m = (L.members || []).find((x) => x.id === mid); if (!m || !canManage()) return;
@@ -2642,8 +2785,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     };
     ACT.userRelink = (mid) => {
       const u = users.find((x) => x.mid === mid); if (!u) return;
-      confirmModal({ title: 'קישור חדש ל„' + u.n + '”?', body: 'הקישור הישן יפסיק לעבוד מיד. שולחים למשתמש את הקישור החדש.', ok: 'הנפקת קישור חדש', tone: 'warn', icon: 'alert',
-        onOk: async () => { try { const r = await call('members.relink', { id: mid }); const m = (L.members || []).find((x) => x.id === mid); if (m) m.token = r.token; L.applyMembers(L.members); render(); linkModal(Object.assign({}, m, { token: r.token })); } catch (e) { toast('לא הצלחנו להנפיק קישור', 'נסו שוב בעוד רגע.', 'err'); } } });
+      confirmModal({ title: 'לנתק את „' + u.n + '” מכל המכשירים?', body: 'כל הכניסות הפעילות שלו ייסגרו מיד. כדי להיכנס שוב הוא יזין את הדוא״ל ויקבל קוד.', ok: 'ניתוק כניסות', tone: 'warn', icon: 'alert',
+        onOk: async () => { try { await call('members.relink', { id: mid }); toast('הכניסות נותקו', u.n); } catch (e) { toast('הניתוק נכשל', 'נסו שוב בעוד רגע.', 'err'); } } });
     };
     ACT.userRemove = (mid) => {
       const u = users.find((x) => x.mid === mid); if (!u) return;
@@ -2652,7 +2795,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     };
     // the demo "edit user" drawer makes no sense for real members: open the link actions instead
     const _userEdit = ACT.userEdit;
-    ACT.userEdit = (i) => { if (!L.members) return _userEdit(i); const u = users[+i]; if (u && u.tok) ACT.userLink(u.mid); };
+    ACT.userEdit = (i) => { if (!L.members) return _userEdit(i); const u = users[+i]; if (u && u.mid) ACT.userLink(u.mid); };
   })();
 
   /* ---------------- calendar on real dates: month / week / list, navigation, filters; dashboard week = this week ---------------- */
@@ -3018,6 +3161,14 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const CHK = ['fb', 'ig', 'x', 'yt', 'li', 'tk', 'th', 'gb', 'tg', 'wa'];
     // networks added on top of the mockup's six
     Object.assign(CH, { th: { t: 'Threads', b: '#101010', s: 'TH' }, gb: { t: 'גוגל לעסקים', b: '#4285F4', s: 'G' }, tg: { t: 'Telegram', b: '#229ED9', s: 'TG' }, wa: { t: 'WhatsApp', b: '#25A244', s: 'WA' } });
+    /* official brand marks for every channel (simple-icons paths, brand colours) */
+    const CH_ICON = {"fb": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#0866FF\" d=\"M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z\"/></svg>", "ig": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"url(#chiIg)\" d=\"M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077\"/></svg>", "x": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#000\" d=\"M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z\"/></svg>", "yt": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#fff\" d=\"M9 7.5h6.5v9H9z\"/><path fill=\"#FF0000\" d=\"M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z\"/></svg>", "li": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#fff\" d=\"M3 3h18v18H3z\"/><path fill=\"#0A66C2\" d=\"M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z\"/></svg>", "tk": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#25F4EE\" transform=\"translate(-.7 -.6)\" d=\"M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z\"/><path fill=\"#FE2C55\" transform=\"translate(.7 .6)\" d=\"M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z\"/><path fill=\"#000\" d=\"M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z\"/></svg>", "th": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#000\" d=\"M12.186 24h-.007c-3.581-.024-6.334-1.205-8.184-3.509C2.35 18.44 1.5 15.586 1.472 12.01v-.017c.03-3.579.879-6.43 2.525-8.482C5.845 1.205 8.6.024 12.18 0h.014c2.746.02 5.043.725 6.826 2.098 1.677 1.29 2.858 3.13 3.509 5.467l-2.04.569c-1.104-3.96-3.898-5.984-8.304-6.015-2.91.022-5.11.936-6.54 2.717C4.307 6.504 3.616 8.914 3.589 12c.027 3.086.718 5.496 2.057 7.164 1.43 1.783 3.631 2.698 6.54 2.717 2.623-.02 4.358-.631 5.8-2.045 1.647-1.613 1.618-3.593 1.09-4.798-.31-.71-.873-1.3-1.634-1.75-.192 1.352-.622 2.446-1.284 3.272-.886 1.102-2.14 1.704-3.73 1.79-1.202.065-2.361-.218-3.259-.801-1.063-.689-1.685-1.74-1.752-2.964-.065-1.19.408-2.285 1.33-3.082.88-.76 2.119-1.207 3.583-1.291a13.853 13.853 0 0 1 3.02.142c-.126-.742-.375-1.332-.75-1.757-.513-.586-1.308-.883-2.359-.89h-.029c-.844 0-1.992.232-2.721 1.32L7.734 7.847c.98-1.454 2.568-2.256 4.478-2.256h.044c3.194.02 5.097 1.975 5.287 5.388.108.046.216.094.321.142 1.49.7 2.58 1.761 3.154 3.07.797 1.82.871 4.79-1.548 7.158-1.85 1.81-4.094 2.628-7.277 2.65Zm1.003-11.69c-.242 0-.487.007-.739.021-1.836.103-2.98.946-2.916 2.143.067 1.256 1.452 1.839 2.784 1.767 1.224-.065 2.818-.543 3.086-3.71a10.5 10.5 0 0 0-2.215-.221z\"/></svg>", "tg": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#26A5E4\" d=\"M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z\"/></svg>", "wa": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#25D366\" d=\"M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z\"/></svg>", "gb": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"#4285F4\" d=\"M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z\"/><path fill=\"#34A853\" d=\"M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z\"/><path fill=\"#FBBC05\" d=\"M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.98-3.09z\"/><path fill=\"#EA4335\" d=\"M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.98 3.09c.95-2.85 3.6-4.96 6.73-4.96z\"/></svg>", "web": "<svg class=\"chi\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"9.2\" fill=\"none\" stroke=\"#0E3B6B\" stroke-width=\"1.8\"/><path fill=\"none\" stroke=\"#0E3B6B\" stroke-width=\"1.6\" d=\"M2.8 12h18.4M12 2.8c2.6 2.6 3.8 5.6 3.8 9.2s-1.2 6.6-3.8 9.2c-2.6-2.6-3.8-5.6-3.8-9.2s1.2-6.6 3.8-9.2z\"/></svg>"};
+    Object.keys(CH_ICON).forEach((k) => { if (CH[k]) { CH[k].s = CH_ICON[k]; CH[k].mark = 1; } });
+    if (!document.getElementById('chiDefs')) {
+      const g = document.createElement('div');
+      g.innerHTML = '<svg id="chiDefs" width="0" height="0" style="position:absolute" aria-hidden="true"><defs><radialGradient id="chiIg" cx="30%" cy="107%" r="150%"><stop offset="0" stop-color="#fdf497"/><stop offset=".05" stop-color="#fdf497"/><stop offset=".45" stop-color="#fd5949"/><stop offset=".6" stop-color="#d6249f"/><stop offset=".9" stop-color="#285AEB"/></radialGradient></defs></svg>';
+      document.body.appendChild(g.firstChild);
+    }
     const NO_POST = ['wa'];
     CHK.forEach((k) => { if (!channels.some((c) => c.k === k)) channels.push({ k, acc: '-', st: 'לא מחובר', sync: '-', fol: '-' }); });
     // the content wizards offer the networks the organisation actually connected
@@ -3936,7 +4087,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         ? '<video src="' + esc(sel.url) + '" controls playsinline preload="metadata" style="width:100%;max-height:360px;border-radius:12px;background:#0A2C51"></video>'
         : '<img src="' + esc(sel.url) + '" alt="" style="width:100%;border-radius:12px;display:block">') : '';
       return head +
-        '<div style="display:grid;grid-template-columns:300px 1fr 300px;gap:16px;align-items:start" class="wa-grid">' +
+        '<div style="display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr) minmax(220px,300px);gap:16px;align-items:start" class="wa-grid">' +
           '<div class="card"><div class="card-head"><h3>בקשות</h3><span class="chip" style="margin-inline-start:auto">' + W.list.length + '</span>' +
             '<button class="icon-btn" data-act="waRefresh" title="רענון">' + ic('refresh', 15) + '</button></div>' +
             '<div class="row-list">' + W.list.map((r) =>
@@ -3971,5 +4122,213 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     };
     // the count in the menu stays fresh while the app is open
     setInterval(() => { if (L.ready && L.kind === 'client' && !L.demo) waLoad(false); }, 60000);
+  })();
+  /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */
+  (function () {
+    const KEY = 'pos_a11y';
+    const OPTS = [
+      ['hc', 'ניגודיות גבוהה', 'contrast'], ['gs', 'גווני אפור', 'drop'], ['links', 'הדגשת קישורים וכפתורים', 'link'],
+      ['font', 'גופן קריא', 'type'], ['still', 'עצירת אנימציות', 'pause'], ['focus', 'הדגשת מיקוד מקלדת', 'target'],
+      ['cursor', 'סמן עכבר גדול', 'cursor'], ['space', 'ריווח טקסט', 'space'],
+    ];
+    const ICO = {
+      contrast: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
+      drop: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
+      link: '<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>',
+      type: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',
+      pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+      target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>',
+      cursor: '<path d="M5 3l14 7-6 2-2 6z"/>',
+      space: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+    };
+    const svgI = (n) => '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + ICO[n] + '</svg>';
+    const MAN = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="11" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="6.4" r="1.7" fill="currentColor"/><path d="M6.5 9.3c1.9.5 3.7.8 5.5.8s3.6-.3 5.5-.8M12 10.2v4.2m0 0l-2.6 5m2.6-5l2.6 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    let st = { z: 0 };
+    try { st = Object.assign(st, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* storage blocked */ }
+    const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* storage blocked */ } };
+    const css = document.createElement('style');
+    css.textContent = `
+:root{--ink-4:#5F6888}
+.skip-link{position:fixed;top:-60px;right:16px;z-index:10000;background:#0B1437;color:#fff;padding:12px 18px;border-radius:10px;font-weight:700;text-decoration:none;transition:top .15s}
+.skip-link:focus{top:12px;outline:3px solid #FFD400;outline-offset:2px}
+.a11y-btn{position:fixed;left:18px;bottom:18px;z-index:90;width:46px;height:46px;border-radius:50%;border:2px solid #fff;background:#0B1437;color:#fff;display:grid;place-items:center;cursor:pointer;box-shadow:0 10px 24px -10px rgba(9,36,101,.6);transition:bottom .25s}
+body.in-app .a11y-btn{display:none}
+body.in-app .main{padding-bottom:110px}
+body.in-app:has(.action-bar) .main{padding-bottom:190px}
+.top-actions #a11yTop{color:var(--p-navy,#092465)}
+.top-actions #a11yTop svg{width:22px;height:22px}
+@media (max-width:480px){.top-actions #btnOrg{display:none}.topbar .icon-btn,.topbar .btn-new-top{width:38px;height:38px;min-width:38px}.top-actions{gap:4px}}
+@media (max-width:360px){html.a11y-z2 .topbar .btn-new-top,html.a11y-z3 .topbar .btn-new-top{display:none}}
+@media (max-width:360px){.topbar .top-logo .logo-txt,.topbar .top-logo b,.topbar .top-logo span{display:none}}
+@media (max-width:528px){html.a11y-z1 .top-actions #btnOrg{display:none}html.a11y-z1 .topbar .icon-btn,html.a11y-z1 .topbar .btn-new-top{width:38px;height:38px;min-width:38px}html.a11y-z1 .top-actions{gap:4px}}
+@media (max-width:426px){html.a11y-z1 .topbar .top-logo .logo-txt,html.a11y-z1 .topbar .top-logo b,html.a11y-z1 .topbar .top-logo span{display:none}}
+@media (max-width:576px){html.a11y-z2 .top-actions #btnOrg{display:none}html.a11y-z2 .topbar .icon-btn,html.a11y-z2 .topbar .btn-new-top{width:38px;height:38px;min-width:38px}html.a11y-z2 .top-actions{gap:4px}}
+@media (max-width:462px){html.a11y-z2 .topbar .top-logo .logo-txt,html.a11y-z2 .topbar .top-logo b,html.a11y-z2 .topbar .top-logo span{display:none}}
+@media (max-width:624px){html.a11y-z3 .top-actions #btnOrg{display:none}html.a11y-z3 .topbar .icon-btn,html.a11y-z3 .topbar .btn-new-top{width:38px;height:38px;min-width:38px}html.a11y-z3 .top-actions{gap:4px}}
+@media (max-width:498px){html.a11y-z3 .topbar .top-logo .logo-txt,html.a11y-z3 .topbar .top-logo b,html.a11y-z3 .topbar .top-logo span{display:none}}
+body.fab-away .ai-fab:not(.on){transform:translateY(160%);opacity:0;pointer-events:none}
+.ai-fab{transition:transform .25s ease,opacity .2s ease,bottom .25s ease}
+.a11y-btn:hover{background:#0124C7}
+.a11y-btn:focus-visible{outline:3px solid #FFD400;outline-offset:2px}
+.a11y-pan{position:fixed;left:18px;bottom:76px;z-index:91;width:320px;max-width:calc(100vw - 36px);max-height:calc(100vh - 110px);overflow:auto;background:#fff;color:#0B1437;border:1px solid #D5DBEA;border-radius:18px;box-shadow:0 24px 60px -20px rgba(9,36,101,.45);padding:16px;display:none}
+body.in-app .a11y-pan{top:calc(var(--topbar-h,64px) + 28px);bottom:auto;max-height:calc(100vh - var(--topbar-h,64px) - 48px)}
+.a11y-pan.on{display:block}
+.a11y-pan h2{font-size:17px;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+.a11y-pan .a11y-x{margin-inline-start:auto;width:34px;height:34px;border-radius:10px;border:1px solid #D5DBEA;background:#fff;cursor:pointer;font-size:18px;line-height:1;color:#0B1437}
+.a11y-z{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 10px;border:1px solid #E4E8F2;border-radius:12px}
+.a11y-z span{flex:1;font-weight:600;font-size:14px}
+.a11y-z button{width:38px;height:34px;border-radius:9px;border:1px solid #D5DBEA;background:#F2F4FA;cursor:pointer;font-weight:800;font-size:15px;color:#0B1437}
+.a11y-z output{min-width:42px;text-align:center;font-weight:700;font-size:13px}
+.a11y-g{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.a11y-o{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:72px;padding:8px;border-radius:12px;border:1px solid #D5DBEA;background:#F7F8FC;cursor:pointer;font-size:12.5px;font-weight:600;color:#0B1437;text-align:center;line-height:1.3}
+.a11y-o[aria-pressed="true"]{background:#0124C7;border-color:#0124C7;color:#fff}
+.a11y-f{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.a11y-f button{flex:1;min-width:120px;height:38px;border-radius:10px;border:1px solid #D5DBEA;background:#fff;cursor:pointer;font-weight:700;font-size:13px;color:#0B1437}
+.a11y-pan button:focus-visible{outline:3px solid #FFD400;outline-offset:2px}
+.a11y-stmt{max-width:640px;line-height:1.7;font-size:14.5px}
+.a11y-stmt h3{margin:0 0 10px}.a11y-stmt h4{margin:16px 0 6px;font-size:15px}
+.a11y-stmt ul{margin:0;padding-inline-start:20px}
+.a11y-stmt .mail{direction:ltr;display:inline-block;font-weight:700;user-select:all}
+html.a11y-z1 body{zoom:1.1}html.a11y-z2 body{zoom:1.2}html.a11y-z3 body{zoom:1.3}
+html.a11y-hc{filter:contrast(1.25)}
+html.a11y-gs{filter:grayscale(1)}
+html.a11y-hc.a11y-gs{filter:contrast(1.25) grayscale(1)}
+html.a11y-hc{--ink:#000;--ink-2:#111;--ink-3:#222;--ink-4:#333;--line:#6B7393;--line-2:#8A92AE}
+html.a11y-hc .ambient{display:none}
+html.a11y-hc body{background:#fff}
+html.a11y-links a,html.a11y-links button:not(.a11y-o):not(.a11y-btn),html.a11y-links [role="button"],html.a11y-links [data-nav]{text-decoration:underline!important;text-underline-offset:3px;outline:2px solid #E0A800!important;outline-offset:1px}
+html.a11y-font body,html.a11y-font body *:not(svg):not(svg *){font-family:Arial,"Helvetica Neue",Helvetica,sans-serif!important;letter-spacing:.01em}
+html.a11y-still *,html.a11y-still *::before,html.a11y-still *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+html.a11y-still .ambient .orb,html.a11y-still .ambient .streak{display:none}
+html.a11y-focus *:focus{outline:3px solid #FFD400!important;outline-offset:2px!important;box-shadow:0 0 0 6px #0B1437!important}
+html.a11y-cursor,html.a11y-cursor *{cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 24 24'%3E%3Cpath d='M4 2l16 8-7 2.4L10 20z' fill='%23000' stroke='%23fff' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E") 3 2,auto!important}
+html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{line-height:1.9!important;letter-spacing:.03em!important;word-spacing:.12em!important}
+`;
+    document.head.appendChild(css);
+    const root = document.documentElement;
+    const apply = () => {
+      root.classList.remove('a11y-z1', 'a11y-z2', 'a11y-z3');
+      if (st.z) root.classList.add('a11y-z' + st.z);
+      OPTS.forEach((o) => root.classList.toggle('a11y-' + o[0], !!st[o[0]]));
+      const pan = document.getElementById('a11yPan');
+      if (pan) {
+        pan.querySelectorAll('[data-a11y]').forEach((b) => b.setAttribute('aria-pressed', st[b.dataset.a11y] ? 'true' : 'false'));
+        const out = pan.querySelector('output'); if (out) out.textContent = (100 + st.z * 10) + '%';
+      }
+    };
+    // skip link, button and panel
+    const skip = document.createElement('a');
+    skip.className = 'skip-link'; skip.href = '#view'; skip.textContent = 'דילוג לתוכן המרכזי';
+    skip.addEventListener('click', (e) => {
+      e.preventDefault();
+      const app = document.getElementById('app');
+      const t = app && getComputedStyle(app).display !== 'none' && document.body.classList.contains('in-app') ? document.getElementById('view') : document.querySelector('#authRoot input, #authRoot button');
+      if (t) { if (!t.hasAttribute('tabindex') && t.id === 'view') t.setAttribute('tabindex', '-1'); t.focus(); }
+    });
+    document.body.insertBefore(skip, document.body.firstChild);
+    const btn = document.createElement('button');
+    btn.className = 'a11y-btn'; btn.id = 'a11yBtn'; btn.type = 'button';
+    btn.setAttribute('aria-label', 'תפריט נגישות'); btn.setAttribute('aria-expanded', 'false'); btn.setAttribute('aria-controls', 'a11yPan');
+    btn.title = 'נגישות'; btn.innerHTML = MAN;
+    const pan = document.createElement('div');
+    pan.className = 'a11y-pan'; pan.id = 'a11yPan'; pan.setAttribute('role', 'dialog'); pan.setAttribute('aria-modal', 'false'); pan.setAttribute('aria-labelledby', 'a11yTtl');
+    pan.innerHTML = '<h2 id="a11yTtl">' + MAN + ' התאמות נגישות<button type="button" class="a11y-x" data-a11y-do="close" aria-label="סגירת תפריט הנגישות">×</button></h2>' +
+      '<div class="a11y-z" role="group" aria-label="גודל תצוגה"><span>גודל תצוגה</span>' +
+        '<button type="button" data-a11y-do="zm" aria-label="הקטנת התצוגה">−</button><output aria-live="polite">100%</output>' +
+        '<button type="button" data-a11y-do="zp" aria-label="הגדלת התצוגה">+</button></div>' +
+      '<div class="a11y-g">' + OPTS.map((o) => '<button type="button" class="a11y-o" data-a11y="' + o[0] + '" aria-pressed="false">' + svgI(o[2]) + '<span>' + o[1] + '</span></button>').join('') + '</div>' +
+      '<div class="a11y-f"><button type="button" data-a11y-do="reset">איפוס התאמות</button><button type="button" data-a11y-do="stmt">הצהרת נגישות</button></div>';
+    document.body.appendChild(btn); document.body.appendChild(pan);
+    // inside the app the button sits in the top bar (never over content); the floating one serves the login screen
+    const top = document.createElement('div');
+    top.className = 'tip';
+    top.innerHTML = '<button type="button" class="icon-btn" id="a11yTop" aria-label="תפריט נגישות" aria-expanded="false" aria-controls="a11yPan">' + MAN + '</button><span class="tip-b">נגישות</span>';
+    const ta = document.querySelector('.top-actions');
+    if (ta) { const help = document.getElementById('btnHelp'); const ref = help && help.closest('.tip'); ta.insertBefore(top, ref && ref.parentElement === ta ? ref : ta.firstChild); }
+    const btnTop = top.querySelector('button');
+    const opener = () => (document.body.classList.contains('in-app') ? btnTop : btn);
+    const open = (on) => {
+      pan.classList.toggle('on', on); [btn, btnTop].forEach((x) => x.setAttribute('aria-expanded', on ? 'true' : 'false'));
+      if (on) { const f = pan.querySelector('.a11y-x'); if (f) f.focus(); } else opener().focus();
+    };
+    btn.addEventListener('click', () => open(!pan.classList.contains('on')));
+    btnTop.addEventListener('click', () => open(!pan.classList.contains('on')));
+    // the AI button steps aside while the page scrolls down and returns on scroll up or at the end of the page
+    let lastY = scrollY;
+    addEventListener('scroll', () => {
+      const y = scrollY, end = y + innerHeight >= document.documentElement.scrollHeight - 40;
+      if (end || y < 80 || y < lastY - 6) document.body.classList.remove('fab-away');
+      else if (y > lastY + 6) document.body.classList.add('fab-away');
+      lastY = y;
+    }, { passive: true });
+    pan.addEventListener('click', (e) => {
+      const o = e.target.closest('[data-a11y]');
+      if (o) { const k = o.dataset.a11y; st[k] = !st[k]; save(); apply(); return; }
+      const d = e.target.closest('[data-a11y-do]'); if (!d) return;
+      const w = d.dataset.a11yDo;
+      if (w === 'close') open(false);
+      else if (w === 'zp') { st.z = Math.min(3, st.z + 1); save(); apply(); }
+      else if (w === 'zm') { st.z = Math.max(0, st.z - 1); save(); apply(); }
+      else if (w === 'reset') { st = { z: 0 }; save(); apply(); }
+      else if (w === 'stmt') { pan.classList.remove('on'); [btn, btnTop].forEach((x) => x.setAttribute('aria-expanded', 'false')); statement(); }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && pan.classList.contains('on')) { open(false); return; }
+      // keyboard activation for clickable elements that are not native buttons or links
+      if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.matches && e.target.matches('[role="button"]:not(button):not(a):not(input):not(textarea):not(select),[role="switch"]:not(button)') && e.target.matches('[role]:not(button):not(a):not(input):not(textarea):not(select)')) { e.preventDefault(); e.target.click(); }
+    });
+    document.addEventListener('click', (e) => { if (pan.classList.contains('on') && !pan.contains(e.target) && !btn.contains(e.target) && !btnTop.contains(e.target)) { pan.classList.remove('on'); [btn, btnTop].forEach((x) => x.setAttribute('aria-expanded', 'false')); } });
+    function statement() {
+      const mail = 'prime.os.team1@gmail.com';
+      openModal('<div class="mb a11y-stmt"><h3>הצהרת נגישות</h3>' +
+        '<p>PrimeOS היא מערכת לניהול תוכן ורשתות חברתיות לרשויות מקומיות ולארגונים. אנחנו רואים חשיבות בהנגשת המערכת לכל המשתמשים, כולל אנשים עם מוגבלות, ופועלים לפי תקנות שוויון זכויות לאנשים עם מוגבלות (התאמות נגישות לשירות), התשע״ג-2013, ולפי התקן הישראלי ת״י 5568, המבוסס על הנחיות WCAG ברמה AA.</p>' +
+        '<h4>מה הונגש</h4><ul>' +
+        '<li>ניווט מלא במקלדת, כולל קישור „דילוג לתוכן המרכזי” וסימון מיקוד ברור.</li>' +
+        '<li>תוויות לרכיבי טופס ולכפתורים שמוצגים כסמל בלבד, לטובת קוראי מסך.</li>' +
+        '<li>ניגודיות צבעים שעומדת ביחס 4.5:1 לטקסט רגיל.</li>' +
+        '<li>תצוגה מותאמת לטלפון, לטאבלט ולמחשב, בלי גלילה רוחבית.</li>' +
+        '<li>תפריט נגישות בכל מסך: הגדלת תצוגה, ניגודיות גבוהה, גווני אפור, הדגשת קישורים, גופן קריא, עצירת אנימציות, הדגשת מיקוד, סמן גדול וריווח טקסט.</li>' +
+        '<li>כיבוד הגדרת „הפחתת תנועה” של מערכת ההפעלה.</li></ul>' +
+        '<h4>מגבלות ידועות</h4><ul>' +
+        '<li>תמונות וסרטונים שמשתמשים מעלים עשויים שלא לכלול טקסט חלופי או כתוביות מלאות.</li>' +
+        '<li>חלונות חיבור של רשתות חברתיות נפתחים באתרי הרשתות עצמן, והנגישות שלהם באחריותן.</li></ul>' +
+        '<h4>פניות בנושא נגישות</h4>' +
+        '<p>נתקלתם בקושי? כתבו לנו ונטפל בהקדם: <span class="mail">' + mail + '</span><br>בפנייה ציינו את המסך, את הפעולה שניסיתם לבצע ואת סוג הדפדפן או הטכנולוגיה המסייעת.</p>' +
+        '<p style="color:var(--ink-3);font-size:13px">ההצהרה עודכנה ב-19.10.2026.</p></div>' +
+        '<div class="modal-foot"><button class="btn" data-act="closeModal">סגירה</button></div>');
+    }
+    window.openA11yStatement = statement;
+    // automatic fixes after every render: names for icon-only controls, alt text, form labels, keyboard reach
+    const txt = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+    let busy = false;
+    const fix = () => {
+      busy = true;
+      try {
+        document.querySelectorAll('button:not([aria-label]),a:not([aria-label]),[role="button"]:not([aria-label])').forEach((b) => {
+          if (txt(b)) return;
+          const tip = b.parentElement && b.parentElement.classList.contains('tip') ? b.parentElement.querySelector('.tip-b') : null;
+          const n = b.getAttribute('title') || (tip && txt(tip)) || (b.querySelector('img[alt]') && b.querySelector('img[alt]').alt) || '';
+          if (n) b.setAttribute('aria-label', n);
+        });
+        document.querySelectorAll('img:not([alt])').forEach((i) => i.setAttribute('alt', i.classList.contains('logo-img') ? 'PrimeOS' : ''));
+        document.querySelectorAll('svg:not([aria-hidden]):not([role])').forEach((s) => s.setAttribute('aria-hidden', 'true'));
+        document.querySelectorAll('input:not([type=hidden]):not([aria-label]),textarea:not([aria-label]),select:not([aria-label])').forEach((f) => {
+          if (f.id && document.querySelector('label[for="' + f.id + '"]')) return;
+          if (f.closest('label')) return;
+          const n = f.getAttribute('placeholder') || f.getAttribute('title') || (f.previousElementSibling && /^(LABEL|SPAN|DIV)$/.test(f.previousElementSibling.tagName) && txt(f.previousElementSibling).slice(0, 60)) || '';
+          if (n) f.setAttribute('aria-label', n);
+        });
+        document.querySelectorAll('[data-act]:not(button):not(a):not(input):not(select):not(textarea):not(label):not([role]),[data-nav]:not(button):not(a):not([role])').forEach((el) => {
+          el.setAttribute('role', 'button'); if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+        });
+        document.querySelectorAll('.sw:not([role])').forEach((s) => { s.setAttribute('role', 'switch'); s.setAttribute('aria-checked', s.classList.contains('on') ? 'true' : 'false'); if (!s.hasAttribute('tabindex')) s.setAttribute('tabindex', '0'); });
+        const m = document.getElementById('modal'); if (m && !m.hasAttribute('aria-labelledby')) { const h = m.querySelector('h2,h3'); if (h) { h.id = h.id || 'modalTtl'; m.setAttribute('aria-labelledby', h.id); } }
+        const v = document.getElementById('view'); if (v && !v.hasAttribute('aria-label')) v.setAttribute('aria-label', 'התוכן המרכזי');
+        const nav = document.getElementById('nav'); if (nav && !nav.hasAttribute('aria-label')) nav.setAttribute('aria-label', 'תפריט ראשי');
+      } finally { busy = false; }
+    };
+    let tm = 0;
+    new MutationObserver(() => { if (busy) return; clearTimeout(tm); tm = setTimeout(fix, 120); }).observe(document.body, { childList: true, subtree: true });
+    apply(); fix();
   })();
 })();

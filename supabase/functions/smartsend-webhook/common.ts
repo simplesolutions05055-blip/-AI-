@@ -43,7 +43,7 @@ export async function whoIs(d: DB, phone: string): Promise<Who | null> {
   if (!m) return null;
   const { data: org } = await d.from('organizations').select('id,name,status,plan').eq('id', m.org_id).maybeSingle();
   if (!org) return null;
-  const { data: t } = await d.from('api_tokens').select('token').eq('member_id', m.id).limit(1).maybeSingle();
+  const { data: t } = await d.from('api_tokens').select('token').eq('member_id', m.id).eq('kind', 'internal').limit(1).maybeSingle();
   if (!t) return null;
   const manager = m.role === 'owner' || m.role === 'admin';
   const direct = manager || m.view !== 'dept' || !!(m.perms && m.perms.direct);

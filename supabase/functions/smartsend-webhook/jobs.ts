@@ -22,7 +22,7 @@ let db0: DB | null = null;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function tokenOf(d: DB, memberId: string) {
-  const { data } = await d.from('api_tokens').select('token').eq('member_id', memberId).limit(1).maybeSingle();
+  const { data } = await d.from('api_tokens').select('token').eq('member_id', memberId).eq('kind', 'internal').limit(1).maybeSingle();
   if (!data) throw new Error('no_token');
   return data.token as string;
 }

@@ -63,10 +63,9 @@ const isManager = (m: any) => !m || m.role === 'owner' || m.role === 'admin';
 async function membersOf(d: DB, orgId: string, withLinks: boolean) {
   const { data: ms } = await d.from('org_members').select('id,name,email,phone,role,dept,view,perms,created_at').eq('org_id', orgId).order('created_at');
   const ids = (ms ?? []).map((m: any) => m.id);
-  const { data: toks } = withLinks && ids.length ? await d.from('api_tokens').select('member_id,token').in('member_id', ids) : { data: [] };
-  const tokOf: Record<string, string> = {};
-  for (const t of toks ?? []) if (t.member_id && !tokOf[t.member_id]) tokOf[t.member_id] = t.token;
-  return (ms ?? []).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone ?? null, role: m.role, dept: m.dept, view: m.view, perms: m.perms ?? {}, token: withLinks ? tokOf[m.id] ?? null : null }));
+  void ids; void withLinks;
+  // tokens never leave the server: users enter by e-mail code, first entry by a one-time link
+  return (ms ?? []).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone ?? null, role: m.role, dept: m.dept, view: m.view, perms: m.perms ?? {}, token: null }));
 }
 
 async function liveLoad(d: DB, orgId: string, memberId: string | null) {
@@ -103,9 +102,9 @@ async function memberCreate(d: DB, orgId: string, memberId: string | null, p: Re
   }).select('id').single();
   if (error) throw error;
   const token = newToken();
-  const { error: e2 } = await d.from('api_tokens').insert({ token, org_id: orgId, member_id: mem.id });
+  const { error: e2 } = await d.from('api_tokens').insert({ token, org_id: orgId, member_id: mem.id, kind: 'internal' });
   if (e2) throw e2;
-  return { id: mem.id, token };
+  return { id: mem.id };
 }
 async function memberRemove(d: DB, orgId: string, memberId: string | null, id: string) {
   const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
@@ -159,9 +158,9 @@ async function memberRelink(d: DB, orgId: string, memberId: string | null, id: s
   if (!m) throw new Error('not_found');
   const token = newToken();
   await d.from('api_tokens').delete().eq('member_id', id);
-  const { error } = await d.from('api_tokens').insert({ token, org_id: orgId, member_id: id });
+  const { error } = await d.from('api_tokens').insert({ token, org_id: orgId, member_id: id, kind: 'internal' });
   if (error) throw error;
-  return { token };
+  return { ok: true };
 }
 
 async function itemsUpsert(d: DB, orgId: string, list: Record<string, any>[]) {
@@ -566,11 +565,11 @@ async function adminLoad(d: DB, adminId: string) {
     state: st?.data ?? null,
     stateAt: st?.updated_at ?? null,
     realOrgs: (orgs.data ?? []).map((o: any) => ({
-      id: o.id, name: o.name, plan: o.plan, status: o.status, ui_id: o.settings?.ui_id ?? null, otype: o.settings?.otype ?? null, token: tokOf[o.id] ?? null, created: o.created_at,
+      id: o.id, name: o.name, plan: o.plan, status: o.status, ui_id: o.settings?.ui_id ?? null, otype: o.settings?.otype ?? null, token: tokOf[o.id] ? 'live' : null, created: o.created_at,
       contact: o.contact_name ?? null, mail: o.contact_email ?? null, phone: o.contact_phone ?? null, items: items[o.id] ?? 0,
       main_dept: o.settings?.main_dept ?? null, role: o.settings?.role ?? null, agr: o.settings?.agr ?? null,
       use: usage[o.id]?.use ?? null, useM: usage[o.id]?.useM ?? null,
-      members: (mems ?? []).filter((m: any) => m.org_id === o.id).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone, role: m.role, dept: m.dept, view: m.view, token: mtokOf[m.id] ?? null, use: usage[o.id]?.members?.[m.id] ?? null })),
+      members: (mems ?? []).filter((m: any) => m.org_id === o.id).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone, role: m.role, dept: m.dept, view: m.view, token: mtokOf[m.id] ? 'live' : null, use: usage[o.id]?.members?.[m.id] ?? null })),
     })),
   };
 }
@@ -624,11 +623,11 @@ async function adminOrgCreate(d: DB, p: Record<string, any>) {
   }).select('id').single();
   if (e2) throw e2;
   const token = newToken();
-  const { error: e3 } = await d.from('api_tokens').insert({ token, org_id: org.id, member_id: mem.id });
+  const { error: e3 } = await d.from('api_tokens').insert({ token, org_id: org.id, member_id: mem.id, kind: 'internal' });
   if (e3) throw e3;
   await d.from('org_state').upsert({ org_id: org.id, data: { fresh: true }, updated_at: new Date().toISOString() });
   const { data: back } = await d.from('organizations').select('settings').eq('id', org.id).single();
-  return { org_id: org.id, token, sign_token: back?.settings?.agr?.sign_token ?? null };
+  return { org_id: org.id, token: 'live', sign_token: back?.settings?.agr?.sign_token ?? null };
 }
 
 // ---------------- sending: e-mail (Resend) and WhatsApp (SmartSend) ----------------
@@ -657,18 +656,16 @@ function inviteHtml(p: { name: string; org: string; login: string; sign: string 
   return `<!doctype html><html dir="rtl" lang="he"><body style="margin:0;background:#F4F6FB;font-family:Arial,Helvetica,sans-serif;color:#1B2238"><div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;padding:28px 28px 22px;border:1px solid #E6E9F2">
 <div style="margin-bottom:6px"><img src="${APP}/logo.png" width="40" height="38" alt="" style="vertical-align:middle;border:0"> <span style="font-size:22px;font-weight:700;color:#4A1BE8;vertical-align:middle">PrimeOS</span></div><div style="font-size:13px;color:#6B7390;margin-bottom:22px">ניהול סושיאל חכם לרשויות</div>
 <p style="font-size:16px;line-height:1.7;margin:0 0 14px">שלום ${escH(p.name)},</p>
-<p style="font-size:15px;line-height:1.7;margin:0 0 18px">נפתח עבור <b>${escH(p.org)}</b> חשבון במערכת PrimeOS. הכניסה היא בקישור אישי, בלי סיסמה.</p>
-<p style="margin:0 0 22px"><a href="${escH(p.login)}" style="display:inline-block;background:#4A1BE8;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:12px;font-size:15px">כניסה למערכת</a></p>
+<p style="font-size:15px;line-height:1.7;margin:0 0 18px">נפתח עבור <b>${escH(p.org)}</b> חשבון במערכת PrimeOS. הכניסה הראשונה בכפתור כאן למטה. בכניסות הבאות מזינים את כתובת הדוא״ל באתר ומקבלים קוד.</p>
+<p style="margin:0 0 22px"><a href="${escH(p.login)}" style="display:inline-block;background:#4A1BE8;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:12px;font-size:15px">כניסה ראשונה למערכת</a></p>
 ${p.sign ? `<p style="font-size:15px;line-height:1.7;margin:0 0 10px">הסכם המנוי ממתין לחתימה דיגיטלית:</p><p style="margin:0 0 22px"><a href="${escH(p.sign)}" style="display:inline-block;background:#fff;color:#4A1BE8;border:1.5px solid #4A1BE8;text-decoration:none;font-weight:700;padding:11px 20px;border-radius:12px;font-size:14px">צפייה וחתימה על ההסכם</a></p>` : ''}
-<p style="font-size:12.5px;line-height:1.6;color:#6B7390;margin:0;border-top:1px solid #E6E9F2;padding-top:14px">הקישור אישי. לא להעביר אותו הלאה. אם לא ציפיתם להודעה הזו, אפשר להתעלם ממנה.</p></div></body></html>`;
+<p style="font-size:12.5px;line-height:1.6;color:#6B7390;margin:0;border-top:1px solid #E6E9F2;padding-top:14px">הקישור אישי, לכניסה אחת, ובתוקף 7 ימים. לא להעביר אותו הלאה. אם לא ציפיתם להודעה הזו, אפשר להתעלם ממנה.</p></div></body></html>`;
 }
 async function adminInviteSend(d: DB, p: Record<string, any>) {
   const id = String(p.org_id ?? '');
   const { data: org } = await d.from('organizations').select('id,name,contact_name,contact_email,contact_phone,settings').eq('id', id).maybeSingle();
   if (!org) throw new Error('not_found');
-  const { data: tok } = await d.from('api_tokens').select('token').eq('org_id', id).order('created_at').limit(1).maybeSingle();
-  if (!tok) throw new Error('no_token');
-  const login = `${APP}/?k=${encodeURIComponent(tok.token)}`;
+  const login = await inviteLinkFor(d, id, await managerOf(d, id));
   const agr = org.settings?.agr ?? {};
   const sign = agr.sign_token && !agr.signed && agr.sign !== 'upload' ? `${APP}/sign?t=${encodeURIComponent(agr.sign_token)}` : null;
   const name = org.contact_name || 'שלום';
@@ -680,7 +677,7 @@ async function adminInviteSend(d: DB, p: Record<string, any>) {
   if (p.wa) {
     if (!org.contact_phone) out.wa = 'skipped:no_phone';
     else {
-      const msg = `שלום ${name}, נפתח עבור ${org.name} חשבון במערכת PrimeOS.\nקישור הכניסה האישי שלך (בלי סיסמה):\n${login}` + (sign ? `\n\nהסכם המנוי לחתימה דיגיטלית:\n${sign}` : '') + `\n\nהקישורים אישיים, לא להעביר הלאה.`;
+      const msg = `שלום ${name}, נפתח עבור ${org.name} חשבון במערכת PrimeOS.\nקישור לכניסה הראשונה (אישי, לכניסה אחת, בתוקף 7 ימים):\n${login}\n\nבכניסות הבאות: app.primeos.co.il, מזינים את כתובת הדוא״ל ומקבלים קוד.` + (sign ? `\n\nהסכם המנוי לחתימה דיגיטלית:\n${sign}` : '') + `\n\nהקישורים אישיים, לא להעביר הלאה.`;
       try { await sendWa(org.contact_phone, msg); out.wa = 'sent'; } catch (e) { out.wa = 'failed:' + (e instanceof Error ? e.message : 'error'); }
     }
   }
@@ -694,12 +691,10 @@ async function memberSend(d: DB, orgId: string, memberId: string | null, p: Reco
   const { data: m } = await d.from('org_members').select('id,name,email,phone').eq('id', String(p.id ?? '')).eq('org_id', orgId).maybeSingle();
   if (!m) throw new Error('not_found');
   const { data: org } = await d.from('organizations').select('name').eq('id', orgId).single();
-  const { data: tok } = await d.from('api_tokens').select('token').eq('member_id', m.id).limit(1).maybeSingle();
-  if (!tok) throw new Error('no_token');
-  const login = `${APP}/?k=${encodeURIComponent(tok.token)}`;
+  const login = await inviteLinkFor(d, orgId, m.id);
   const out: Record<string, string> = {};
   if (p.mail) { if (!m.email) out.mail = 'skipped:no_email'; else { try { await sendMail(m.email, `הכניסה שלך ל-PrimeOS · ${org?.name ?? ''}`, inviteHtml({ name: m.name, org: org?.name ?? '', login, sign: null })); out.mail = 'sent'; } catch (e) { out.mail = 'failed:' + (e instanceof Error ? e.message : 'error'); } } }
-  if (p.wa) { if (!m.phone) out.wa = 'skipped:no_phone'; else { try { await sendWa(m.phone, `שלום ${m.name}, זה קישור הכניסה האישי שלך למערכת PrimeOS של ${org?.name ?? ''}:\n${login}\nהקישור אישי, לא להעביר הלאה.`); out.wa = 'sent'; } catch (e) { out.wa = 'failed:' + (e instanceof Error ? e.message : 'error'); } } }
+  if (p.wa) { if (!m.phone) out.wa = 'skipped:no_phone'; else { try { await sendWa(m.phone, `שלום ${m.name}, זה קישור הכניסה הראשונה שלך למערכת PrimeOS של ${org?.name ?? ''}:\n${login}\nהקישור אישי, לכניסה אחת ובתוקף 7 ימים. בכניסות הבאות: app.primeos.co.il, מזינים את הדוא״ל ומקבלים קוד.`); out.wa = 'sent'; } catch (e) { out.wa = 'failed:' + (e instanceof Error ? e.message : 'error'); } } }
   return { ok: true, ...out };
 }
 
@@ -743,50 +738,163 @@ async function adminOrgUpdate(d: DB, p: Record<string, any>) {
 }
 
 // ---------------- auth ----------------
+// Browsers hold a session (api_tokens / admin_tokens with kind 'session' and an expiry).
+// 'internal' tokens belong to the server (WhatsApp bot, job runner); they never open the app in a browser.
 async function resolve(d: DB, token: string) {
-  const { data: t } = await d.from('api_tokens').select('org_id,member_id').eq('token', token).maybeSingle();
-  if (t) return { kind: 'client' as const, orgId: t.org_id as string, memberId: (t.member_id as string) ?? null };
-  const { data: a } = await d.from('admin_tokens').select('admin_id').eq('token', token).maybeSingle();
-  if (a) return { kind: 'admin' as const, adminId: a.admin_id as string };
+  const now = Date.now();
+  const { data: t } = await d.from('api_tokens').select('org_id,member_id,kind,expires_at').eq('token', token).maybeSingle();
+  if (t) {
+    if (t.expires_at && new Date(t.expires_at).getTime() < now) return null;
+    return { kind: 'client' as const, orgId: t.org_id as string, memberId: (t.member_id as string) ?? null, session: t.kind === 'session' };
+  }
+  const { data: a } = await d.from('admin_tokens').select('admin_id,kind,expires_at').eq('token', token).maybeSingle();
+  if (a) {
+    if (a.expires_at && new Date(a.expires_at).getTime() < now) return null;
+    return { kind: 'admin' as const, adminId: a.admin_id as string, session: a.kind === 'session' };
+  }
   return null;
 }
 
-// passwordless login: a link by e-mail, only to the account manager's address (organizations.contact_email)
-// or to the master admin (admin_users.email). Every other address gets the same answer and nothing is sent.
-async function loginLink(d: DB, p: Record<string, any>) {
-  const email = String(p.email ?? '').toLowerCase().trim().slice(0, 200);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('bad_email');
-  const same = (x: unknown) => String(x ?? '').toLowerCase().trim() === email;
+// the master admins of PrimeOS (only these addresses ever reach the admin console)
+const ADMIN_EMAILS = ['simple.solutions05055@gmail.com', 'prime.os.team1@gmail.com', 'ofir.taf@gmail.com'];
+const DAY = 86400000;
+const sha = async (x: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(x)))).map((b) => b.toString(16).padStart(2, '0')).join('');
+const normMail = (x: unknown) => String(x ?? '').toLowerCase().trim().slice(0, 200);
+const okMail = (x: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
+
+// who may enter with this address: a member with this e-mail, or the account manager of an organisation whose contact e-mail it is
+async function clientTarget(d: DB, email: string) {
+  const same = (x: unknown) => normMail(x) === email;
+  const { data: mems } = await d.from('org_members').select('id,org_id,email,role,created_at').ilike('email', email).order('created_at');
+  const m = (mems ?? []).filter((x: any) => same(x.email));
+  const pick = m.find((x: any) => isManager(x)) ?? m[0];
+  if (pick) return { orgId: pick.org_id as string, memberId: pick.id as string };
+  const { data: orgs } = await d.from('organizations').select('id,contact_email,created_at').ilike('contact_email', email).order('created_at');
+  const o = (orgs ?? []).find((x: any) => same(x.contact_email));
+  if (!o) return null;
+  const { data: ms } = await d.from('org_members').select('id,role,created_at').eq('org_id', o.id).order('created_at');
+  const mg = (ms ?? []).find((x: any) => isManager(x) && x.role !== 'member');
+  return mg ? { orgId: o.id as string, memberId: mg.id as string } : null;
+}
+async function adminTarget(d: DB, email: string) {
+  if (!ADMIN_EMAILS.includes(email)) return null;
+  const { data: admins } = await d.from('admin_users').select('id,name,email');
+  const a = (admins ?? []).find((x: any) => normMail(x.email) === email);
+  return a ? { adminId: a.id as string, name: a.name as string } : null;
+}
+async function newSession(d: DB, t: { kind: string; orgId?: string; memberId?: string; adminId?: string }, ms: number) {
+  // expired sessions and old codes go away as new ones are made
+  const nowIso = new Date().toISOString();
+  await Promise.all([
+    d.from('api_tokens').delete().eq('kind', 'session').lt('expires_at', nowIso),
+    d.from('admin_tokens').delete().eq('kind', 'session').lt('expires_at', nowIso),
+    d.from('v2_login_codes').delete().lt('expires_at', new Date(Date.now() - 2 * DAY).toISOString()),
+  ]).catch(() => {});
+  const token = newToken() + newToken();
+  const expires_at = new Date(Date.now() + ms).toISOString();
+  if (t.kind === 'admin') { const { error } = await d.from('admin_tokens').insert({ token, admin_id: t.adminId, kind: 'session', expires_at }); if (error) throw error; }
+  else { const { error } = await d.from('api_tokens').insert({ token, org_id: t.orgId, member_id: t.memberId, kind: 'session', expires_at }); if (error) throw error; }
+  return token;
+}
+// a one-time entry link (first entry, or the "enter directly" button in the code e-mail)
+async function entryLink(d: DB, row: Record<string, unknown>, ms: number, path = '/') {
+  const raw = newToken() + newToken();
+  const { error } = await d.from('v2_login_codes').insert({ ...row, link_hash: await sha(raw), expires_at: new Date(Date.now() + ms).toISOString() });
+  if (error) throw error;
+  return `${APP}${path}?lc=${raw}`;
+}
+
+// step 1: a 6-digit code to an authorised address (every request gets the same answer)
+async function loginCode(d: DB, p: Record<string, any>) {
+  const email = normMail(p.email);
+  if (!okMail(email)) throw new Error('bad_email');
+  const kind = p.admin ? 'admin' : 'client';
   try {
-    if (p.admin) {
-      const { data: admins } = await d.from('admin_users').select('id,name,email');
-      const a = (admins ?? []).find((x: any) => same(x.email));
-      if (a) {
-        const { data: t } = await d.from('admin_tokens').select('token').eq('admin_id', a.id).limit(1).maybeSingle();
-        if (t) await sendMail(a.email, 'קישור כניסה לממשק הניהול של PrimeOS', loginHtml({ name: a.name || '', org: 'ממשק הניהול', login: `${APP}/admin?k=${encodeURIComponent(t.token)}` }));
-      }
-    } else {
-      const { data: orgs } = await d.from('organizations').select('id,name,contact_name,contact_email').ilike('contact_email', email);
-      const org = (orgs ?? []).find((o: any) => same(o.contact_email));
-      if (org) {
-        const { data: mems } = await d.from('org_members').select('id,email,role,created_at').eq('org_id', org.id).order('created_at');
-        const m = (mems ?? []).find((x: any) => same(x.email) && isManager(x)) ?? (mems ?? []).find((x: any) => isManager(x) && x.role !== 'member');
-        if (m) {
-          const { data: t } = await d.from('api_tokens').select('token').eq('member_id', m.id).limit(1).maybeSingle();
-          if (t) await sendMail(org.contact_email, `קישור כניסה ל-PrimeOS · ${org.name}`, loginHtml({ name: org.contact_name || '', org: org.name, login: `${APP}/?k=${encodeURIComponent(t.token)}` }));
-        }
-      }
+    const { count } = await d.from('v2_login_codes').select('id', { count: 'exact', head: true }).eq('email', email).eq('purpose', 'code').gte('created_at', new Date(Date.now() - 3600000).toISOString());
+    if ((count ?? 0) >= 6) return { ok: true };
+    const t = kind === 'admin' ? await adminTarget(d, email) : await clientTarget(d, email);
+    if (!t) return { ok: true };
+    const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
+    const ids = kind === 'admin' ? { admin_id: (t as any).adminId } : { org_id: (t as any).orgId, member_id: (t as any).memberId };
+    const { error } = await d.from('v2_login_codes').insert({ email, kind, purpose: 'code', code_hash: await sha(email + ':' + code), ...ids, expires_at: new Date(Date.now() + 10 * 60000).toISOString() });
+    if (error) throw error;
+    const link = await entryLink(d, { email, kind, purpose: 'direct', ...ids }, 10 * 60000, kind === 'admin' ? '/admin' : '/');
+    let name = '', org = '';
+    if (kind === 'admin') { name = (t as any).name || ''; org = 'ממשק הניהול'; }
+    else {
+      const { data: m } = await d.from('org_members').select('name').eq('id', (t as any).memberId).maybeSingle();
+      const { data: o } = await d.from('organizations').select('name').eq('id', (t as any).orgId).maybeSingle();
+      name = m?.name || ''; org = o?.name || '';
     }
-  } catch (e) { console.error('login.link', e instanceof Error ? e.message : e); }
+    await sendMail(email, `קוד הכניסה שלך ל-PrimeOS: ${code}`, codeHtml({ name, org, code, link }));
+  } catch (e) { console.error('login.code', e instanceof Error ? e.message : e); }
   return { ok: true };
+}
+// step 2: the code -> a session
+async function loginVerify(d: DB, p: Record<string, any>) {
+  const email = normMail(p.email);
+  const code = String(p.code ?? '').replace(/\D/g, '');
+  const kind = p.admin ? 'admin' : 'client';
+  const { data: row } = await d.from('v2_login_codes').select('*').eq('email', email).eq('kind', kind).eq('purpose', 'code').is('used_at', null).gte('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (!row) throw new Error('code_expired');
+  if (row.tries >= 5) throw new Error('too_many_tries');
+  if (code.length !== 6 || (await sha(email + ':' + code)) !== row.code_hash) {
+    await d.from('v2_login_codes').update({ tries: row.tries + 1 }).eq('id', row.id);
+    throw new Error(row.tries + 1 >= 5 ? 'too_many_tries' : 'bad_code');
+  }
+  await d.from('v2_login_codes').update({ used_at: new Date().toISOString() }).eq('purpose', 'code').eq('email', email).is('used_at', null);
+  const token = await newSession(d, { kind, orgId: row.org_id, memberId: row.member_id, adminId: row.admin_id }, kind === 'admin' ? 14 * DAY : 30 * DAY);
+  return { token, kind };
+}
+// a one-time link (first entry / "enter directly") -> a session
+async function loginLinkUse(d: DB, p: Record<string, any>) {
+  const raw = String(p.t ?? '');
+  if (!/^[0-9a-f]{72}$/.test(raw)) throw new Error('link_invalid');
+  const { data: row } = await d.from('v2_login_codes').select('*').eq('link_hash', await sha(raw)).maybeSingle();
+  if (!row || row.used_at || new Date(row.expires_at).getTime() < Date.now()) throw new Error('link_invalid');
+  const { data: used } = await d.from('v2_login_codes').update({ used_at: new Date().toISOString() }).eq('id', row.id).is('used_at', null).select('id');
+  if (!used || !used.length) throw new Error('link_invalid');
+  if (row.kind === 'admin' && !(await adminTarget(d, row.email))) throw new Error('link_invalid');
+  if (row.kind === 'client' && row.member_id) { const { data: m } = await d.from('org_members').select('id').eq('id', row.member_id).maybeSingle(); if (!m) throw new Error('link_invalid'); }
+  const imp = row.purpose === 'enter';
+  const token = await newSession(d, { kind: row.kind, orgId: row.org_id, memberId: row.member_id, adminId: row.admin_id }, imp ? DAY / 2 : row.kind === 'admin' ? 14 * DAY : 30 * DAY);
+  return { token, kind: row.kind };
+}
+async function logout(d: DB, token: string, kind: string) {
+  if (kind === 'admin') await d.from('admin_tokens').delete().eq('token', token).eq('kind', 'session');
+  else await d.from('api_tokens').delete().eq('token', token).eq('kind', 'session');
+  return { ok: true };
+}
+// first-entry link for a member (sent by e-mail or copied by the manager / the admin)
+async function inviteLinkFor(d: DB, orgId: string, memberId: string) {
+  const { data: m } = await d.from('org_members').select('id,email').eq('id', memberId).eq('org_id', orgId).maybeSingle();
+  if (!m) throw new Error('not_found');
+  return entryLink(d, { email: normMail(m.email) || 'invite', kind: 'client', purpose: 'invite', org_id: orgId, member_id: memberId }, 7 * DAY);
+}
+async function managerOf(d: DB, orgId: string) {
+  const { data: ms } = await d.from('org_members').select('id,role,created_at').eq('org_id', orgId).order('created_at');
+  const m = (ms ?? []).find((x: any) => isManager(x) && x.role !== 'member') ?? (ms ?? [])[0];
+  if (!m) throw new Error('no_member');
+  return m.id as string;
+}
+function codeHtml(p: { name: string; org: string; code: string; link: string }) {
+  return `<!doctype html><html dir="rtl" lang="he"><body style="margin:0;background:#F4F6FB;font-family:Arial,Helvetica,sans-serif;color:#1B2238"><div style="max-width:520px;margin:24px auto;background:#fff;border-radius:16px;padding:28px;border:1px solid #E6E9F2">
+<div style="font-size:22px;font-weight:700;color:#4A1BE8;margin-bottom:18px">PrimeOS</div>
+<p style="font-size:16px;line-height:1.7;margin:0 0 6px">שלום ${escH(p.name)},</p>
+<p style="font-size:15px;line-height:1.7;margin:0 0 16px">קוד הכניסה ל-<b>${escH(p.org)}</b>:</p>
+<div style="font-size:34px;font-weight:700;letter-spacing:10px;direction:ltr;text-align:center;background:#F3F0FF;color:#2A1580;border-radius:14px;padding:16px 10px;margin:0 0 18px">${p.code}</div>
+<p style="font-size:14px;line-height:1.7;margin:0 0 14px">פתחתם את המייל באותו מכשיר? אפשר להיכנס ישירות:</p>
+<p style="margin:0 0 20px"><a href="${escH(p.link)}" style="display:inline-block;background:#4A1BE8;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:12px;font-size:15px">כניסה ישירה למערכת</a></p>
+<p style="font-size:12.5px;line-height:1.6;color:#6B7390;margin:0;border-top:1px solid #E6E9F2;padding-top:14px">הקוד והכפתור תקפים ל-10 דקות ולכניסה אחת. אם לא ביקשתם להיכנס, אפשר להתעלם מההודעה.</p></div></body></html>`;
 }
 function loginHtml(p: { name: string; org: string; login: string }) {
   return `<!doctype html><html dir="rtl" lang="he"><body style="margin:0;background:#F4F6FB;font-family:Arial,Helvetica,sans-serif;color:#1B2238"><div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;padding:28px;border:1px solid #E6E9F2">
 <div style="font-size:22px;font-weight:700;color:#4A1BE8;margin-bottom:18px">PrimeOS</div>
 <p style="font-size:16px;line-height:1.7;margin:0 0 14px">שלום ${escH(p.name)},</p>
-<p style="font-size:15px;line-height:1.7;margin:0 0 18px">ביקשת קישור כניסה ל-<b>${escH(p.org)}</b>.</p>
-<p style="margin:0 0 22px"><a href="${escH(p.login)}" style="display:inline-block;background:#4A1BE8;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:12px;font-size:15px">כניסה למערכת</a></p>
-<p style="font-size:12.5px;line-height:1.6;color:#6B7390;margin:0;border-top:1px solid #E6E9F2;padding-top:14px">אם לא ביקשת קישור, אפשר להתעלם מההודעה. הקישור אישי, לא להעביר אותו הלאה.</p></div></body></html>`;
+<p style="font-size:15px;line-height:1.7;margin:0 0 18px">נפתח עבורך חשבון ב-<b>${escH(p.org)}</b>. הכניסה הראשונה בקישור הזה:</p>
+<p style="margin:0 0 22px"><a href="${escH(p.login)}" style="display:inline-block;background:#4A1BE8;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:12px;font-size:15px">כניסה ראשונה למערכת</a></p>
+<p style="font-size:13px;line-height:1.6;color:#41506A;margin:0 0 14px">בכניסות הבאות: app.primeos.co.il ← מזינים את כתובת הדוא״ל הזו ← מקבלים קוד במייל.</p>
+<p style="font-size:12.5px;line-height:1.6;color:#6B7390;margin:0;border-top:1px solid #E6E9F2;padding-top:14px">הקישור אישי, לכניסה אחת, ותקף ל-7 ימים. לא להעביר אותו הלאה.</p></div></body></html>`;
 }
 
 // files people upload (brand assets, photos, videos, documents): signed direct upload to storage
@@ -815,14 +923,21 @@ Deno.serve(async (req) => {
   }
   const d = db();
   try {
-    if (action === 'login.link') return json(req, await loginLink(d, p));
+    if (action === 'login.code' || action === 'login.link') return json(req, await loginCode(d, p));
+    if (action === 'login.verify') return json(req, await loginVerify(d, p));
+    if (action === 'login.use') return json(req, await loginLinkUse(d, p));
     if (action === 'sign.load') return json(req, await signLoad(d, p));
     if (action === 'sign.submit') return json(req, await signSubmit(d, p, req));
     const token = req.headers.get('x-primeos-token')?.trim() ?? '';
     const s = token ? await resolve(d, token) : null;
     if (!s) return json(req, { error: 'invalid_token' }, 401);
 
-    if (action === 'whoami') return json(req, { kind: s.kind });
+    if (action === 'whoami') return json(req, { kind: s.kind, session: !!s.session });
+    if (action === 'logout') return json(req, await logout(d, token, s.kind));
+    // the app opens only with a browser session (server tokens of the bot / job runner never open it)
+    if ((action === 'live.load' || action === 'admin.load') && !s.session) return json(req, { error: 'session_required' }, 401);
+    // the admin console has no server-side users: every admin call needs a browser session
+    if (s.kind === 'admin' && !s.session) return json(req, { error: 'session_required' }, 401);
     if (action === 'upload.sign') return json(req, await uploadSign(d, s, p));
 
     if (s.kind === 'client') {
@@ -843,6 +958,11 @@ Deno.serve(async (req) => {
       if (action === 'members.update') return json(req, await memberUpdate(d, s.orgId, s.memberId, p));
       if (action === 'state.patch') return json(req, await statePatch(d, s.orgId, s.memberId, p.data ?? {}));
       if (action === 'members.send') return json(req, await memberSend(d, s.orgId, s.memberId, p));
+      if (action === 'members.invite.link') {
+        const { data: me } = s.memberId ? await d.from('org_members').select('role').eq('id', s.memberId).maybeSingle() : { data: null };
+        if (!isManager(me)) return json(req, { error: 'forbidden' }, 403);
+        return json(req, { link: await inviteLinkFor(d, s.orgId, String(p.id ?? '')) });
+      }
       if (action === 'job.create') return json(req, await jobCreate(d, s.orgId, s.memberId, p));
       if (action === 'job.get') return json(req, await jobGet(d, s.orgId, String(p.id ?? '')));
       if (action === 'job.retry') return json(req, await jobRetry(d, s.orgId, String(p.id ?? '')));
@@ -862,10 +982,21 @@ Deno.serve(async (req) => {
       if (action === 'admin.org.delete') return json(req, await adminOrgDelete(d, p));
       if (action === 'admin.invite.send') return json(req, await adminInviteSend(d, p));
       if (action === 'admin.org.update') return json(req, await adminOrgUpdate(d, p));
+      // the admin opens a client's system (a short session), or copies a first-entry link for the client
+      if (action === 'admin.enter' || action === 'admin.invite.link') {
+        const orgId = String(p.org_id ?? '');
+        const memberId = p.member_id ? String(p.member_id) : await managerOf(d, orgId);
+        const { data: m } = await d.from('org_members').select('id,email').eq('id', memberId).eq('org_id', orgId).maybeSingle();
+        if (!m) return json(req, { error: 'not_found' }, 404);
+        if (action === 'admin.invite.link') return json(req, { link: await inviteLinkFor(d, orgId, memberId) });
+        return json(req, { link: await entryLink(d, { email: normMail(m.email) || 'admin-enter', kind: 'client', purpose: 'enter', org_id: orgId, member_id: memberId }, 5 * 60000) });
+      }
       // the master admin's own name and e-mail (the e-mail is the only one that receives an admin login link)
       if (action === 'admin.profile.save') {
         const email = String(p.email ?? '').toLowerCase().trim().slice(0, 200);
         if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(req, { error: 'bad_email' }, 400);
+        // only the master admin addresses can enter the console, so the address stays one of them
+        if (email && !ADMIN_EMAILS.includes(email)) return json(req, { error: 'email_not_allowed' }, 400);
         const row: Record<string, string> = {};
         if (typeof p.name === 'string' && p.name.trim()) row.name = p.name.trim().slice(0, 120);
         if (email) row.email = email;
