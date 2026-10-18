@@ -332,27 +332,38 @@
     if (views) views.remove();
     const nw = $('#lNew');
     if (nw) nw.remove();
+    // passwordless: only the account manager's e-mail (or the master admin's) gets a login link by e-mail
     const em = $('#lEmail'), pw = $('#lPass');
     if (em) em.value = '';
-    if (pw) pw.value = '';
+    if (pw) { const f = pw.closest('.field'); if (f) f.remove(); }
+    const fg = $('#lForgot'); if (fg && fg.parentElement) fg.parentElement.remove();
+    let adm = isAdminPath();
+    const card = $('.auth-card');
+    const paint = () => {
+      const h = card && card.querySelector('h2'), sub = card && card.querySelector('.sub');
+      if (h) h.textContent = adm ? 'כניסת מנהל מערכת' : 'כניסה למערכת';
+      if (sub) sub.textContent = adm ? 'הזינו את הדוא״ל של מנהל המערכת. קישור כניסה יישלח אליו.' : 'הזינו את הדוא״ל של מנהל החשבון. קישור כניסה אישי יישלח אליו.';
+      const lb = $('label[for="lEmail"]'); if (lb) lb.textContent = adm ? 'דוא״ל מנהל המערכת' : 'דוא״ל מנהל החשבון';
+      $('#lIn').textContent = 'שליחת קישור כניסה';
+      const la = $('#lAdmin'); if (la) la.innerHTML = ic('shield', 14) + (adm ? ' כניסה לחשבון ארגון' : ' כניסת מנהל מערכת PrimeOS');
+    };
+    paint();
     const go = async () => {
-      const email = (em && em.value || '').trim(), password = pw && pw.value || '';
-      if (!email || !password) { toast('חסרים פרטים', 'הזינו דוא״ל וסיסמה.', 'err'); return; }
-      const done = busyBtn('#lIn', 'מתחבר...');
+      const email = (em && em.value || '').trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('חסר דוא״ל', 'הזינו כתובת דוא״ל תקינה.', 'err'); return; }
+      const done = busyBtn('#lIn', 'שולחים...');
       try {
-        const r = await post(API, { action: 'login', payload: { email, password } });
-        L.token = r.token;
-        ls.set(SLOT.client, r.token);
-        await bootWithToken();
+        await post(API, { action: 'login.link', payload: { email, admin: adm } });
+        done();
+        toast('אם הכתובת מורשית, נשלח אליה קישור', 'בדקו את תיבת הדוא״ל. הקישור אישי ותקף לכניסה.', '');
       } catch (e) {
         done();
-        toast('הכניסה נכשלה', e.status === 401 ? 'דוא״ל או סיסמה שגויים.' : 'בעיית חיבור. נסו שוב.', 'err');
+        toast('השליחה נכשלה', 'בעיית חיבור. נסו שוב בעוד רגע.', 'err');
       }
     };
     $('#lIn').onclick = go;
-    if (pw) pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-    $('#lAdmin').onclick = () => toast('כניסת מנהל מערכת', 'הכניסה לממשק הניהול מתבצעת מהקישור האישי שלך.', '');
-    $('#lForgot').onclick = (e) => { e.preventDefault(); toast('איפוס סיסמה', 'פנו למנהל המערכת לקבלת קישור כניסה חדש.', ''); };
+    if (em) em.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    $('#lAdmin').onclick = () => { adm = !adm; paint(); };
   };
 
   /* logout clears this interface's link */
@@ -424,7 +435,7 @@
   /* ---------------- /sign: the client reads the agreement and signs it inside PrimeOS ---------------- */
   async function bootSign(t) {
     const root = $('#authRoot');
-    const wrap = (inner) => '<div style="position:relative;z-index:50;min-height:100vh;background:var(--bg,#F4F6FB);padding:28px 16px;font-family:Heebo,sans-serif"><div style="max-width:760px;margin:0 auto">' + inner + '</div></div>';
+    const wrap = (inner) => '<div style="position:relative;z-index:50;min-height:100vh;background:var(--bg,#F4F6FB);padding:28px 16px calc(40px + env(safe-area-inset-bottom));font-family:Heebo,sans-serif"><div style="max-width:760px;margin:0 auto">' + inner + '</div></div>';
     root.innerHTML = wrap('<div class="card card-pad">טוען את ההסכם...</div>');
     L.ready = true;
     let d;
@@ -436,10 +447,21 @@
     const form = a.signed
       ? '<div class="note" style="margin-top:16px">' + ic('checkc', 16) + '<span><b>ההסכם נחתם</b> על ידי ' + esc(a.signer || '') + ' · ' + esc(a.signedAt || '') + '</span></div>'
       : '<div class="card card-pad" style="margin-top:16px"><h3 style="margin:0 0 6px">חתימה דיגיטלית</h3><p class="t-sub" style="margin:0 0 14px">הקלידו שם מלא ואשרו. החתימה נשמרת עם תאריך ושעה ומהווה הסכמה לתנאי ההסכם.</p>' +
-        '<div class="field"><label for="sgName">שם מלא של החותם/ת</label><input type="text" id="sgName" value="' + esc(d.org.contact || '') + '"></div>' +
-        '<label class="checkline" style="margin:12px 0;gap:10px;display:flex;align-items:center"><input type="checkbox" id="sgOk"> <span>קראתי את ההסכם ואני מאשר/ת אותו בשם ' + esc(d.org.name) + '</span></label>' +
-        '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-primary btn-lg" id="sgBtn">' + ic('sign', 16) + ' חתימה על ההסכם</button><button class="btn" id="sgPrint">' + ic('down', 16) + ' הדפסה / PDF</button></div></div>';
-    root.innerHTML = wrap('<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><b style="font-size:22px;color:#4A1BE8">PrimeOS</b><span class="t-sub">הסכם מנוי · ' + esc(d.org.name) + '</span></div><div class="card card-pad agr-page">' + doc() + '</div>' + form);
+        '<div class="field"><label for="sgName">שם מלא של החותם/ת</label><input type="text" id="sgName" autocomplete="name" value="' + esc(d.org.contact || '') + '"></div>' +
+        '<label class="sg-ok" for="sgOk"><input type="checkbox" id="sgOk"><span>קראתי את ההסכם ואני מאשר/ת אותו בשם ' + esc(d.org.name) + '</span></label>' +
+        '<div class="sg-acts"><button class="btn btn-primary btn-lg" id="sgBtn">' + ic('sign', 16) + ' חתימה על ההסכם</button><button class="btn btn-lg" id="sgPrint">' + ic('down', 16) + ' הדפסה / PDF</button></div></div>';
+    document.body.classList.add('sign-mode');
+    root.innerHTML = '<style>' +
+      'body.sign-mode #aiFab,body.sign-mode .ai-fab{display:none!important}' +
+      'body.sign-mode #toasts{bottom:max(16px,env(safe-area-inset-bottom));top:auto}' +
+      '.agr-page{overflow-wrap:anywhere}.agr-page table{display:block;max-width:100%;overflow-x:auto}' +
+      '.sg-ok{display:flex;align-items:flex-start;gap:12px;margin:14px 0;padding:14px;border:1.5px solid var(--line,#DDE3EC);border-radius:14px;cursor:pointer;line-height:1.5;font-weight:600;background:#fff}' +
+      '.sg-ok:has(input:checked){border-color:var(--brand,#4A1BE8);background:#F3F0FF}' +
+      '.sg-ok input{width:26px;height:26px;min-width:26px;margin:0;accent-color:#4A1BE8;cursor:pointer}' +
+      '.sg-acts{display:flex;gap:10px;flex-wrap:wrap}.sg-acts .btn{min-height:52px}' +
+      '#sgName{min-height:50px;font-size:17px}' +
+      '@media(max-width:640px){.sg-acts{flex-direction:column}.sg-acts .btn{width:100%;justify-content:center}.agr-page{padding:16px!important}}' +
+      '</style>' + wrap('<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><b style="font-size:22px;color:#4A1BE8">PrimeOS</b><span class="t-sub">הסכם מנוי · ' + esc(d.org.name) + '</span></div><div class="card card-pad agr-page">' + doc() + '</div>' + form);
     const pr = $('#sgPrint'); if (pr) pr.onclick = () => window.print();
     const btn = $('#sgBtn');
     if (btn) btn.onclick = async () => {
@@ -462,7 +484,7 @@
     } else {
       L.token = ls.get(isAdminPath() ? SLOT.admin : SLOT.client);
     }
-    if (!L.token) { renderAuth(isAdminPath() ? 'הכניסה לממשק הניהול מתבצעת מהקישור האישי.' : ''); return; }
+    if (!L.token) { renderAuth(''); return; }
     try {
       await bootWithToken();
     } catch (e) {
@@ -527,6 +549,17 @@
     // the demo's second admin is not part of a live system; admins added here (ids with a timestamp) stay
     replaceAll(ADMINS, ADMINS.filter((a, i) => i === 0 || a.id !== 'ad2'));
   }
+  // the master admin's e-mail is saved on the server: it is the only address that gets an admin login link
+  const _apSave = ACT.apSave;
+  ACT.apSave = async () => {
+    const m = ($('#apM') && $('#apM').value || '').trim().toLowerCase();
+    if (m && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m)) { toast('דוא״ל לא תקין', 'בדקו את הכתובת.', 'err'); return; }
+    const n = ($('#apN') && $('#apN').value || '').trim();
+    _apSave();
+    if (L.kind !== 'admin') return;
+    try { await call('admin.profile.save', { name: n, email: m }); if (L.admin) { if (n) L.admin.name = n; if (m) L.admin.email = m; } toast('נשמר', 'כניסה לממשק הניהול תישלח רק לכתובת ' + (m || L.admin.email) + '.'); }
+    catch (e) { toast('השמירה בשרת נכשלה', 'נסו שוב בעוד רגע.', 'err'); }
+  };
   const linkOf = (o) => location.origin + '/?k=' + encodeURIComponent(o.live.token);
   const signLinkOf = (o) => (o.live && o.live.sign_token ? location.origin + '/sign?t=' + encodeURIComponent(o.live.sign_token) : '');
   const waNum = (ph) => { let d = String(ph || '').replace(/\D/g, ''); if (d.startsWith('0')) d = '972' + d.slice(1); return d; };
@@ -959,6 +992,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .real-acts a{text-decoration:none}
 .thumb.has-real{background-size:cover!important;background-position:center!important}
 .thumb.has-real .tt{display:none}
+#modalBox{max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain}
+#modalBox .modal-foot{position:sticky;bottom:0;z-index:2;flex-wrap:wrap}
+@media (max-width:560px){.modal{padding:10px!important}#modalBox .mb{padding:18px 16px 14px}#modalBox .modal-foot{padding:12px 14px}#modalBox .modal-foot .btn{flex:1 1 calc(50% - 6px);justify-content:center;min-height:46px}}
 @media (max-width:520px){.lay-pick{grid-template-columns:repeat(2,minmax(0,1fr))}}`;
   document.head.appendChild(css);
 

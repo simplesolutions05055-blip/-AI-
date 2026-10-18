@@ -679,16 +679,42 @@ async function resolve(d: DB, token: string) {
   return null;
 }
 
-async function login(d: DB, p: Record<string, any>) {
-  const email = String(p.email ?? '').toLowerCase().trim();
-  if (!email || !p.password) throw new Error('missing_fields');
-  const { data: m } = await d.from('org_members').select('id,org_id').ilike('email', email).maybeSingle();
-  if (!m || p.password !== 'demo1234') throw new Error('invalid_credentials');
-  const { data: t } = await d.from('api_tokens').select('token').eq('member_id', m.id).limit(1).maybeSingle();
-  if (t) return { token: t.token };
-  const token = newToken();
-  await d.from('api_tokens').insert({ token, org_id: m.org_id, member_id: m.id });
-  return { token };
+// passwordless login: a link by e-mail, only to the account manager's address (organizations.contact_email)
+// or to the master admin (admin_users.email). Every other address gets the same answer and nothing is sent.
+async function loginLink(d: DB, p: Record<string, any>) {
+  const email = String(p.email ?? '').toLowerCase().trim().slice(0, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('bad_email');
+  const same = (x: unknown) => String(x ?? '').toLowerCase().trim() === email;
+  try {
+    if (p.admin) {
+      const { data: admins } = await d.from('admin_users').select('id,name,email');
+      const a = (admins ?? []).find((x: any) => same(x.email));
+      if (a) {
+        const { data: t } = await d.from('admin_tokens').select('token').eq('admin_id', a.id).limit(1).maybeSingle();
+        if (t) await sendMail(a.email, 'קישור כניסה לממשק הניהול של PrimeOS', loginHtml({ name: a.name || '', org: 'ממשק הניהול', login: `${APP}/admin?k=${encodeURIComponent(t.token)}` }));
+      }
+    } else {
+      const { data: orgs } = await d.from('organizations').select('id,name,contact_name,contact_email').ilike('contact_email', email);
+      const org = (orgs ?? []).find((o: any) => same(o.contact_email));
+      if (org) {
+        const { data: mems } = await d.from('org_members').select('id,email,role,created_at').eq('org_id', org.id).order('created_at');
+        const m = (mems ?? []).find((x: any) => same(x.email) && isManager(x)) ?? (mems ?? []).find((x: any) => isManager(x) && x.role !== 'member');
+        if (m) {
+          const { data: t } = await d.from('api_tokens').select('token').eq('member_id', m.id).limit(1).maybeSingle();
+          if (t) await sendMail(org.contact_email, `קישור כניסה ל-PrimeOS · ${org.name}`, loginHtml({ name: org.contact_name || '', org: org.name, login: `${APP}/?k=${encodeURIComponent(t.token)}` }));
+        }
+      }
+    }
+  } catch (e) { console.error('login.link', e instanceof Error ? e.message : e); }
+  return { ok: true };
+}
+function loginHtml(p: { name: string; org: string; login: string }) {
+  return `<!doctype html><html dir="rtl" lang="he"><body style="margin:0;background:#F4F6FB;font-family:Arial,Helvetica,sans-serif;color:#1B2238"><div style="max-width:560px;margin:24px auto;background:#fff;border-radius:16px;padding:28px;border:1px solid #E6E9F2">
+<div style="font-size:22px;font-weight:700;color:#4A1BE8;margin-bottom:18px">PrimeOS</div>
+<p style="font-size:16px;line-height:1.7;margin:0 0 14px">שלום ${escH(p.name)},</p>
+<p style="font-size:15px;line-height:1.7;margin:0 0 18px">ביקשת קישור כניסה ל-<b>${escH(p.org)}</b>.</p>
+<p style="margin:0 0 22px"><a href="${escH(p.login)}" style="display:inline-block;background:#4A1BE8;color:#fff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:12px;font-size:15px">כניסה למערכת</a></p>
+<p style="font-size:12.5px;line-height:1.6;color:#6B7390;margin:0;border-top:1px solid #E6E9F2;padding-top:14px">אם לא ביקשת קישור, אפשר להתעלם מההודעה. הקישור אישי, לא להעביר אותו הלאה.</p></div></body></html>`;
 }
 
 // files people upload (brand assets, photos, videos, documents): signed direct upload to storage
@@ -717,7 +743,7 @@ Deno.serve(async (req) => {
   }
   const d = db();
   try {
-    if (action === 'login') return json(req, await login(d, p));
+    if (action === 'login.link') return json(req, await loginLink(d, p));
     if (action === 'sign.load') return json(req, await signLoad(d, p));
     if (action === 'sign.submit') return json(req, await signSubmit(d, p, req));
     const token = req.headers.get('x-primeos-token')?.trim() ?? '';
@@ -760,6 +786,16 @@ Deno.serve(async (req) => {
       if (action === 'admin.org.delete') return json(req, await adminOrgDelete(d, p));
       if (action === 'admin.invite.send') return json(req, await adminInviteSend(d, p));
       if (action === 'admin.org.update') return json(req, await adminOrgUpdate(d, p));
+      // the master admin's own name and e-mail (the e-mail is the only one that receives an admin login link)
+      if (action === 'admin.profile.save') {
+        const email = String(p.email ?? '').toLowerCase().trim().slice(0, 200);
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(req, { error: 'bad_email' }, 400);
+        const row: Record<string, string> = {};
+        if (typeof p.name === 'string' && p.name.trim()) row.name = p.name.trim().slice(0, 120);
+        if (email) row.email = email;
+        if (Object.keys(row).length) { const { error } = await d.from('admin_users').update(row).eq('id', s.adminId); if (error) throw error; }
+        return json(req, { ok: true });
+      }
       if (action === 'admin.env') return json(req, { mail: !!(Deno.env.get('RESEND_API_KEY') && Deno.env.get('RESEND_FROM_EMAIL')), wa: !!(Deno.env.get('SMARTSEND_ORGANIZATION_ID') || Deno.env.get('SMARTSEND_API_KEY')), pub: provider()?.name ?? null });
     }
     return json(req, { error: 'unknown_action' }, 400);

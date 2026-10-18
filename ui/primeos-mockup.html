@@ -2369,7 +2369,7 @@ SCREENS.settings={
     if(tab==='org'){
       panel='<div class="card card-pad" style="max-width:760px"><div class="form-grid">'+
         '<div class="field"><label>שם הארגון</label><input type="text" value="עיריית נווה הדר"></div>'+
-        '<div class="field"><label>סוג הגוף</label><select><option>רשות מקומית</option><option>מתנ״ס</option><option>מוסד ציבורי</option><option>ארגון ציבורי</option></select></div>'+
+        '<div class="field"><label>סוג הגוף</label><select><option>רשות מקומית</option><option>מתנ״ס</option><option>מוסד ציבורי</option><option>ארגון ציבורי</option><option>חברה</option></select></div>'+
         '<div class="field"><label>אתר אינטרנט</label><input type="text" value="www.nave-hadar.muni.il"></div>'+
         '<div class="field"><label>אזור זמן</label><select><option>ישראל (GMT+3)</option></select></div>'+
         '<div class="field full"><label>כתובת</label><input type="text" value="שדרות העצמאות 12, נווה הדר"></div>'+
@@ -2477,7 +2477,7 @@ SCREENS.onboard={
     if(s===0){
       body='<div class="form-grid">'+
         '<div class="field"><label>שם הארגון</label><input type="text" value="עיריית נווה הדר"></div>'+
-        '<div class="field"><label>סוג הגוף</label><select><option>רשות מקומית</option><option>מתנ״ס</option><option>מוסד ציבורי</option><option>ארגון ציבורי</option></select></div>'+
+        '<div class="field"><label>סוג הגוף</label><select><option>רשות מקומית</option><option>מתנ״ס</option><option>מוסד ציבורי</option><option>ארגון ציבורי</option><option>חברה</option></select></div>'+
         '<div class="field"><label>אתר אינטרנט</label><input type="text" value="www.nave-hadar.muni.il"></div>'+
         '<div class="field"><label>איש קשר ראשי</label><input type="text" value="רועי מזרחי"></div>'+
         '<div class="field full"><label>מחלקות מרכזיות <span class="hint">אפשר להוסיף ולשנות בהמשך</span></label>'+
@@ -2950,7 +2950,7 @@ ACT.deptSave=d=>{$$('[data-direct]').forEach(sw=>{const u=users.find(x=>x.n===sw
 /* ================= ADMIN CONSOLE ================= */
 const PRICE={ch1:800,ch3:1600,xch:180,xu:150,deck:250,video:450};
 const OST={active:{t:'פעיל',c:'s-approved',i:'checkc'},trial:{t:'תקופת ניסיון',c:'s-scheduled',i:'spark'},overdue:{t:'בפיגור תשלום',c:'s-fix',i:'alert'},paused:{t:'מושהה',c:'s-archived',i:'pause'}};
-const OTYPES=['רשות מקומית','מועצה אזורית','מועצה מקומית','מתנ״ס','מוסד ציבורי'];
+const OTYPES=['רשות מקומית','מועצה אזורית','מועצה מקומית','מתנ״ס','מוסד ציבורי','חברה'];
 const ORGS=[
   {id:'o1',n:'עיריית נווה הדר',type:'רשות מקומית',st:'active',since:'03/2026',ch:3,xch:1,xu:2,add:['deck','video'],gfx:312,docs:96,logins:188,items:142,last:'לפני 4 דקות',cost:1180,contact:'רועי מזרחי',phone:'08-9990000',mail:'dover@nave-hadar.muni.il',c:'#0124C7'},
   {id:'o2',n:'עיריית מצפה אורן',type:'רשות מקומית',st:'active',since:'01/2026',ch:3,xch:0,xu:1,add:['deck'],gfx:374,docs:121,logins:236,items:168,last:'לפני 12 דקות',cost:1310,contact:'לימור אשכנזי',phone:'04-6120000',mail:'pr@mitzpe-oren.muni.il',c:'#7501F6'},
