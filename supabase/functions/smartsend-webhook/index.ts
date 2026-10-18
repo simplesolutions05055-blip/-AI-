@@ -18,6 +18,8 @@ async function same(a: string, b: string) {
 const ok = (b: unknown = { ok: true }) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
 
 Deno.serve(async (req) => {
+  // a provider checking the address with GET gets a plain OK
+  if (req.method === 'GET') return new Response('ok', { status: 200 });
   if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
   const url = new URL(req.url);
   const d = db();
@@ -45,7 +47,9 @@ Deno.serve(async (req) => {
 
   const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
   const secret = env('SMARTSEND_WEBHOOK_SECRET');
-  if (!(await same(bearer, secret)) && !(await same(url.searchParams.get('secret') ?? '', secret))) return new Response('Forbidden', { status: 403 });
+  // accepted: the env secret (bearer or ?secret=) or the inbound key kept in v2_secrets ('wa_in', ?k=)
+  const { data: inKey } = await d.from('v2_secrets').select('v').eq('k', 'wa_in').maybeSingle();
+  if (!(await same(bearer, secret)) && !(await same(url.searchParams.get('secret') ?? '', secret)) && !(await same(url.searchParams.get('k') ?? '', inKey?.v ?? ''))) return new Response('Forbidden', { status: 403 });
   let raw: unknown;
   try { raw = await req.json(); } catch { return ok({ ok: false, error: 'bad_json' }); }
   const msg = await readInbound(raw);
