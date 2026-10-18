@@ -312,6 +312,14 @@ async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; p
     if (!rec && prev === ui.s) continue; // saved again without a status change (items from before publishing existed)
     if (rec && (rec.status === 'published' || rec.status === 'partial')) continue; // already out; later edits stay in PrimeOS
     const media = mediaOf(ui);
+    // a video post goes out only with its finished file; until then it waits and goes out on the next save that has it
+    if (ui.ty === 'video' && !media.length) {
+      const why = 'הסרטון עוד בהכנה. הפוסט יפורסם כשהסרטון יהיה מוכן.';
+      if (open) { try { await pv.cancelPost(rec.post_id); } catch (_) { /* gone */ } }
+      await d.from('v2_pub_posts').upsert({ org_id: orgId, ui_id: ui.id, provider: pv.name, sig: 'waiting', post_id: null, status: 'waiting', targets: [], error: why, updated_at: new Date().toISOString() }, { onConflict: 'org_id,ui_id' });
+      await setUi(d, orgId, ui.id, (u) => { u.pubWarn = why; });
+      continue;
+    }
     const when = ui.s === 'published' ? null : whenOf(ui.pub);
     const sig = await sigOf({ t: textOf(ui), m: media, ch: [...ui.ch].sort(), w: when ?? 'now' });
     const retry = rec && rec.status === 'failed' && prev === 'failed';
@@ -469,11 +477,12 @@ async function adminLoad(d: DB, adminId: string) {
   for (const c of cnt ?? []) items[c.org_id] = (items[c.org_id] ?? 0) + 1;
   // AI usage: this month per org and per member, and the last 12 months per org
   const since = new Date(); since.setMonth(since.getMonth() - 11); since.setDate(1); since.setHours(0, 0, 0, 0);
-  const { data: us } = ids.length ? await d.from('v2_usage').select('org_id,member_id,cin,cout,img_low,img_med,img_high,created_at').in('org_id', ids).gte('created_at', since.toISOString()) : { data: [] };
+  const { data: us } = ids.length ? await d.from('v2_usage').select('org_id,member_id,cin,cout,img_low,img_med,img_high,tts_chars,music_sec,stock,render_sec,created_at').in('org_id', ids).gte('created_at', since.toISOString()) : { data: [] };
   const now = new Date(); const curKey = now.getFullYear() * 100 + now.getMonth() + 1;
   const usage: Record<string, { use: any; useM: Record<string, any>; members: Record<string, any> }> = {};
-  const addTo = (t: any, r: any) => { t.cin += r.cin ?? 0; t.cout += r.cout ?? 0; t.img_low += r.img_low ?? 0; t.img_med += r.img_med ?? 0; t.img_high += r.img_high ?? 0; };
-  const zero = () => ({ cin: 0, cout: 0, img_low: 0, img_med: 0, img_high: 0 });
+  const UK = ['cin', 'cout', 'img_low', 'img_med', 'img_high', 'tts_chars', 'music_sec', 'stock', 'render_sec'];
+  const addTo = (t: any, r: any) => { for (const k of UK) t[k] += r[k] ?? 0; };
+  const zero = () => Object.fromEntries(UK.map((k) => [k, 0])) as Record<string, number>;
   for (const r of us ?? []) {
     const dt = new Date(r.created_at); const key = String(dt.getFullYear() * 100 + dt.getMonth() + 1);
     const u = usage[r.org_id] ??= { use: zero(), useM: {}, members: {} };

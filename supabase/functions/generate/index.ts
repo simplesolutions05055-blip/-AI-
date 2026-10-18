@@ -34,6 +34,12 @@ function logUse(row: Record<string, unknown>) {
   if (!c.org) return;
   try { db().from('v2_usage').insert({ org_id: c.org, member_id: c.member, ...row }).then(() => {}, () => {}); } catch { /* usage log never breaks a call */ }
 }
+// narration: characters actually sent to the voice provider (tags included, they are billed)
+function logVoice(clips: any[], says: string[]) {
+  let chars = 0, model = '';
+  (clips ?? []).forEach((c, i) => { if (c && c.src) { chars += String(says[i] ?? '').length; model = model || String(c.model ?? ''); } });
+  if (chars) logUse({ kind: 'tts', model: model || 'tts', tts_chars: chars });
+}
 
 async function claude(key: string, system: string, user: string, maxTokens = 1500, extra: unknown[] = []): Promise<string> {
   const order = goodModel ? [goodModel, ...MODELS.filter((m) => m !== goodModel)] : MODELS;
@@ -361,6 +367,23 @@ ${list}
       return json(req, { ok: true, items: out });
     }
 
+    // event kit: texts for every post around one event (before it, or the summary after it)
+    if (mode === 'event') {
+      const ev = `שם האירוע: ${p.name || ''}\nתאריך: ${p.date || ''}\nשעת התחלה: ${p.start || ''}\nמקום: ${p.place || ''}\nעל האירוע: ${p.desc || '(לא נמסר)'}${p.note ? '\nלהדגיש בסיכום: ' + p.note : ''}`;
+      const slots = ((p.slots ?? []) as any[]).slice(0, 6);
+      const list = slots.map((x, i) => `${i + 1}. ${x.l} (${x.kind === 'video' ? 'סרטון' : 'גרפיקה'}), יוצא ב-${x.date} ${x.time}: ${x.sub}`).join('\n');
+      const raw = await claude(key, s, `${p.after ? 'האירוע הסתיים. כתוב פוסט סיכום ותודה שמלווה את סרטון הסיכום.' : 'כתוב את רצף הפרסומים לקראת האירוע, פרסום לכל שלב ברשימה. כל פרסום שונה בזווית ובפתיחה.'}
+${ev}${filesNote(fb)}
+${p.after ? '' : 'השלבים:\n' + list}
+
+החזר JSON בלבד:
+${p.after ? '{"title":"כותרת קצרה עד 45 תווים","body":"טקסט הפוסט, 2-4 משפטים, תודה לתושבים והזמנה לאירוע הבא","tags":["#האשטג"]}' : '{"posts":[{"i":מספר השלב,"title":"כותרת הפוסט עד 45 תווים","body":"טקסט הפוסט, 2-4 משפטים, עד 320 תווים","kicker":"1-3 מילים מעל הכותרת בגרפיקה","headline":"כותרת ראשית לגרפיקה, 2-5 מילים","sub":"שורת משנה עד 60 תווים","details":[{"icon":"cal|clock|pin|info","text":"פרט קצר עד 28 תווים"}],"cta":"קריאה לפעולה עד 24 תווים","tags":["#האשטג"]}]}'}
+details: רק תאריך, שעה ומקום כפי שנמסרו, עד 3. אסור להמציא מחירים, אמנים או מספרים שלא מופיעים בפרטים. tags: 3-4, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.`, 3000, fb);
+      const j = parseJson(raw);
+      if (p.after) return json(req, { ok: true, ...tagFix(j) });
+      return json(req, { ok: true, posts: ((j.posts ?? []) as any[]).map((x) => tagFix(x)) });
+    }
+
     if (mode === 'graphic') {
       const raw = await claude(key, s, `אתה גם מעצב הפרסומים של הרשות. כתוב את הטקסטים שיופיעו על גבי גרפיקה לרשתות, ואת טקסט הפוסט שמתחתיה.
 ${brief}
@@ -396,7 +419,9 @@ ${brief}
       if (mode === 'vvoice') {
         if (!voices.some((v) => v.id === p.voiceId) && !VOICES.some((v) => v.id === p.voiceId)) return json(req, { error: 'unknown_voice' }, 400);
         const stab = p.stab == null ? undefined : Math.max(0, Math.min(1, +p.stab || 0.5));
-        const clips = await voiceScenes(database, CUR.org ?? '', String(p.voiceId), (p.says ?? []) as string[], stab);
+        const says = (p.says ?? []) as string[];
+        const clips = await voiceScenes(database, CUR.org ?? '', String(p.voiceId), says, stab);
+        logVoice(clips, says);
         return json(req, { ok: true, clips });
       }
       const imgs = await fileBlocks(((p.media ?? []) as any[]).filter((m) => !m.v).map((m) => ({ url: m.url, name: m.name || m.url })));
@@ -408,6 +433,7 @@ ${brief}
     if (mode === 'vsample') {
       const text = String(p.text || 'שלום, אני הקול של PrimeOS. ביום חמישי הקרוב מחכה לכם פסטיבל הסתיו בפארק העירוני, עם הופעות, אוכל ופינת ילדים. נתראה שם!').slice(0, 300);
       const [clip] = await voiceScenes(database, CUR.org ?? 'samples', String(p.voiceId), [text], p.stab == null ? undefined : +p.stab);
+      logVoice([clip], [text]);
       return json(req, { ok: true, src: clip?.src, sec: clip?.sec, model: clip?.model, words: clip?.words?.length ?? 0 });
     }
     if (mode === 'vapprove') {
@@ -416,8 +442,24 @@ ${brief}
       await database.from('admin_state').upsert({ id: 'voices', data: { approved: ids, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
       return json(req, { ok: true, approved: ids });
     }
-    if (mode === 'vmusic') return json(req, { ok: true, ...(await musicTrack(database, CUR.org ?? '', String(p.prompt ?? ''), +p.seconds || 30)) });
-    if (mode === 'vstock') return json(req, { ok: true, items: await stock(database, CUR.org ?? '', (p.queries ?? []) as any[], String(p.format ?? '9x16')) });
+    if (mode === 'vmusic') {
+      const sec = +p.seconds || 30;
+      const r: any = await musicTrack(database, CUR.org ?? '', String(p.prompt ?? ''), sec);
+      if (r && r.src) logUse({ kind: 'music', model: 'music_v1', music_sec: Math.round(Math.min(sec, 300)) });
+      return json(req, { ok: true, ...r });
+    }
+    if (mode === 'vstock') {
+      const items = await stock(database, CUR.org ?? '', (p.queries ?? []) as any[], String(p.format ?? '9x16'));
+      const n = (items as any[]).filter((x) => x && x.src).length;
+      if (n) logUse({ kind: 'stock', model: 'pixabay', stock: n });
+      return json(req, { ok: true, items });
+    }
+    // render time reported by the browser when a video finishes (sandbox minutes)
+    if (mode === 'vrender') {
+      const sec = Math.round(Math.max(0, Math.min(3600, +p.sec || 0)));
+      if (sec) logUse({ kind: 'render', model: 'vercel-sandbox', render_sec: sec });
+      return json(req, { ok: true });
+    }
 
     if (mode === 'doc2') {
       const raw = await claude(key, s, `כתוב מסמך רשמי של הרשות בסגנון "${p.styleLabel || 'רשמי'}", באורך עמוד עד שני עמודים.

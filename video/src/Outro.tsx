@@ -13,8 +13,12 @@ export const Outro: React.FC<{ plan: Plan; durF: number }> = ({ plan, durF }) =>
   const logoAt = Math.max(fps * 1.2, durF - fps * 1.4);
   const s3 = spring({ frame: f - logoAt, fps, config: { damping: 13 } });
   const ring = interpolate(f - logoAt, [0, fps * 0.8], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  // event sting: the event's own logo in the circle, with the motion and background chosen for the event
+  const st = o.sting; const mark = st?.logo || plan.brand.logo;
+  const mv = st?.motion === 'zoom' ? `scale(${0.25 + 0.75 * s3})` : st?.motion === 'spin' ? `rotate(${(1 - s3) * -200}deg) scale(${0.6 + 0.4 * s3})` : `scale(${0.8 + 0.2 * s3})`;
+  const bg = st?.bg ? `radial-gradient(120% 90% at 80% 10%, ${st.bg} 0%, ${c.deep} 70%, #05070d 100%)` : `radial-gradient(120% 90% at 80% 10%, ${c.main} 0%, ${c.deep} 60%, #05070d 100%)`;
   return (
-    <AbsoluteFill dir="rtl" style={{ background: `radial-gradient(120% 90% at 80% 10%, ${c.main} 0%, ${c.deep} 60%, #05070d 100%)`, alignItems: 'center', justifyContent: 'center', padding: `0 ${80 * k}px`, gap: 44 * k, textAlign: 'center' }}>
+    <AbsoluteFill dir="rtl" style={{ background: bg, alignItems: 'center', justifyContent: 'center', padding: `0 ${80 * k}px`, gap: 44 * k, textAlign: 'center' }}>
       {o.cta && <div style={{ transform: `translateY(${(1 - s1) * 60}px)`, opacity: s1, fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: Math.max(116 * k, Math.min(150 * k, (width - 160 * k) / (Math.max(1, [...(o.cta ?? '')].length) * 0.56))), lineHeight: 1.06, color: '#fff' }}>{o.cta}</div>}
       {!!o.details?.length && (
         <div style={{ display: 'flex', flexDirection: wide ? 'row' : 'column', gap: 18 * k, alignItems: 'center' }}>
@@ -24,11 +28,14 @@ export const Outro: React.FC<{ plan: Plan; durF: number }> = ({ plan, durF }) =>
           })}
         </div>
       )}
-      <div style={{ marginTop: 20 * k, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 * k, opacity: s3, transform: `scale(${0.8 + 0.2 * s3})` }}>
-        <div style={{ position: 'relative', width: 190 * k, height: 190 * k, borderRadius: '50%', background: '#fff', display: 'grid', placeItems: 'center', boxShadow: `0 0 0 ${ring * 14 * k}px ${c.accent}55` }}>
-          {plan.brand.logo ? <Img src={asset(plan.brand.logo)!} style={{ width: '72%', height: '72%', objectFit: 'contain' }} /> : <span style={{ fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: 70 * k, color: c.main }}>{plan.brand.org.slice(0, 2)}</span>}
+      <div style={{ marginTop: 20 * k, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 * k, opacity: s3 }}>
+        <div style={{ position: 'relative', width: (st?.logo ? 230 : 190) * k, height: (st?.logo ? 230 : 190) * k, borderRadius: '50%', background: '#fff', display: 'grid', placeItems: 'center', boxShadow: `0 0 0 ${ring * 14 * k}px ${c.accent}55`, transform: mv }}>
+          {mark ? <Img src={asset(mark)!} style={{ width: '72%', height: '72%', objectFit: 'contain' }} /> : <span style={{ fontFamily: font(plan.font?.head), fontWeight: 900, fontSize: 70 * k, color: c.main }}>{plan.brand.org.slice(0, 2)}</span>}
         </div>
-        <div style={{ fontFamily: font(plan.font?.head), fontWeight: 800, fontSize: 52 * k, color: '#fff' }}>{plan.brand.org}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 * k, fontFamily: font(plan.font?.head), fontWeight: 800, fontSize: 52 * k, color: '#fff' }}>
+          {st?.logo && plan.brand.logo && <span style={{ width: 64 * k, height: 64 * k, borderRadius: '50%', background: '#fff', display: 'grid', placeItems: 'center' }}><Img src={asset(plan.brand.logo)!} style={{ width: '74%', height: '74%', objectFit: 'contain' }} /></span>}
+          {plan.brand.org}
+        </div>
         {plan.brand.site && <div dir="ltr" style={{ fontFamily: font(plan.font?.body), fontSize: 36 * k, color: c.light }}>{plan.brand.site}</div>}
       </div>
     </AbsoluteFill>

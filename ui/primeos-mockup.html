@@ -3588,12 +3588,12 @@ const PLANS={appr:{t:'מסלול מורחב',d:'משתמש ארגון, מחלק�
 /* money model: prices in ILS per month (annual plan, + VAT); expenses = vendor subscriptions (USD) + AI usage per client */
 const VAT=0.18;
 const FX={usd:3.7};
-const VENDORS=[{k:'claude',n:'Claude',usd:200,note:'מנוי'},{k:'gpt',n:'ChatGPT',usd:40,note:'מנוי'},{k:'vercel',n:'Vercel',usd:25,note:'Pro'},{k:'supabase',n:'Supabase',usd:20,note:'Pro'},{k:'zernio',n:'Zernio',usd:0,note:'פרסום'}];
-const RATES={cin:3,cout:15,img_low:0.02,img_med:0.07,img_high:0.19};
+const VENDORS=[{k:'claude',n:'Claude',usd:200,note:'מנוי'},{k:'gpt',n:'ChatGPT',usd:40,note:'מנוי'},{k:'vercel',n:'Vercel',usd:25,note:'Pro'},{k:'supabase',n:'Supabase',usd:20,note:'Pro'},{k:'zernio',n:'Zernio',usd:0,note:'פרסום'},{k:'eleven',n:'ElevenLabs',usd:6,note:'Starter · קריינות ומוזיקה'},{k:'pixabay',n:'Pixabay',usd:0,note:'סטוק חינם'}];
+const RATES={cin:3,cout:15,img_low:0.02,img_med:0.07,img_high:0.19,tts:0.08,music:0.15,stock:0,render:0.018};
 const PACKS=[{k:'p1',n:'חבילת גרפיקות ומסמכים',q:'',price:null},{k:'p2',n:'חבילת מצגות',q:'',price:null},{k:'p3',n:'חבילת סרטונים',q:'',price:null}];
 const vendorsUsd=()=>VENDORS.reduce((s,v)=>s+(+v.usd||0),0);
 const vendorsIls=()=>vendorsUsd()*FX.usd;
-function aiCost(u){u=u||{};return FX.usd*((+u.cin||0)/1e6*RATES.cin+(+u.cout||0)/1e6*RATES.cout+(+u.img_low||0)*RATES.img_low+(+u.img_med||0)*RATES.img_med+(+u.img_high||0)*RATES.img_high);}
+function aiCost(u){u=u||{};return FX.usd*((+u.cin||0)/1e6*RATES.cin+(+u.cout||0)/1e6*RATES.cout+(+u.img_low||0)*RATES.img_low+(+u.img_med||0)*RATES.img_med+(+u.img_high||0)*RATES.img_high+(+u.tts_chars||0)/1e3*(+RATES.tts||0)+(+u.music_sec||0)/60*(+RATES.music||0)+(+u.stock||0)*(+RATES.stock||0)+(+u.render_sec||0)/60*(+RATES.render||0));}
 const withVat=n=>Math.round(n*(1+VAT));
 function orgRevM(o){return (o.st==='paused'||o.st==='trial')?0:PLANS[o.plan].cost;}
 delete OST.overdue;
@@ -6010,8 +6010,8 @@ SCREENS.a_settings.render=function(){
       VENDORS.map(v=>'<div class="field" style="display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center"><label style="margin:0">'+esc(v.n)+' <span class="hint">'+esc(v.note||'')+' · '+usd(v.usd*FX.usd)+'</span></label>'+num('vd-'+v.k,v.usd)+'</div>').join('')+
       '<div class="field" style="display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center"><label style="margin:0">שער דולר <span class="hint">₪ לדולר</span></label>'+num('fx-usd',FX.usd)+'</div>'+
       '<div class="tot" style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--line-2);padding-top:10px"><span>סה״כ ספקים לחודש</span><span>'+usd(vendorsIls())+'</span></div></div></div>'+
-    '<div class="card"><div class="card-head">'+ic('bot',18)+'<h3>תעריפי שימוש AI</h3><span class="t-sub" style="margin-inline-start:auto;display:inline">בדולר, נצבר לפי יצירות</span></div><div class="card-pad" style="display:flex;flex-direction:column;gap:12px">'+
-      [['cin','Claude · מיליון טוקנים קלט'],['cout','Claude · מיליון טוקנים פלט'],['img_low','ChatGPT · תמונה באיכות נמוכה'],['img_med','ChatGPT · תמונה באיכות בינונית'],['img_high','ChatGPT · תמונה באיכות גבוהה']].map(r=>'<div class="field" style="display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center"><label style="margin:0">'+r[1]+'</label>'+num('rt-'+r[0],RATES[r[0]])+'</div>').join('')+'</div></div>'+
+    '<div class="card"><div class="card-head">'+ic('bot',18)+'<h3>תעריפי שימוש</h3><span class="t-sub" style="margin-inline-start:auto;display:inline">בדולר, נצבר לפי יצירות</span></div><div class="card-pad" style="display:flex;flex-direction:column;gap:12px">'+
+      [['cin','Claude · מיליון טוקנים קלט'],['cout','Claude · מיליון טוקנים פלט'],['img_low','ChatGPT · תמונה באיכות נמוכה'],['img_med','ChatGPT · תמונה באיכות בינונית'],['img_high','ChatGPT · תמונה באיכות גבוהה'],['tts','ElevenLabs · אלף תווי קריינות'],['music','ElevenLabs · דקת מוזיקה'],['stock','Pixabay · קטע או תמונה'],['render','Vercel · דקת רינדור סרטון']].map(r=>'<div class="field" style="display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center"><label style="margin:0">'+r[1]+'</label>'+num('rt-'+r[0],RATES[r[0]])+'</div>').join('')+'</div></div>'+
     '<div class="card"><div class="card-head">'+ic('deck',18)+'<h3>מסלולים</h3><span class="t-sub" style="margin-inline-start:auto;display:inline">₪ לחודש, לפני מע״מ, מנוי שנתי</span></div><div class="card-pad" style="display:flex;flex-direction:column;gap:12px">'+
       Object.entries(PLANS).map(([k,p])=>'<div class="field" style="display:grid;grid-template-columns:1fr 140px;gap:10px;align-items:center"><label style="margin:0">'+esc(p.t)+' <span class="hint">כולל מע״מ: '+usd(withVat(p.cost))+'</span></label>'+num('pl-'+k,p.cost)+'</div>').join('')+
       '<div class="note">'+ic('help',14)+'<span>מחיר חדש חל על לקוחות חדשים. ללקוח קיים המחיר נשאר לפי ההסכם.</span></div></div></div>'+

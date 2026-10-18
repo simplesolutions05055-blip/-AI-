@@ -106,10 +106,15 @@
   function adminStateObj() { const o = {}; for (const k in ADMIN_KEYS) o[k] = ADMIN_KEYS[k](); return o; }
   // plan names, descriptions and colours come from the code; only the prices are the admin's saved values
   const PLAN_DEF = JSON.parse(JSON.stringify(PLANS));
+  const VENDOR_DEF = JSON.parse(JSON.stringify(VENDORS));
+  const RATE_DEF = JSON.parse(JSON.stringify(RATES));
   function hydrateAdmin(st) {
     for (const k in ADMIN_KEYS) if (st[k] !== undefined) restore(ADMIN_KEYS[k](), st[k]);
     Object.keys(PLAN_DEF).forEach((k) => { if (!PLANS[k]) PLANS[k] = JSON.parse(JSON.stringify(PLAN_DEF[k])); PLANS[k].t = PLAN_DEF[k].t; PLANS[k].d = PLAN_DEF[k].d; PLANS[k].c = PLAN_DEF[k].c; if (!(+PLANS[k].cost > 100)) PLANS[k].cost = PLAN_DEF[k].cost; });
     VENDORS.forEach((v) => { if (typeof v.usd !== 'number') v.usd = +v.usd || 0; });
+    // vendors and rates added after the admin last saved come back with their defaults
+    VENDOR_DEF.forEach((v) => { if (!VENDORS.some((x) => x.k === v.k)) VENDORS.push(JSON.parse(JSON.stringify(v))); });
+    Object.keys(RATE_DEF).forEach((k) => { if (typeof RATES[k] !== 'number') RATES[k] = RATE_DEF[k]; });
   }
 
   // 'דוברות' is the mockup's main department; a client may call it שיווק, תקשורת...
@@ -3377,7 +3382,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         await sleep(6000);
         let r;
         try { r = await post(VID, { action: 'status', sandboxId: st.sandboxId, cmdId: st.cmdId, upload: slot.upload, url: slot.url }, 120000); } catch (e) { if (Date.now() - t0 > 25 * 60000) throw e; continue; }
-        if (r.stage === 'done') return r.url;
+        if (r.stage === 'done') { gen({ mode: 'vrender', sec: Math.round((Date.now() - t0) / 1000) + 20 }).catch(() => {}); return r.url; }
         if (r.stage === 'error' || r.stage === 'expired') throw new Error('render_' + r.stage);
         onP(r.progress || 0);
         if (Date.now() - t0 > 25 * 60000) throw new Error('render_timeout');
@@ -3455,5 +3460,356 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     };
     const _wFmt3 = ACT.wFmt;
     ACT.wFmt = (k) => { const w = S.wiz; if (w && w.media && w.media.eng === 'v3') { toast('הגודל נקבע בבריף', 'כדי לשנות גודל חזרו לבריף ובקשו פורמט אחר.'); return; } _wFmt3(k); };
+
+    // ---- poster: a frame from the finished mp4 when no scene had an image ----
+    function posterOf(url) {
+      return new Promise((res) => {
+        const vd = document.createElement('video');
+        let done = false;
+        const end = (u) => { if (done) return; done = true; clearTimeout(tm); vd.removeAttribute('src'); try { vd.load(); } catch (e) { /* ignore */ } res(u || ''); };
+        const tm = setTimeout(() => end(''), 25000);
+        vd.crossOrigin = 'anonymous'; vd.muted = true; vd.preload = 'auto'; vd.playsInline = true;
+        vd.addEventListener('loadedmetadata', () => { vd.currentTime = Math.min(2.2, Math.max(0.1, (vd.duration || 4) * 0.12)); });
+        vd.addEventListener('seeked', () => {
+          try {
+            const W = vd.videoWidth, H = vd.videoHeight; if (!W || !H) return end('');
+            const k = Math.min(1, 720 / Math.max(W, H));
+            const c = document.createElement('canvas'); c.width = Math.round(W * k); c.height = Math.round(H * k);
+            c.getContext('2d').drawImage(vd, 0, 0, c.width, c.height);
+            c.toBlob(async (b) => {
+              if (!b) return end('');
+              try { const s = await call('upload.sign', { name: 'poster.jpg' }); const r = await fetch(s.upload, { method: 'PUT', headers: { 'content-type': 'image/jpeg', 'x-upsert': 'true' }, body: b }); end(r.ok ? s.url : ''); } catch (e) { end(''); }
+            }, 'image/jpeg', 0.82);
+          } catch (e) { end(''); }
+        });
+        vd.addEventListener('error', () => end(''));
+        vd.src = url;
+      });
+    }
+    // when a poster arrives later, put it on the studio and on any saved item with that video
+    function setPoster(url, thumb) {
+      if (!thumb) return;
+      const w = S.wiz;
+      if (w && w.media && w.media.url === url) { w.media.thumb = thumb; if (!w.media.images || !w.media.images.length) w.media.images = [thumb]; }
+      items.forEach((it) => { if (it.media && it.media.url === url && !it.media.thumb) it.media.thumb = thumb; });
+      evAll().forEach((m) => { if (m.url === url && !m.thumb) m.thumb = thumb; });
+      if (['wizard', 'library', 'item', 'eventKit'].includes(S.route)) render();
+    }
+    const evAll = () => [].concat(...((S.events || []).concat(S.ev && !(S.events || []).includes(S.ev) ? [S.ev] : []).map((e) => [].concat(...(e.posts || []).map((p) => [p.mg, p.mv]), e.after ? [e.after.vm] : []).filter(Boolean))));
+    window.__vPoster = (url) => posterOf(url).then((t) => (setPoster(url, t), t));
+    const _openStudio = openStudio;
+    openStudio = function (v, url, thumb) {
+      const rep = v.replaces;
+      _openStudio(v, url, thumb);
+      const w = S.wiz;
+      if (w && w.media && w.media.url === url && rep) w.replaces = rep;
+      if (!thumb) window.__vPoster(url);
+    };
+
+    // ---- saved video keeps its brief so it can be re-edited later ----
+    const slimV = (v) => { const o = {}; ['name', 'desc', 'goal', 'aud', 'audQ', 'fmt', 'ch', 'style', 'clip', 'imgs', 'dur', 'voice', 'music', 'voiceId', 'dept', 'brief', 'kitRef'].forEach((k) => { if (v[k] !== undefined) o[k] = v[k]; }); return JSON.parse(JSON.stringify(o)); };
+    const _wizItemV = wizItem;
+    wizItem = function (st) {
+      const w = S.wiz;
+      const it = _wizItemV(st);
+      if (w && w.media && w.media.eng === 'v3') {
+        it.media.eng = 'v3';
+        if (w.vmeta) it.media.vmeta = slimV(w.vmeta);
+      }
+      if (w && w.replaces) {
+        const old = items.findIndex((x) => x !== it && x.id === w.replaces);
+        if (old >= 0) { const prev = items[old]; items.splice(items.indexOf(it), 1); it.id = w.replaces; items.splice(items.indexOf(prev), 1, it); }
+      }
+      return it;
+    };
+    // "עריכה" on a saved video: back to its brief (a change request re-renders), or the studio with the file
+    const _edit = ACT.edit;
+    ACT.edit = (id) => {
+      const it = itemById(id);
+      const m = it && it.media;
+      if (!m || m.kind !== 'video' || !m.url) return _edit(id);
+      if (m.eng === 'v3' && m.vmeta && m.vmeta.brief) {
+        const v = Object.assign(JSON.parse(JSON.stringify(m.vmeta)), { step: 2, replaces: it.id });
+        S.dirty = false; S.wiz = null; S.vd = v; go('vidWiz');
+        toast('הבריף של הסרטון נפתח', 'כתבו מה לשנות ולחצו "עדכון הבריף", או אשרו ליצירה מחדש.');
+        return;
+      }
+      _edit(id);
+      const w = S.wiz;
+      if (w) { w.media = JSON.parse(JSON.stringify(m)); w.replaces = it.id; w.fmt = m.fmt || w.fmt; render(); }
+    };
+
+    /* =================== event kit: real texts, graphics, videos and uploads =================== */
+    // headless production of a brief into an mp4 (same steps as the wizard, without the screens)
+    async function produceV(v, b, onP, outro) {
+      const fmt = fmtK(v.fmt);
+      const wantVoice = v.voice && b.voice && ttsOn() && (b.scenes || []).some((s) => s.say);
+      const wantMusic = v.music && musicOn() && b.musicPrompt;
+      const est = (b.scenes || []).reduce((a, s) => a + s.dur, 0) + 3;
+      onP(0.05, 'מכינים תמונות, קריינות ומוזיקה');
+      const [vis, voice, music] = await Promise.all([
+        resolveVisuals(v, b.scenes, fmt),
+        wantVoice ? genLong({ mode: 'vvoice', voiceId: b.voice.id, stab: b.stab, says: b.scenes.map((s) => s.say || '') }).then((r) => r.clips || []).catch(() => []) : Promise.resolve([]),
+        wantMusic ? genLong({ mode: 'vmusic', prompt: b.musicPrompt, seconds: Math.min(95, est + 4) }).catch(() => null) : Promise.resolve(null),
+      ]);
+      const scenes = b.scenes.map((s, i) => {
+        const c = voice[i];
+        const sc = { dur: c ? Math.max(s.dur, c.sec + 0.55) : s.dur, visual: vis[i], text: s.text, transition: s.transition, fx: s.fx };
+        if (c) sc.voice = { src: c.src, words: c.words, at: 0.25 };
+        return sc;
+      });
+      const brand = b.kind === 'memorial' ? Object.assign(vidBrand(), { colors: { deep: '#0A0F1A', main: '#2B3445', accent: '#C9B37E', light: '#D9D4C7' } }) : vidBrand();
+      const plan = { format: fmt, fps: 30, brand, font: b.font, mood: b.mood, fx: b.fx, scenes, outro: Object.assign({ dur: 3.6 }, b.outro, outro || {}), captions: { style: b.captions || 'karaoke', words: [] }, audio: music && music.src ? { music: { src: music.src } } : {}, showLogo: true };
+      onP(0.4, 'מרנדרים את הסרטון');
+      const url = await renderPlan(plan, (x) => onP(0.4 + 0.58 * x, 'מרנדרים את הסרטון'));
+      const img = vis.find((x) => x.kind === 'image');
+      return { url, thumb: img ? img.src : '' };
+    }
+    const todayIso = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+    evDays = function (e) { return Math.round((new Date(e.date + 'T12:00') - new Date(todayIso() + 'T12:00')) / 864e5); };
+    const _evPosts = evPosts;
+    evPosts = function (e) {
+      const ps = _evPosts(e);
+      const soon = ps.find((p) => p.k === 'soon');
+      if (soon) soon.date = evDays(e) >= 8 ? addDays(e.date, -7) : addDays(todayIso(), 1);
+      ps.forEach((p) => { p.mg = null; p.mv = null; });
+      return ps;
+    };
+    const _evNew = evNew;
+    evNew = function () { const e = _evNew(); e.date = addDays(todayIso(), 10); e.logo = null; return e; };
+    const pm = (p) => (p.kind === 'video' ? p.mv : p.mg);
+    const orgName = () => (aiCtx().org || '');
+    const stingBg = (e) => { const c = (typeof BRAND !== 'undefined' && BRAND.colors && BRAND.colors[e.sting.bg]) ? BRAND.colors[e.sting.bg][1] : ''; return /^#[0-9a-f]{6}$/i.test(c || '') ? c : undefined; };
+    const evRedraw = (e) => { if (S.ev === e && S.route === 'eventKit') { evCollect(); if ($('#drawer .ev-th') && S.evCur != null && e.posts[S.evCur]) { const th = $('#drawer .ev-th'); th.outerHTML = evThumb(e.posts[S.evCur], e, true); } render(); } };
+    const evInfo = (e) => e.desc + '\nתאריך: ' + fmtD(e.date) + ', שעה ' + e.start + '\nמקום: ' + e.place;
+    const evImgs = (e, list) => (list || e.media || []).filter((m) => m.url).map((m) => ({ url: m.url, name: m.name || '', v: !!m.v }));
+
+    // a post's media changed: keep the scheduled item in step
+    function evSyncItem(p) {
+      if (!p.item) return;
+      const it = itemById(p.item);
+      const m = pm(p);
+      if (it && m && m.url && !m.busy) { it.media = JSON.parse(JSON.stringify(m)); delete it.pubWarn; }
+    }
+    // graphic: the event's own photo (or an AI photo) under the designed texts
+    async function evGraphic(e, p, change) {
+      const m = (p.mg = Object.assign(p.mg || { kind: 'graphic' }, { busy: change ? 'מעדכנים את הגרפיקה...' : 'מעצבים את הגרפיקה...', err: false }));
+      evRedraw(e);
+      try {
+        let d = p.design || { kicker: e.name, headline: p.t, sub: '', details: [], cta: '' };
+        if (change) { const r = await gen({ mode: 'revise', content: d, instruction: change }); if (r.content && r.content.headline) d = r.content; }
+        p.design = d;
+        const photos = (e.media || []).filter((x) => x.url && !x.v);
+        let image = photos.length ? photos[(['soon', 'd2', 'day'].indexOf(p.k) + 3) % photos.length].url : '';
+        if (!image) image = await aiImage({ title: e.name, brief: evInfo(e), dept: e.dept, size: 'square' }).catch(() => '');
+        const r = await produce([{ id: 'g', kind: 'graphic', layout: image ? 'photo' : 'official', format: '1x1', data: { kicker: d.kicker || '', headline: d.headline || p.t, sub: d.sub || '', details: d.details || [], cta: d.cta || '', image }, thumb: false }], e.dept);
+        const x = (r.results || [])[0];
+        if (!x || !x.ok) throw new Error((x && x.error) || 'render_failed');
+        p.mg = { kind: 'graphic', url: x.urls.main, layout: image ? 'photo' : 'official', fmt: '1:1', ar: '1/1', image, design: d, ready: true };
+        p.ver = (p.ver || 1) + (change ? 1 : 0);
+        evSyncItem(p);
+      } catch (err) { m.busy = ''; m.err = true; toast('הגרפיקה לא נוצרה', p.l + '. אפשר לנסות שוב מהכרטיס.', 'err'); }
+      evRedraw(e);
+    }
+    // video: the director builds an event brief from the details and uploads, the logo sting closes it
+    async function evVideo(e, holder, key, o) {
+      const prev = holder[key];
+      const m = (holder[key] = { kind: 'video', busy: 'Claude כותב את הבריף...', pct: 0.02, err: false });
+      evRedraw(e);
+      try {
+        await capsLoad();
+        const v = (prev && prev.vmeta && o.change) ? JSON.parse(JSON.stringify(prev.vmeta)) : { name: o.name, desc: o.desc, goal: o.goal, aud: '', audQ: [], fmt: '9:16', ch: [...e.ch], style: 'ai', clip: null, imgs: o.imgs, dur: o.dur, voice: true, music: true, voiceId: 'auto', dept: e.dept };
+        const b = await genLong(briefReq(v, o.change));
+        v.brief = b;
+        const out = await produceV(v, b, (x, t) => { m.pct = x; m.busy = t; evRedraw(e); }, { sting: { logo: e.logo && e.logo.url, motion: e.sting.style, bg: stingBg(e) } });
+        holder[key] = { kind: 'video', eng: 'v3', url: out.url, thumb: out.thumb, ready: true, fmt: '9:16', ar: '9/16', vmeta: slimV(v), cta: (b.outro && b.outro.cta) || '' };
+        if (!out.thumb) window.__vPoster(out.url);
+        if (o.done) o.done();
+        toast('הסרטון מוכן', o.name);
+      } catch (err) { holder[key] = prev && prev.url ? prev : Object.assign(m, { busy: '', err: true }); toast('הסרטון לא נוצר', o.name + '. אפשר לנסות שוב מהכרטיס.', 'err'); }
+      evRedraw(e);
+    }
+    function evPostVideo(e, p, change) {
+      return evVideo(e, p, 'mv', {
+        name: p.t || e.name, goal: 'event', dur: 25, imgs: evImgs(e), change,
+        desc: 'סרטון הזמנה לאירוע, שלב: ' + p.l + ' (' + p.sub + ').\n' + evInfo(e) + '\nטקסט הפוסט: ' + p.body,
+        done: () => evSyncItem(p),
+      });
+    }
+    const evMake = (e, p, change) => (p.kind === 'video' ? evPostVideo(e, p, change) : evGraphic(e, p, change));
+
+    // thumbnails: the real file, or the progress of its production
+    const _evThumb = evThumb;
+    evThumb = function (p, e, big) {
+      const m = p.after ? p.media : pm(p);
+      if (!m) return _evThumb(p, e, big);
+      const cls = 'ev-th thumb ' + GV[(p.g || 0) % GV.length] + (big ? ' big' : '') + ' ev-real';
+      const idx = e && e.posts ? e.posts.indexOf(p) : -1;
+      if (m.busy) return '<div class="' + cls + ' ev-busy"><span class="ev-prog"><span class="gm-spin"></span><b>' + esc(m.busy) + '</b>' + (m.pct ? '<i><u style="width:' + Math.round(m.pct * 100) + '%"></u></i>' : '') + '</span></div>';
+      if (m.err) return '<div class="' + cls + ' ev-busy"><span class="ev-prog"><b>' + (p.kind === 'video' ? 'הסרטון לא נוצר' : 'הגרפיקה לא נוצרה') + '</b><button class="btn btn-sm" data-act="' + (p.after ? 'evAfRe' : 'evRe:' + idx) + '">' + ic('refresh', 13) + ' ניסיון חוזר</button></span></div>';
+      if (m.kind === 'video' && m.url) return big ? '<div class="' + cls + '"><video src="' + esc(m.url) + '"' + (m.thumb ? ' poster="' + esc(m.thumb) + '"' : '') + ' controls playsinline preload="metadata"></video></div>'
+        : '<div class="' + cls + '"' + (m.thumb ? ' style="background-image:url(\'' + esc(m.thumb) + '\')"' : '') + '><span class="sp-play">' + ic('play', 16, 2) + '</span><span class="ev-sting">' + ic('spark', 11, 2) + ' סיומת לוגו</span></div>';
+      if (m.url) return '<div class="' + cls + '" style="background-image:url(\'' + esc(m.url) + '\')"></div>';
+      return _evThumb(p, e, big);
+    };
+    stingHtml = function (e) {
+      const c = stingBg(e) || '#0124C7';
+      const lg = e.logo && e.logo.url;
+      return '<div class="sting" style="background:' + c + '"><div class="st-in a-' + e.sting.style + '" data-k="' + e.sting.play + '"><span class="st-logo">' + (lg ? '<img src="' + esc(lg) + '" alt="">' : esc((e.name || orgName()).split(' ').slice(0, 2).map((w) => w[0] || '').join(''))) + '</span><b>' + esc(e.name || 'שם האירוע') + '</b><small>' + esc(orgName()) + '</small></div><span class="st-dur">3 שנ׳</span></div>';
+    };
+    // the screen: real uploads in the grids, no demo-only controls
+    const _evR = SCREENS.eventKit.render;
+    SCREENS.eventKit.render = function () {
+      const e = S.ev;
+      if (e && e.st === 'scheduled' && evDays(e) < 0) e.st = 'after';
+      let h = _evR.call(this);
+      if (!e) return h;
+      const tile = (m) => m && m.url ? (m.v ? ' ev-vid" style="background:#0A2C51' : ' has-real" style="background-image:url(\'' + esc(m.url) + '\')') : '';
+      h = h.replace(/<span class="raw thumb ([^"]*)">([\s\S]*?)<button class="icon-btn" data-act="(evMediaX|evAfX):(\d+)"/g, (all, g, inner, act, i) => {
+        const m = act === 'evMediaX' ? e.media[+i] : e.after.files[+i];
+        return '<span class="raw thumb ' + g + tile(m) + '">' + (m && m.v ? ic('play', 16, 2) : '') + '<button class="icon-btn" data-act="' + act + ':' + i + '"';
+      });
+      h = h.replace(/<div class="field"><label for="evStFix">[\s\S]*?<\/div><\/div><\/div><\/div>/, '</div></div>');
+      h = h.replace(/<button class="chip demo-chip" data-act="evSim">[\s\S]*?<\/button>/, '<button class="chip" data-act="evSim">' + ic('upload', 12) + ' מעבר לסיכום האירוע</button>');
+      h = h.replace('אפשר גם תמונות מאירועים קודמים', 'התמונות ישמשו לגרפיקות ולסרטון');
+      h = h.replace(/\d+ פרסומים: 3 לפני האירוע, סרטון סיכום ופוסט מלווה\./, (e.posts.length + 1) + ' פרסומים: ' + e.posts.length + ' לפני האירוע וסרטון סיכום עם פוסט מלווה.');
+      if (e.step === 2 && e.st === 'setup' && e.posts.some((p) => { const m = pm(p); return m && m.busy; })) h = h.replace('<div class="ev-tl">', '<div class="note">' + ic('info', 15) + '<span>התכנים נוצרים עכשיו. סרטון לוקח כ-6 דקות. השאירו את החלון פתוח עד שהכל מוכן.</span></div><div class="ev-tl">');
+      return h;
+    };
+    // logo and media: real files
+    ACT.evLogo = async (val) => {
+      evCollect();
+      const e = S.ev;
+      if (/^org/.test(val)) { const u = logoOf(); if (!u) { toast('אין לוגו בנכסי המותג', 'העלו לוגו לאירוע, או הוסיפו לוגו בנכסי המותג.', 'err'); return; } e.logo = { k: 'png', n: 'לוגו ' + (orgName() || 'הארגון'), url: u }; render(); toast('הלוגו נקלט', e.logo.n); return; }
+      const [f] = await uploadPicked('image/png,image/svg+xml,image/jpeg,image/webp');
+      if (!f || S.ev !== e) return;
+      e.logo = { k: /svg/i.test(f.ext || f.name) ? 'svg' : 'png', n: f.name, url: f.url };
+      render(); toast('הלוגו נקלט', f.name);
+    };
+    const pickMedia = async (vid, list) => { const fs = await uploadPicked(vid ? 'video/mp4,video/quicktime,video/webm' : 'image/png,image/jpeg,image/webp', true); fs.forEach((f) => list.push({ v: vid, url: f.url, name: f.name })); return fs.length; };
+    ACT.evMedia = async (v) => { evCollect(); const e = S.ev; if (await pickMedia(v === '1', e.media)) render(); };
+    ACT.evAf = async (v) => { evCollect(); const e = S.ev; if (await pickMedia(v === '1', e.after.files)) render(); };
+    ACT.evNext0 = () => {
+      evCollect(); const e = S.ev;
+      if (!e.name.trim()) { toast('חסר שם אירוע', '', 'err'); return; }
+      if (!e.date || !e.start) { toast('חסרים תאריך ושעה', '', 'err'); return; }
+      if (evDays(e) < 3) { toast('האירוע קרוב מדי', 'צריך לפחות 3 ימים עד האירוע כדי לבנות את רצף הפרסומים.', 'err'); return; }
+      if (!e.place.trim()) { toast('חסר מקום', '', 'err'); return; }
+      if (!e.ch.length) { toast('לא נבחרה פלטפורמה', '', 'err'); return; }
+      if (!e.logo || !e.logo.url) { toast('חסר לוגו', 'העלו לוגו לאירוע או בחרו את לוגו הארגון.', 'err'); return; }
+      if (e.media.length < 3) { toast('חסרים חומרים', 'העלו לפחות 3 תמונות או סרטונים.', 'err'); return; }
+      e.step = 1; render(); window.scrollTo({ top: 0 });
+    };
+    // texts from Claude, then every post gets its graphic or video
+    ACT.evNext1 = async () => {
+      const e = S.ev; e.sting.ok = true; e.gen = 'Claude כותב את פרסומי האירוע...'; render();
+      const ps = evPosts(e);
+      try {
+        const r = await gen({ mode: 'event', dept: e.dept, name: e.name, date: fmtD(e.date), start: e.start, place: e.place, desc: e.desc, slots: ps.map((p) => ({ l: p.l, sub: p.sub, kind: p.kind, date: fmtD(p.date), time: p.time })) });
+        (r.posts || []).forEach((x, k) => { const p = ps[(+x.i || k + 1) - 1]; if (!p) return; if (x.title) p.t = x.title; if (x.body) p.body = x.body; p.tags = x.tags || []; p.design = { kicker: x.kicker || '', headline: x.headline || x.title || p.t, sub: x.sub || '', details: x.details || [], cta: x.cta || '' }; });
+      } catch (err) { aiFail(err); }
+      if (S.ev !== e) return;
+      e.gen = null; e.posts = ps; e.step = 2; render(); window.scrollTo({ top: 0 });
+      ps.forEach((p) => evMake(e, p));
+    };
+    ACT.evRe = (i) => { const e = S.ev, p = e.posts[+i]; if (p) evMake(e, p); };
+    ACT.evKind = (val) => {
+      const [i, k] = val.split('|'); const e = S.ev, p = e.posts[+i];
+      if (k === 'graphic' && p.kind === 'video' && e.posts.filter((x) => x.kind === 'video').length === 1) { toast('צריך לפחות סרטון אחד', 'לפחות אחד מהפרסומים שלפני האירוע הוא סרטון. הפכו קודם פרסום אחר לסרטון.', 'err'); return; }
+      if (p.kind === k) return;
+      p.kind = k; p.ok = false; render();
+      const m = pm(p); if (!m || (!m.url && !m.busy)) evMake(e, p);
+    };
+    ACT.epAi = () => {
+      const el = $('#epAi'), v = (el && el.value || '').trim();
+      if (!v) { toast('מה לשנות?', '', 'err'); return; }
+      const e = S.ev, p = e.posts[S.evCur]; const m = pm(p);
+      if (m && m.busy) { toast('עוד בהכנה', 'אפשר לבקש שינוי כשהגרסה הנוכחית תסתיים.', 'err'); return; }
+      el.value = ''; evMake(e, p, v); toast(p.kind === 'video' ? 'הסרטון נבנה מחדש' : 'הגרפיקה מתעדכנת', '„' + v + '”');
+    };
+    // scheduling: each post becomes an item with its file; a video still in production joins when it is ready
+    ACT.evSched = () => {
+      const e = S.ev;
+      if (canDirect() && e.posts.some((p) => !p.ok)) { toast('יש פרסומים שלא אושרו', 'אשרו את כל הפרסומים, או לחצו "אישור הכל".', 'err'); return; }
+      if (e.posts.some((p) => { const m = pm(p); return m && m.busy && p.kind === 'graphic'; })) { toast('הגרפיקות עוד בעיצוב', 'עוד כמה שניות והן מוכנות.', 'err'); return; }
+      if (e.posts.some((p) => { const m = pm(p); return !m || m.err; })) { toast('יש פרסום בלי קובץ', 'נסו שוב ליצור את הגרפיקה או הסרטון שלא נוצרו.', 'err'); return; }
+      const st = canDirect() ? 'scheduled' : 'pending';
+      e.posts.forEach((p) => {
+        const it = mkItem({ t: p.t, ty: p.kind, s: st, pub: p.date + ' ' + p.time, ch: [...e.ch], g: p.g, body: p.body, d: e.dept, tags: p.tags || [], fmts: [p.kind === 'video' ? '9:16' : '1:1'] });
+        const m = pm(p);
+        it.media = m && m.url && !m.busy ? JSON.parse(JSON.stringify(m)) : { kind: p.kind, ready: false };
+        p.item = it.id;
+      });
+      e.st = 'scheduled'; if (!S.events.includes(e)) S.events.unshift(e); render(); window.scrollTo({ top: 0 });
+      const wait = e.posts.some((p) => { const m = pm(p); return m && m.busy; });
+      toast(canDirect() ? 'הפרסומים תוזמנו' : 'נשלח לאישור', e.posts.length + ' פרסומים' + (wait ? ' · סרטון שעוד בהכנה יצטרף לפרסום כשיהיה מוכן' : ''));
+    };
+    ACT.evSim = () => { S.ev.st = 'after'; render(); };
+    // after the event: summary video from the uploads (showcase) and the companion post
+    function evAfVideo(e, change) {
+      const a = e.after;
+      return evVideo(e, a, 'vm', {
+        name: 'סיכום: ' + e.name, goal: 'showcase', dur: 30, imgs: evImgs(e, a.files), change,
+        desc: 'סרטון סיכום לאירוע שהתקיים, מתוך החומרים שצולמו בו. להציג את האווירה, הקהל והרגעים החזקים ולהודות לתושבים.\n' + evInfo(e) + (a.note ? '\nלהדגיש: ' + a.note : ''),
+        done: () => { if (a.vItem) { const it = itemById(a.vItem); if (it) it.media = JSON.parse(JSON.stringify(a.vm)); } },
+      });
+    }
+    ACT.evAfGen = async () => {
+      const e = S.ev, a = e.after;
+      if (a.files.length < 3) { toast('חסרים חומרים', 'העלו לפחות 3 תמונות או סרטונים מהאירוע.', 'err'); return; }
+      a.note = ($('#evAfN') || {}).value || '';
+      e.gen = 'Claude כותב את פוסט הסיכום...'; render();
+      let post = { t: 'תודה שהייתם איתנו: ' + e.name, body: 'תודה לכל מי שהגיע ל' + e.name + (a.note ? '. ' + a.note : '') + '. נתראה באירוע הבא.', tags: [] };
+      try { const r = await gen({ mode: 'event', after: true, dept: e.dept, name: e.name, date: fmtD(e.date), start: e.start, place: e.place, desc: e.desc, note: a.note }); if (r.body) post = { t: r.title || post.t, body: r.body, tags: r.tags || [] }; } catch (err) { /* the default text stays, it can be edited */ }
+      if (S.ev !== e) return;
+      e.gen = null; a.ready = true;
+      a.video = { t: 'סיכום: ' + e.name, kind: 'video', g: 4, ver: 1, after: true };
+      a.post = Object.assign(post, { date: addDays(e.date, 1) < todayIso() ? addDays(todayIso(), 1) : addDays(e.date, 1), time: '18:00' });
+      render();
+      evAfVideo(e);
+    };
+    // the summary card reads the video from after.vm
+    const _evAfter = evAfter;
+    evAfter = function (e) {
+      const a = e.after;
+      if (a.video) a.video.media = a.vm || null;
+      return _evAfter(e);
+    };
+    ACT.evAfRe = () => evAfVideo(S.ev);
+    ACT.evVAi = () => {
+      const el = $('#evVFix'), v = (el && el.value || '').trim();
+      if (!v) { toast('מה לתקן?', '', 'err'); return; }
+      evCollect(); const e = S.ev;
+      if (e.after.vm && e.after.vm.busy) { toast('עוד בהכנה', 'אפשר לבקש שינוי כשהסרטון יהיה מוכן.', 'err'); return; }
+      evAfVideo(e, v); toast('הסרטון נבנה מחדש', '„' + v + '”');
+    };
+    ACT.evAfOk = () => {
+      evCollect(); const e = S.ev, a = e.after, p = a.post;
+      if (!a.vm || a.vm.err) { toast('אין סרטון סיכום', 'צרו את סרטון הסיכום לפני התזמון.', 'err'); return; }
+      const st = canDirect() ? 'scheduled' : 'pending';
+      const it = mkItem({ t: a.video.t, ty: 'video', s: st, pub: p.date + ' ' + p.time, ch: [...e.ch], g: 4, body: p.body, d: e.dept, tags: p.tags || [], fmts: ['9:16'] });
+      it.media = a.vm.url && !a.vm.busy ? JSON.parse(JSON.stringify(a.vm)) : { kind: 'video', ready: false };
+      a.vItem = it.id;
+      e.st = 'done'; render();
+      toast(canDirect() ? 'סרטון הסיכום תוזמן' : 'נשלח לאישור', fmtD(p.date) + ' · ' + p.time + (a.vm.busy ? ' · יצא לפרסום כשהסרטון יהיה מוכן' : ''));
+    };
+    // a reload in the middle of a production: that file is marked for a retry
+    (function fixBusy() {
+      if (!L.ready) { setTimeout(fixBusy, 700); return; }
+      (S.events || []).forEach((e) => {
+        const mark = (m) => { if (m && m.busy) { m.busy = ''; m.err = true; } };
+        (e.posts || []).forEach((p) => { mark(p.mg); mark(p.mv); });
+        if (e.after) mark(e.after.vm);
+      });
+    })();
+    css.textContent += `
+.ev-th.ev-real{background-size:cover;background-position:center;position:relative;overflow:hidden}
+.ev-th.ev-real .tt{display:none}
+.ev-th.ev-real video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#0A2C51}
+.ev-th.ev-busy{display:grid;place-items:center;background:var(--bg-2,#EEF1F6)!important;color:var(--ink,#13213A)}
+.ev-prog{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;font-size:12.5px;padding:6px}
+.ev-prog i{display:block;width:80%;height:5px;border-radius:9px;background:#fff;overflow:hidden}.ev-prog i u{display:block;height:100%;background:var(--brand,#0E3B6B);text-decoration:none}
+.raw.has-real,.raw.ev-vid{background-size:cover;background-position:center;color:#fff}
+.st-logo img{width:78%;height:78%;object-fit:contain}`;
   })();
 })();

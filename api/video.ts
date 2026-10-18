@@ -35,6 +35,11 @@ const str = (v: unknown, n = 160) => (typeof v === 'string' ? v.slice(0, n) : un
 
 const cleanWords = (a: unknown) => (Array.isArray(a) ? a.slice(0, 600).filter((w: any) => typeof w?.w === 'string').map((w: any) => ({ w: w.w.slice(0, 40), s: num(w.s, 0, 95, 0), e: num(w.e, 0, 95, 0) })) : []);
 
+const cleanOutro = (o: any) => {
+  if (!o || typeof o !== 'object') return undefined;
+  const st = o.sting && typeof o.sting === 'object' ? { logo: okSrc(o.sting.logo) ? o.sting.logo : undefined, motion: ['reveal', 'zoom', 'spin'].includes(o.sting.motion) ? o.sting.motion : 'reveal', bg: /^#[0-9a-f]{6}$/i.test(o.sting.bg ?? '') ? o.sting.bg : undefined } : undefined;
+  return { cta: str(o.cta, 60), dur: num(o.dur, 0, 6, 3.2), details: Array.isArray(o.details) ? o.details.slice(0, 4).map((d: any) => ({ icon: str(d?.icon, 20), text: str(d?.text, 60) ?? '' })) : [], sting: st };
+};
 // keeps the plan inside the engine's limits: 90 seconds, sane sizes, allowed media only
 export function cleanPlan(p: any) {
   if (!p || typeof p !== 'object' || !Array.isArray(p.scenes) || !p.scenes.length) throw new Error('bad_plan');
@@ -61,6 +66,7 @@ export function cleanPlan(p: any) {
     fps: 30,
     brand: { ...p.brand, org: str(p.brand?.org, 80) ?? '', logo, colors: { deep: '#0B1F3A', main: '#1F5FBF', accent: '#FFC93C', light: '#BFD7FF', ...(p.brand?.colors ?? {}) } },
     scenes,
+    outro: cleanOutro(p.outro),
     audio,
     captions: { style: ['karaoke', 'pop', 'clean', 'none'].includes(p.captions?.style) ? p.captions.style : 'karaoke', pos: p.captions?.pos === 'center' ? 'center' : 'bottom', words },
   };

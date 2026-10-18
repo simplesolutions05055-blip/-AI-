@@ -248,7 +248,7 @@ export function textOf(ui: Record<string, any>): string {
 }
 export function mediaOf(ui: Record<string, any>): Media[] {
   const m = ui.media || {};
-  if (ui.ty === 'video' && m.url) return [{ url: String(m.url), type: 'video' }];
+  if (ui.ty === 'video' && m.kind === 'video' && m.url && m.ready !== false && /^https:\/\//.test(m.url)) return [{ url: String(m.url), type: 'video' }];
   if (ui.ty === 'graphic' && m.url && /^https:\/\//.test(m.url)) return [{ url: String(m.url), type: 'image' }];
   return [];
 }

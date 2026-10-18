@@ -60,7 +60,7 @@ export interface Plan {
   font?: { head?: string; body?: string };
   mood?: 'energetic' | 'emotional' | 'informative' | 'festive' | 'solemn' | 'calm' | 'luxury';
   scenes: Scene[];
-  outro?: { cta?: string; details?: { icon?: string; text: string }[]; dur?: number };
+  outro?: { cta?: string; details?: { icon?: string; text: string }[]; dur?: number; sting?: { logo?: string; motion?: 'reveal' | 'zoom' | 'spin'; bg?: string } };
   captions?: { words: Word[]; style?: 'karaoke' | 'pop' | 'clean' | 'none'; pos?: 'bottom' | 'center' };
   audio?: { voice?: { src: string; vol?: number; start?: number }; music?: { src: string; vol?: number } };
   fx?: Fx[];                 // global effects over the whole video
