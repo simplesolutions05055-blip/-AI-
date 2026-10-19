@@ -9,7 +9,8 @@ const sections = (d, k, numbered = true) => (d.sections || []).map((s, i) => `<s
 ${(s.paras || []).map((p) => `<p>${esc(p)}</p>`).join('')}
 ${s.bullets && s.bullets.length ? `<ul>${s.bullets.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}</section>`).join('');
 const note = (d, k) => (d.note ? `<div class="note"><span class="ic">${icon('info', 22, k.gold, 2.2)}</span><div><b>טוב לדעת. </b>${esc(String(d.note).replace(/^(חשוב|טוב) לדעת:\s*/, ''))}</div></div>` : '');
-const sign = (d) => `<div class="sign"><span>בברכה,</span><b>${esc(d.sign || '')}</b></div>`;
+const signOf = (d) => String(d.sign || '').replace(/^\s*בברכה,?\s*/, '');
+const sign = (d) => `<div class="sign"><span>בברכה,</span><b>${esc(signOf(d))}</b></div>`;
 const header = (k, date) => `<header class="hd"><span>${crest(k, 54)}</span><div class="org"><b>${esc(k.org)}</b><span>${esc(k.dept)}</span></div><div class="meta">תאריך: ${esc(date)}</div></header>`;
 
 function chartBlock(k, c) {
@@ -118,7 +119,7 @@ export async function docDocx(k, d, style = 'formal', o = {}) {
   for (const c of d.charts || []) { if ((c.items || []).length) { out.push(par(c.title + (c.unit ? ' (' + c.unit + ')' : ''), { spacing: { before: 200 } }, { bold: true, color: navy })); out.push(tbl({ head: ['', c.unit || 'ערך'], rows: c.items.map((x) => [x.l, String(x.v)]) })); } }
   if (d.table && d.table.head) { out.push(par('', { spacing: { before: 200 } })); out.push(tbl(d.table)); }
   if (d.note) out.push(par([run('טוב לדעת. ', { bold: true, color: navy }), run(String(d.note).replace(/^(חשוב|טוב) לדעת:\s*/, ''))], { spacing: { before: 280 }, border: { top: { color: 'D5DCE8', size: 6, style: BorderStyle.SINGLE, space: 8 }, bottom: { color: 'D5DCE8', size: 6, style: BorderStyle.SINGLE, space: 8 } } }));
-  if (d.sign) { out.push(par('בברכה,', { spacing: { before: 320, after: 40 } }, { color: ink })); out.push(par(d.sign, {}, { bold: true, size: 26, color: navy })); }
+  if (d.sign) { out.push(par('בברכה,', { spacing: { before: 320, after: 40 } }, { color: ink })); out.push(par(signOf(d), {}, { bold: true, size: 26, color: navy })); }
   const doc = new Document({
     creator: 'PrimeOS', title: d.title || '',
     styles: { default: { document: { run: { font, size: 22, rightToLeft: true } } } },
