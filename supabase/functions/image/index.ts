@@ -90,7 +90,7 @@ Hard rules:
 - State-grade, dignified, clean, high-end Israeli municipal design. Generous margins, strong hierarchy, nothing cluttered.
 - Follow the STYLE, PALETTE MODE, BRAND ROLES and numeric rules given in the design directive exactly; they override any general habit. Name the colours by hex in the prompt. Do not flood the canvas with the brand colours.
 - Hebrew text is written right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in a clean bold Hebrew sans-serif. Never add any other words, letters, numbers, fake text or English.
-- Include only the texts given. Headline largest; kicker small above it; details as clean rows with simple line icons; organisation name small.
+- Include every text line given, all of them, and only them (a missing line is a failure). Headline largest; kicker small above it; details as clean rows with simple line icons; organisation name small.
 - If reference images are attached: image 1 may be the organisation logo - place it small and unchanged; other images are real photos to feature prominently and respectfully.
 - People only when it serves the message: real, diverse Israeli residents, modest, natural. No flags with emblems, no political symbols, no alarming scenes.
 Return only the prompt, max 260 words.`;
@@ -281,15 +281,17 @@ fixed=true for texts that belong to the template itself and must stay (organisat
         const qa = p.qa === false ? null : await qaReview(ckey, gen.all[best], { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles });
         return { b64: gen.all[best], check: checks[best], model: gen.model, qa, prompt: pr };
       };
-      let r1 = await round(prompt);
-      // a weak result gets one more attempt with the reviewer's art-direction note; the better of the two is kept
-      if (r1.qa && !r1.qa.stop && r1.qa.score < QA_REDO && r1.qa.redo && p.redo !== false) {
-        try {
-          const r2 = await round(prompt + '\nREVIEWER NOTE (must be applied): ' + r1.qa.redo);
-          if (r2.qa && r2.qa.score > r1.qa.score && issuesOf(r2.check) <= issuesOf(r1.check) + 1) r1 = r2;
-        } catch (_) { /* keep the first */ }
+      // a weak result (missing / misspelled Hebrew, or a low review score) gets up to two more attempts with the reviewer's note;
+      // the best attempt wins: fewest text errors first, then the higher score
+      const tries: Awaited<ReturnType<typeof round>>[] = [await round(prompt)];
+      const weak = (r: typeof tries[0]) => issuesOf(r.check) > 0 || (r.qa && !r.qa.stop && r.qa.score < QA_REDO);
+      for (let k = 0; k < 2 && p.redo !== false && weak(tries[tries.length - 1]); k++) {
+        const last = tries[tries.length - 1];
+        const note = [issuesOf(last.check) ? 'The previous attempt had Hebrew text errors: ' + (last.check.issues ?? []).join('; ') + '. Every text line must appear, spelled exactly.' : '', last.qa?.redo ? 'REVIEWER NOTE (must be applied): ' + last.qa.redo : ''].filter(Boolean).join('\n');
+        try { tries.push(await round(prompt + '\n' + note)); } catch (_) { break; }
       }
-      const { b64, check, model } = r1; prompt = r1.prompt; const qa = r1.qa;
+      const r1 = tries.sort((a, b) => issuesOf(a.check) - issuesOf(b.check) || (b.qa?.score ?? 0) - (a.qa?.score ?? 0))[0];
+      const { b64, check, model } = r1; prompt = r1.prompt; const qa = r1.qa ? { ...r1.qa, tries: tries.length } : null;
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${tpl ? 't' : 'd'}-${crypto.randomUUID().slice(0, 8)}.jpg`;
       const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
