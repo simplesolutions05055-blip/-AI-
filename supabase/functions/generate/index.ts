@@ -5,6 +5,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import JSZip from 'https://esm.sh/jszip@3.10.1';
 import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES } from './video.ts';
+import { STYLE_PICK_HE, styleOf, PALETTE_MODES, DOC_RULES_HE, DOC_TYPES, DECK_RULES_HE, DECK_STYLES, VIDEO_RULES_HE } from './design.ts';
 
 const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-7-sonnet-latest'];
 let goodModel: string | null = null;
@@ -429,8 +430,9 @@ ${(p.avoid ?? []).length ? 'נושאים שכבר נבחרו בסדרה (לא ל
 ${list}
 
 החזר JSON בלבד:
-{"items":[{"i":מספר המועד,"title":"כותרת ראשית לגרפיקה, 2-5 מילים","kicker":"1-3 מילים שמסווגות את הנושא","sub":"שורת משנה עד 60 תווים","caption":"טקסט הפוסט, 2-3 משפטים","tags":["#האשטג"]}]}
-כל פוסט בנושא שונה. מועד עם חג - ברכה לחג בשם הרשות. אסור להמציא תאריכים, שעות, מקומות או מספרים שלא מופיעים בבריף, בקבצים או בפרטים מאתר הארגון - במקרה כזה לכתוב פוסט כללי בלי פרטים מומצאים. tags: 3-4, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.`, 6000, fb);
+{"items":[{"i":מספר המועד,"title":"כותרת ראשית לגרפיקה, 2-5 מילים","kicker":"1-3 מילים שמסווגות את הנושא","sub":"שורת משנה עד 60 תווים","caption":"טקסט הפוסט, 2-3 משפטים","tags":["#האשטג"],"style":"id של סגנון"}]}
+כל פוסט בנושא שונה. מועד עם חג - ברכה לחג בשם הרשות. אסור להמציא תאריכים, שעות, מקומות או מספרים שלא מופיעים בבריף, בקבצים או בפרטים מאתר הארגון - במקרה כזה לכתוב פוסט כללי בלי פרטים מומצאים. tags: 3-4, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.
+${STYLE_PICK_HE}`, 6000, fb);
       const j = parseJson(raw);
       const out = ((j.items ?? []) as any[]).map((x) => tagFix(x));
       return json(req, { ok: true, items: out });
@@ -446,8 +448,9 @@ ${ev}${filesNote(fb)}
 ${p.after ? '' : 'השלבים:\n' + list}
 
 החזר JSON בלבד:
-${p.after ? '{"title":"כותרת קצרה עד 45 תווים","body":"טקסט הפוסט, 2-4 משפטים, תודה לתושבים והזמנה לאירוע הבא","tags":["#האשטג"]}' : '{"posts":[{"i":מספר השלב,"title":"כותרת הפוסט עד 45 תווים","body":"טקסט הפוסט, 2-4 משפטים, עד 320 תווים","kicker":"1-3 מילים מעל הכותרת בגרפיקה","headline":"כותרת ראשית לגרפיקה, 2-5 מילים","sub":"שורת משנה עד 60 תווים","details":[{"icon":"cal|clock|pin|info","text":"פרט קצר עד 28 תווים"}],"cta":"קריאה לפעולה עד 24 תווים","tags":["#האשטג"]}]}'}
-details: רק תאריך, שעה ומקום כפי שנמסרו, עד 3. אסור להמציא מחירים, אמנים או מספרים שלא מופיעים בפרטים. tags: 3-4, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.`, 3000, fb);
+${p.after ? '{"title":"כותרת קצרה עד 45 תווים","body":"טקסט הפוסט, 2-4 משפטים, תודה לתושבים והזמנה לאירוע הבא","tags":["#האשטג"]}' : '{"posts":[{"i":מספר השלב,"title":"כותרת הפוסט עד 45 תווים","body":"טקסט הפוסט, 2-4 משפטים, עד 320 תווים","kicker":"1-3 מילים מעל הכותרת בגרפיקה","headline":"כותרת ראשית לגרפיקה, 2-5 מילים","sub":"שורת משנה עד 60 תווים","details":[{"icon":"cal|clock|pin|info","text":"פרט קצר עד 28 תווים"}],"cta":"קריאה לפעולה עד 24 תווים","tags":["#האשטג"],"style":"id של סגנון"}]}'}
+details: רק תאריך, שעה ומקום כפי שנמסרו, עד 3. אסור להמציא מחירים, אמנים או מספרים שלא מופיעים בפרטים. tags: 3-4, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.
+${p.after ? '' : STYLE_PICK_HE}`, 3000, fb);
       const j = parseJson(raw);
       if (p.after) return json(req, { ok: true, ...tagFix(j) });
       return json(req, { ok: true, posts: ((j.posts ?? []) as any[]).map((x) => tagFix(x)) });
@@ -458,11 +461,14 @@ details: רק תאריך, שעה ומקום כפי שנמסרו, עד 3. אסו�
 ${brief}
 
 החזר JSON בלבד:
-{"kicker":"1-3 מילים מעל הכותרת שמסווגות את הנושא באופן ספציפי, למשל: תרבות ופנאי / עבודות תשתית / איכות הסביבה / קול קורא / ברכת חג / שירות לתושב","headline":"כותרת ראשית לגרפיקה, 2-5 מילים, חזקה וברורה","sub":"שורת משנה אחת, עד 60 תווים","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט קצר, עד 28 תווים"}],"cta":"קריאה לפעולה קצרה עד 24 תווים","caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"]}
+{"kicker":"1-3 מילים מעל הכותרת שמסווגות את הנושא באופן ספציפי, למשל: תרבות ופנאי / עבודות תשתית / איכות הסביבה / קול קורא / ברכת חג / שירות לתושב","headline":"כותרת ראשית לגרפיקה, 2-5 מילים, חזקה וברורה","sub":"שורת משנה אחת, עד 60 תווים","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט קצר, עד 28 תווים"}],"cta":"קריאה לפעולה קצרה עד 24 תווים","caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"],"style":"id של סגנון","palette":"מצב פלטה","styleWhy":"משפט אחד: למה הסגנון הזה"}
 details: רק פרטים שמופיעים בבריף (תאריך, שעה, מקום, טלפון), עד 3. אם אין פרטים - מערך ריק.
+${STYLE_PICK_HE}
 kicker: לא "הודעה לתושבים" ולא "עדכון" כלליים, אלא אם אין שום נושא ספציפי.
 tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון (#פסטיבל_הסתיו), כולל אחד עם שם הרשות.`, 1500, fb);
-      return json(req, { ok: true, ...(await proof(key, parseJson(raw))) });
+      const g = await proof(key, parseJson(raw));
+      g.style = styleOf(g.style); if (!PALETTE_MODES[g.palette as keyof typeof PALETTE_MODES]) delete g.palette;
+      return json(req, { ok: true, ...g });
     }
 
     if (mode === 'video') {
@@ -494,7 +500,7 @@ ${brief}
         return json(req, { ok: true, clips });
       }
       const imgs = await fileBlocks(((p.media ?? []) as any[]).filter((m) => !m.v).map((m) => ({ url: m.url, name: m.name || m.url })));
-      const ask = () => claudeObj(key, DIRECTOR_SYS + '\n' + s, directorPrompt(p, c, voices), 8000, [...imgs, ...fb], BRIEF_SCHEMA);
+      const ask = () => claudeObj(key, DIRECTOR_SYS + '\n' + VIDEO_RULES_HE + '\n' + s, directorPrompt(p, c, voices), 8000, [...imgs, ...fb], BRIEF_SCHEMA);
       let plan: any;
       try { plan = await ask(); } catch (e) { console.error('vbrief', e instanceof Error ? e.message : e); plan = await ask(); } // one retry
       return json(req, { ok: true, caps: c, ...sanitizeBrief(plan, p, voices) });
@@ -535,11 +541,13 @@ ${brief}
 ${brief}
 
 החזר JSON בלבד:
-{"title":"כותרת המסמך","to":"אל מי המסמך מופנה, למשל: לתושבי השכונה","summary":"תקציר של משפט או שניים","sections":[{"h":"כותרת סעיף","paras":["פסקה"],"bullets":["נקודה (לא חובה)"]}],"note":"מסגרת 'טוב לדעת' של משפט אחד או ריק","sign":"חתימה, למשל: אגף ההנדסה"}
-3 עד 5 סעיפים. עניינית, בלי חזרות.${p.style === 'data' ? `
+{"dtype":"סוג המסמך מהרשימה","title":"כותרת המסמך","to":"אל מי המסמך מופנה, למשל: לתושבי השכונה","summary":"תקציר של משפט או שניים","sections":[{"h":"כותרת סעיף","paras":["פסקה"],"bullets":["נקודה (לא חובה)"]}],"note":"מסגרת 'טוב לדעת' של משפט אחד או ריק","sign":"חתימה, למשל: אגף ההנדסה"}
+3 עד 6 סעיפים לפי מבנה סוג המסמך. עניינית, בלי חזרות.
+${DOC_RULES_HE}${p.style === 'data' ? `
 סגנון גרפים וטבלאות: הוסף גם "charts":[{"title":"כותרת","unit":"יחידה","type":"bar|pie","items":[{"l":"תווית","v":מספר}]}] (1-2 גרפים) ו-"table":{"head":["עמודה"],"rows":[["תא"]]}. רק מספרים שמופיעים בבריף - אסור להמציא נתונים. אם אין מספרים בבריף, החזר מערך charts ריק.` : ''}${p.style === 'designed' ? `
 סגנון מעוצב: הוסף "highlights":[{"icon":"cal|clock|pin|info|phone|users|check","t":"כותרת קצרה","d":"משפט קצר"}] (3-4 פריטים) ו-"quote":"משפט מוביל קצר להדגשה".` : ''}`, 3500, fb);
-      return json(req, { ok: true, ...parseJson(raw) });
+      const dj = parseJson(raw); if (!DOC_TYPES[dj.dtype]) dj.dtype = 'notice';
+      return json(req, { ok: true, ...dj });
     }
 
     if (mode === 'deck2') {
@@ -548,11 +556,13 @@ ${brief}
 ${brief}
 
 החזר JSON בלבד:
-{"title":"כותרת המצגת","subtitle":"שורת משנה לשער","slides":[{"kind":"cover|bullets|stat|timeline|quote|cards|chart|table|end","t":"כותרת השקף","pts":["נקודה קצרה"],"stat":{"v":"מספר או ערך","l":"מה הוא מודד"}}]}
+{"dstyle":"סגנון המצגת מהרשימה","title":"כותרת המצגת","subtitle":"שורת משנה לשער","slides":[{"kind":"cover|bullets|stat|timeline|quote|cards|chart|table|end","t":"כותרת השקף = המסר של השקף","msg":"המסר במשפט אחד","pts":["נקודה קצרה"],"stat":{"v":"מספר או ערך","l":"מה הוא מודד"}}]}
+${DECK_RULES_HE}
 ${fb.length && p.keep ? 'מספר השקפים כמו בקובץ המצורף (עד 20), באותו סדר' : 'בדיוק ' + n + ' שקפים'}. ראשון cover, אחרון end. stat רק אם יש מספר אמיתי מהבריף, אחרת לא להשתמש ב-stat. timeline ל-3-5 שלבים או תאריכים. 2-4 נקודות בשקף.${p.style === 'data' ? `
 סגנון גרפים וטבלאות: מותר גם kind "chart" עם "chart":{"type":"bar|pie|line","unit":"יחידה","items":[{"l":"תווית","v":מספר}]}, ו-kind "table" עם "table":{"head":["עמודה"],"rows":[["תא"]]}. רק מספרים מהבריף - אסור להמציא.` : ''}${p.style === 'designed' ? `
 סגנון מעוצב: העדף kinds מגוונים: "cover","bullets","cards" (pts של 3-4 כרטיסים קצרים),"quote","timeline","end".` : ''}`, 4000, fb);
-      return json(req, { ok: true, ...parseJson(raw) });
+      const kj = parseJson(raw); if (!DECK_STYLES[kj.dstyle]) kj.dstyle = 'project';
+      return json(req, { ok: true, ...kj });
     }
 
     return json(req, { error: 'unknown_mode' }, 400);

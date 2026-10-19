@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/build-ui.mjs && vite",
-    "build": "node scripts/build-ui.mjs && node video/scripts/bundle.mjs && vite build",
+    "build": "node scripts/sync-design.mjs && node scripts/build-ui.mjs && node video/scripts/bundle.mjs && vite build",
     "preview": "vite preview",
     "typecheck:api": "tsc -p tsconfig.api.json --noEmit",
     "typecheck": "node --check public/primeos-live.js && node --check scripts/build-ui.mjs",
     "check:functions": "deno check --config supabase/functions/deno.ci.json --node-modules-dir=auto supabase/functions/v2-api/index.ts supabase/functions/generate/index.ts supabase/functions/image/index.ts supabase/functions/produce/index.ts",
     "video:fonts": "node video/scripts/fonts.mjs",
-    "typecheck:video": "tsc -p video/tsconfig.json"
+    "typecheck:video": "tsc -p video/tsconfig.json",
+    "sync:design": "node scripts/sync-design.mjs"
   },
   "dependencies": {
     "@remotion/bundler": "^4.0.535",

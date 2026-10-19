@@ -1,6 +1,7 @@
 // Brand kit shared by every output (graphics, documents, decks, videos).
 // One source of colours, type and emblem so all outputs of an organisation stay consistent.
 import { FONTS } from './fonts.mjs';
+import { paletteRoles } from './palette.mjs';
 
 const UR_HE = 'U+0590-05FF,U+200C-2010,U+20AA,U+25CC,U+FB1D-FB4F';
 const UR_LA = 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD';
@@ -13,6 +14,8 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&am
 /** Normalise an organisation's brand (mockup BRAND shape or plain) into the render kit. */
 export function kit(b = {}) {
   const col = (i, d) => (Array.isArray(b.colors) && b.colors[i] ? (Array.isArray(b.colors[i]) ? b.colors[i][1] : b.colors[i]) : d);
+  // roles, not positions: a colourful logo gives its colours in any order; the dark base, accent and light ground are derived
+  const r = paletteRoles(b.colors || [], b.roles || {});
   return {
     org: b.org || 'עיריית נווה הדר',
     dept: b.dept || '',
@@ -20,8 +23,8 @@ export function kit(b = {}) {
     phone: b.phone || '',
     logo: b.logo || null, // optional URL of the organisation's own logo (transparent PNG)
     logoLight: b.logoLight || null, // white version of the logo for dark backgrounds
-    navy: col(0, '#0E3B6B'), deep: col(1, '#0A2C51'), gold: col(2, '#9A6B1F'), sky: col(3, '#1E6BA8'),
-    ink: col(4, '#41506A'), bg: col(5, '#EEF1F6'), green: col(6, '#0A6C43'), alert: col(7, '#9B1C1C'),
+    navy: r.base, deep: r.deep, gold: r.accent, sky: r.secondary,
+    ink: r.ink, bg: r.light, green: col(6, '#0A6C43'), alert: col(7, '#9B1C1C'), accentText: r.accentText,
     goldLt: b.goldLt || '#C9A15A', amber: '#E8A317',
   };
 }

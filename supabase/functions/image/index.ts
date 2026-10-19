@@ -4,6 +4,7 @@
 // action 'fixtext': edits an existing design to correct only the flagged Hebrew.
 // POST { action:'check' } | { action:'models' } | { action:'tplscan', url } | design + template:{url,desc,slots} | { action:'design', texts, brief, colors, refs, logo, size, note?, n? } | { action:'fixtext', url, fixes, issues, want, size } | { brief, title?, dept?, size?, prompt? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import { designDirective, qaPrompt, QA_SYS, QA_REDO, styleOf } from './design.ts';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
@@ -87,12 +88,12 @@ Write ONE prompt in English for an image model that will design the COMPLETE fin
 Design freedom: invent the composition, typographic hierarchy, shapes, illustration or photo treatment that best fits this specific message. Avoid generic templates; make it feel like a designer made it for this exact announcement.
 Hard rules:
 - State-grade, dignified, clean, high-end Israeli municipal design. Generous margins, strong hierarchy, nothing cluttered.
-- Brand colours (hex values given) are an identity accent, roughly 20-40% of the design: typography, a band, a shape, an icon colour. The remaining 60-80% is free: natural photography or illustration colours, white and light neutrals, and any complementary palette that makes this specific piece striking. Do not flood the canvas with the brand colours.
+- Follow the STYLE, PALETTE MODE, BRAND ROLES and numeric rules given in the design directive exactly; they override any general habit. Name the colours by hex in the prompt. Do not flood the canvas with the brand colours.
 - Hebrew text is written right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in a clean bold Hebrew sans-serif. Never add any other words, letters, numbers, fake text or English.
 - Include only the texts given. Headline largest; kicker small above it; details as clean rows with simple line icons; organisation name small.
 - If reference images are attached: image 1 may be the organisation logo - place it small and unchanged; other images are real photos to feature prominently and respectfully.
 - People only when it serves the message: real, diverse Israeli residents, modest, natural. No flags with emblems, no political symbols, no alarming scenes.
-Return only the prompt, max 230 words.`;
+Return only the prompt, max 260 words.`;
 
 // personal template: the organisation's own design is the fixed structure, only texts and imagery change
 const TEMPLATE_DESIGNER = `You are the senior art director of a studio that produces official social-media graphics for an Israeli municipality from the municipality's OWN fixed design template.
@@ -143,6 +144,19 @@ async function proofImage(ckey: string, b64: string, want: string) {
   } catch { return { ok: true, unchecked: true }; }
 }
 const issuesOf = (c: any) => (c && !c.ok ? (c.issues ?? []).length || 1 : 0);
+// independent reviewer: score 0-100 by the PrimeOS rubric, a redo note, and a hard stop for facts / minors / unreadable text
+async function qaReview(ckey: string, b64: string, o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string> }) {
+  try {
+    const raw = await claude(ckey, QA_SYS, [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+      { type: 'text', text: qaPrompt(o) },
+    ]);
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const j = JSON.parse(m[0]);
+    return { score: Math.max(0, Math.min(100, Math.round(+j.score || 0))), parts: j.parts ?? {}, issues: (Array.isArray(j.issues) ? j.issues : []).slice(0, 5).map(String), redo: String(j.redo ?? '').slice(0, 500), stop: !!j.stop, stopWhy: String(j.stopWhy ?? '').slice(0, 200) };
+  } catch { return null; }
+}
 // PNG mask for a masked edit: transparent inside the boxes (only there the model may draw), opaque elsewhere
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(b: Uint8Array) { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
@@ -244,27 +258,42 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const refs = [...(tpl ? [String(tpl.url)] : []), ...((p.refs ?? []) as string[]).filter(okUrl)].slice(0, 4);
       const fmt = p.size === 'portrait' ? 'vertical portrait' : p.size === 'landscape' ? 'wide landscape' : 'square';
       const slots = tpl ? ((tpl.slots ?? []) as any[]).map((x) => `- ${x.role}${x.fixed ? ' (fixed, keep)' : ''}: ${x.he ?? ''}${x.text ? ' - currently "' + x.text + '"' : ''}`).join('\n') : '';
-      const prompt = tpl
+      const style = styleOf(p.style);
+      const directive = designDirective({ style, palette: p.palette, colors: p.colors, roles: p.roles, fmt: p.size === 'portrait' ? 'portrait' : p.size === 'landscape' ? 'landscape' : 'square', photos: refs.length - (p.logo && !tpl ? 1 : 0) - (tpl ? 1 : 0), logo: !!p.logo });
+      let prompt = tpl
         ? (await claude(ckey, TEMPLATE_DESIGNER, [
           { type: 'image', source: { type: 'url', url: String(tpl.url) } },
           { type: 'text', text: `The attached image is the template (it will be reference image 1 for the image model).\nStructural description: ${tpl.desc ?? ''}\nText areas of the template:\n${slots || '(read them from the image)'}\nNew message brief (Hebrew): ${p.brief ?? ''}\nNew texts to place (exactly):\n${lines}\n${refs.length > 1 ? `More reference images after the template: ${p.logo ? 'the logo, then ' : ''}${refs.length - 1 - (p.logo ? 1 : 0)} photo(s).` : ''}\n${p.note ? 'Change request from the user: ' + p.note : ''}` },
         ])).trim()
-        : (await claude(ckey, DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nBrand palette: ${colors}\nTexts to place (exactly):\n${lines}\n${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the logo; ' : ''}${refs.length - (p.logo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim();
+        : (await claude(ckey, DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nBrand palette: ${colors}\nDESIGN DIRECTIVE:\n${directive}\nTexts to place (exactly):\n${lines}\n${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the logo; ' : ''}${refs.length - (p.logo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim();
       const size = SIZES[p.size] ?? SIZES.square;
-      const gen = await openaiImage(okey, prompt, size, p.quality ?? 'high', refs, Math.max(1, Math.min(3, +p.n || 2)), undefined, p.model);
-      if (!gen.b64) throw new Error('openai_empty');
-      // proofread every candidate the image model wrote, keep the one with the fewest text errors
       const fixedTx = tpl ? ((tpl.slots ?? []) as any[]).filter((x) => x.fixed && x.text).map((x) => `"${x.text}"`) : [];
       const wantTxt = lines.replace(/^[a-z0-9 ]+: /gim, '') + (fixedTx.length ? '\n' + fixedTx.join('\n') : '');
-      const checks = await Promise.all(gen.all.map((x) => proofImage(ckey, x, wantTxt)));
-      let best = 0;
-      checks.forEach((c, i) => { if (issuesOf(c) < issuesOf(checks[best])) best = i; });
-      const b64 = gen.all[best], check = checks[best], model = gen.model;
+      const wantList = [...lines.split('\n').map((l) => l.replace(/^[a-z0-9 ]+: "|"$/gi, '')), ...fixedTx.map((x) => x.slice(1, -1))];
+      // one round: generate candidates, proofread the Hebrew of each, score the cleanest with the independent reviewer
+      const round = async (pr: string) => {
+        const gen = await openaiImage(okey, pr, size, p.quality ?? 'high', refs, Math.max(1, Math.min(3, +p.n || 2)), undefined, p.model);
+        if (!gen.b64) throw new Error('openai_empty');
+        const checks = await Promise.all(gen.all.map((x) => proofImage(ckey, x, wantTxt)));
+        let best = 0;
+        checks.forEach((c, i) => { if (issuesOf(c) < issuesOf(checks[best])) best = i; });
+        const qa = p.qa === false ? null : await qaReview(ckey, gen.all[best], { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles });
+        return { b64: gen.all[best], check: checks[best], model: gen.model, qa, prompt: pr };
+      };
+      let r1 = await round(prompt);
+      // a weak result gets one more attempt with the reviewer's art-direction note; the better of the two is kept
+      if (r1.qa && !r1.qa.stop && r1.qa.score < QA_REDO && r1.qa.redo && p.redo !== false) {
+        try {
+          const r2 = await round(prompt + '\nREVIEWER NOTE (must be applied): ' + r1.qa.redo);
+          if (r2.qa && r2.qa.score > r1.qa.score && issuesOf(r2.check) <= issuesOf(r1.check) + 1) r1 = r2;
+        } catch (_) { /* keep the first */ }
+      }
+      const { b64, check, model } = r1; prompt = r1.prompt; const qa = r1.qa;
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${tpl ? 't' : 'd'}-${crypto.randomUUID().slice(0, 8)}.jpg`;
       const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
       if (up.error) throw up.error;
-      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: [...lines.split('\n').map((l) => l.replace(/^[a-z0-9 ]+: "|"$/gi, '')), ...fixedTx.map((x) => x.slice(1, -1))], prompt, model, size });
+      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: wantList, prompt, model, size, style, qa });
     } catch (e) {
       return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
     }

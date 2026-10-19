@@ -1045,12 +1045,16 @@
     ['official', 'רשמי', 0], ['notice', 'הודעה דחופה', 0], ['stat', 'נתון מרכזי', 0], ['editorial', 'בהיר מערכתי', 0],
   ];
   const needsImg = (l) => !!(LAY.find((x) => x[0] === l) || [])[2];
+  // the ten design styles (ids match supabase/functions/_shared/design.ts); PrimeOS picks one per graphic, the user may change it
+  const STYLE_HE = { documentary: 'דוקומנטרי', official: 'רשמי וחד', comic: 'קומי', satire: 'סאטירי', marketing: 'שיווקי', info: 'אינפורמטיבי', representative: 'ייצוגי', light: 'קל וזורם', service: 'הודעת שירות', editorial: 'Editorial' };
+  const styleHe = (id) => STYLE_HE[id] || STYLE_HE.official;
+  const qaHtml = (qa) => (qa && typeof qa.score === 'number' ? '<span class="qa-pill' + (qa.score >= 80 ? ' ok' : qa.score >= 70 ? ' mid' : ' low') + '" title="' + esc((qa.issues || []).join(' · ')) + '">ציון איכות ' + qa.score + '</span>' : '');
   // 'ai' = free design in the brand colours; 'tpl:<id>' = the organisation's own template, only texts and imagery change
   const isAiLay = (l) => l === 'ai' || /^tpl:/.test(String(l || ''));
   const tplOf = (l) => { const id = /^tpl:(.+)$/.exec(String(l || '')); return id ? ((typeof BRAND !== 'undefined' && BRAND.tpls) || []).find((t) => t.url && String(t.id) === id[1]) || null : null; };
   function brandFor(dept) {
     const c = (typeof BRAND !== 'undefined' && BRAND.colors) || [];
-    return { org: aiCtx().org, dept: dept || aiCtx().dept || '', colors: c.map((x) => (Array.isArray(x) ? x[1] : x)) };
+    return { org: aiCtx().org, dept: dept || aiCtx().dept || '', colors: c.map((x) => (Array.isArray(x) ? x[1] : x)), roles: (typeof BRAND !== 'undefined' && BRAND.roles) || {} };
   }
   async function aiImage(o) {
     const r = await fx('image', { brief: o.brief || '', title: o.title || '', dept: o.dept || '', people: o.people || 'auto', style: o.style || 'photo', size: o.size || 'square', quality: o.quality || 'high', model: o.model || undefined, colors: brandFor(o.dept).colors }, 150000);
@@ -1073,14 +1077,8 @@
     return out;
   }
   async function produce(jobs, dept) {
-    const b = brandFor(dept);
-    try {
-      if (b.colors && b.colors[0] && lum(b.colors[0]) > 0.18) {
-        let c = b.colors[0]; for (let t = 0; lum(c) > 0.18 && t < 12; t++) c = mix(c, '#000000', 0.12);
-        b.colors = [c, ...b.colors.slice(1)];
-      }
-    } catch (e) { /* keep the palette as is */ }
-    return fx('produce', { brand: b, jobs }, 150000);
+    // the render service derives the colour roles itself (dark base, accent, light ground) from the brand list
+    return fx('produce', { brand: brandFor(dept), jobs }, 150000);
   }
   // async renders (video): poll the result file until it exists
   function waitFile(url, maxMs) {
@@ -1112,6 +1110,8 @@
 video.sp-real{object-fit:contain;background:#0A2C51}
 .sp-mb{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(10,44,81,.62);color:#fff;font-weight:700;font-size:14px;text-align:center;padding:16px}
 .sp-mb .pth-orb{--s:68px}.sp-mb .pth-ph{color:#fff;font-size:14px;max-width:260px}
+.g-style select{font:inherit;font-size:13px;padding:3px 8px;border:1px solid #DDE3EC;border-radius:8px;background:#fff}
+.qa-pill{display:inline-block;font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:#E6EBF2;color:#41506A;vertical-align:middle}.qa-pill.ok{background:#E3F5EB;color:#0A6C43}.qa-pill.mid{background:#FFF3DD;color:#9A5B00}.qa-pill.low{background:#FDE8E8;color:#9B1C1C}
 .lay-pick{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:10px}
 .lay-pick button{border:1.5px solid var(--line,#DDE3EC);background:#fff;border-radius:10px;padding:8px 4px;font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2,#41506A);cursor:pointer;line-height:1.25}
 .lay-pick button.on{border-color:var(--brand,#0E3B6B);background:var(--brand,#0E3B6B);color:#fff}
@@ -1234,7 +1234,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       w.tags = tags.slice(0, 4);
       w.ver = 1;
       if (gfx) {
-        w.design = { kicker: r.kicker || '', sub: r.sub || '', details: r.details || [], cta: r.cta || '' };
+        w.design = { kicker: r.kicker || '', sub: r.sub || '', details: r.details || [], cta: r.cta || '', style: r.style || 'official', palette: r.palette || '', styleWhy: r.styleWhy || '' };
         w.media = { kind: 'graphic', layout: pickLayout(r, w.brief.free) };
       }
       render();
@@ -1308,8 +1308,15 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const t = $('#sTitle');
     if (t) t.addEventListener('change', () => {
       if (!w.media || w.media.busy) return;
-      if (isAiLay(w.media.layout)) { w.media.stale = true; render(); return; }
+      if (isAiLay(w.media.layout)) { w.media.stale = true; w.media.staleWhy = ''; render(); return; }
       clearTimeout(tmr); tmr = setTimeout(() => gfxRun(w), 300);
+    });
+    const gs = $('#gStyle');
+    if (gs) gs.addEventListener('change', () => {
+      if (!w.media || w.media.busy || !w.design) return;
+      w.design.style = gs.value; w.design.styleWhy = '';
+      if (w.media.url) { w.media.stale = true; w.media.staleWhy = 'הסגנון השתנה'; }
+      render();
     });
   };
   // the saved item keeps the real file
@@ -1900,12 +1907,12 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         render();
         const r = await fx('image', {
           action: 'design', org: aiCtx().org, dept: w.brief.dept, size, brief: (w.brief.title || '') + '\n' + (w.brief.free || ''),
-          colors: brandFor(w.brief.dept).colors, texts: { kicker: w.design.kicker, headline: w.t, sub: w.design.sub, details: w.design.details, cta: w.design.cta },
+          colors: brandFor(w.brief.dept).colors, roles: brandFor(w.brief.dept).roles, style: w.design.style || 'official', palette: w.design.palette || '', texts: { kicker: w.design.kicker, headline: w.t, sub: w.design.sub, details: w.design.details, cta: w.design.cta },
           refs: [...(logo && !tpl ? [logo] : []), ...photos].slice(0, tpl ? 3 : 4), logo: !!logo && !tpl, note: opts.note || '', quality: 'high', n: 2,
           template: tpl ? { url: tpl.url, desc: tpl.desc || '', slots: tpl.slots || [] } : undefined,
         }, 150000);
         if (S.wiz !== w || m.job !== job) return;
-        url = r.url; check = r.check || { ok: true }; want = r.want || []; m.model = r.model || '';
+        url = r.url; check = r.check || { ok: true }; want = r.want || []; m.model = r.model || ''; m.qa = r.qa || null; m.style = r.style || w.design.style;
       }
       // a fix round can break another line: keep the version with the fewest text errors
       const nIss = (c) => (c && !c.ok ? (c.issues || []).length || 1 : 0);
@@ -1961,9 +1968,10 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     h = h.replace(/<div class="lay-pick" role="radiogroup" aria-label="פריסה">[\s\S]*?<\/div>/, layPickHtml(m, busy));
     if (isAiLay(m.layout)) {
       h = h.replace('<div class="real-acts">', '<div class="real-acts"><button class="btn btn-sm" data-act="gNew"' + (busy ? ' disabled' : '') + '>' + ic('refresh', 14) + ' עיצוב חדש</button>' + (m.warn ? '<button class="btn btn-sm" data-act="gFix"' + (busy ? ' disabled' : '') + '>' + ic('edit', 14) + ' תיקון הטקסט</button>' : ''));
-      if (m.stale) h += '<div class="note ai-warn">' + ic('edit', 15) + '<span>הכותרת השתנתה. לחצו "עיצוב חדש" כדי לעדכן את הגרפיקה.</span></div>';
+      if (isAiLay(m.layout) && w.design) h += '<label class="t-sub g-style" style="margin-top:8px;display:flex;align-items:center;gap:8px">סגנון העיצוב <select id="gStyle"' + (busy ? ' disabled' : '') + '>' + Object.keys(STYLE_HE).map((k) => '<option value="' + k + '"' + (k === (w.design.style || 'official') ? ' selected' : '') + '>' + esc(STYLE_HE[k]) + '</option>').join('') + '</select>' + (w.design.styleWhy ? '<span class="t-sub">' + esc(w.design.styleWhy) + '</span>' : '') + '</label>';
+      if (m.stale) h += '<div class="note ai-warn">' + ic('edit', 15) + '<span>' + (m.staleWhy || 'הכותרת השתנתה') + '. לחצו "עיצוב חדש" כדי לעדכן את הגרפיקה.</span></div>';
       if (m.warn) h += '<div class="note ai-warn">' + ic('alert', 15) + '<span>בדיקת הטקסט מצאה: ' + m.warn.map(esc).join(' · ') + '</span></div>';
-      if (m.model && m.url) h += '<div class="t-sub" style="margin-top:8px">' + ic('img', 13) + ' עוצב ב-ChatGPT, מודל <span dir="ltr">' + esc(m.model) + '</span> · <a href="' + esc(m.design || m.url) + '" target="_blank" rel="noopener">הקובץ המקורי</a></div>';
+      if (m.model && m.url) h += '<div class="t-sub" style="margin-top:8px">' + ic('img', 13) + ' סגנון: ' + esc(styleHe(m.style)) + ' ' + qaHtml(m.qa) + ' · מודל <span dir="ltr">' + esc(m.model) + '</span> · <a href="' + esc(m.design || m.url) + '" target="_blank" rel="noopener">הקובץ המקורי</a></div>';
       if (briefPhotos(w).length || logoOf()) h += '<div class="t-sub" style="margin-top:8px">בעיצוב משולבים: ' + [logoOf() ? 'הלוגו מנכסי המותג' : '', briefPhotos(w).length ? briefPhotos(w).length + ' תמונות שהעליתם' : ''].filter(Boolean).join(' ו') + '.</div>';
     }
     return h;
@@ -2541,9 +2549,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     try {
       m.busy = 'ChatGPT מעצב את הגרפיקה...'; rerenderCamp();
       const tx = { kicker: x.kicker || '', headline: x.t, sub: x.sub || '', details: [], cta: '' };
-      let r = await fx('image', { action: 'design', org: aiCtx().org, dept: c.dept, size, brief: x.t + '\n' + (x.body || ''), colors: brandFor(c.dept).colors, texts: tx,
+      let r = await fx('image', { action: 'design', org: aiCtx().org, dept: c.dept, size, brief: x.t + '\n' + (x.body || ''), colors: brandFor(c.dept).colors, roles: brandFor(c.dept).roles, style: x.style || 'official', texts: tx,
         refs: logo ? [logo] : [], logo: !!logo, note: note || '', quality: 'high', n: 1, model: FAST_IMG }, 150000);
-      let url = r.url, check = r.check || { ok: true }; m.model = r.model || '';
+      let url = r.url, check = r.check || { ok: true }; m.model = r.model || ''; m.qa = r.qa || null; m.style = r.style || x.style;
       // up to two masked fix rounds; the version with the fewest text errors is kept
       const nI = (c) => (c && !c.ok ? (c.issues || []).length || 1 : 0);
       for (let round = 1; round <= 2 && !check.ok && (check.fixes || []).length; round++) {
@@ -2625,7 +2633,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       (m.url ? '<a class="btn btn-sm" href="' + esc(m.url) + '" target="_blank" rel="noopener">' + ic('down', 14) + ' הורדת הקובץ</a>' : '') + '</div>' +
       (m.err ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>' + esc(m.err) + '. לחצו "עיצוב חדש".</span></div>' : '') +
       (m.warn ? '<div class="note ai-warn">' + ic('alert', 15) + '<span>בדיקת הטקסט מצאה: ' + m.warn.map(esc).join(' · ') + '</span></div>' : '') +
-      (m.model && m.url ? '<div class="t-sub" style="margin-bottom:8px">' + ic('img', 13) + ' עוצב ב-ChatGPT, מודל <span dir="ltr">' + esc(m.model) + '</span> · <a href="' + esc(m.design || m.url) + '" target="_blank" rel="noopener">הקובץ המקורי</a></div>' : '') +
+      (m.model && m.url ? '<div class="t-sub" style="margin-bottom:8px">' + ic('img', 13) + ' סגנון: ' + esc(styleHe(m.style)) + ' ' + qaHtml(m.qa) + ' · מודל <span dir="ltr">' + esc(m.model) + '</span> · <a href="' + esc(m.design || m.url) + '" target="_blank" rel="noopener">הקובץ המקורי</a></div>' : '') +
       (m.stale ? '<div class="note ai-warn">' + ic('edit', 15) + '<span>הכותרת השתנתה. לחצו "עיצוב חדש" כדי לעדכן את הגרפיקה.</span></div>' : '') + h;
   };
   ACT.cRedo = () => { const [c, x] = CX(); if (!x || (x.media && x.media.busy)) return; const t = $('#cT'); if (t) x.t = t.value; queueGraphic(c, x, 'קומפוזיציה ועיצוב שונים מהגרסה הקודמת'); render(); };
