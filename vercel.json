@@ -24,5 +24,20 @@
       "memory": 1024,
       "includeFiles": "api/_video/**"
     }
-  }
+  },
+  "headers": [
+    {
+      "source": "/fn-src/(.*)\\.ts",
+      "headers": [
+        {
+          "key": "content-type",
+          "value": "application/typescript; charset=utf-8"
+        },
+        {
+          "key": "cache-control",
+          "value": "no-store"
+        }
+      ]
+    }
+  ]
 }
