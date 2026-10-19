@@ -10,10 +10,4 @@ for (const fn of ['generate', 'image', 'produce']) {
   copyFileSync('supabase/functions/_shared/palette.ts', `supabase/functions/${fn}/palette.ts`);
   copyFileSync('supabase/functions/_shared/design.ts', `supabase/functions/${fn}/design.ts`);
 }
-// edge-function sources served from the app (public/fn-src): a deploy is then a one-line stub that imports them
-import { mkdirSync, readdirSync } from 'node:fs';
-for (const fn of ['generate', 'image', 'produce', 'v2-api']) {
-  mkdirSync(`public/fn-src/${fn}`, { recursive: true });
-  for (const f of readdirSync(`supabase/functions/${fn}`).filter((f) => f.endsWith('.ts'))) copyFileSync(`supabase/functions/${fn}/${f}`, `public/fn-src/${fn}/${f}`);
-}
-console.log('design + palette synced, fn-src mirrored');
+console.log('design + palette synced');
