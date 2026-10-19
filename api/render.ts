@@ -15,7 +15,7 @@ import { kit, crest, fontCss } from './_render/brand.mjs';
 // @ts-ignore
 import { graphicHtml } from './_render/graphics.mjs';
 // @ts-ignore
-import { docHtml } from './_render/docs.mjs';
+import { docHtml, docDocx } from './_render/docs.mjs';
 // @ts-ignore
 import { deckHtml, deckPptx } from './_render/decks.mjs';
 // @ts-ignore
@@ -148,6 +148,8 @@ async function renderAll(body: any) {
             await load(p, html, 794, 1123);
             const pdf = Buffer.from(await p.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true, displayHeaderFooter: true, headerTemplate: '<span></span>', footerTemplate: footer.replace('<style></style>', `<style>${fontCss}</style>`) }));
             if (up.main) await put(up.main, pdf, 'application/pdf');
+            // the same document as an editable Word file
+            if (up.docx) { try { await put(up.docx, await docDocx(k, j.data, j.style, { date: j.date }), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'); } catch (e) { console.error('docx', e instanceof Error ? e.message : e); } }
             if (up.p1) { // first-page preview for galleries / mobile
               await p.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1.4 });
               await put(up.p1, Buffer.from(await p.screenshot({ type: 'jpeg', quality: 84 })), 'image/jpeg');

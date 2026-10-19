@@ -1468,7 +1468,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (S.dw !== w || m.job !== job) return;
       const x = (r.results || [])[0];
       if (!x || !x.ok) throw new Error((x && x.error) || 'render_failed');
-      m.url = x.urls.main; m.thumb = x.urls.p1; m.busy = '';
+      m.url = x.urls.main; m.docx = x.urls.docx; m.thumb = x.urls.p1; m.busy = '';
       render();
     } catch (e) {
       if (S.dw !== w || m.job !== job) return;
@@ -1542,7 +1542,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const m = w && w.media;
     _dwDoneL(st);
     const it = items[0];
-    if (m && m.url && it && it.ty === 'doc') { it.media = { kind: 'doc', url: m.url, thumb: m.thumb, ar: '210/297', style: w.style }; if (w.doc) it.doc = w.doc; flush(); }
+    if (m && m.url && it && it.ty === 'doc') { it.media = { kind: 'doc', url: m.url, docx: m.docx, thumb: m.thumb, ar: '210/297', style: w.style }; if (w.doc) it.doc = w.doc; flush(); }
   };
 
   /* ---------- presentations: 3 styles, real PDF + PowerPoint + slide previews ---------- */
@@ -1678,6 +1678,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (!m || !m.url) return h;
     const links = [[m.kind === 'video' ? 'הורדת הסרטון' : m.kind === 'graphic' ? 'הורדת הגרפיקה' : 'PDF', m.url]];
     if (m.pptx) links.push(['PowerPoint', m.pptx]);
+    if (m.docx) links.push(['Word', m.docx]);
     const box = '<div class="note">' + ic('down', 16) + '<span>הקובץ המקורי: ' + links.map((l) => '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" style="font-weight:700;color:var(--brand)">' + l[0] + '</a>').join(' · ') + (m.kind === 'video' && !m.ready ? ' (הסרטון עדיין ברינדור)' : '') + '</span></div>';
     return h.replace('<div class="note">' + ic('help', 16), box + '<div class="note">' + ic('help', 16));
   };

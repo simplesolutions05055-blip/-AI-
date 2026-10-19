@@ -89,3 +89,44 @@ ${sections(d, k)}${note(d, k)}${sign(d)}</div>`;
   const footer = `<style>${'' /* fonts injected by caller */}</style><div style="font-family:Heebo,Arial;direction:rtl;width:100%;margin:0 20mm;padding-top:3mm;border-top:.8pt solid #D5DCE8;display:flex;gap:6mm;font-size:8.5pt;color:${k.ink}"><b style="color:${k.navy}">${esc(k.org)}</b>${k.phone ? `<span>${esc(k.phone)}</span>` : ''}${k.site ? `<span style="direction:ltr">${esc(k.site)}</span>` : ''}<span style="margin-inline-start:auto">עמוד <span class="pageNumber"></span> מתוך <span class="totalPages"></span></span></div>`;
   return { html: page(base(k), body), footer };
 }
+
+/** Editable Word version of the same document: real headings, paragraphs, bullets and tables, right-to-left. */
+export async function docDocx(k, d, style = 'formal', o = {}) {
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType, Footer, PageNumber } = await import('docx');
+  const navy = k.navy.replace('#', ''), gold = k.gold.replace('#', ''), ink = k.ink.replace('#', '');
+  const font = 'Heebo';
+  const run = (t, x = {}) => new TextRun({ text: String(t ?? ''), font, rightToLeft: true, size: 22, ...x });
+  const par = (t, x = {}, rx = {}) => new Paragraph({ bidirectional: true, alignment: AlignmentType.RIGHT, spacing: { after: 120, line: 320 }, ...x, children: Array.isArray(t) ? t : [run(t, rx)] });
+  const out = [];
+  out.push(par([run(k.org, { bold: true, size: 30, color: navy }), run(k.dept ? '  |  ' + k.dept : '', { size: 22, color: ink })], { spacing: { after: 60 } }));
+  out.push(par(o.date || new Date().toLocaleDateString('he-IL'), { spacing: { after: 240 }, border: { bottom: { color: navy, size: 12, style: BorderStyle.SINGLE, space: 6 } } }, { size: 20, color: ink }));
+  if (d.to) out.push(par([run('אל: ', { color: ink }), run(d.to, { bold: true })]));
+  out.push(new Paragraph({ bidirectional: true, alignment: AlignmentType.RIGHT, heading: HeadingLevel.TITLE, spacing: { after: 200 }, children: [run(d.title, { bold: true, size: 40, color: navy })] }));
+  if (d.summary) out.push(par(d.summary, { shading: { type: ShadingType.CLEAR, fill: k.bg.replace('#', '') }, spacing: { after: 240, before: 60 }, indent: { left: 200, right: 200 } }, { size: 24 }));
+  if (d.quote) out.push(par(d.quote, { border: { right: { color: gold, size: 24, style: BorderStyle.SINGLE, space: 8 } }, spacing: { after: 240 } }, { bold: true, size: 28, color: navy }));
+  for (const h of d.highlights || []) out.push(par([run(h.t + ': ', { bold: true, color: navy }), run(h.d)]));
+  (d.sections || []).forEach((s, i) => {
+    out.push(new Paragraph({ bidirectional: true, alignment: AlignmentType.RIGHT, heading: HeadingLevel.HEADING_2, spacing: { before: 280, after: 120 }, children: [run((style === 'designed' ? '' : i + 1 + '. ') + s.h, { bold: true, size: 28, color: navy })] }));
+    for (const p of s.paras || []) out.push(par(p));
+    for (const b of s.bullets || []) out.push(par(b, { bullet: { level: 0 } }));
+  });
+  const tbl = (t) => t && t.head && new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE }, visuallyRightToLeft: true,
+    rows: [new TableRow({ tableHeader: true, children: t.head.map((h) => new TableCell({ shading: { type: ShadingType.CLEAR, fill: navy }, children: [par(h, { spacing: { after: 0 } }, { bold: true, color: 'FFFFFF' })] })) }),
+      ...(t.rows || []).map((r) => new TableRow({ children: r.map((c) => new TableCell({ children: [par(c, { spacing: { after: 0 } })] })) }))],
+  });
+  for (const c of d.charts || []) { if ((c.items || []).length) { out.push(par(c.title + (c.unit ? ' (' + c.unit + ')' : ''), { spacing: { before: 200 } }, { bold: true, color: navy })); out.push(tbl({ head: ['', c.unit || 'ערך'], rows: c.items.map((x) => [x.l, String(x.v)]) })); } }
+  if (d.table && d.table.head) { out.push(par('', { spacing: { before: 200 } })); out.push(tbl(d.table)); }
+  if (d.note) out.push(par([run('טוב לדעת. ', { bold: true, color: navy }), run(String(d.note).replace(/^(חשוב|טוב) לדעת:\s*/, ''))], { spacing: { before: 280 }, border: { top: { color: 'D5DCE8', size: 6, style: BorderStyle.SINGLE, space: 8 }, bottom: { color: 'D5DCE8', size: 6, style: BorderStyle.SINGLE, space: 8 } } }));
+  if (d.sign) { out.push(par('בברכה,', { spacing: { before: 320, after: 40 } }, { color: ink })); out.push(par(d.sign, {}, { bold: true, size: 26, color: navy })); }
+  const doc = new Document({
+    creator: 'PrimeOS', title: d.title || '',
+    styles: { default: { document: { run: { font, size: 22, rightToLeft: true } } } },
+    sections: [{
+      properties: { page: { margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } }, rtlGutter: true },
+      footers: { default: new Footer({ children: [par([run(k.org, { bold: true, color: navy, size: 18 }), run(k.site ? '  ' + k.site : '', { size: 18, color: ink }), run('   עמוד ', { size: 18, color: ink }), new TextRun({ children: [PageNumber.CURRENT], font, size: 18, color: ink })], { alignment: AlignmentType.CENTER })] }) },
+      children: out,
+    }],
+  });
+  return Buffer.from(await Packer.toBuffer(doc));
+}
