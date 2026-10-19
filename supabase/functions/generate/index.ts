@@ -62,6 +62,44 @@ async function claude(key: string, system: string, user: string, maxTokens = 150
   throw new Error('claude_api_error: ' + last.slice(0, 300));
 }
 
+// a JSON answer through a forced tool call: the model fills a tool input, so the object always parses (no quote / fence / truncation repairs)
+async function claudeObj(key: string, system: string, user: string, maxTokens = 6000, extra: unknown[] = [], schema: Record<string, unknown> = { type: 'object', additionalProperties: true }): Promise<any> {
+  const order = goodModel ? [goodModel, ...MODELS.filter((m) => m !== goodModel)] : MODELS;
+  let last = '';
+  for (const model of order) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model, max_tokens: maxTokens, system,
+        tools: [{ name: 'answer', description: 'התשובה המלאה במבנה ה-JSON שהתבקש', input_schema: schema }],
+        tool_choice: { type: 'tool', name: 'answer' },
+        messages: [{ role: 'user', content: extra.length ? [...extra, { type: 'text', text: user }] : user }],
+      }),
+    });
+    if (res.ok) {
+      goodModel = model;
+      const d = await res.json();
+      logUse({ kind: 'claude', model, cin: d.usage?.input_tokens ?? 0, cout: d.usage?.output_tokens ?? 0 });
+      const call = (d.content ?? []).find((c: any) => c.type === 'tool_use');
+      if (call && call.input && typeof call.input === 'object') {
+        let o: any = call.input;
+        // the whole answer sometimes arrives under one key, or as a JSON string
+        const ks = Object.keys(o);
+        if (ks.length === 1 && typeof o[ks[0]] === 'string' && /^\s*\{/.test(o[ks[0]])) o = parseJson(o[ks[0]]);
+        else if (ks.length === 1 && o[ks[0]] && typeof o[ks[0]] === 'object' && !Array.isArray(o[ks[0]])) o = o[ks[0]];
+        return o;
+      }
+      // the answer came as text after all
+      const txt = (d.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
+      return parseJson(txt);
+    }
+    last = await res.text();
+    if (res.status !== 404 && !(res.status === 400 && last.includes('model'))) break;
+  }
+  throw new Error('claude_api_error: ' + last.slice(0, 300));
+}
+
 // uploaded files become Claude context: images and PDFs natively, Word / PowerPoint / text as extracted text
 const xmlText = (x: string) => x.replace(/<\/a:p>|<\/w:p>/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/\n{3,}/g, '\n\n').trim();
 async function fileBlocks(files: any[]): Promise<unknown[]> {
@@ -217,6 +255,37 @@ ${RULES}`;
 }
 
 interface Ctx { org: string; dept?: string; tone?: string; good?: string[]; bad?: string[]; facts?: string }
+
+// the director's answer, as a tool schema (the model fills it field by field, so the plan always arrives whole)
+const STR = { type: 'string' };
+const BRIEF_SCHEMA = {
+  type: 'object',
+  properties: {
+    brief: { type: 'object', properties: { idea: STR, style: STR, look: STR, pace: STR, music: STR, voiceWhy: STR, delivery: STR } },
+    mood: STR, voice: STR, musicPrompt: STR,
+    font: { type: 'object', properties: { head: STR, body: STR } },
+    fx: { type: 'array', items: STR },
+    captions: STR,
+    scenes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          dur: { type: 'number' }, say: STR,
+          visual: { type: 'object', properties: { src: STR, motion: STR, tint: { type: 'number' } }, required: ['src'] },
+          text: { type: 'object', properties: { style: STR, lines: { type: 'array', items: STR }, kicker: STR, sub: STR, highlight: { type: 'array', items: STR }, pos: STR, value: STR, unit: STR } },
+          transition: { type: 'object', properties: { kind: STR, dir: STR, dur: { type: 'number' } } },
+          fx: { type: 'array', items: STR },
+        },
+        required: ['dur', 'visual'],
+      },
+    },
+    outro: { type: 'object', properties: { cta: STR, details: { type: 'array', items: { type: 'object', properties: { text: STR } } } } },
+    caption: STR,
+    tags: { type: 'array', items: STR },
+  },
+  required: ['brief', 'scenes', 'outro', 'caption'],
+};
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
@@ -425,9 +494,9 @@ ${brief}
         return json(req, { ok: true, clips });
       }
       const imgs = await fileBlocks(((p.media ?? []) as any[]).filter((m) => !m.v).map((m) => ({ url: m.url, name: m.name || m.url })));
-      const ask = () => claude(key, DIRECTOR_SYS + '\n' + s, directorPrompt(p, c, voices), 6000, [...imgs, ...fb]);
+      const ask = () => claudeObj(key, DIRECTOR_SYS + '\n' + s, directorPrompt(p, c, voices), 8000, [...imgs, ...fb], BRIEF_SCHEMA);
       let plan: any;
-      try { plan = parseJson(await ask()); } catch { plan = parseJson(await ask()); } // one retry on a broken answer
+      try { plan = await ask(); } catch (e) { console.error('vbrief', e instanceof Error ? e.message : e); plan = await ask(); } // one retry
       return json(req, { ok: true, caps: c, ...sanitizeBrief(plan, p, voices) });
     }
     if (mode === 'vsample') {

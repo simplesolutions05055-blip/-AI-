@@ -2522,7 +2522,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const h = _bulkR.call(this), b = S.bulk;
     const files = b.files || [];
     const up = '<div class="up-row"><button class="up-opt" data-act="bUpload"><span class="fi pdf">' + ic('upload', 14) + '</span>העלאת קובץ</button></div>' + (files.length ? '<div class="up-chips">' + fileChips(files, 'bFileX2') + '</div>' : '') +
-      '<span class="t-sub" style="display:block;margin:4px 0 8px">תוכנית עבודה, לוח אירועים או כל מסמך. Claude קורא אותו ובונה ממנו את הסדרה.</span>';
+      '<span class="t-sub" style="display:block;margin:4px 0 8px">תוכנית עבודה, לוח אירועים או כל מסמך. PrimeOS קורא אותו ובונה ממנו את הסדרה.</span>';
     return h.replace(/<div class="up-row">[\s\S]*?<\/button><\/div>(?=<textarea id="bBrief")/, up).replace(/<div class="file-chip">[\s\S]*?<\/button><\/div>(?=<textarea id="bBrief")/, up)
       .replace('<span>טקסט + גרפיקה לכל תוכן</span>', '<span>טקסט ב-Claude, גרפיקה ב-ChatGPT</span>');
   };
@@ -3432,7 +3432,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         '<div class="checkline"><span>קריינות בעברית<small>' + (ttsOn() ? 'קול מקצועי שמקריא את התסריט' : 'יופעל כשיחובר ספק קריינות') + '</small></span><button class="sw ' + (w.voice ? 'on' : '') + '" data-act="vdTg:voice" role="switch" aria-checked="' + w.voice + '" aria-label="קריינות"></button></div>' +
         '<div class="checkline"><span>מוזיקת רקע<small>' + (musicOn() ? 'מוזיקה מקורית שמותאמת לתוכן ולאורך' : 'תופעל כשיחובר ספק מוזיקה') + '</small></span><button class="sw ' + (w.music ? 'on' : '') + '" data-act="vdTg:music" role="switch" aria-checked="' + w.music + '" aria-label="מוזיקת רקע"></button></div>' +
         '</div></div>' +
-        (w.voice && vs.length ? '<div class="field full"><label>קול הקריין</label><div class="vd-voices"><button class="tagc ' + (w.voiceId === 'auto' ? 'on' : '') + '" data-act="vdVoice:auto">' + (w.voiceId === 'auto' ? ic('check', 13, 2.4) : ic('spark', 13, 2)) + 'Claude יבחר</button>' +
+        (w.voice && vs.length ? '<div class="field full"><label>קול הקריין</label><div class="vd-voices"><button class="tagc ' + (w.voiceId === 'auto' ? 'on' : '') + '" data-act="vdVoice:auto">' + (w.voiceId === 'auto' ? ic('check', 13, 2.4) : ic('spark', 13, 2)) + 'PrimeOS יבחר</button>' +
           vs.filter((v) => v.g === 'm').map(vbtn).join('') + vs.filter((v) => v.g === 'f').map(vbtn).join('') + '</div></div>' : '');
     }
     const _r0 = SCREENS.vidWiz.render;

@@ -835,12 +835,17 @@ async function loginVerify(d: DB, p: Record<string, any>) {
   const email = normMail(p.email);
   const code = String(p.code ?? '').replace(/\D/g, '');
   const kind = p.admin ? 'admin' : 'client';
-  const { data: row } = await d.from('v2_login_codes').select('*').eq('email', email).eq('kind', kind).eq('purpose', 'code').is('used_at', null).gte('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle();
-  if (!row) throw new Error('code_expired');
-  if (row.tries >= 5) throw new Error('too_many_tries');
-  if (code.length !== 6 || (await sha(email + ':' + code)) !== row.code_hash) {
-    await d.from('v2_login_codes').update({ tries: row.tries + 1 }).eq('id', row.id);
-    throw new Error(row.tries + 1 >= 5 ? 'too_many_tries' : 'bad_code');
+  // every live code of this address counts (two e-mails arrive when the code was requested twice), so the user may type any of them
+  const { data: rows } = await d.from('v2_login_codes').select('*').eq('email', email).eq('kind', kind).eq('purpose', 'code').is('used_at', null).gte('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(6);
+  const live = rows ?? [];
+  if (!live.length) throw new Error('code_expired');
+  const tries = Math.max(...live.map((r: any) => r.tries ?? 0));
+  if (tries >= 5) throw new Error('too_many_tries');
+  const h = code.length === 6 ? await sha(email + ':' + code) : '';
+  const row = live.find((r: any) => r.code_hash === h);
+  if (!row) {
+    await d.from('v2_login_codes').update({ tries: tries + 1 }).in('id', live.map((r: any) => r.id));
+    throw new Error(tries + 1 >= 5 ? 'too_many_tries' : 'bad_code');
   }
   await d.from('v2_login_codes').update({ used_at: new Date().toISOString() }).eq('purpose', 'code').eq('email', email).is('used_at', null);
   const token = await newSession(d, { kind, orgId: row.org_id, memberId: row.member_id, adminId: row.admin_id }, kind === 'admin' ? 14 * DAY : 30 * DAY);
