@@ -152,10 +152,11 @@ async function qaReview(ckey: string, b64: string, o: { brief: string; texts: st
       { type: 'text', text: qaPrompt(o) },
     ]);
     const m = raw.match(/\{[\s\S]*\}/);
-    if (!m) return null;
-    const j = JSON.parse(m[0]);
+    if (!m) { console.error('qa: no json', raw.slice(0, 200)); return null; }
+    let j: any;
+    try { j = JSON.parse(m[0]); } catch { j = JSON.parse(m[0].replace(/([\u05d0-\u05ea])"(?=[\u05d0-\u05ea])/g, '$1\u05f4').replace(/,\s*([}\]])/g, '$1')); }
     return { score: Math.max(0, Math.min(100, Math.round(+j.score || 0))), parts: j.parts ?? {}, issues: (Array.isArray(j.issues) ? j.issues : []).slice(0, 5).map(String), redo: String(j.redo ?? '').slice(0, 500), stop: !!j.stop, stopWhy: String(j.stopWhy ?? '').slice(0, 200) };
-  } catch { return null; }
+  } catch (e) { console.error('qa', e instanceof Error ? e.message : e); return null; }
 }
 // PNG mask for a masked edit: transparent inside the boxes (only there the model may draw), opaque elsewhere
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
