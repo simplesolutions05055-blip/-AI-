@@ -4381,12 +4381,15 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const canManageBrand = () => !isMember();
     // a department user: the organisation's two brands, or a brand of its own; nothing is deleted when switching
     {
+      const _hydC = hydrateClient;
+      hydrateClient = function (st) { S.campsBefore = Array.isArray(S.camps) ? S.camps : []; return _hydC.apply(this, arguments); };
       const _slices = L.memberSlices;
       L.memberSlices = function (st) {
         _slices(st);
         if (!isMember()) return;
         // a department's series live under its own id (the organisation state holds only the organisation's)
         const srv = st && st.memberCamps && Array.isArray(st.memberCamps[L.me.id]) ? st.memberCamps[L.me.id] : null;
+        S.camps = S.campsBefore; // the organisation's series were just hydrated over ours; ours come back
         if (!SY.mstate) S.camps = srv || [];
         else {
           // a pull never overwrites series that changed locally and were not saved yet (a generation in progress)
