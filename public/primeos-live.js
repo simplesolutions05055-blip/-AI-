@@ -2683,6 +2683,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   // generation: texts first (Claude, in batches), then the graphics fill in one by one
   const GQ = { list: [], run: 0, max: 2 };
   function campOf(x) { return (S.camps || []).find((c) => c.items.includes(x)); }
+  L.queueGraphic = (c, x, note) => queueGraphic(c, x, note);
   function queueGraphic(c, x, note) { x.media = Object.assign(x.media || {}, { kind: 'graphic', busy: 'ממתין לעיצוב...', err: '' }); GQ.list.push({ c, x, note }); pumpG(); }
   function pumpG() {
     while (GQ.run < GQ.max && GQ.list.length) { const j = GQ.list.shift(); GQ.run++; designItem(j.c, j.x, j.note).finally(() => { GQ.run--; pumpG(); }); }
@@ -2733,7 +2734,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     let done = 0; const avoid = [];
     try {
       for (const part of chunks) {
-        const r = await fx('generate', Object.assign(aiCtx(), { mode: 'series', dept: b.dept, brief: b.brief, files, avoid: avoid.slice(-30), slots: part.map((x) => ({ i: x.i, date: x.date, hol: x.hol || '' })) }), 150000);
+        const r = await fx('generate', Object.assign(aiCtx(), { mode: 'series', dept: camp.dept, brief: b.brief, files: b.plan ? [] : files, avoid: avoid.slice(-30), slots: part.map((x) => ({ i: x.i, date: x.date, hol: x.hol || '', hint: x.hint || '', text: x.text || '' })) }), 150000);
         (r.items || []).forEach((y) => { const x = camp.items[+y.i]; if (!x) return; x.t = y.title || x.t; x.kicker = y.kicker || ''; x.sub = y.sub || ''; x.body = y.caption || ''; x.tags = (y.tags || []).slice(0, 5); x.sugg = x.tags.slice(); avoid.push(x.t); });
         done += part.length; S.genP = Math.round(done / camp.items.length * 100);
         const bar = $('#genBar'), num = $('#genNum'); if (bar) bar.style.width = S.genP + '%'; if (num) num.textContent = done;
@@ -2744,8 +2745,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     camp.items.forEach((x) => { if (!x.t) x.t = x.hol ? x.hol + ' שמח' : 'עדכון לתושבים'; });
     flush();
     S.campId = camp.id; S.campMode = 'edit'; go('bulkReview');
-    camp.items.forEach((x) => queueGraphic(camp, x));
-    toast('הטקסטים מוכנים', 'מעצבים עכשיו את הגרפיקות, שתיים במקביל. אפשר לעבור על הפוסטים בינתיים.');
+    const first = camp.gfxUntil ? camp.items.filter((x) => x.date <= camp.gfxUntil) : camp.items;
+    first.forEach((x) => queueGraphic(camp, x));
+    toast('הטקסטים מוכנים', 'מעצבים עכשיו את הגרפיקות של החודש הראשון, שתיים במקביל. אפשר לעבור על הפוסטים בינתיים.');
   };
   // review: real thumbnails in the strip, design status and actions in the graphic box
   function paintStrip() {
@@ -4383,6 +4385,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       L.memberSlices = function (st) {
         _slices(st);
         if (!isMember()) return;
+        // a department's series live under its own id (the organisation state holds only the organisation's)
+        S.camps = Array.isArray(st && st.memberCamps && st.memberCamps[L.me.id]) ? st.memberCamps[L.me.id] : (S.campsOwn || []);
+        S.campsOwn = S.camps;
         const mb = st && st.memberBrand && st.memberBrand[L.me.id];
         S.ownBrandKeep = mb && mb.brand ? mb.brand : null;
         if (!S.ownBrand && mb && mb.which === 'second' && BRAND.alt && BRAND.which !== 'second') swapBrand();
@@ -4391,7 +4396,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       L.memberPatch = function () {
         if (!isMember()) return null;
         const mid = L.me.id;
-        return { memberBrand: { [mid]: { own: !!S.ownBrand, brand: S.ownBrand ? BRAND : (S.ownBrandKeep || null), which: S.ownBrand ? null : (BRAND.which === 'second' ? 'second' : 'main') } }, memberChannels: { [mid]: channels } };
+        return { memberBrand: { [mid]: { own: !!S.ownBrand, brand: S.ownBrand ? BRAND : (S.ownBrandKeep || null), which: S.ownBrand ? null : (BRAND.which === 'second' ? 'second' : 'main') } }, memberChannels: { [mid]: channels }, memberCamps: { [mid]: (S.camps || []).slice(0, 12) } };
       };
       ACT.brandOwn = () => {
         const go2 = () => { S.ownBrandKeep = S.ownBrandKeep || deepCopy(brandCore(BRAND)); S.ownBrand = true; replaceObj(BRAND, deepCopy(S.ownBrandKeep)); render(); flush(); toast('נכסי מותג משלך', 'המחלקה עובדת עכשיו עם המותג שלה. אפשר לחזור למותג הארגון במתג.'); };
@@ -4729,6 +4734,130 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   if (typeof groupsSec === 'function') groupsSec = () => '';
   const _wizItemG = wizItem;
   wizItem = function (st) { const it = _wizItemG(st); if (it) { it.groups = []; } return it; };
+
+
+  /* ---------------- periodic content: plan upload first, period up to 6 months, 1-4 a week, holidays closed by default ---------------- */
+  (function () {
+    const HOL = [["חג הסיגד","2026-11-08","he"],["יום הילד הבינלאומי","2026-11-20","intl"],["יום הנשים הבינלאומי למניעת אלימות","2026-11-25","intl"],["חנוכה","2026-12-03","he"],["יום האדם עם מוגבלות","2026-12-03","intl"],["יום ההתנדבות הבינלאומי","2026-12-05","intl"],["ראש השנה האזרחי","2027-01-01","intl"],["ט״ו בשבט","2027-01-22","he"],["יום המשפחה","2027-02-06","he"],["יום האהבה","2027-02-14","intl"],["יום האישה הבינלאומי","2027-03-08","intl"],["פורים","2027-03-22","he"],["יום העלייה","2027-04-16","he"],["פסח","2027-04-21","he"],["יום כדור הארץ","2027-04-22","intl"],["יום השואה","2027-05-03","he"],["יום הזיכרון","2027-05-10","he"],["יום העצמאות","2027-05-11","he"],["יום ההורים","2027-05-15","intl"],["ל״ג בעומר","2027-05-24","he"],["יום ירושלים","2027-06-03","he"],["יום הסביבה העולמי","2027-06-05","intl"],["יום הספר העברי","2027-06-10","intl"],["שבועות","2027-06-11","he"],["פתיחת שנת הלימודים","2027-09-01","intl"],["ראש השנה","2027-10-01","he"],["יום הקשיש הבינלאומי","2027-10-01","intl"],["יום המורה הבינלאומי","2027-10-05","intl"],["יום כיפור","2027-10-10","he"],["סוכות","2027-10-15","he"],["שמחת תורה","2027-10-22","he"],["יום הילד הבינלאומי","2027-11-20","intl"],["יום הנשים הבינלאומי למניעת אלימות","2027-11-25","intl"],["חג הסיגד","2027-11-28","he"],["יום האדם עם מוגבלות","2027-12-03","intl"],["יום ההתנדבות הבינלאומי","2027-12-05","intl"],["חנוכה","2027-12-23","he"],["ראש השנה האזרחי","2028-01-01","intl"],["ט״ו בשבט","2028-02-11","he"],["יום האהבה","2028-02-14","intl"],["יום המשפחה","2028-02-26","he"],["יום האישה הבינלאומי","2028-03-08","intl"],["פורים","2028-03-11","he"],["יום העלייה","2028-04-05","he"],["פסח","2028-04-10","he"],["יום כדור הארץ","2028-04-22","intl"],["יום השואה","2028-04-23","he"],["יום הזיכרון","2028-04-30","he"],["יום העצמאות","2028-05-01","he"],["ל״ג בעומר","2028-05-13","he"],["יום ההורים","2028-05-15","intl"],["יום ירושלים","2028-05-23","he"],["שבועות","2028-05-31","he"],["יום הסביבה העולמי","2028-06-05","intl"],["יום הספר העברי","2028-06-10","intl"],["פתיחת שנת הלימודים","2028-09-01","intl"],["ראש השנה","2028-09-20","he"],["יום כיפור","2028-09-29","he"],["יום הקשיש הבינלאומי","2028-10-01","intl"],["סוכות","2028-10-04","he"],["יום המורה הבינלאומי","2028-10-05","intl"],["שמחת תורה","2028-10-11","he"],["חג הסיגד","2028-11-15","he"],["יום הילד הבינלאומי","2028-11-20","intl"],["יום הנשים הבינלאומי למניעת אלימות","2028-11-25","intl"],["יום האדם עם מוגבלות","2028-12-03","intl"],["יום ההתנדבות הבינלאומי","2028-12-05","intl"],["חנוכה","2028-12-11","he"]];
+    HOLIDAYS.splice(0, HOLIDAYS.length, ...HOL.map((h) => [h[0], h[1]]));
+    const HOL_KIND = {}; HOL.forEach((h) => { HOL_KIND[h[0] + '|' + h[1]] = h[2]; });
+    const isoDay = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
+    const todayIso = () => isoDay(new Date());
+    const plusDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return isoDay(d); };
+    const startIso = () => { const d = new Date(); d.setDate(d.getDate() + ((7 - d.getDay()) % 7 || 7)); return isoDay(d); };
+    const b0 = S.bulk;
+    b0.holidays = false; b0.hol = HOL.filter((h) => h[2] === 'he' && !/השואה|הזיכרון/.test(h[0])).map((h) => h[0]); b0.fmts = ['1:1']; b0.plan = null; b0.files = [];
+    const myDept = () => (L.me && L.me.role === 'member' && (L.me.dept || S.dept)) || (S.user && S.user.dept) || DEPTS[0];
+    // the period: from a plan (its dates), otherwise months from the coming week
+    function periodOf(b) {
+      const pl = b.plan && b.plan.items && b.plan.items.length ? b.plan : null;
+      const dated = pl ? pl.items.filter((x) => x.date && x.date >= todayIso()) : [];
+      if (dated.length) { const ds = dated.map((x) => x.date).sort(); return { st: ds[0], end: ds[ds.length - 1], plan: pl, dated: true }; }
+      const st = startIso();
+      return { st, end: plusDays(st, b.months * 30), plan: pl, dated: false };
+    }
+    const holIn = (b, per) => b.holidays ? HOLIDAYS.filter((h) => b.hol.includes(h[0]) && h[1] >= todayIso() && h[1] >= per.st && h[1] <= per.end) : [];
+    bulkCount = function (b) {
+      const per = periodOf(b);
+      const weeks = Math.max(1, Math.round(b.months * 52 / 12));
+      const hol = holIn(b, per).length;
+      if (per.plan) { const n = per.plan.items.length; return { weeks, base: n, hol, total: n + hol, plan: true }; }
+      return { weeks, base: weeks * b.perWeek, hol, total: weeks * b.perWeek + hol };
+    };
+    buildCamp = function (b, owner) {
+      const per = periodOf(b), list = [];
+      const mk = (date, extra) => Object.assign({ t: '', body: '', date, time: ['10:00', '18:00', '20:00'][list.length % 3], g: list.length % GV.length, lay: 0, ver: 1, ch: [...b.ch], flag: null, edited: false, hol: false }, extra);
+      if (per.plan) {
+        const pw = per.plan.perWeek >= 1 && per.plan.perWeek <= 4 ? per.plan.perWeek : 2;
+        const off = [[2], [0, 3], [0, 2, 4], [0, 2, 3, 5]][pw - 1];
+        let k = 0;
+        per.plan.items.forEach((x) => {
+          const date = x.date && x.date >= todayIso() ? x.date : plusDays(startIso(), Math.floor(k / off.length) * 7 + off[k % off.length]);
+          if (!(x.date && x.date >= todayIso())) k++;
+          list.push(mk(date, { hint: x.title, text: x.text || '', hol: x.hol || false, t: x.title || '' }));
+        });
+      } else {
+        const off = [[2], [0, 3], [0, 2, 4], [0, 2, 3, 5]][b.perWeek - 1];
+        const weeks = Math.max(1, Math.round(b.months * 52 / 12));
+        for (let w = 0; w < weeks; w++) off.forEach((o) => list.push(mk(plusDays(per.st, w * 7 + o))));
+      }
+      holIn(b, per).forEach((h) => list.push(mk(plusDays(h[1], -1), { t: h[0], time: '12:00', g: 1, lay: 1, hol: h[0] })));
+      list.sort((a, x) => (a.date < x.date ? -1 : 1));
+      list.forEach((x, i) => { x.i = i; x.tags = []; x.sugg = []; });
+      const last = list.length ? list[list.length - 1].date : per.st;
+      const dept = myDept();
+      const name = per.plan && b.files && b.files[0] ? b.files[0].name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]/g, ' ') : 'סדרת ' + dept + ' · ' + b.months + ' ' + (b.months === 1 ? 'חודש' : 'חודשים');
+      return { id: 'c' + Date.now().toString(36), name, dept, owner, status: 'draft', type: b.type, items: list, range: fmtD(list[0] ? list[0].date : per.st) + ' - ' + fmtD(last), cur: 0, filter: 'all', fmt: (b.fmts || ['1:1'])[0], gfxUntil: plusDays(list[0] ? list[0].date : per.st, 31) };
+    };
+    // the screen
+    const _bR = SCREENS.bulk.render;
+    SCREENS.bulk.render = function () {
+      const b = S.bulk; b.dept = myDept();
+      let h = _bR.call(this);
+      const per = periodOf(b), files = b.files || [], pl = b.plan;
+      // 1-4 a week
+      h = h.replace(/(<div class="bf-row"><label>תכנים בשבוע<\/label><div class="seg big">)[\s\S]*?(<\/div><\/div>)/, '$1' + [1, 2, 3, 4].map((v) => '<button class="' + (b.perWeek === v ? 'on' : '') + '" data-act="bSet:perWeek|' + v + '"' + (pl ? ' disabled' : '') + '>' + v + '</button>').join('') + '$2');
+      if (pl) h = h.replace(/(<div class="bf-row"><label>תקופה<\/label><div class="seg big">)([\s\S]*?)(<\/div><\/div>)/, (m, a, mid, z) => a + mid.replace(/<button /g, '<button disabled ') + z);
+      // one month of graphics per run
+      h = h.replace('<div class="bf-row"><label>תכנים בשבוע</label>', '<div class="t-sub" style="margin:-6px 0 10px">הטקסטים נכתבים לכל התקופה. הגרפיקות מעוצבות חודש אחד בכל פעם; את החודש הבא מעצבים בלחיצה מתוך הסדרה.</div><div class="bf-row"><label>תכנים בשבוע</label>');
+      // holidays: closed by default; when open, the list for the period with a kind label
+      const holRow = '<div class="bf-row"><label>חגים ומועדים <button class="sw ' + (b.holidays ? 'on' : '') + '" data-act="bHol" role="switch" aria-checked="' + b.holidays + '" aria-label="חגים ומועדים"></button><span class="t-sub" style="font-weight:400;margin-inline-start:8px">' + (b.holidays ? 'ברכה יוצאת יום לפני כל מועד שמסומן' : 'סגור. פתיחה מציגה את החגים והמועדים בתקופה, כולל ימים בינלאומיים') + '</span></label>' +
+        (b.holidays ? '<div class="hol-pick">' + HOL.filter((x) => x[1] >= todayIso() && x[1] >= per.st && x[1] <= per.end).map((x) => '<button class="tagc ' + (b.hol.includes(x[0]) ? 'on' : '') + '" data-act="bHolT:' + x[0] + '">' + (b.hol.includes(x[0]) ? ic('check', 13, 2.4) : ic('create', 13, 2.4)) + x[0] + ' <small>' + fmtD(x[1]) + (x[2] === 'intl' ? ' · בינלאומי' : '') + '</small></button>').join('') + '</div>' : '') + '</div>';
+      h = h.replace(/<div class="bf-row"><label>חגים ומועדים [\s\S]*?<\/div>(?=<div class="bf-row"><label>מחלקה)/, holRow);
+      // no department row
+      h = h.replace(/<div class="bf-row"><label>מחלקה<\/label>[\s\S]*?<\/select><\/div>/, '');
+      // sizes: no link, no A4
+      h = h.replace(/<button class="fmt[^"]*" data-act="bFmt:(1\.91:1|A4)"[\s\S]*?<\/button>/g, '');
+      // the plan upload, first
+      const planRow = '<div class="bf-row plan-row"><label>העלה תוכנית מוכנה</label>' +
+        '<div class="up-row"><button class="up-opt" data-act="bUpload"' + (b.planBusy ? ' disabled' : '') + '><span class="fi xlsx">' + ic('upload', 14) + '</span>' + (b.planBusy ? 'קוראים את התוכנית...' : 'העלאת קובץ') + '</button><span class="t-sub">Excel, Word, PDF או טקסט: תאריכים, נושאים והטקסטים אם כתובים</span></div>' +
+        (files.length ? '<div class="up-chips">' + fileChips(files, 'bFileX2') + '</div>' : '') +
+        (pl ? '<div class="note" style="margin-top:8px">' + ic('checkc', 15) + '<span><b>' + pl.items.length + ' פוסטים זוהו</b>' + (per.dated ? ' · מתוזמנים לפי התאריכים בתוכנית, ' + fmtD(per.st) + ' - ' + fmtD(per.end) : ' · אין תאריכים בתוכנית: יתוזמנו ' + (pl.perWeek >= 1 && pl.perWeek <= 4 ? pl.perWeek : 2) + ' בשבוע מהשבוע הבא') + (pl.items.some((x) => x.text) ? ' · כולל טקסטים' : '') + '. ' + esc(pl.note || '') + '</span></div>' : '') +
+        '<textarea id="bBrief" rows="2" placeholder="או בריף קצר: נושאים, קהל, דגשים">' + esc(b.brief) + '</textarea></div>';
+      h = h.replace(/<div class="bf-row"><label>מקור התוכן<\/label>[\s\S]*?<\/textarea><\/div>/, '');
+      h = h.replace('<div class="card bulk-form">', '<div class="card bulk-form">' + planRow);
+      return h;
+    };
+    ACT.bUpload = async () => {
+      const b = S.bulk;
+      const fs = await uploadPicked('.xlsx,.xls,.docx,.pdf,.txt,.csv', true);
+      if (!fs.length) return;
+      b.files = [...(b.files || []), ...fs]; b.planBusy = true; render();
+      try {
+        const r = await fx('generate', Object.assign(aiCtx(), { mode: 'plan', dept: myDept(), files: b.files.map((f) => ({ url: f.url, name: f.name })) }), 150000);
+        b.plan = r && r.items && r.items.length ? { items: r.items, perWeek: r.perWeek || 0, note: r.note || '' } : null;
+        if (b.plan) {
+          const per = periodOf(b);
+          const days = Math.max(1, Math.round((new Date(per.end) - new Date(per.st)) / 86400000));
+          b.months = Math.max(1, Math.min(6, Math.ceil(days / 30)));
+          b.perWeek = b.plan.perWeek >= 1 && b.plan.perWeek <= 4 ? b.plan.perWeek : 2;
+          toast('התוכנית נקראה', b.plan.items.length + ' פוסטים' + (per.dated ? ', לפי התאריכים בקובץ' : ', בלי תאריכים: 2 בשבוע'));
+        } else toast('לא זוהו פוסטים בקובץ', 'בדקו שהקובץ כולל נושאים או תאריכים, או כתבו בריף.', 'err');
+      } catch (e) { b.plan = null; toast('קריאת התוכנית נכשלה', 'נסו קובץ אחר או כתבו בריף.', 'err'); }
+      b.planBusy = false; render();
+    };
+    ACT.bFileX2 = (i) => { const b = S.bulk; (b.files || []).splice(+i, 1); if (!(b.files || []).length) b.plan = null; render(); };
+    css.textContent += `.plan-row{border:1.5px dashed var(--line,#DDE3EC);border-radius:14px;padding:12px 14px;margin-bottom:6px}.fi.xlsx{background:#1D6F42;color:#fff}`;
+    // graphics: one month per run; the next month on request from the review screen
+    const _rv = SCREENS.bulkReview.render;
+    SCREENS.bulkReview.render = function () {
+      let h = _rv.call(this);
+      const c = campById(S.campId); if (!c || !c.gfxUntil) return h;
+      const rest = c.items.filter((x) => x.date > c.gfxUntil && !(x.media && (x.media.url || x.media.busy)));
+      if (!rest.length) return h;
+      const note = '<div class="note" style="margin-bottom:12px">' + ic('cal', 15) + '<span><b>' + rest.length + ' פוסטים מהחודשים הבאים עם טקסט בלבד.</b> הגרפיקות מעוצבות חודש אחד בכל פעם.</span><button class="btn btn-sm btn-primary" style="margin-inline-start:auto" data-act="cNextMonth">' + ic('spark', 14) + ' עיצוב החודש הבא</button></div>';
+      return h.replace('<div class="rv-strip" id="rvStrip">', note + '<div class="rv-strip" id="rvStrip">');
+    };
+    ACT.cNextMonth = () => {
+      const c = campById(S.campId); if (!c) return;
+      const until = plusDays(c.gfxUntil, 31);
+      const batch = c.items.filter((x) => x.date > c.gfxUntil && x.date <= until && !(x.media && (x.media.url || x.media.busy)));
+      c.gfxUntil = until;
+      batch.forEach((x) => L.queueGraphic(c, x));
+      render(); flush();
+      toast('מעצבים את החודש הבא', batch.length + ' גרפיקות בתור.');
+    };
+  })();
 
   /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */
   (function () {

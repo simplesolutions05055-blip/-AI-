@@ -139,7 +139,7 @@ async function memberUpdate(d: DB, orgId: string, memberId: string | null, p: Re
 async function statePatch(d: DB, orgId: string, memberId: string | null, patch: Record<string, any>) {
   const { data: st } = await d.from('org_state').select('data').eq('org_id', orgId).maybeSingle();
   const cur: Record<string, any> = (st?.data && typeof st.data === 'object') ? { ...st.data } : {};
-  for (const k of ['memberBrand', 'memberChannels']) {
+  for (const k of ['memberBrand', 'memberChannels', 'memberCamps']) {
     if (!patch[k] || typeof patch[k] !== 'object') continue;
     const slot: Record<string, any> = (cur[k] && typeof cur[k] === 'object') ? { ...cur[k] } : {};
     for (const mid of Object.keys(patch[k])) if (!memberId || mid === memberId) slot[mid] = patch[k][mid];

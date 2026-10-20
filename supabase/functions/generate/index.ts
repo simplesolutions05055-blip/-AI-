@@ -115,6 +115,27 @@ async function fileBlocks(files: any[]): Promise<unknown[]> {
       if (/^(png|jpe?g|webp|gif)$/.test(ext)) out.push({ type: 'image', source: { type: 'url', url } });
       else if (ext === 'pdf') out.push({ type: 'document', source: { type: 'url', url }, title: name });
       else if (/^(txt|csv)$/.test(ext)) out.push({ type: 'text', text: `תוכן הקובץ "${name}":\n` + (await (await fetch(url)).text()).slice(0, 30000) });
+      else if (ext === 'xlsx') {
+        const zip = await JSZip.loadAsync(await (await fetch(url)).arrayBuffer());
+        const ssx = zip.files['xl/sharedStrings.xml'] ? await zip.files['xl/sharedStrings.xml'].async('string') : '';
+        const strs = [...ssx.matchAll(/<si>([\s\S]*?)<\/si>/g)].map((m) => xmlText(m[1]));
+        const sheets = Object.keys(zip.files).filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort();
+        const serial = (v: number) => { const d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000); return d.toISOString().slice(0, 10); };
+        const parts: string[] = [];
+        for (const n of sheets.slice(0, 4)) {
+          const x = await zip.files[n].async('string');
+          const rows = [...x.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)].map((r) => [...r[1].matchAll(/<c r="([A-Z]+)\d+"([^>]*)>([\s\S]*?)<\/c>/g)].map((c) => {
+            const t = /t="s"/.test(c[2]), inl = /t="inlineStr"/.test(c[2]);
+            const v = (c[3].match(/<v>([\s\S]*?)<\/v>/) ?? [])[1] ?? '';
+            if (t) return strs[+v] ?? '';
+            if (inl) return xmlText(c[3]);
+            const num = Number(v);
+            return v && Number.isFinite(num) && num > 40000 && num < 60000 && Number.isInteger(num) ? serial(num) : v;
+          }).filter((v) => v !== '').join(' | ')).filter(Boolean);
+          parts.push(`--- גיליון ${n.match(/\d+/)![0]} ---\n` + rows.join('\n'));
+        }
+        out.push({ type: 'text', text: `תוכן הקובץ "${name}" (טבלה, תאים מופרדים ב-|; מספרים שהומרו לתאריכים מופיעים כ-YYYY-MM-DD):\n` + parts.join('\n').slice(0, 30000) });
+      }
       else if (/^(docx|pptx)$/.test(ext)) {
         const zip = await JSZip.loadAsync(await (await fetch(url)).arrayBuffer());
         const names = Object.keys(zip.files).filter((n) => (ext === 'docx' ? n === 'word/document.xml' : /^ppt\/slides\/slide\d+\.xml$/.test(n)))
@@ -438,10 +459,23 @@ ${site ? 'להלן הטקסט של האתר הרשמי (דף הבית ועמוד
     }
 
     // a period of content: one call writes a whole batch of posts (texts for the graphic and the caption)
+    // a ready content plan the user uploaded: the dates, topics and texts become the slots of the series
+    if (mode === 'plan') {
+      if (!fb.length) return json(req, { error: 'no_files' }, 400);
+      const raw = await claude(key, s, `המשתמש העלה תוכנית תוכן מוכנה (מצורפת). חלץ ממנה את רשימת הפרסומים המתוכננים: תאריך (אם יש), נושא, והטקסט אם כתוב.
+היום: ${new Date().toISOString().slice(0, 10)}. תאריכים בלי שנה - השנה הקרובה שבה התאריך עוד לא עבר. תאריכים עבריים או מילוליים ("ערב פסח", "שבוע ראשון של נובמבר") - תרגם לתאריך לועזי מקורב.
+החזר JSON בלבד:
+{"items":[{"date":"YYYY-MM-DD או ריק אם אין תאריך","title":"נושא הפוסט, 2-6 מילים","text":"הטקסט שכתוב בתוכנית לפוסט הזה, או ריק","hol":"שם החג אם זה פוסט לחג, אחרת ריק"}],"perWeek":מספר הפוסטים בשבוע לפי התוכנית או 0 אם לא ניתן לדעת,"note":"משפט אחד בעברית: מה זוהה (כמה פוסטים, טווח תאריכים, האם יש טקסטים)"}
+עד 120 פריטים, לפי סדר התאריכים. רק מה שכתוב בתוכנית, בלי להמציא.`, 8000, fb);
+      const j = parseJson(raw);
+      const items = ((j.items ?? []) as any[]).map((x) => ({ date: /^\d{4}-\d{2}-\d{2}$/.test(String(x.date ?? '')) ? String(x.date) : '', title: String(x.title ?? '').slice(0, 120), text: String(x.text ?? '').slice(0, 1200), hol: String(x.hol ?? '').slice(0, 40) })).filter((x) => x.title || x.text).slice(0, 120);
+      return json(req, { ok: true, items, perWeek: Math.max(0, Math.min(7, +j.perWeek || 0)), note: String(j.note ?? '').slice(0, 300) });
+    }
+
     if (mode === 'series') {
       const slots = ((p.slots ?? []) as any[]).slice(0, 14);
       if (!slots.length) return json(req, { error: 'no_slots' }, 400);
-      const list = slots.map((x) => `${x.i}. ${x.date}${x.hol ? ' - ברכה לחג ' + x.hol : ''}${x.hint ? ' - נושא מוצע: ' + x.hint : ''}`).join('\n');
+      const list = slots.map((x) => `${x.i}. ${x.date}${x.hol ? ' - ברכה לחג ' + x.hol : ''}${x.hint ? ' - נושא מהתוכנית: ' + String(x.hint).slice(0, 160) : ''}${x.text ? '\n   טקסט מהתוכנית (להשתמש בו כבסיס): ' + String(x.text).slice(0, 700) : ''}`).join('\n');
       const raw = await claude(key, s, `בנה סדרת פרסומים לרשתות החברתיות לתקופה, פוסט לכל מועד ברשימה.
 מחלקה: ${p.dept || 'דוברות'}
 ${p.brief ? 'בריף לסדרה: ' + p.brief : 'אין בריף - בחר נושאים אמיתיים ורלוונטיים למחלקה ולעונה, לפי הפרטים מאתר הארגון אם יש.'}${filesNote(fb)}
