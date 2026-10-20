@@ -249,9 +249,15 @@ export function textOf(ui: Record<string, any>): string {
 export function mediaOf(ui: Record<string, any>): Media[] {
   const m = ui.media || {};
   if (ui.ty === 'video' && m.kind === 'video' && m.url && m.ready !== false && /^https:\/\//.test(m.url)) return [{ url: String(m.url), type: 'video' }];
+  if (ui.ty === 'graphic' && Array.isArray(m.slides) && m.slides.length > 1) {
+    const sl = m.slides.filter((u: unknown) => typeof u === 'string' && /^https:\/\//.test(u)).slice(0, 10);
+    if (sl.length > 1) return sl.map((u: string) => ({ url: u, type: 'image' as const }));
+  }
   if (ui.ty === 'graphic' && m.url && /^https:\/\//.test(m.url)) return [{ url: String(m.url), type: 'image' }];
   return [];
 }
+// how many images one post may carry per network (provider documentation); 1 = no carousel
+export const MAX_IMAGES: Record<string, number> = { fb: 10, ig: 10, tk: 35, li: 20, x: 4, th: 10, tg: 10, gb: 1, yt: 0, wa: 1 };
 // platforms that refuse a post without a picture or a video
 export const NEEDS_MEDIA: ChKey[] = ['ig', 'tk', 'yt'];
 export const NEEDS_VIDEO: ChKey[] = ['yt'];

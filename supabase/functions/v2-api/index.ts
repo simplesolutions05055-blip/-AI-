@@ -5,7 +5,7 @@
 // admin: admin.load | admin.state.save | admin.org.create | admin.org.delete | admin.invite.send | admin.org.update
 // open (sign token): sign.load | sign.submit
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, NEEDS_VIDEO, NO_POST, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
+import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, MAX_IMAGES, NEEDS_VIDEO, NO_POST, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
@@ -410,10 +410,16 @@ async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; p
     const skipped: string[] = [];
     if (pick) {
       pick.targets = pick.targets.filter((t) => {
-        const ok = !NO_POST.includes(t.ch) && (!NEEDS_MEDIA.includes(t.ch) || media.length > 0) && (!NEEDS_VIDEO.includes(t.ch) || media.some((m) => m.type === 'video'));
+        const ok = !NO_POST.includes(t.ch) && (!NEEDS_MEDIA.includes(t.ch) || media.length > 0) && (!NEEDS_VIDEO.includes(t.ch) || media.some((m) => m.type === 'video'))
+          && !(media.length > 1 && (MAX_IMAGES[t.ch] ?? 1) < 2);
         if (!ok) skipped.push(t.ch);
         return ok;
       });
+      // a carousel is capped to the smallest limit among the networks it goes to
+      if (media.length > 1 && pick.targets.length) {
+        const cap = Math.min(...pick.targets.map((t) => MAX_IMAGES[t.ch] ?? 10));
+        if (media.length > cap) media.splice(cap);
+      }
     }
     const base = { org_id: orgId, ui_id: ui.id, provider: pv.name, sig, updated_at: new Date().toISOString() };
     const missing = (ui.ch as string[]).filter((c) => !pick || ![...pick.targets.map((t) => t.ch), ...skipped].includes(c as ChKey));

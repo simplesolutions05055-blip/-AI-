@@ -1315,11 +1315,14 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const done = busyBtn('[data-act="wizNext"]', 'ה-AI כותב את התוכן...');
     try {
       const gfx = isGfx(w);
-      const r = gfx
+      const r = gfx && w.carousel
+        ? await gen({ mode: 'carousel', slides: w.carousel, title: w.brief.title, brief: w.brief.free, dept: w.brief.dept, files: briefFiles(w) })
+        : gfx
         ? await gen({ mode: 'graphic', title: w.brief.title, brief: w.brief.free, dept: w.brief.dept, files: briefFiles(w) })
         : await gen({ mode: 'post', title: w.brief.title, brief: w.brief.free, dept: w.brief.dept, channels: chNames(w.ch), typeLabel: TYPES[w.type] ? TYPES[w.type].t : 'גרפיקה' });
       if (S.wiz !== w) return;
       w.step = 1;
+      if (gfx && w.carousel) { const s0 = (r.slides || [])[0] || {}; Object.assign(r, s0, { headline: s0.headline, caption: r.caption, tags: r.tags, style: r.style, palette: r.palette, styleWhy: r.styleWhy }); w.slides = r.slides || []; }
       w.t = (gfx ? r.headline : r.title) || w.brief.title;
       w.body = (gfx ? r.caption : r.body) || '';
       const tags = (r.tags || []).slice(0, 6);
@@ -1417,7 +1420,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   wizItem = function (st) {
     const w = S.wiz;
     const it = _wizItemL(st);
-    if (w && w.media && w.media.url) it.media = { kind: w.media.kind, url: w.media.url, thumb: w.media.thumb || '', layout: w.media.layout, fmt: w.media.fmt, ar: w.media.ar, image: w.media.image || '', design: w.design || null, ready: w.media.ready !== false };
+    if (w && w.media && w.media.url) it.media = { kind: w.media.kind, url: w.media.url, thumb: w.media.thumb || '', layout: w.media.layout, fmt: w.media.fmt, ar: w.media.ar, image: w.media.image || '', design: w.design || null, ready: w.media.ready !== false, slides: Array.isArray(w.media.slides) && w.media.slides.length > 1 ? w.media.slides.slice() : undefined };
     return it;
   };
 
@@ -4616,6 +4619,109 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!m || m.layout !== 'own' || !m.url) return;
       const pane = $('.preview-pane'); if (!pane) return;
       pane.innerHTML = m.kind === 'video' ? '<video src="' + esc(m.url) + '" controls playsinline style="width:100%;border-radius:12px;display:block"></video>' : '<img src="' + esc(m.url) + '" alt="" style="width:100%;border-radius:12px;display:block">';
+    };
+  })();
+
+
+  /* ---------------- carousel posts and captions for uploaded posts ---------------- */
+  (function () {
+    // images one post may carry per network (provider documentation); 1 = no carousel, 0 = video only
+    const CAR_MAX = { fb: 10, ig: 10, tk: 35, li: 20, x: 4, th: 10, tg: 10, gb: 1, yt: 0, wa: 1, web: 1 };
+    const carOk = (k) => (CAR_MAX[k] == null ? 10 : CAR_MAX[k]) >= 2;
+    const chName = (k) => (CH[k] ? CH[k].t : k);
+    // step 0: the carousel choice, and the networks that cannot take one
+    const _wz = SCREENS.wizard.render;
+    SCREENS.wizard.render = function () {
+      let h = _wz.apply(this, arguments);
+      const w = S.wiz;
+      if (!w || !isGfx(w)) return h;
+      if (w.step === 0) {
+        const n = +w.carousel || 0;
+        const sel = '<div class="field full"><label>סוג הפוסט <span class="hint">תמונה אחת, או קרוסלה של כמה תמונות בפוסט אחד</span></label><div class="lay-pick" role="radiogroup" aria-label="סוג הפוסט">' +
+          [[0, 'תמונה אחת'], [2, 'קרוסלה · 2'], [3, 'קרוסלה · 3'], [4, 'קרוסלה · 4'], [5, 'קרוסלה · 5'], [6, 'קרוסלה · 6']].map((o) => '<button class="' + (n === o[0] ? 'on' : '') + '" data-act="wCar:' + o[0] + '" role="radio" aria-checked="' + (n === o[0]) + '">' + o[1] + '</button>').join('') + '</div>' +
+          (n ? '<div class="t-sub" style="margin-top:6px">קרוסלה: פייסבוק ואינסטגרם עד 10 תמונות, טיקטוק עד 35, לינקדאין עד 20, X עד 4, Threads וטלגרם עד 10. יוטיוב וגוגל לעסקים לא מקבלים קרוסלה ולכן חסומים.</div>' : '') + '</div>';
+        h = h.replace('<div class="field full"><label>פלטפורמות לפרסום</label>', sel + '<div class="field full"><label>פלטפורמות לפרסום</label>');
+        if (n) h = h.replace(/<button class="plat( on)?" data-act="ch:([a-z]+)">/g, (m, on, k) => carOk(k) ? m : '<button class="plat is-disabled" disabled title="' + esc(chName(k)) + ' לא מקבל קרוסלה" data-act="ch:' + k + '">');
+      } else if (w.step === 1 && w.carousel && w.media) {
+        const m = w.media, busy = !!m.busy, sl = m.slides || [];
+        const strip = '<div class="car-strip">' + (w.slides || []).map((x, i) => '<div class="car-sl' + (sl[i] ? '' : ' wait') + '">' + (sl[i] ? '<img src="' + esc(sl[i]) + '" alt="">' : '<span class="t-sub">' + (busy && i === sl.length ? 'מעצבים...' : 'ממתין') + '</span>') + '<b>' + (i + 1) + '</b></div>').join('') + '</div>';
+        const box = '<div class="field full"><label>קרוסלה · ' + (w.slides || []).length + ' שקפים</label>' + strip +
+          '<div class="real-acts" style="margin-top:8px"><button class="btn btn-sm" data-act="carRedo"' + (busy ? ' disabled' : '') + '>' + ic('refresh', 14) + ' עיצוב מחדש של כל השקפים</button>' + (m.qa ? ' ' + qaHtml(m.qa) : '') + '</div>' +
+          (busy ? '<div class="t-sub" style="margin-top:6px">' + esc(m.busy) + '</div>' : '') + '</div>';
+        h = h.replace(/<div class="lay-pick" role="radiogroup" aria-label="פריסה">[\s\S]*?<\/div>/, '');
+        h = h.replace(/(<div class="ai-box[^>]*>)/, box + '$1');
+      }
+      return h;
+    };
+    css.textContent += `
+.car-strip{display:flex;gap:8px;overflow-x:auto;padding:4px 0}.car-sl{position:relative;width:96px;height:96px;flex:none;border-radius:12px;overflow:hidden;border:1px solid var(--line-2,#E6EAF2);background:var(--surface-2,#F3F5F9);display:grid;place-items:center}
+.car-sl img{width:100%;height:100%;object-fit:cover;display:block}.car-sl b{position:absolute;top:4px;inset-inline-end:4px;background:#fff;border-radius:6px;font-size:11px;padding:1px 6px}.car-sl.wait{border-style:dashed}
+.plat.is-disabled{opacity:.45;cursor:not-allowed}`;
+    ACT.wCar = (n) => { const w = S.wiz; if (!w) return; collectWiz(); w.carousel = +n || 0; if (w.carousel) w.ch = (w.ch || []).filter(carOk); render(); };
+    // the design of every slide, one after the other, with the organisation's kit
+    async function carouselRun(w, opts) {
+      const m = w.media; const job = ++m.job || (m.job = 1);
+      const fmt = w.fmt || '1:1'; const size = IMG_SIZE(fmt);
+      const logo = logoOf(); const photos = briefPhotos(w);
+      const kit = logo ? await ensureKit() : null;
+      if (S.wiz !== w || m.job !== job) return;
+      const slides = w.slides || [];
+      if (!opts || !opts.keep) m.slides = [];
+      m.url = ''; m.thumb = ''; m.warn = null; m.qa = null;
+      const qas = [];
+      try {
+        for (let i = 0; i < slides.length; i++) {
+          if (m.slides[i]) continue;
+          const sl = slides[i];
+          m.busy = 'ChatGPT מעצב שקף ' + (i + 1) + ' מתוך ' + slides.length + '...'; render();
+          const r = await fx('image', {
+            action: 'design', org: aiCtx().org, dept: w.brief.dept, size, brief: (w.brief.title || '') + '\n' + (w.brief.free || '') + '\nשקף ' + (i + 1) + ' מתוך ' + slides.length + ' בקרוסלה. אותה שפה בדיוק בכל השקפים.',
+            colors: brandFor(w.brief.dept).colors, roles: brandFor(w.brief.dept).roles, style: w.design.style || 'official', palette: w.design.palette || '', kit: kit || undefined,
+            texts: { kicker: sl.kicker, headline: sl.headline, sub: sl.sub, details: sl.details || [], cta: sl.cta || '', icons: sl.icons || [], keyword: sl.keyword || '' },
+            refs: [...(logo ? [logo] : []), ...(i === 0 ? photos : [])].slice(0, 4), logo: !!logo, note: opts && opts.note || '', quality: 'high', n: 1, redo: false,
+          }, 150000);
+          if (S.wiz !== w || m.job !== job) return;
+          m.slides[i] = r.url; if (r.qa) qas.push(r.qa.score || 0);
+          if (r.check && !r.check.ok && (r.check.issues || []).length) m.warn = [...(m.warn || []), 'שקף ' + (i + 1) + ': ' + r.check.issues.join('; ')];
+          render();
+        }
+        m.url = m.slides[0] || ''; m.thumb = m.url; m.design = m.url; m.image = m.url; m.layout = 'ai'; m.kind = 'graphic'; m.fmt = fmt; m.ar = AR[fmt] || '1/1'; m.ready = true; m.dsize = size; m.stale = false;
+        m.qa = qas.length ? { score: Math.round(qas.reduce((a, b) => a + b, 0) / qas.length), issues: [], tries: 1 } : null;
+        m.busy = ''; w.ver = (w.ver || 1) + 1; render();
+        if (m.warn) toast('בדקו את הטקסט בשקפים', m.warn.join(' · '), 'err');
+      } catch (e) {
+        if (S.wiz !== w || m.job !== job) return;
+        m.busy = ''; render();
+        toast('עיצוב הקרוסלה לא הושלם', 'אפשר ללחוץ "עיצוב מחדש" כדי להשלים את השקפים החסרים.', 'err');
+      }
+    }
+    const _gfx = gfxRun;
+    gfxRun = async function (w, opts) {
+      if (w && w.carousel && (w.slides || []).length > 1 && isGfx(w)) {
+        if (opts && opts.fit && w.media && w.media.slides && w.media.slides.length === w.slides.length && w.media.dsize === IMG_SIZE(w.fmt || '1:1')) return;
+        return carouselRun(w, opts);
+      }
+      return _gfx(w, opts);
+    };
+    ACT.carRedo = () => { const w = S.wiz; if (!w || !w.media || w.media.busy) return; collectWiz(); carouselRun(w, { note: 'קומפוזיציה שונה מהגרסה הקודמת' }); };
+    // the preview of a carousel: the first slide, with the strip above
+    // an uploaded finished post: Claude reads it and writes the caption
+    const _own = ACT.wOwnStart;
+    ACT.wOwnStart = async () => {
+      await _own();
+      const w = S.wiz; const m = w && w.media;
+      if (!m || m.layout !== 'own' || m.kind !== 'graphic' || !m.url) return;
+      const done = busyBtn('[data-act="wizNext"]', 'קוראים את הפוסט וכותבים את הטקסט...');
+      try {
+        const r = await gen({ mode: 'caption', image: m.url, title: w.brief.title, brief: w.brief.free, dept: w.brief.dept });
+        if (S.wiz !== w) return;
+        if (r.title && !w.brief.title) w.t = r.title;
+        if (r.body) w.body = r.body + (r.cta ? '\n\n' + r.cta : '');
+        const tags = (r.tags || []).slice(0, 6);
+        if (tags.length) { w.sugg = [...new Set([...tags, ...(w.sugg || [])])].slice(0, 7); w.tags = tags.slice(0, 4); }
+        render();
+        toast('הטקסט נכתב מתוך הגרפיקה', r.read ? String(r.read).slice(0, 120) : '');
+      } catch (e) { done(); toast('קריאת הגרפיקה לא הצליחה', 'אפשר לכתוב את הטקסט ידנית.', 'err'); }
     };
   })();
 

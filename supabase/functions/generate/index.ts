@@ -476,6 +476,35 @@ ${p.after ? '' : STYLE_PICK_HE}`, 3000, fb);
       return json(req, { ok: true, posts: ((j.posts ?? []) as any[]).map((x) => tagFix(x)) });
     }
 
+    // a finished post the user uploaded: read it and write the caption for it
+    if (mode === 'caption') {
+      const url = String(p.image ?? '');
+      if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(url)) return json(req, { error: 'bad_url' }, 400);
+      const raw = await claude(key, s, `המשתמש העלה גרפיקה מוכנה לפוסט (מצורפת). קרא את כל מה שכתוב בה ואת מה שרואים בה, וכתוב עבורו את הפוסט שיתלווה אליה ברשתות.
+${p.title ? 'כותרת שהוזנה: ' + p.title + '\n' : ''}${p.brief ? 'הערות המשתמש: ' + p.brief + '\n' : ''}
+החזר JSON בלבד:
+{"title":"כותרת קצרה לפריט, עד 45 תווים, מתוך הגרפיקה","body":"טקסט הפוסט, 2-4 משפטים, לפי מה שכתוב בגרפיקה בלבד. פרטים (תאריך, שעה, מקום, טלפון) רק אם מופיעים בגרפיקה","cta":"קריאה לפעולה קצרה או ריק","tags":["#האשטג"],"read":"כל הטקסט שקראת בגרפיקה, בקצרה"}
+tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות. בלי להמציא עובדות שלא כתובות בגרפיקה.`, 1500, [{ type: 'image', source: { type: 'url', url } }]);
+      return json(req, { ok: true, ...(await proof(key, parseJson(raw))) });
+    }
+
+    // a carousel: one post, several slides that tell one story
+    if (mode === 'carousel') {
+      const n = Math.max(2, Math.min(6, +p.slides || 4));
+      const raw = await claude(key, s, `אתה גם מעצב הפרסומים של הרשות. כתוב קרוסלה של ${n} שקפים לפוסט אחד ברשתות, ואת טקסט הפוסט שמתחתיה.
+${brief}
+
+החזר JSON בלבד:
+{"slides":[{"i":1,"kicker":"1-3 מילים (בשקף הראשון: סיווג הנושא; בשאר: 'שקף 2 מתוך ${n}' או כותרת משנה קצרה)","headline":"כותרת השקף, 2-5 מילים","sub":"שורת משנה אחת, עד 50 תווים","keyword":"מילה אחת מהכותרת להדגשה","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט עד 28 תווים"}],"icons":[{"icon":"music|family|food|tree|bus|water|sun|home|phone|shop|chart|users|cone|recycle|book|heart","label":"תווית 2-4 מילים"}],"cta":"קריאה לפעולה רק בשקף האחרון, אחרת ריק"}],"caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"],"style":"id של סגנון","palette":"מצב פלטה","styleWhy":"משפט אחד"}
+מבנה הקרוסלה: שקף 1 = הוק וכותרת ראשית; שקפים אמצעיים = פרט אחד או רעיון אחד לכל שקף (מה, מתי, איפה, למה כדאי); שקף אחרון = סיכום וקריאה לפעולה. כל שקף עומד בפני עצמו. רק עובדות מהבריף. details עד 2 לשקף, icons עד 3 לשקף או ריק.
+${STYLE_PICK_HE}
+tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.`, 4000, fb);
+      const g = await proof(key, parseJson(raw));
+      g.style = styleOf(g.style); if (!PALETTE_MODES[g.palette as keyof typeof PALETTE_MODES]) delete g.palette;
+      g.slides = (Array.isArray(g.slides) ? g.slides : []).slice(0, n);
+      return json(req, { ok: true, ...g });
+    }
+
     if (mode === 'graphic') {
       const raw = await claude(key, s, `אתה גם מעצב הפרסומים של הרשות. כתוב את הטקסטים שיופיעו על גבי גרפיקה לרשתות, ואת טקסט הפוסט שמתחתיה.
 ${brief}
