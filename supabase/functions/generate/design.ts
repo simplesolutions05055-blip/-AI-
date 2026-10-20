@@ -1,7 +1,7 @@
 // PrimeOS design rules - one source for every output (graphics, documents, decks, videos).
 // Derived from the PrimeOS design rulebook (12 principles, 1080 type sizes, 60/30/10 colour, 10 styles, QA score)
 // and the document/deck and video specifications. Copied into each edge function by `npm run sync:design`.
-import { paletteRoles } from './palette.ts';
+import { paletteRoles, contrast } from './palette.ts';
 
 /* ---------------- graphic styles ---------------- */
 export interface Style { he: string; when: string; photo: 'must' | 'good' | 'none'; palette: PaletteMode; energy: 'low' | 'mid' | 'high'; en: string }
@@ -199,8 +199,10 @@ export function kitDirective(kit: BrandKit, o: { colors?: unknown[]; roles?: Rec
   const r = paletteRoles((o.colors ?? []) as string[], o.roles ?? {});
   const tpl = KIT_TEMPLATES[kit.template] ?? KIT_TEMPLATES.panel;
   const hot = /^#[0-9a-f]{6}$/i.test(kit.hot || '') ? kit.hot : r.accent;
+  const hotText = contrast(hot, '#FFFFFF') >= 3 ? '#FFFFFF' : r.base;
+  const hotOnLight = contrast(hot, r.light) >= 3;
   return `BRAND KIT (derived from this organisation's logo - follow exactly):
-LOGO COLOURS - ${kit.colorsEn}. Base (type, dark elements): ${r.base}. Hot colour (key word, button, tag): ${hot}. Light ground: ${r.light}.
+LOGO COLOURS - ${kit.colorsEn}. Base (type, dark elements): ${r.base}. Hot colour (key word, button, tag): ${hot}; text ON the hot colour is ${hotText}. ${hotOnLight ? '' : `The hot colour is too light for text on the light ground: the key word gets a filled hot band behind ${r.base} text instead of hot-coloured letters. `}Light ground: ${r.light}.
 MOTIF - ${kit.motif?.en ?? 'soft rounded shapes'} (shape: ${kit.motif?.shape ?? 'other'}).
 LOGO POSITION - ${kit.logoPos ?? 'top-center'} of the text side.
 TEMPLATE - ${tpl.en}
