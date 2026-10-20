@@ -171,7 +171,7 @@
     seedDepts(L.org && L.org.settings && L.org.settings.depts);
     // the main approver is the organisation user, not the demo's spokesperson
     const mgr = L.me && L.me.role !== 'member' ? L.me : null;
-    replaceObj(MAIN_APPR, { n: mgr ? mgr.name : 'משתמש הארגון', r: 'משתמש ארגון', ph: (mgr && mgr.phone) || '', mail: (mgr && mgr.email) || '' });
+    replaceObj(MAIN_APPR, { n: mgr ? mgr.name : 'משתמש הארגון', r: 'הרשאת מנהל (גישה מלאה)', ph: (mgr && mgr.phone) || '', mail: (mgr && mgr.email) || '' });
   }
 
   /* ---------------- sync engine ---------------- */
@@ -467,7 +467,7 @@
     if (L.memberSlices) L.memberSlices(d.state && !d.state.fresh ? d.state : null);
     if (L.me) {
       const demoUser = L.demo && L.me.name === 'יעל כהן';
-      S.user = { name: L.me.name, role: demoUser ? 'מנהלת תקשורת' : (L.me.role === 'member' ? 'משתמש יחיד' : 'משתמש ארגון'), init: initials(L.me.name), dept: L.me.dept || S.user.dept || DEPTS[0] };
+      S.user = { name: L.me.name, role: demoUser ? 'מנהלת תקשורת' : (L.me.role === 'member' ? 'מחלקה בארגון' : 'הרשאת מנהל (גישה מלאה)'), init: initials(L.me.name), dept: L.me.dept || S.user.dept || DEPTS[0] };
       if (!L.members && !users.some((u) => u.n === L.me.name)) users.unshift({ n: L.me.name, r: S.user.role, d: S.user.dept, st: 'פעיל', last: 'עכשיו', i: S.user.init, direct: true });
     }
     if (!L.demo) {
@@ -596,7 +596,7 @@
     });
   }
   /* the console shows the real organisations only: the demo municipalities of the mockup never appear */
-  const ROLE_A = { owner: 'משתמש ארגון', admin: 'משתמש ארגון', member: 'משתמש יחיד' };
+  const ROLE_A = { owner: 'הרשאת מנהל (גישה מלאה)', admin: 'הרשאת מנהל (גישה מלאה)', member: 'מחלקה בארגון' };
   function liveAdmin(real) {
     const keep = ['uLim', 'dLim', 'agr', 'add', 'c', 'type', 'ch', 'xch', 'xu', 'st'];
     const list = real.map((r) => {
@@ -676,7 +676,7 @@
     const ms = o.members || [];
     const dept = ms.filter((m) => m.role === 'member');
     const rows = ms.map((m) => '<div class="ml-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line-2)">' +
-      '<span style="flex:1;min-width:160px"><b>' + esc(m.name) + '</b> <span class="t-sub">' + (m.role === 'member' ? 'משתמש יחיד' + (m.dept ? ' · ' + esc(m.dept) : '') : 'משתמש ארגון') + '</span>' + (m.email ? '<br><span class="t-sub" dir="ltr">' + esc(m.email) + '</span>' : '<br><span class="t-sub">אין דוא״ל: המשתמש לא יוכל להיכנס בקוד</span>') + '</span>' +
+      '<span style="flex:1;min-width:160px"><b>' + esc(m.name) + '</b> <span class="t-sub">' + (m.role === 'member' ? 'מחלקה בארגון' + (m.dept ? ' · ' + esc(m.dept) : '') : 'הרשאת מנהל (גישה מלאה)') + '</span>' + (m.email ? '<br><span class="t-sub" dir="ltr">' + esc(m.email) + '</span>' : '<br><span class="t-sub">אין דוא״ל: המשתמש לא יוכל להיכנס בקוד</span>') + '</span>' +
       '<button class="btn btn-sm" data-act="liveFirst:' + o.id + ':' + esc(m.id) + '">' + ic('copy', 14) + ' קישור כניסה ראשונה</button>' +
       '<button class="btn btn-sm" data-act="liveOpenM:' + o.id + ':' + esc(m.id) + '">' + ic('eye', 14) + ' כניסה כמשתמש</button></div>').join('');
     return '<div style="margin-top:14px"><b style="font-size:13.5px">משתמשים</b>' + rows +
@@ -2826,7 +2826,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   /* ---------------- team: real members with their own login links ----------------
    * The spokesperson (owner/admin) opens users here. A department user gets a link that opens the department interface only. */
   (function () {
-    const ROLE_T = { owner: 'משתמש ארגון', admin: 'משתמש ארגון', member: 'משתמש יחיד' };
+    const ROLE_T = { owner: 'הרשאת מנהל (גישה מלאה)', admin: 'הרשאת מנהל (גישה מלאה)', member: 'מחלקה בארגון' };
     const waText = (name, link) => 'שלום ' + name + ', נפתח לך משתמש במערכת PrimeOS של ' + (L.org ? L.org.name : '') + '.\nקישור לכניסה הראשונה (אישי, לכניסה אחת, בתוקף 7 ימים):\n' + link + '\n\nבכניסות הבאות: app.primeos.co.il, מזינים את כתובת הדוא״ל ומקבלים קוד.';
     const inviteLink = async (mid) => (await call('members.invite.link', { id: mid })).link;
     function rowOf(m) {
@@ -4267,6 +4267,312 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     // the count in the menu stays fresh while the app is open
     setInterval(() => { if (L.ready && L.kind === 'client' && !L.demo) waLoad(false); }, 60000);
   })();
+  /* ---------------- corrections 21.10: team wording, two brands, channel pages, compact approvals, own media ---------------- */
+  (function () {
+    const isMember = () => !!(L.me && L.me.role === 'member');
+    const deepCopy = (o) => JSON.parse(JSON.stringify(o));
+    const chName = (k) => (CH[k] ? CH[k].t : k);
+
+    /* ===== 1. team: user types, free-text department, access details saved on the new user ===== */
+    const ROLE_HE = { owner: 'הרשאת מנהל (גישה מלאה)', admin: 'הרשאת מנהל (גישה מלאה)', member: 'מחלקה בארגון' };
+    const relabel = (h) => String(h).replace(/משתמש ארגון \(גישה חלקית\)/g, ROLE_HE.admin).replace(/משתמש ארגון(?! ·)/g, ROLE_HE.admin).replace(/משתמש יחיד/g, ROLE_HE.member);
+    if (SCREENS.team) {
+      const _tR = SCREENS.team.render;
+      SCREENS.team.render = function () { return relabel(_tR.apply(this, arguments)); };
+    }
+    function seedDept(n) {
+      n = String(n || '').trim();
+      if (!n) return '';
+      if (!DEPTS.includes(n)) {
+        DEPTS.push(n);
+        DEPT_C[n] = DEPT_COLORS[(DEPTS.length - 1) % DEPT_COLORS.length];
+        if (typeof TOPICS !== 'undefined' && !TOPICS[n]) TOPICS[n] = TOPICS[DEPTS[0]] || [];
+        if (typeof TAG_BANK !== 'undefined' && !TAG_BANK[n]) TAG_BANK[n] = ['עדכון_לתושבים'];
+      }
+      if (!DEPT_INFO[n]) DEPT_INFO[n] = { lead: '', route: 'full', phones: [], mails: [], appr: null };
+      return n;
+    }
+    const _inviteUser = ACT.inviteUser;
+    ACT.inviteUser = () => {
+      _inviteUser();
+      const k = $('#ivKind'), w = $('#ivDeptWrap');
+      if (!k || !w) return;
+      k.innerHTML = '<option value="dept">מחלקה בארגון (רואה את המחלקה שלה בלבד)</option><option value="ext">הרשאת מנהל (גישה מלאה: כל המערכת, מחלקות ואישורים)</option>';
+      w.innerHTML = '<label for="ivDept">מחלקה</label><input type="text" id="ivDept" list="ivDeptList" placeholder="שם המחלקה, למשל: תרבות ופנאי" autocomplete="off"><datalist id="ivDeptList">' + DEPTS.map((d) => '<option value="' + esc(d) + '">').join('') + '</datalist>';
+      const note = $('#drawer .note');
+      if (note) note.innerHTML = ic('shield', 16) + '<span>מחלקה בארגון רואה רק את התוכן שלה; בלי ההרשאה שלמעלה כל תוכן שלה עובר אישור. הרשאת מנהל פותחת גם מחלקות ומשתמשים, ומגבלת המחלקות של המנוי חלה על כולם יחד.</span>';
+    };
+    const _doInvite = ACT.doInvite;
+    ACT.doInvite = async () => {
+      const kind = $('#ivKind') ? $('#ivKind').value : 'dept';
+      const dept = kind === 'dept' ? seedDept($('#ivDept') && $('#ivDept').value) : '';
+      if (kind === 'dept' && !dept) { toast('חסר שם מחלקה', 'כתבו את שם המחלקה.', 'err'); return; }
+      const phone = ($('#ivPhone') && $('#ivPhone').value || '').trim();
+      const email = ($('#ivMail') && $('#ivMail').value || '').trim().toLowerCase();
+      const before = (L.members || []).length;
+      await _doInvite();
+      if ((L.members || []).length === before) return; // not created
+      // the phone and the e-mail given at creation are the new user's access details
+      if (dept && DEPT_INFO[dept]) {
+        const di = DEPT_INFO[dept];
+        if (phone && !di.phones.includes(phone)) di.phones.push(phone);
+        if (email && !di.mails.includes(email)) di.mails.push(email);
+        const nm = ($('#ivName') && $('#ivName').value || '').trim();
+        if (!di.lead && nm) di.lead = nm;
+      }
+      render(); flush();
+    };
+    // a department user sees its own phone and e-mail under settings > access
+    if (SCREENS.settings) {
+      const _sR = SCREENS.settings.render;
+      SCREENS.settings.render = function () {
+        if (isMember()) { const d = S.dept; const di = d && DEPT_INFO[d]; if (di) { if (L.me.phone && !di.phones.includes(L.me.phone)) di.phones.push(L.me.phone); if (L.me.email && !di.mails.includes(L.me.email)) di.mails.push(L.me.email); } }
+        return _sR.apply(this, arguments);
+      };
+    }
+
+    /* ===== 2. two brands: the organisation's and a second one, with a switch ===== */
+    // BRAND is always the active brand; the inactive one sleeps in BRAND.alt (name in BRAND.altName). Switching swaps them.
+    const brandCore = (b) => { const c = Object.assign({}, b); delete c.alt; delete c.which; return c; };
+    function swapBrand() {
+      const alt = BRAND.alt; if (!alt) return;
+      const cur = brandCore(BRAND);
+      const which = BRAND.which === 'second' ? 'main' : 'second';
+      replaceObj(BRAND, Object.assign(deepCopy(alt), { alt: cur, which }));
+      S.brandEdit = false; S.brandDraft = null;
+    }
+    const name2Of = () => (BRAND.which === 'second' ? BRAND.name2 : BRAND.alt && BRAND.alt.name2) || 'מותג שני';
+    ACT.brandSwitch = () => { if (!BRAND.alt) return; swapBrand(); render(); flush(); toast('המותג הפעיל הוחלף', BRAND.which === 'second' ? (BRAND.name2 || 'המותג השני') + ' פעיל עכשיו.' : 'מותג הארגון פעיל עכשיו.'); };
+    ACT.brandSecond = () => {
+      if (BRAND.alt) return;
+      openModal('<div class="mb"><div class="m-ic">' + ic('palette', 20) + '</div><h3>הקמת מותג שני</h3><p>הארגון יעבוד עם שני מותגים במקביל, ואפשר לעבור ביניהם במתג. המותג השני מתחיל מעותק של מותג הארגון: לוגו, צבעים וכללי כתיבה משלו.</p>' +
+        '<div class="field" style="margin-top:14px"><label for="b2Name">שם המותג השני</label><input type="text" id="b2Name" placeholder="לדוגמה: החברה הכלכלית"></div></div>' +
+        '<div class="modal-foot"><button class="btn btn-primary" data-act="brandSecondGo">הקמה ומעבר למותג השני</button><button class="btn" data-act="closeModal">ביטול</button></div>');
+    };
+    ACT.brandSecondGo = () => {
+      const n = ($('#b2Name') && $('#b2Name').value || '').trim() || 'מותג שני';
+      const main = brandCore(BRAND);
+      const second = deepCopy(main); second.kit = null; second.tpls = []; second.docs = []; second.name2 = n;
+      replaceObj(BRAND, Object.assign(second, { alt: main, which: 'second' }));
+      S.brandEdit = false; S.brandDraft = null;
+      closeModal(); render(); flush();
+      toast('המותג השני הוקם', n + ' פעיל עכשיו. העלו לו לוגו משלו בלשונית לוגו.');
+    };
+    ACT.brandSecondDel = () => {
+      confirmModal({ title: 'למחוק את המותג השני?', body: 'נכסי המותג השני יימחקו והארגון יחזור לעבוד עם מותג אחד.', ok: 'מחיקת המותג השני', tone: 'bad', icon: 'x',
+        onOk: () => { if (BRAND.which === 'second') swapBrand(); delete BRAND.alt; delete BRAND.which; render(); flush(); toast('המותג השני נמחק', ''); } });
+    };
+    function brandBar() {
+      const two = !!BRAND.alt;
+      const second = BRAND.which === 'second';
+      const n2 = name2Of();
+      return '<div class="note bsw" style="margin-bottom:14px;align-items:center;gap:12px">' + ic('palette', 16) +
+        (two
+          ? '<span><b>שני מותגים.</b> המתג קובע איזה מותג פעיל בגרפיקות, במסמכים ובסרטונים.</span>' +
+            '<span class="bsw-tg" style="margin-inline-start:auto;display:inline-flex;align-items:center;gap:10px"><span class="' + (second ? 't-sub' : '') + '" style="font-weight:700">מותג הארגון</span><button class="sw ' + (second ? 'on' : '') + '" data-act="brandSwitch" role="switch" aria-checked="' + second + '" aria-label="מעבר בין המותגים"></button><span class="' + (second ? '' : 't-sub') + '" style="font-weight:700">' + esc(n2) + '</span>' + (canManageBrand() ? '<button class="btn btn-sm btn-quiet-bad" data-act="brandSecondDel" title="מחיקת המותג השני">' + ic('x', 13) + '</button>' : '') + '</span>'
+          : '<span><b>מותג אחד.</b> ארגון שעובד תחת שני מותגים יכול להקים מותג שני ולעבור ביניהם במתג.</span>' + (canManageBrand() ? '<button class="btn btn-sm" style="margin-inline-start:auto" data-act="brandSecond">' + ic('plus', 14) + ' הקמת מותג שני</button>' : '')) +
+        '</div>';
+    }
+    const canManageBrand = () => !isMember();
+    // a department user: the organisation's two brands, or a brand of its own; nothing is deleted when switching
+    {
+      const _slices = L.memberSlices;
+      L.memberSlices = function (st) {
+        _slices(st);
+        if (!isMember()) return;
+        const mb = st && st.memberBrand && st.memberBrand[L.me.id];
+        S.ownBrandKeep = mb && mb.brand ? mb.brand : null;
+        if (!S.ownBrand && mb && mb.which === 'second' && BRAND.alt && BRAND.which !== 'second') swapBrand();
+        S.brandWhich = BRAND.which === 'second' ? 'second' : 'main';
+      };
+      L.memberPatch = function () {
+        if (!isMember()) return null;
+        const mid = L.me.id;
+        return { memberBrand: { [mid]: { own: !!S.ownBrand, brand: S.ownBrand ? BRAND : (S.ownBrandKeep || null), which: S.ownBrand ? null : (BRAND.which === 'second' ? 'second' : 'main') } }, memberChannels: { [mid]: channels } };
+      };
+      ACT.brandOwn = () => {
+        const go2 = () => { S.ownBrandKeep = S.ownBrandKeep || deepCopy(brandCore(BRAND)); S.ownBrand = true; replaceObj(BRAND, deepCopy(S.ownBrandKeep)); render(); flush(); toast('נכסי מותג משלך', 'המחלקה עובדת עכשיו עם המותג שלה. אפשר לחזור למותג הארגון במתג.'); };
+        if (S.ownBrandKeep) { go2(); return; }
+        confirmModal({ title: 'לבנות נכסי מותג משלך?', body: 'המחלקה תקבל מותג משלה, בנפרד ממותג הארגון. מתחילים מעותק של מותג הארגון ומשנים מה שרוצים. המתג מחליף בין השניים בכל רגע.', ok: 'בניית נכסי מותג משלי', icon: 'palette', onOk: go2 });
+      };
+      ACT.brandUseOrg = () => { S.ownBrandKeep = deepCopy(BRAND); S.ownBrand = false; replaceObj(BRAND, deepCopy(L.orgBrand || BRAND)); if (S.brandWhich === 'second' && BRAND.alt && BRAND.which !== 'second') swapBrand(); render(); flush(); toast('מותג הארגון', 'המחלקה משתמשת במותג הארגון. המותג שלך נשמר.'); };
+      ACT.brandOwnToggle = () => (S.ownBrand ? ACT.brandUseOrg() : ACT.brandOwn());
+      ACT.brandSwitchM = () => { if (S.ownBrand || !BRAND.alt) return; swapBrand(); S.brandWhich = BRAND.which === 'second' ? 'second' : 'main'; render(); flush(); toast('המותג הפעיל הוחלף', ''); };
+      const _bR2 = SCREENS.brand.render;
+      SCREENS.brand.render = function () {
+        let h = _bR2.apply(this, arguments);
+        if (!isMember()) return h.replace(/(<div class="tabs">)/, brandBar() + '$1');
+        const own = !!S.ownBrand, has2 = !own && !!BRAND.alt, second = BRAND.which === 'second';
+        const bar = '<div class="note bsw" style="margin-bottom:14px;align-items:center;gap:12px">' + ic('palette', 16) +
+          '<span><b>' + (own ? 'נכסי מותג משלך.' : 'מותג הארגון.') + '</b> ' + (own ? 'הגרפיקות של המחלקה נבנות לפי המותג הזה.' : 'מנוהל על ידי הרשאת מנהל ואינו ניתן לשינוי מכאן.') + '</span>' +
+          '<span class="bsw-tg" style="margin-inline-start:auto;display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+          (has2 ? '<span class="' + (second ? 't-sub' : '') + '" style="font-weight:700">מותג הארגון</span><button class="sw ' + (second ? 'on' : '') + '" data-act="brandSwitchM" role="switch" aria-checked="' + second + '" aria-label="מעבר בין מותגי הארגון"></button><span class="' + (second ? '' : 't-sub') + '" style="font-weight:700">' + esc(BRAND.name2 || (BRAND.alt && BRAND.alt.name2) || 'מותג שני') + '</span><span class="t-sub">·</span>' : '') +
+          '<span class="' + (own ? 't-sub' : '') + '" style="font-weight:700">הארגון</span><button class="sw ' + (own ? 'on' : '') + '" data-act="brandOwnToggle" role="switch" aria-checked="' + own + '" aria-label="מותג משלי"></button><span class="' + (own ? '' : 't-sub') + '" style="font-weight:700">מותג משלי</span></span></div>';
+        h = h.replace(/<div class="note" style="margin-bottom:14px;align-items:center">[\s\S]*?<\/div>/, bar);
+        return h;
+      };
+    }
+
+    /* ===== 3. channels: the page's own picture and name next to the network mark ===== */
+    const picOf = (k) => { const a = (L.pub && L.pub.acc || []).find((x) => x.ch === k); return a && a.pic && /^https:\/\//.test(a.pic) ? a.pic : ''; };
+    if (SCREENS.channels) {
+      const _cR = SCREENS.channels.render;
+      SCREENS.channels.render = function () {
+        let h = _cR.apply(this, arguments);
+        channels.forEach((c) => {
+          if (!(c.st === 'מחובר' || c.st === 'דורש חידוש הרשאה')) return;
+          const pic = picOf(c.k);
+          const nm = '<span class="ch-main"><b>' + CH[c.k].t + '</b><span class="t-sub">' + esc(c.acc) + '</span></span>';
+          if (!h.includes(nm)) return;
+          h = h.replace(nm, '<span class="ch-main ch-page"><b>' + CH[c.k].t + '</b><span class="ch-acc">' + (pic ? '<img class="ch-pic" src="' + esc(pic) + '" alt="">' : '<span class="ch-pic ch-pic-i">' + esc(initials(c.acc)) + '</span>') + '<span class="t-sub" style="font-weight:700;color:var(--ink)">' + esc(c.acc) + '</span>' + (c.fol && c.fol !== '-' ? '<span class="t-sub">· ' + esc(c.fol) + ' עוקבים</span>' : '') + '</span></span>');
+        });
+        return h;
+      };
+    }
+    css.textContent += `
+.ch-acc{display:inline-flex;align-items:center;gap:8px;min-width:0}.ch-pic{width:26px;height:26px;border-radius:50%;object-fit:cover;flex:none;border:1px solid var(--line,#DDE3EC);background:#fff}
+.ch-pic-i{display:inline-grid;place-items:center;font-size:10px;font-weight:800;color:var(--ink-2)}
+.bsw .sw{margin:0}`;
+
+    /* ===== 4-7. approvals: compact rows, view, fix note, self fix, approve = scheduled or published ===== */
+    const thumbOf = (it) => { const m = it && it.media; if (!m) return ''; if (m.thumb) return m.thumb; if (m.kind === 'graphic' && m.url) return m.url; if (m.image) return m.image; return ''; };
+    const approvedOf = (it) => Array.isArray(it.log) && it.log.some((e) => e.k === 'approved' || (e.k === 'scheduled' && it.log.some((x) => x.k === 'pending')));
+    const stLabel = (it) => (it.s === 'scheduled' && approvedOf(it) ? '<span class="badge s-scheduled">' + ic('checkc', 13, 2) + 'אושר ותוזמן</span>' : it.s === 'published' && approvedOf(it) ? '<span class="badge s-published">' + ic('checkc', 13, 2) + 'אושר ופורסם</span>' : badge(it.s));
+    const me = () => curUser().n;
+    const apList = () => {
+      const f = S.apF || {};
+      return items.filter((i) => i.s === 'pending' && i.o !== me() && (!f.dept || i.d === f.dept) && (!f.who || i.o === f.who) && (!f.src || (i.src || 'system') === f.src));
+    };
+    function apRow(x) {
+      const th = thumbOf(x);
+      const vid = x.media && x.media.kind === 'video';
+      return '<div class="ap-row card" data-id="' + x.id + '">' +
+        '<div class="ap-info"><div class="ap-t"><b>' + esc(x.t) + '</b>' + (typeof srcChip === 'function' ? srcChip(x) : '') + '</div>' +
+        '<div class="ap-m t-sub">' + esc(x.o) + ' · ' + esc(x.d) + ' · ' + (x.ch || []).map(chName).join(', ') + ' · ' + (x.pub ? 'מתוזמן ל-' + esc(x.pub) : 'פרסום מיידי עם האישור') + (x.wait ? ' · ממתין ' + esc(x.wait) : '') + '</div>' +
+        (x.body ? '<div class="ap-b t-sub">' + esc(String(x.body).slice(0, 140)) + (x.body.length > 140 ? '…' : '') + '</div>' : '') +
+        '<div class="ap-acts"><button class="btn btn-sm btn-ok" data-act="approve:' + x.id + '">' + ic('check', 14) + ' אישור</button><button class="btn btn-sm" data-act="askfix:' + x.id + '">' + ic('undo', 14) + ' תיקון</button><button class="btn btn-sm" data-act="apEdit:' + x.id + '">' + ic('edit', 14) + ' תיקון בעצמי</button><button class="btn btn-sm" data-act="apView:' + x.id + '">' + ic('eye', 14) + ' צפייה</button><button class="btn btn-sm btn-quiet-bad" data-act="reject:' + x.id + '">' + ic('x', 14) + ' דחייה</button></div></div>' +
+        '<div class="ap-th" data-act="apView:' + x.id + '" role="button" tabindex="0" aria-label="צפייה">' + (th ? '<img src="' + esc(th) + '" alt="">' + (vid ? '<span class="ap-play">' + ic('play', 16) + '</span>' : '') : '<span class="ap-noimg">' + ic(x.ty === 'video' ? 'vid' : x.ty === 'doc' ? 'doc' : 'img', 20) + '</span>') + '</div></div>';
+    }
+    if (SCREENS.approvals) {
+      const _aR = SCREENS.approvals.render;
+      SCREENS.approvals.render = function () {
+        let h = _aR.apply(this, arguments);
+        const tab = S.tab.approvals || 'mine';
+        if (tab === 'mine') {
+          if (isMember()) return h;
+          const list = apList();
+          if (!list.length) return h;
+          h = h.replace(/<div class="grid" style="grid-template-columns:1fr;gap:10px;margin-bottom:18px">[\s\S]*$/, '<div class="ap-list">' + list.map(apRow).join('') + '</div>');
+          return h;
+        }
+        // sent / history: the requester sees "approved and scheduled / published", and a fix button on items returned to it
+        items.forEach((x) => {
+          const row = new RegExp('<tr><td data-l="כותרת"><span class="row-title" data-act="open:' + x.id + '">[\\s\\S]*?<\\/tr>');
+          const m = h.match(row); if (!m) return;
+          let r = m[0];
+          if (approvedOf(x) && (x.s === 'scheduled' || x.s === 'published')) r = r.replace(/<td data-l="סטטוס">[\s\S]*?<\/td>/, '<td data-l="סטטוס">' + stLabel(x) + '</td>');
+          if (x.s === 'fix' && x.o === me()) r = r.replace('<button class="btn btn-sm" data-act="open:' + x.id + '">פתיחה</button>', '<button class="btn btn-sm btn-primary" data-act="fixGo:' + x.id + '">' + ic('edit', 14) + ' תיקון</button> <button class="btn btn-sm" data-act="open:' + x.id + '">פתיחה</button>');
+          h = h.replace(m[0], r);
+        });
+        return h;
+      };
+    }
+    css.textContent += `
+.ap-list{display:flex;flex-direction:column;gap:8px;max-width:1100px}
+.ap-row{display:flex;gap:14px;align-items:stretch;padding:10px 14px;min-height:0}
+.ap-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;justify-content:center}
+.ap-t{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14.5px}.ap-t b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.ap-m{font-size:12.5px}.ap-b{font-size:12.5px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ap-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}.ap-acts .btn-sm{padding:4px 10px;font-size:12.5px}
+.ap-th{width:96px;height:96px;flex:none;border-radius:12px;overflow:hidden;background:var(--surface-2,#F3F5F9);display:grid;place-items:center;position:relative;cursor:pointer;border:1px solid var(--line-2,#E6EAF2)}
+.ap-th img{width:100%;height:100%;object-fit:cover;display:block}.ap-play{position:absolute;inset:0;display:grid;place-items:center;color:#fff;background:rgba(0,0,0,.25)}
+.ap-noimg{color:var(--ink-3)}
+.ap-view{display:grid;place-items:center;max-height:78vh}.ap-view img,.ap-view video{max-width:100%;max-height:72vh;border-radius:12px;display:block}
+.fix-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+@media (max-width:640px){.ap-row{flex-wrap:wrap}.ap-th{width:72px;height:72px}}`;
+    ACT.apView = (id) => {
+      const it = itemById(id); if (!it) return;
+      const m = it.media || {};
+      const vid = m.kind === 'video' && m.url;
+      const img = !vid && (m.url || thumbOf(it));
+      const body = vid ? '<video src="' + esc(m.url) + '" controls autoplay playsinline' + (m.thumb ? ' poster="' + esc(m.thumb) + '"' : '') + '></video>'
+        : img ? '<img src="' + esc(img) + '" alt="' + esc(it.t) + '">' : '<div class="preview-pane" style="width:min(420px,90vw)">' + postPreview(it) + '</div>';
+      openModal('<div class="mb" style="max-width:none"><h3 style="margin:0 0 10px">' + esc(it.t) + '</h3><div class="ap-view">' + body + '</div>' + (it.body ? '<p class="t-sub" style="margin:12px 0 0;line-height:1.6;max-width:640px">' + esc(it.body) + '</p>' : '') + '</div>' +
+        '<div class="modal-foot">' + (!isMember() && it.s === 'pending' ? '<button class="btn btn-ok" data-act="approve:' + it.id + '">' + ic('check', 15) + ' אישור</button><button class="btn" data-act="askfix:' + it.id + '">' + ic('undo', 15) + ' תיקון</button>' : '') + '<button class="btn" data-act="goItem:' + it.id + '">פתיחת הפריט</button><button class="btn" data-act="closeModal">סגירה</button></div>');
+    };
+    // the organisation user fixes the post itself: the same editing screen as the creator, the item stays the same item
+    ACT.apEdit = (id) => { closeModal(); closeDrawer(); ACT.edit(id); };
+    ACT.fixGo = (id) => { closeModal(); closeDrawer(); ACT.edit(id); };
+    // approve: with a date it is scheduled, without a date it goes out now; the requester sees "approved and ..."
+    ACT.approve = (id) => {
+      const it = itemById(id); if (!it) return;
+      const now = !it.pub;
+      confirmModal({ title: 'לאשר את הפריט?', body: now ? 'הפריט „' + esc(it.t) + '” יפורסם מיד לערוצים שנבחרו.' : 'הפריט „' + esc(it.t) + '” יתוזמן ל-' + esc(it.pub) + ' ויופיע בלוח התוכן.', ok: now ? 'אישור ופרסום' : 'אישור ותזמון', tone: 'ok', icon: 'checkc',
+        onOk: () => {
+          if (L.itemLog) L.itemLog(it, 'approved', '');
+          it.s = now ? 'published' : 'scheduled'; it.u = 'עכשיו';
+          closeDrawer(); closeModal(); render(); flush();
+          toast(now ? 'אושר ופורסם' : 'אושר ותוזמן', now ? 'יוצא עכשיו לערוצים. הסטטוס אצל המבקש: אושר ופורסם.' : 'יוצא במועד ' + it.pub + '. הסטטוס אצל המבקש: אושר ותוזמן.');
+          const next = apList()[0];
+          if (next && S.route === 'approvals') setTimeout(() => toast('הפריט הבא בתור', '„' + next.t + '” ממתין לבדיקה.'), 700);
+        } });
+    };
+    // askfix: the note goes back to the creator, who sees it on the item with a fix button
+    ACT.askfix = (id) => {
+      const it = itemById(id); if (!it) return;
+      confirmModal({ title: 'בקשת תיקון', body: 'כתבו מה צריך לתקן. הפריט יחזור ליוצר עם ההערה, והוא יפתח אותו לתיקון הטקסט או העיצוב.', ok: 'שליחת בקשת תיקון', icon: 'undo',
+        extra: '<div class="field" style="margin-top:14px"><textarea id="fixTxt" rows="3" placeholder="לדוגמה: להוסיף את שעת הסיום ואת פרטי החניה"></textarea></div>',
+        onOk: () => { const t = ($('#fixTxt') && $('#fixTxt').value.trim()) || 'נדרש עדכון לפני האישור.'; it.s = 'fix'; it.fixnote = t; it.u = 'עכשיו'; closeDrawer(); closeModal(); render(); flush(); toast('הבקשה נשלחה', '„' + it.t + '” חזר ליוצר עם ההערה.'); } });
+    };
+    // the item screen: a returned item shows the note and opens the fix screen in one click
+    if (SCREENS.item) {
+      const _iR = SCREENS.item.render;
+      SCREENS.item.render = function () {
+        let h = _iR.apply(this, arguments);
+        const it = items.find((x) => x.id === S.itemId) || items[0];
+        if (!it) return h;
+        let bar = '';
+        if (it.s === 'fix') bar = '<div class="note warn fix-bar">' + ic('undo', 16) + '<span><b>הוחזר לתיקון.</b> ' + esc(it.fixnote || '') + '</span><button class="btn btn-primary btn-sm" style="margin-inline-start:auto" data-act="fixGo:' + it.id + '">' + ic('edit', 14) + ' תיקון הטקסט או העיצוב</button></div>';
+        else if ((it.s === 'scheduled' || it.s === 'published') && approvedOf(it)) bar = '<div class="note fix-bar">' + ic('checkc', 16) + '<span><b>' + (it.s === 'published' ? 'אושר ופורסם.' : 'אושר ותוזמן.') + '</b> ' + (it.s === 'published' ? 'הפוסט יצא לערוצים.' : 'יוצא במועד ' + esc(it.pub) + '.') + '</span></div>';
+        else if (it.s === 'pending' && !isMember() && it.o !== me()) bar = '<div class="note fix-bar">' + ic('clock', 16) + '<span><b>ממתין לאישור.</b></span><span style="margin-inline-start:auto;display:inline-flex;gap:6px;flex-wrap:wrap"><button class="btn btn-ok btn-sm" data-act="approve:' + it.id + '">' + ic('check', 14) + ' אישור</button><button class="btn btn-sm" data-act="askfix:' + it.id + '">' + ic('undo', 14) + ' תיקון</button><button class="btn btn-sm" data-act="apEdit:' + it.id + '">' + ic('edit', 14) + ' תיקון בעצמי</button></span></div>';
+        return bar ? h.replace('<div class="split-wide">', bar + '<div class="split-wide">') : h;
+      };
+    }
+
+    /* ===== 8. own media: a finished graphic or video the user made, no AI ===== */
+    const _layPick = typeof layPickHtml === 'function' ? layPickHtml : null;
+    if (_layPick) {
+      layPickHtml = function (m, busy) {
+        let h = _layPick(m, busy);
+        const on = m.layout === 'own';
+        return h.replace('</div>', '<button class="' + (on ? 'on' : '') + '" data-act="gOwn"' + (busy ? ' disabled' : '') + ' role="radio" aria-checked="' + on + '">' + ic('upload', 13) + ' העלאת גרפיקה מוכנה (בלי AI)</button></div>') +
+          (on && m.url ? '<div class="t-sub" style="margin-top:6px">' + ic('checkc', 13) + ' הקובץ שהעליתם מוצג כמו שהוא. <button class="link-btn" data-act="gOwn" style="background:none;border:0;padding:0;font:inherit;color:var(--brand);font-weight:700;cursor:pointer">החלפת קובץ</button></div>' : '');
+      };
+    }
+    const _gfxRun = typeof gfxRun === 'function' ? gfxRun : null;
+    if (_gfxRun) gfxRun = async function (w, opts) { const m = w.media; if (m && m.layout === 'own' && m.url && !(opts && opts.layout && opts.layout !== 'own')) { m.busy = ''; render(); return; } return _gfxRun(w, opts); };
+    ACT.gOwn = async () => {
+      const w = S.wiz; if (!w || !w.media || w.media.busy) return;
+      collectWiz();
+      const [f] = await uploadPicked('image/*,video/*');
+      if (!f || S.wiz !== w) return;
+      const m = w.media; const vid = isVid(f.name);
+      m.layout = 'own'; m.url = f.url; m.design = f.url; m.thumb = vid ? '' : f.url; m.image = vid ? '' : f.url; m.kind = vid ? 'video' : 'graphic';
+      m.model = ''; m.qa = null; m.warn = null; m.stale = false; m.busy = ''; m.ready = true; m.uploaded = true; m.fmt = w.fmt || '1:1'; m.ar = m.ar || '1/1';
+      render();
+      toast('הקובץ הועלה', 'הגרפיקה שלכם תפורסם כמו שהיא, בלי שינוי.');
+    };
+    // the preview shows the uploaded file as is
+    const _wizR = SCREENS.wizard && SCREENS.wizard.mount;
+    if (SCREENS.wizard) SCREENS.wizard.mount = function () {
+      _wizR && _wizR.apply(this, arguments);
+      const w = S.wiz; const m = w && w.media;
+      if (!m || m.layout !== 'own' || !m.url) return;
+      const pane = $('.preview-pane'); if (!pane) return;
+      pane.innerHTML = m.kind === 'video' ? '<video src="' + esc(m.url) + '" controls playsinline style="width:100%;border-radius:12px;display:block"></video>' : '<img src="' + esc(m.url) + '" alt="" style="width:100%;border-radius:12px;display:block">';
+    };
+  })();
+
   /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */
   (function () {
     const KEY = 'pos_a11y';
