@@ -312,7 +312,7 @@
     const chip = $('#demoChip');
     if (chip) chip.style.display = L.demo ? '' : 'none';
     if (!L.org || S.imp || isDept()) {
-      if (L.org && isDept() && !S.imp) $('#btnOrg .otx').textContent = L.org.name + ' · ' + S.dept;
+      if (L.org && isDept() && !S.imp) { $('#btnOrg .otx').textContent = L.org.name + ' · ' + S.dept; $('#userNm').textContent = S.dept; $('#userRl').textContent = (L.me && L.me.name) || 'מחלקה בארגון'; $('#userAv').textContent = initials(L.me && L.me.name) || S.dept.slice(0, 2); }
       return;
     }
     $('#btnOrg .otx').textContent = L.org.name + (isBasic() ? '' : ' · ' + (S.user.dept || 'דוברות'));
@@ -4450,7 +4450,17 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         '<div class="ap-info"><div class="ap-t"><b>' + esc(x.t) + '</b>' + (typeof srcChip === 'function' ? srcChip(x) : '') + '</div>' +
         '<div class="ap-m t-sub">' + esc(x.o) + ' · ' + esc(x.d) + ' · ' + (x.ch || []).map(chName).join(', ') + ' · ' + (x.pub ? 'מתוזמן ל-' + esc(x.pub) : 'פרסום מיידי עם האישור') + (x.wait ? ' · ממתין ' + esc(x.wait) : '') + '</div>' +
         (x.body ? '<div class="ap-b t-sub">' + esc(String(x.body).slice(0, 140)) + (x.body.length > 140 ? '…' : '') + '</div>' : '') +
-        '<div class="ap-acts"><button class="btn btn-sm btn-ok" data-act="approve:' + x.id + '">' + ic('check', 14) + ' אישור</button><button class="btn btn-sm" data-act="askfix:' + x.id + '">' + ic('undo', 14) + ' תיקון</button><button class="btn btn-sm" data-act="apEdit:' + x.id + '">' + ic('edit', 14) + ' תיקון בעצמי</button><button class="btn btn-sm" data-act="apView:' + x.id + '">' + ic('eye', 14) + ' צפייה</button><button class="btn btn-sm btn-quiet-bad" data-act="reject:' + x.id + '">' + ic('x', 14) + ' דחייה</button></div></div>' +
+        '<div class="ap-acts"><button class="btn btn-sm btn-ok" data-act="approve:' + x.id + '">' + ic('check', 14) + ' אישור</button><button class="btn btn-sm" data-act="askfix:' + x.id + '">' + ic('undo', 14) + ' תיקון</button><button class="btn btn-sm" data-act="apView:' + x.id + '">' + ic('eye', 14) + ' צפייה</button><button class="btn btn-sm btn-quiet-bad" data-act="reject:' + x.id + '">' + ic('x', 14) + ' דחייה</button></div></div>' +
+        '<div class="ap-th" data-act="apView:' + x.id + '" role="button" tabindex="0" aria-label="צפייה">' + (th ? '<img src="' + esc(th) + '" alt="">' + (vid ? '<span class="ap-play">' + ic('play', 16) + '</span>' : '') : '<span class="ap-noimg">' + ic(x.ty === 'video' ? 'vid' : x.ty === 'doc' ? 'doc' : 'img', 20) + '</span>') + '</div></div>';
+    }
+    function fixRow(x) {
+      const th = thumbOf(x);
+      const vid = x.media && x.media.kind === 'video';
+      return '<div class="ap-row card" data-id="' + x.id + '">' +
+        '<div class="ap-info"><div class="ap-t"><b>' + esc(x.t) + '</b><span class="badge s-fix">' + ic('undo', 13, 2) + 'נדרש תיקון</span></div>' +
+        '<div class="ap-m t-sub">' + (x.ch || []).map(chName).join(', ') + ' · ' + (x.pub ? 'מתוזמן ל-' + esc(x.pub) : 'פרסום מיידי עם האישור') + ' · עודכן ' + esc(x.u || '') + '</div>' +
+        '<div class="ap-note">' + ic('msg', 13) + ' ' + esc(x.fixnote || 'נדרש עדכון לפני האישור.') + '</div>' +
+        '<div class="ap-acts"><button class="btn btn-sm btn-primary" data-act="fixGo:' + x.id + '">' + ic('edit', 14) + ' תיקון הטקסט או העיצוב</button><button class="btn btn-sm" data-act="apView:' + x.id + '">' + ic('eye', 14) + ' צפייה</button><button class="btn btn-sm" data-act="open:' + x.id + '">פתיחה</button></div></div>' +
         '<div class="ap-th" data-act="apView:' + x.id + '" role="button" tabindex="0" aria-label="צפייה">' + (th ? '<img src="' + esc(th) + '" alt="">' + (vid ? '<span class="ap-play">' + ic('play', 16) + '</span>' : '') : '<span class="ap-noimg">' + ic(x.ty === 'video' ? 'vid' : x.ty === 'doc' ? 'doc' : 'img', 20) + '</span>') + '</div></div>';
     }
     if (SCREENS.approvals) {
@@ -4458,11 +4468,26 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       SCREENS.approvals.render = function () {
         let h = _aR.apply(this, arguments);
         const tab = S.tab.approvals || 'mine';
+        if (isMember()) {
+          const nFix = items.filter((i) => i.s === 'fix').length;
+          h = h.replace(/(data-act="tab:approvals:sent">)נשלחו וטופלו<span class="cnt">\d+<\/span>/, '$1דרוש תיקון<span class="cnt">' + nFix + '</span>');
+        }
         if (tab === 'mine') {
           if (isMember()) return h;
           const list = apList();
           if (!list.length) return h;
           h = h.replace(/<div class="grid" style="grid-template-columns:1fr;gap:10px;margin-bottom:18px">[\s\S]*$/, '<div class="ap-list">' + list.map(apRow).join('') + '</div>');
+          return h;
+        }
+        if (isMember() && tab === 'sent') {
+          // a department: the returned items, as compact rows with the reviewer's note and a fix button
+          const f = S.apF || {};
+          const list = items.filter((i) => i.s === 'fix' && (!f.dept || i.d === f.dept) && (!f.who || i.o === f.who) && (!f.src || (i.src || 'system') === f.src));
+          const body = list.length ? '<div class="ap-list">' + list.map(fixRow).join('') + '</div>'
+            : emptyState({ i: 'checkc', t: 'אין פריטים שדורשים תיקון', d: 'פריט שיוחזר לתיקון יופיע כאן עם ההערה של המאשר.' });
+          if (/<div class="tbl-wrap">/.test(h)) h = h.replace(/<div class="tbl-wrap">[\s\S]*$/, body);
+          else if (/<div class="empty">/.test(h)) h = h.replace(/<div class="empty">[\s\S]*$/, body);
+          else h += body;
           return h;
         }
         // sent / history: the requester sees "approved and scheduled / published", and a fix button on items returned to it
@@ -4487,6 +4512,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .ap-th{width:66px;height:66px;flex:none;border-radius:12px;overflow:hidden;background:var(--surface-2,#F3F5F9);display:grid;place-items:center;position:relative;cursor:pointer;border:1px solid var(--line-2,#E6EAF2)}
 .ap-th img{width:100%;height:100%;object-fit:cover;display:block}.ap-play{position:absolute;inset:0;display:grid;place-items:center;color:#fff;background:rgba(0,0,0,.25)}
 .ap-noimg{color:var(--ink-3)}
+.ap-note{font-size:12.5px;color:var(--ink-2);background:var(--surface-2,#F3F5F9);border-radius:8px;padding:4px 8px;display:inline-flex;gap:6px;align-items:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ap-view{display:grid;place-items:center;max-height:78vh}.ap-view img,.ap-view video{max-width:100%;max-height:72vh;border-radius:12px;display:block}
 .fix-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
 @media (max-width:640px){.ap-row{flex-wrap:wrap}.ap-th{width:72px;height:72px}}`;
@@ -4498,7 +4524,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const body = vid ? '<video src="' + esc(m.url) + '" controls autoplay playsinline' + (m.thumb ? ' poster="' + esc(m.thumb) + '"' : '') + '></video>'
         : img ? '<img src="' + esc(img) + '" alt="' + esc(it.t) + '">' : '<div class="preview-pane" style="width:min(420px,90vw)">' + postPreview(it) + '</div>';
       openModal('<div class="mb" style="max-width:none"><h3 style="margin:0 0 10px">' + esc(it.t) + '</h3><div class="ap-view">' + body + '</div>' + (it.body ? '<p class="t-sub" style="margin:12px 0 0;line-height:1.6;max-width:640px">' + esc(it.body) + '</p>' : '') + '</div>' +
-        '<div class="modal-foot">' + (!isMember() && it.s === 'pending' ? '<button class="btn btn-ok" data-act="approve:' + it.id + '">' + ic('check', 15) + ' אישור</button><button class="btn" data-act="askfix:' + it.id + '">' + ic('undo', 15) + ' תיקון</button>' : '') + '<button class="btn" data-act="goItem:' + it.id + '">פתיחת הפריט</button><button class="btn" data-act="closeModal">סגירה</button></div>');
+        '<div class="modal-foot">' + (!isMember() && it.s === 'pending' ? '<button class="btn btn-ok" data-act="approve:' + it.id + '">' + ic('check', 15) + ' אישור</button><button class="btn" data-act="askfix:' + it.id + '">' + ic('undo', 15) + ' תיקון</button><button class="btn" data-act="apEdit:' + it.id + '">' + ic('edit', 15) + ' תיקון בעצמי</button>' : '') + (isMember() && it.s === 'fix' && it.o === me() ? '<button class="btn btn-primary" data-act="fixGo:' + it.id + '">' + ic('edit', 15) + ' תיקון הפוסט</button>' : '') + '<button class="btn" data-act="goItem:' + it.id + '">פתיחת הפריט</button><button class="btn" data-act="closeModal">סגירה</button></div>');
     };
     // the organisation user fixes the post itself: the same editing screen as the creator, the item stays the same item
     ACT.apEdit = (id) => { closeModal(); closeDrawer(); ACT.edit(id); };
