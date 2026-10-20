@@ -8,7 +8,7 @@ export interface Style { he: string; when: string; photo: 'must' | 'good' | 'non
 export type PaletteMode = 'darkTech' | 'lightCivic' | 'boldCreative' | 'warmDoc';
 export const STYLES: Record<string, Style> = {
   documentary: { he: 'דוקומנטרי', when: 'סיכום אירוע, התנדבות, עבודות בשטח, תמונות אמיתיות שצורפו', photo: 'must', palette: 'warmDoc', energy: 'low',
-    en: 'DOCUMENTARY: one real, candid photograph fills 75-85% of the canvas, minimal processing, natural colour. The headline is restrained, set on a quiet area of the photo or on a narrow solid band at the bottom. No illustrations, no decorative shapes. The photo is the hero; typography steps back.' },
+    en: 'DOCUMENTARY: one real, candid photograph fills 70-85% of the canvas, minimal processing, natural colour. The headline is restrained, set on a quiet area of the photo or on a narrow solid band at the bottom; the other lines small and quiet in one or two rows. No illustrations, no icons, no tags, no brush strokes, no decorative lines. The photo is the hero; typography steps back.' },
   official: { he: 'רשמי וחד', when: 'הודעת רשות, שינוי בשירות, עדכון דוברות, דבר ראש הרשות', photo: 'none', palette: 'lightCivic', energy: 'low',
     en: 'OFFICIAL: flat, uniform background (light or deep brand base), strong headline as the single focal point, precise detail rows with thin line icons, generous margins, one accent band or rule. No photo unless provided. Institutional, calm, exact.' },
   comic: { he: 'קומי', when: 'פסולת, חניה, קמפיין התנהגות קליל', photo: 'must', palette: 'boldCreative', energy: 'high',
@@ -70,13 +70,15 @@ ${graphicRulesEn(o.fmt ?? 'square')}`;
 export const STYLE_PICK_HE = `בחר סגנון עיצוב אחד מהרשימה, לפי הנושא, המחלקה והמטרה:
 ${STYLE_IDS.map((id) => `${id} - ${STYLES[id].he}: ${STYLES[id].when}`).join('\n')}
 satire רק אם המשתמש ביקש סאטירה במפורש. comic רק לנושא קליל באמת. חירום ושיבושי שירות תמיד service.
+ב-documentary, representative ו-editorial הטקסט מינימלי: sub קצרה, details עד פריט אחד, cta עד 3 מילים או ריק.
 palette: darkTech | lightCivic | boldCreative | warmDoc (ברירת המחדל של הסגנון מתאימה ברוב המקרים).`;
 
 /* ---------------- QA review (independent reviewer) ---------------- */
 export const QA_PARTS = [['mobile', 'קריאות הטקסט בנייד', 25], ['hierarchy', 'היררכיה חזותית והבנת המסר', 20], ['composition', 'קומפוזיציה, מרווחים ואיזון', 15], ['imagery', 'איכות צילום, דמויות ורקעים', 10], ['brand', 'שפה מותגית ועקביות', 10], ['access', 'נגישות וניגודיות', 10], ['originality', 'מקוריות והתאמת הסגנון', 10]] as const;
 export const QA_PASS = 80;
 export const QA_REDO = 70;
-export const QA_SYS = 'You are an independent senior design reviewer for official municipal social-media graphics in Hebrew. You have not seen how this graphic was made. Judge only what is in the image against the brief and the rules. Be strict, concrete and short. Answer with JSON only.';
+export const QA_SYS = `You are an independent senior design reviewer for official municipal social-media graphics in Hebrew. You have not seen how this graphic was made. Judge only what is in the image against the brief and the rules. Be concrete and short. Answer with JSON only.
+Calibration: 85-100 = publish as is; 80-84 = publish, minor notes; 70-79 = acceptable, a resident would not notice a problem; below 70 only for a real problem a resident would notice: unreadable or wrong text, a missing required line, clutter that hides the message, off-brand colours, a dated or unprofessional look. A band that is a bit large, a margin a little under 72px, or one extra icon are notes, not failures. The ten rubric parts must add up to the score.`;
 export function qaPrompt(o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string> }) {
   const r = paletteRoles((o.colors ?? []) as string[], o.roles ?? {});
   const st = STYLES[styleOf(o.style)];
