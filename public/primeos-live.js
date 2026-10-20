@@ -4822,7 +4822,14 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const b = S.bulk;
       const fs = await uploadPicked('.xlsx,.xls,.docx,.pdf,.txt,.csv', true);
       if (!fs.length) return;
-      b.files = [...(b.files || []), ...fs]; b.planBusy = true; render();
+      b.files = [...(b.files || []), ...fs];
+      await ACT.bPlanRead();
+    };
+    // read the uploaded plan: dates, topics and texts become the slots
+    ACT.bPlanRead = async () => {
+      const b = S.bulk;
+      if (!(b.files || []).length) return;
+      b.planBusy = true; render();
       try {
         const r = await fx('generate', Object.assign(aiCtx(), { mode: 'plan', dept: myDept(), files: b.files.map((f) => ({ url: f.url, name: f.name })) }), 150000);
         b.plan = r && r.items && r.items.length ? { items: r.items, perWeek: r.perWeek || 0, note: r.note || '' } : null;
