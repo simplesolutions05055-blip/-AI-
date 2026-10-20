@@ -252,8 +252,10 @@ async function reviewContent(key: string, kind: 'doc' | 'deck' | 'video', brief:
   } catch (e) { console.error('review', e instanceof Error ? e.message : e); return null; }
 }
 // the reviewed result: the reviewer's corrected copy when the first draft fell short, with the review attached
-async function supervised(key: string, kind: 'doc' | 'deck' | 'video', brief: string, draft: any) {
-  const r = await reviewContent(key, kind, brief, draft);
+async function supervised(key: string, kind: 'doc' | 'deck' | 'video', brief: string, draft: any, ctx?: Ctx) {
+  // the organisation's own identity and site facts are known context, not invented facts
+  const known = ctx ? `שם הארגון: ${ctx.org}${ctx.dept ? ' | מחלקה: ' + ctx.dept : ''}${ctx.facts ? '\nפרטים ידועים מאתר הארגון (מותרים): ' + String(ctx.facts).slice(0, 1500) : ''}\n` : '';
+  const r = await reviewContent(key, kind, known + brief, draft);
   if (!r) return { out: draft, qa: null };
   const out = r.score < QA_PASS && r.fixed && !r.stop ? r.fixed : draft;
   return { out, qa: { score: r.score, issues: r.issues, stop: r.stop, stopWhy: r.stopWhy, fixed: out !== draft } };
@@ -521,7 +523,7 @@ ${brief}
       const ask = () => claudeObj(key, DIRECTOR_SYS + '\n' + VIDEO_RULES_HE + '\n' + s, directorPrompt(p, c, voices), 8000, [...imgs, ...fb], BRIEF_SCHEMA);
       let plan: any;
       try { plan = await ask(); } catch (e) { console.error('vbrief', e instanceof Error ? e.message : e); plan = await ask(); } // one retry
-      const rv = p.review === false ? { out: plan, qa: null } : await supervised(key, 'video', `${p.title || ''}\n${p.desc || ''}\nסוג: ${p.goal || ''} | קהל: ${p.aud || ''} | אורך: ${p.duration || 30} שניות`, plan);
+      const rv = p.review === false ? { out: plan, qa: null } : await supervised(key, 'video', `${p.title || ''}\n${p.desc || ''}\nסוג: ${p.goal || ''} | קהל: ${p.aud || ''} | אורך: ${p.duration || 30} שניות`, plan, ctx);
       return json(req, { ok: true, caps: c, ...sanitizeBrief(rv.out, p, voices), qa: rv.qa });
     }
     if (mode === 'vsample') {
@@ -566,7 +568,7 @@ ${DOC_RULES_HE}${p.style === 'data' ? `
 סגנון גרפים וטבלאות: הוסף גם "charts":[{"title":"כותרת","unit":"יחידה","type":"bar|pie","items":[{"l":"תווית","v":מספר}]}] (1-2 גרפים) ו-"table":{"head":["עמודה"],"rows":[["תא"]]}. רק מספרים שמופיעים בבריף - אסור להמציא נתונים. אם אין מספרים בבריף, החזר מערך charts ריק.` : ''}${p.style === 'designed' ? `
 סגנון מעוצב: הוסף "highlights":[{"icon":"cal|clock|pin|info|phone|users|check","t":"כותרת קצרה","d":"משפט קצר"}] (3-4 פריטים) ו-"quote":"משפט מוביל קצר להדגשה".` : ''}`, 3500, fb);
       const dj = parseJson(raw); if (!DOC_TYPES[dj.dtype]) dj.dtype = 'notice';
-      const rv = await supervised(key, 'doc', brief, dj);
+      const rv = await supervised(key, 'doc', brief, dj, ctx);
       return json(req, { ok: true, ...rv.out, qa: rv.qa });
     }
 
@@ -582,7 +584,7 @@ ${fb.length && p.keep ? 'מספר השקפים כמו בקובץ המצורף (�
 סגנון גרפים וטבלאות: מותר גם kind "chart" עם "chart":{"type":"bar|pie|line","unit":"יחידה","items":[{"l":"תווית","v":מספר}]}, ו-kind "table" עם "table":{"head":["עמודה"],"rows":[["תא"]]}. רק מספרים מהבריף - אסור להמציא.` : ''}${p.style === 'designed' ? `
 סגנון מעוצב: העדף kinds מגוונים: "cover","bullets","cards" (pts של 3-4 כרטיסים קצרים),"quote","timeline","end".` : ''}`, 4000, fb);
       const kj = parseJson(raw); if (!DECK_STYLES[kj.dstyle]) kj.dstyle = 'project';
-      const rv = await supervised(key, 'deck', brief, kj);
+      const rv = await supervised(key, 'deck', brief, kj, ctx);
       return json(req, { ok: true, ...rv.out, qa: rv.qa });
     }
 
