@@ -55,3 +55,11 @@ export function paletteRoles(colors = [], roles = {}) {
     derivedBase: !(roles && hex(roles.base)) && !dark.some((c) => c === R.base),
   };
 }
+
+/** Colours for the video engine (Remotion plan.brand.colors): the dark base as main, its deep tone, one accent, a light tint. */
+export function videoColors(colors = [], roles = {}) {
+  const r = paletteRoles(colors, roles);
+  let accent = r.accent;
+  if (lum(accent) < 0.12) accent = mix(accent, '#FFFFFF', 0.45);
+  return { deep: r.deep, main: r.base, accent, light: mix(r.base, '#FFFFFF', 0.72) };
+}

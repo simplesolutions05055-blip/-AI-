@@ -1,4 +1,5 @@
 // Shared helpers for the PrimeOS WhatsApp bot and the server job runner.
+import { videoColors } from './palette.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 // deno-lint-ignore no-explicit-any
@@ -94,15 +95,8 @@ export const rgbOf = (h: string) => { const x = h.replace('#', ''); return [0, 2
 export const mix = (a: string, b: string, t: number) => { const p = rgbOf(a), q = rgbOf(b); return '#' + p.map((v, i) => hex(v + (q[i] - v) * t)).join(''); };
 export const lum = (h: string) => { const c = rgbOf(h).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
 // same palette rules as the browser (deep stays dark for white text)
-export function videoBrand(org: string, dept: string, colors: string[], logo: string) {
-  const cols = colors.filter(Boolean);
-  const main = cols[0] || '#1F5FBF';
-  let deep = cols.slice().sort((x, y) => lum(x) - lum(y))[0] || '#0B1F3A';
-  for (let t = 0; lum(deep) > 0.06 && t < 14; t++) deep = mix(deep, '#000000', 0.15);
-  const chroma = (h: string) => { const c = rgbOf(h); return (Math.max(...c) - Math.min(...c)) / 255; };
-  let acc = cols.filter((c) => c !== main && chroma(c) > 0.28 && lum(c) > 0.08).sort((x, y) => chroma(y) - chroma(x))[0] || '#FFC93C';
-  if (lum(acc) < 0.12) acc = mix(acc, '#ffffff', 0.45);
-  return { org, dept, logo: logo || undefined, colors: { deep, main, accent: acc, light: mix(main, '#ffffff', 0.72) } };
+export function videoBrand(org: string, dept: string, colors: string[], logo: string, roles: Record<string, string> = {}) {
+  return { org, dept, logo: logo || undefined, colors: videoColors(colors.filter(Boolean), roles) };
 }
 
 // ---- content items: saved through v2-api so publishing rules apply ----

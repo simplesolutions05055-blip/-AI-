@@ -1033,6 +1033,73 @@
   /* =====================================================================
    * REAL PRODUCTION: AI images (ChatGPT) + the render engine (graphic / doc / deck / video)
    * ===================================================================== */
+  // palette roles shared with the render service and the edge functions (filled by scripts/sync-design.mjs)
+  const PAL = (() => {
+/* @palette-start */
+const hex = (s) => /^#[0-9a-f]{6}$/i.test(String(s || '')) ? String(s).toUpperCase() : null;
+const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const toHex = (r, g, b) => '#' + [r, g, b].map((x) => Math.round(Math.max(0, Math.min(255, x))).toString(16).padStart(2, '0')).join('').toUpperCase();
+const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+const lum = (h) => { const [r, g, b] = rgb(h); return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b); };
+const contrast = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+const sat = (h) => { const [r, g, b] = rgb(h); const mx = Math.max(r, g, b), mn = Math.min(r, g, b); return mx ? (mx - mn) / mx : 0; };
+const hue = (h) => { const [r, g, b] = rgb(h).map((x) => x / 255); const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return 0; let hh = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return hh * 60; };
+const hueDist = (a, b) => { const d = Math.abs(hue(a) - hue(b)) % 360; return d > 180 ? 360 - d : d; };
+const mix = (a, b, t) => { const x = rgb(a), y = rgb(b); return toHex(...x.map((v, i) => v + (y[i] - v) * t)); };
+const darken = (h, target) => { let c = h; for (let i = 0; i < 40 && lum(c) > target; i++) c = mix(c, '#06101F', 0.08); return c; };
+const lighten = (h, target) => { let c = h; for (let i = 0; i < 40 && lum(c) < target; i++) c = mix(c, '#FFFFFF', 0.1); return c; };
+
+/**
+ * colors: array of hex strings or [name, hex] pairs (the organisation's list, logo colours first).
+ * roles (optional): explicit overrides { base, secondary, accent, light } saved by the organisation.
+ * Returns { base, deep, secondary, accent, light, ink, mode } - mode: 'light' ground by default.
+ */
+function paletteRoles(colors = [], roles = {}) {
+  const list = [...new Set((Array.isArray(colors) ? colors : []).map((c) => hex(Array.isArray(c) ? c[1] : c)).filter(Boolean))];
+  const R = {};
+  for (const k of ['base', 'secondary', 'accent', 'light']) if (hex(roles && roles[k])) R[k] = hex(roles[k]);
+  if (!list.length && !R.base) list.push('#0E3B6B', '#9A6B1F', '#1E6BA8');
+  const chroma = list.filter((c) => sat(c) >= 0.25).sort((a, b) => sat(b) - sat(a));
+  const dark = list.filter((c) => lum(c) < 0.12);
+  // base: the darkest colour that still carries a hue; otherwise the most saturated colour taken down to a deep tone
+  if (!R.base) {
+    const cand = dark.filter((c) => sat(c) >= 0.2).sort((a, b) => lum(a) - lum(b));
+    R.base = cand[0] ? (lum(cand[0]) < 0.02 ? mix(cand[0], '#FFFFFF', 0.12) : cand[0]) : chroma[0] ? darken(chroma[0], 0.06) : dark[0] || '#0E3B6B';
+  }
+  // accent: the most saturated colour far enough in hue (or in lightness) from the base
+  if (!R.accent) {
+    const cand = chroma.filter((c) => c !== R.base && (hueDist(c, R.base) > 25 || lum(c) > 0.2)).sort((a, b) => sat(b) * (0.5 + lum(b)) - sat(a) * (0.5 + lum(a)));
+    R.accent = cand[0] || (chroma[0] && chroma[0] !== R.base ? chroma[0] : lighten(R.base, 0.3));
+  }
+  // secondary: another hue, else a mid tone of the base
+  if (!R.secondary) {
+    const cand = chroma.filter((c) => c !== R.base && c !== R.accent && hueDist(c, R.accent) > 25).sort((a, b) => Math.abs(lum(a) - 0.18) - Math.abs(lum(b) - 0.18));
+    R.secondary = cand[0] || mix(R.base, '#FFFFFF', 0.35);
+  }
+  if (!R.light) {
+    const cand = list.filter((c) => lum(c) > 0.85 && sat(c) < 0.25);
+    R.light = cand[0] || mix(R.base, '#FFFFFF', 0.94);
+  }
+  // the accent must read against the light ground when used for type; otherwise type uses the base and the accent stays a shape colour
+  const accentOnLight = contrast(R.accent, R.light) >= 3;
+  return {
+    base: R.base, deep: darken(R.base, Math.max(0.01, lum(R.base) * 0.55)), secondary: R.secondary, accent: R.accent, light: R.light,
+    ink: mix(R.base, '#41506A', 0.6), accentText: accentOnLight ? R.accent : R.base, accentOnLight,
+    // whether the organisation's own first colour is a light/neon one (a sign the logo is colourful; the base was derived)
+    derivedBase: !(roles && hex(roles.base)) && !dark.some((c) => c === R.base),
+  };
+}
+
+/** Colours for the video engine (Remotion plan.brand.colors): the dark base as main, its deep tone, one accent, a light tint. */
+function videoColors(colors = [], roles = {}) {
+  const r = paletteRoles(colors, roles);
+  let accent = r.accent;
+  if (lum(accent) < 0.12) accent = mix(accent, '#FFFFFF', 0.45);
+  return { deep: r.deep, main: r.base, accent, light: mix(r.base, '#FFFFFF', 0.72) };
+}
+/* @palette-end */
+    return { paletteRoles, videoColors, lum, mix, contrast };
+  })();
   const FN_URL = 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/';
   const fx = (name, body, ms) => post(FN_URL + name, body, ms || 150000);
   // period content (many graphics at once) uses OpenAI's fast model; single graphics use the server default (the precision model)
@@ -3416,18 +3483,10 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .vp-bar{height:8px;border-radius:99px;background:var(--bg-2,#EEF1F6);overflow:hidden;max-width:420px;margin:14px auto 0}.vp-bar i{display:block;height:100%;background:var(--brand,#0E3B6B);transition:width .6s}
 @media(max-width:640px){.vd-tg,.vb-grid{grid-template-columns:1fr}.vb-sc th:nth-child(5),.vb-sc td:nth-child(5){display:none}}`;
 
-    // brand palette -> engine colours (deep must stay dark enough for white text)
+    // brand palette -> engine colours, by role (same code as the render service: api/_render/palette.mjs)
     function vidBrand() {
       const b = brandFor(S.vd && S.vd.dept);
-      const cols = (b.colors || []).filter(Boolean);
-      let main = cols[0] || '#1F5FBF';
-      let deep = cols.slice().sort((x, y) => lum(x) - lum(y))[0] || '#0B1F3A';
-      for (let t = 0; lum(deep) > 0.06 && t < 14; t++) deep = mix(deep, '#000000', 0.15);
-      // accent: the most colourful brand colour that is not the main one (greys and near-white never qualify)
-      const chroma = (h) => { const c = rgbOf(h); return (Math.max(...c) - Math.min(...c)) / 255; };
-      let acc = cols.filter((c) => c !== main && chroma(c) > 0.28 && lum(c) > 0.08).sort((x, y) => chroma(y) - chroma(x))[0] || '#FFC93C';
-      if (lum(acc) < 0.12) acc = mix(acc, '#ffffff', 0.45);
-      return { org: b.org || aiCtx().org || '', dept: b.dept || '', logo: b.logo || undefined, colors: { deep, main, accent: acc, light: mix(main, '#ffffff', 0.72) } };
+      return { org: b.org || aiCtx().org || '', dept: b.dept || '', logo: b.logo || undefined, colors: PAL.videoColors(b.colors || [], b.roles || {}) };
     }
     const fmtK = (f) => ({ '9:16': '9x16', '1:1': '1x1', '4:5': '4x5', '16:9': '16x9' }[f] || '9x16');
     const tsec = (n) => (Math.round(n * 10) / 10).toString().replace(/\.0$/, '');
