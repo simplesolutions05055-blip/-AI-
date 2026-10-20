@@ -150,7 +150,7 @@ export function sanitizeBrief(j: any, p: Record<string, any>, voices: Voice[]) {
     say: p.voice === false ? '' : cleanSay(String(s.say ?? '').slice(0, 300)),
     visual: { src: String(s.visual?.src ?? 'gradient').slice(0, 400), motion: s.visual?.motion, tint: Math.max(0, Math.min(0.25, +s.visual?.tint || 0.12)) },
     // captions own the bottom of the frame: on-screen text moves to the centre so the two never overlap
-    text: s.text && Array.isArray(s.text.lines) ? { ...s.text, style: TEXT_STYLES.includes(s.text.style) ? s.text.style : 'headline', pos: captionsOn && (s.text.pos === 'bottom' || s.text.pos === 'lower') ? 'center' : s.text.pos, items: Array.isArray(s.text.items) ? s.text.items.slice(0, 6).map((x: any) => ({ t: String(x?.t ?? '').slice(0, 80), sub: x?.sub ? String(x.sub).slice(0, 80) : undefined })) : undefined } : undefined,
+    text: s.text && (Array.isArray(s.text.lines) || Array.isArray(s.text.items)) ? { ...s.text, lines: Array.isArray(s.text.lines) ? s.text.lines : [], style: TEXT_STYLES.includes(s.text.style) ? s.text.style : 'headline', pos: captionsOn && (s.text.pos === 'bottom' || s.text.pos === 'lower') ? 'center' : s.text.pos, items: Array.isArray(s.text.items) ? s.text.items.slice(0, 6).map((x: any) => ({ t: String(x?.t ?? '').slice(0, 80), sub: x?.sub ? String(x.sub).slice(0, 80) : undefined })) : undefined } : undefined,
     transition: s.transition,
     fx: Array.isArray(s.fx) ? s.fx.slice(0, 3) : [],
   }));
