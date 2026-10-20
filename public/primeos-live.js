@@ -4725,6 +4725,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     };
   })();
 
+  /* ---------------- no Facebook-group sharing: the publishing provider works with Pages only (Meta closed the Groups API) ---------------- */
+  if (typeof groupsSec === 'function') groupsSec = () => '';
+  const _wizItemG = wizItem;
+  wizItem = function (st) { const it = _wizItemG(st); if (it) { it.groups = []; } return it; };
+
   /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */
   (function () {
     const KEY = 'pos_a11y';
