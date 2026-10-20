@@ -113,7 +113,8 @@ export default {
 };
 
 async function renderAll(body: any) {
-    const k = kit(body.brand || {});
+    const k = kit(body.brand || {}, 'print');
+    const kScreen = kit(body.brand || {}, 'screen');
     const jobs: any[] = Array.isArray(body.jobs) ? body.jobs.slice(0, 12) : [];
     const b = await browser();
     const out: any[] = [];
@@ -138,7 +139,7 @@ async function renderAll(body: any) {
             continue;
           }
           if (j.kind === 'graphic') {
-            const { html, w, h } = graphicHtml(k, j.data, j.layout, j.format);
+            const { html, w, h } = graphicHtml(kScreen, j.data, j.layout, j.format);
             await load(p, html, w, h);
             const img = Buffer.from(await p.screenshot((j.image === 'png' ? { type: 'png' } : { type: 'jpeg', quality: 92 }) as any));
             if (up.main) await put(up.main, img, j.image === 'png' ? 'image/png' : 'image/jpeg');

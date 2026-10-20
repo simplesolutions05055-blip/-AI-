@@ -45,7 +45,10 @@ function slides(k, d, style, o) {
       body = `<div class="bl">${pts.map((p, j) => `<div class="bi"><span class="bn">${j + 1}</span><span>${esc(p)}</span></div>`).join('')}</div>`;
     }
     // every content slide carries a photo: a rounded column on the left, content on the right (RTL)
-    if (su) body = `<div class="two"><div class="col">${body}</div><div class="sideimg"><img src="${esc(su)}" alt=""></div></div>`;
+    // a .png side image is a cutout (person / object on a transparent background): it stands on the slide floor over a soft brand blob,
+    // off-grid on purpose; a photo stays in its rounded column
+    const cut = su && /\.png(\?|$)/i.test(su);
+    if (su) body = `<div class="two"><div class="col">${body}</div><div class="sideimg ${cut ? 'cut' : ''}"><img src="${esc(su)}" alt=""></div></div>`;
     return `<div class="sl k-${s.kind} ${su ? 'ph' : ''}"><h2>${esc(s.t)}</h2><div class="bd">${body}</div>${chrome(i)}</div>`;
   }).join('');
 }
@@ -53,7 +56,7 @@ function slides(k, d, style, o) {
 const css = (k, style) => `${chartCss(k)}
 @page{size:1920px 1080px;margin:0}
 .sl{width:1920px;height:1080px;position:relative;overflow:hidden;background:#fff;padding:100px 140px 170px;break-after:page;color:#1F2A44;display:flex;flex-direction:column}
-.sl:not(.dark)::before{content:"";position:absolute;inset:0 0 auto 0;height:14px;background:linear-gradient(90deg,${k.gold} 0 22%,${k.navy} 22% 100%)}
+.sl:not(.dark)::before{content:"";position:absolute;inset:0 0 auto 0;height:14px;background:linear-gradient(90deg,${k.hot} 0 22%,${k.navy} 22% 100%)}
 ${style === 'designed' ? `.sl:not(.dark){background:linear-gradient(180deg,#fff 0,#fff 70%,${k.bg} 100%)}.sl:not(.dark)::before{height:0}.sl:not(.dark)::after{content:"";position:absolute;top:0;right:0;width:520px;height:520px;border-radius:50%;background:${k.bg};transform:translate(30%,-45%)}` : ''}
 ${style === 'data' ? `.sl:not(.dark){background-image:linear-gradient(#EEF1F6 1px,transparent 1px),linear-gradient(90deg,#EEF1F6 1px,transparent 1px);background-size:60px 60px}` : ''}
 .bd{position:relative;z-index:1;flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center}
@@ -78,15 +81,17 @@ h2{position:relative;z-index:1;font-size:74px;font-weight:900;color:${k.navy};le
 .bi{display:flex;align-items:center;gap:32px;font-size:50px;font-weight:600;line-height:1.3}
 .bn{flex:none;width:84px;height:84px;border-radius:24px;background:${k.bg};color:${k.navy};display:grid;place-items:center;font-size:40px;font-weight:900}.bi:first-child .bn{background:${k.navy};color:#fff}
 .sideimg{flex:none;width:520px;align-self:stretch;max-height:700px;border-radius:40px;overflow:hidden;box-shadow:0 30px 60px rgba(14,59,107,.25);order:2}.sideimg img{width:100%;height:100%;object-fit:cover}
+.sideimg.cut{position:absolute;left:40px;bottom:0;width:640px;height:820px;max-height:none;border-radius:0;overflow:visible;box-shadow:none;align-self:auto}.sideimg.cut::before{content:"";position:absolute;left:-60px;bottom:120px;width:620px;height:620px;border-radius:46% 54% 50% 50%/55% 45% 55% 45%;background:radial-gradient(circle at 40% 40%,${k.bg},${k.hot}33 70%,transparent 72%);transform:rotate(-14deg)}.sideimg.cut img{position:absolute;inset:auto 0 0 0;width:100%;height:100%;object-fit:contain;object-position:bottom;filter:drop-shadow(0 30px 40px rgba(14,59,107,.22))}
+.sl.ph:has(.sideimg.cut) .two .col{margin-left:620px}
 .stat{display:flex;align-items:baseline;gap:56px;flex-wrap:wrap}.sv{font-size:230px;font-weight:900;color:${k.accentText || k.gold};line-height:1;letter-spacing:-.03em;white-space:nowrap}
 .sl2{font-size:54px;font-weight:800;color:${k.navy};max-width:820px;line-height:1.22}
 .sp{list-style:none;padding:0;margin-top:56px;display:flex;flex-wrap:wrap;gap:20px 60px}.sp li{font-size:38px;color:${k.ink};font-weight:600;padding-inline-start:30px;position:relative}.sp li::before{content:"";position:absolute;right:0;top:20px;width:14px;height:14px;border-radius:50%;background:${k.gold}}
 .chw{display:flex;align-items:center;gap:80px}.viz{flex:none}.pie{display:flex;align-items:center;gap:70px}.pie .lg{min-width:520px}
-.side{list-style:none;padding:0;display:grid;gap:30px;flex:1}.side li{font-size:40px;font-weight:600;line-height:1.35;padding:26px 32px;border-radius:24px;background:${k.bg};border-inline-start:10px solid ${k.gold}}
+.side{list-style:none;padding:0;display:grid;gap:30px;flex:1}.side li{font-size:40px;font-weight:600;line-height:1.35;padding:26px 32px;border-radius:24px;background:${k.bg};border-inline-start:10px solid ${k.hot}}
 table{width:100%;border-collapse:separate;border-spacing:0;font-size:38px;border-radius:24px;overflow:hidden;box-shadow:0 0 0 2px #E1E6EF}
 th{background:${k.navy};color:#fff;font-weight:800;text-align:right;padding:26px 34px}td{padding:24px 34px;border-top:2px solid #E1E6EF;font-weight:600}tr:nth-child(even) td{background:#F6F8FB}td:first-child{color:${k.navy};font-weight:800}
 .tl{display:grid;grid-template-columns:repeat(var(--n,4),1fr);position:relative}.tl::before{content:"";position:absolute;top:30px;inset-inline:80px;height:6px;background:${k.bg};border-radius:3px}
-.tn{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;gap:20px;padding:0 20px}.tn .dot{width:66px;height:66px;border-radius:50%;background:#fff;border:12px solid ${k.navy}}.tn:nth-child(even) .dot{border-color:${k.gold}}
+.tn{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;gap:20px;padding:0 20px}.tn .dot{width:66px;height:66px;border-radius:50%;background:#fff;border:12px solid ${k.navy}}.tn:nth-child(even) .dot{border-color:${k.hot}}
 .tn b{font-size:54px;font-weight:900;color:${k.navy}}.tn span:last-child{font-size:38px;color:${k.ink};font-weight:600;line-height:1.3}
 .cards{display:grid;grid-template-columns:repeat(var(--n,3),1fr);gap:36px}
 .card{position:relative;border-radius:36px;padding:48px 40px 56px;background:#fff;box-shadow:0 24px 60px rgba(14,59,107,.13);border-top:12px solid ${k.navy};display:flex;flex-direction:column;gap:30px;min-height:380px}
@@ -113,7 +118,7 @@ export async function deckPptx(PptxGenJS, k, d, style = 'formal', o = {}) {
   const frame = (sl, i, dark) => {
     if (!dark) {
       sl.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W, h: 0.09, fill: { color: hx(k.navy) }, line: { color: hx(k.navy) } });
-      sl.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W * 0.22, h: 0.09, fill: { color: hx(k.gold) }, line: { color: hx(k.gold) } });
+      sl.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W * 0.22, h: 0.09, fill: { color: hx(k.hot) }, line: { color: hx(k.hot) } });
     }
     sl.addShape(pptx.ShapeType.line, { x: M, y: H - 0.72, w: W - 2 * M, h: 0, line: { color: dark ? '3A5F8A' : 'E1E6EF', width: 1 } });
     const c = dark ? crestD : crestL;
@@ -159,7 +164,9 @@ export async function deckPptx(PptxGenJS, k, d, style = 'formal', o = {}) {
     const top = 1.75;
     const su = im['s' + i] || (style === 'designed' ? im.side : null);
     const hasPic = !!(su && imgs[su]);
-    if (hasPic) sl.addImage({ data: imgs[su], x: M, y: top, w: 3.6, h: 4.6, rounding: false, sizing: { type: 'cover', w: 3.6, h: 4.6 } });
+    const cutP = hasPic && /\.png(\?|$)/i.test(su);
+    if (hasPic && cutP) sl.addImage({ data: imgs[su], x: M - 0.2, y: H - 0.72 - 5.0, w: 3.9, h: 5.0, sizing: { type: 'contain', w: 3.9, h: 5.0 } });
+    else if (hasPic) sl.addImage({ data: imgs[su], x: M, y: top, w: 3.6, h: 4.6, rounding: false, sizing: { type: 'cover', w: 3.6, h: 4.6 } });
     const X0 = hasPic ? M + 4.0 : M, WD = W - M - X0; // content column (right side in RTL)
     if (s.kind === 'stat' && s.stat) {
       sl.addText(s.stat.v, { ...T, x: X0 + WD / 2 - 1.2, y: top + 0.2, w: WD / 2 + 1.2, h: 1.9, fontSize: hasPic ? 80 : 92, bold: true, color: hx(k.accentText || k.gold), fit: 'shrink' });

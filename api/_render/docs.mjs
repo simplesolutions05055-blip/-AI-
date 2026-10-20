@@ -25,20 +25,20 @@ const base = (k) => `${chartCss(k)}
 @page{size:A4;margin:16mm 0 18mm}@page:first{margin-top:0}
 body{color:#1F2A44;font-size:10.4pt;line-height:1.5}
 .page{width:210mm;padding:0 20mm 0;position:relative}
-.band{height:5mm;margin:0 -20mm;background:linear-gradient(90deg,${k.gold} 0 18%,${k.navy} 18% 100%)}
+.band{height:5mm;margin:0 -20mm;background:linear-gradient(90deg,${k.hot} 0 18%,${k.navy} 18% 100%)}
 .hd{display:flex;align-items:center;gap:5mm;padding:6mm 0 4mm;border-bottom:1.4pt solid ${k.navy}}
 .hd .org b{display:block;font-size:16pt;font-weight:800;color:${k.navy};line-height:1.2}.hd .org span{font-size:10.5pt;color:${k.ink}}
 .hd .meta{margin-inline-start:auto;font-size:9.5pt;color:${k.ink}}
 .to{margin-top:6mm;font-size:11pt;color:${k.ink}}.to b{color:#1F2A44}
 h1{margin-top:2mm;font-size:19pt;line-height:1.25;font-weight:900;color:${k.navy}}
-.sum{margin-top:5mm;padding:4.5mm 6mm;background:${k.bg};border-inline-start:3pt solid ${k.gold};border-radius:2mm;font-size:11.2pt;font-weight:500}
+.sum{margin-top:5mm;padding:4.5mm 6mm;background:${k.bg};border-inline-start:3pt solid ${k.hot};border-radius:2mm;font-size:11.2pt;font-weight:500}
 section{margin-top:3.6mm;break-inside:avoid}
 h2{display:flex;align-items:center;gap:3mm;font-size:13pt;font-weight:800;color:${k.navy};margin-bottom:2mm}
 h2 .n{width:7.5mm;height:7.5mm;border-radius:50%;background:${k.navy};color:#fff;display:grid;place-items:center;font-size:10pt;font-weight:800;flex:none}
-h2 .bar{width:1.4mm;height:6mm;border-radius:1mm;background:${k.gold};flex:none}
+h2 .bar{width:1.4mm;height:6mm;border-radius:1mm;background:${k.hot};flex:none}
 p{margin-bottom:1.4mm;text-align:start;text-wrap:pretty}
 ul{list-style:none;padding:0;margin:1mm 0 0;display:grid;gap:1.6mm}li{position:relative;padding-inline-start:7mm}
-li::before{content:"";position:absolute;inset-inline-start:1.2mm;top:2.1mm;width:2.4mm;height:2.4mm;border-radius:50%;background:${k.gold}}
+li::before{content:"";position:absolute;inset-inline-start:1.2mm;top:2.1mm;width:2.4mm;height:2.4mm;border-radius:50%;background:${k.hot}}
 .note{margin-top:6mm;display:flex;gap:3.5mm;align-items:flex-start;padding:4mm 5mm;border:1pt solid #D5DCE8;border-radius:2.5mm;break-inside:avoid}.note .ic{flex:none;margin-top:.6mm}.note b{color:${k.navy}}
 .sign{margin-top:6mm;break-inside:avoid}.sign span{color:${k.ink}}.sign b{display:block;font-size:13pt;color:${k.navy};font-weight:800;margin-top:1mm}
 /* data */
@@ -58,7 +58,7 @@ td{padding:2.2mm 3mm;border-bottom:.8pt solid #E1E6EF}tr:nth-child(even) td{back
 .hero .top b{font-size:11pt;font-weight:800}.hero .top small{font-size:8.5pt;color:${k.ink};display:block}
 .hero .tx{position:absolute;inset:auto 20mm 8mm 20mm}.hero h1{color:#fff;font-size:24pt;margin:0}.hero .to2{font-size:10.5pt;color:#DCE7F3;margin-top:1.5mm}
 .lead{margin-top:5mm;font-size:11.4pt;font-weight:500;line-height:1.55}
-.quote{margin-top:5mm;padding:4mm 6mm;font-size:14pt;font-weight:800;color:${k.navy};border-inline-start:2.4mm solid ${k.gold};background:linear-gradient(90deg,transparent,${k.bg})}
+.quote{margin-top:5mm;padding:4mm 6mm;font-size:14pt;font-weight:800;color:${k.navy};border-inline-start:2.4mm solid ${k.hot};background:linear-gradient(90deg,transparent,${k.bg})}
 .hl{display:grid;grid-template-columns:1fr 1fr;gap:3mm;margin-top:4mm;break-inside:avoid}
 .hl div{display:flex;gap:3mm;align-items:flex-start;padding:3.5mm 4mm;border-radius:3mm;background:${k.bg}}.hl .i{flex:none;width:9mm;height:9mm;border-radius:2.5mm;background:${k.navy};color:#fff;display:grid;place-items:center}
 .hl b{display:block;color:${k.navy};font-size:11pt;font-weight:800}.hl span{font-size:9.5pt;color:${k.ink}}
@@ -95,7 +95,7 @@ ${sections(d, k)}${note(d, k)}${sign(d)}</div>`;
 /** Editable Word version of the same document: real headings, paragraphs, bullets and tables, right-to-left. */
 export async function docDocx(k, d, style = 'formal', o = {}) {
   const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType, Footer, PageNumber } = await import('docx');
-  const navy = k.navy.replace('#', ''), gold = k.gold.replace('#', ''), ink = k.ink.replace('#', '');
+  const navy = k.navy.replace('#', ''), gold = (k.hot || k.gold).replace('#', ''), ink = k.ink.replace('#', '');
   const font = 'Heebo';
   const run = (t, x = {}) => new TextRun({ text: String(t ?? ''), font, rightToLeft: true, size: 22, ...x });
   const par = (t, x = {}, rx = {}) => new Paragraph({ bidirectional: true, alignment: AlignmentType.RIGHT, spacing: { after: 120, line: 320 }, ...x, children: Array.isArray(t) ? t : [run(t, rx)] });

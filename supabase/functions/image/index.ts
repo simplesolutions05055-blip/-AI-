@@ -105,6 +105,16 @@ Hard rules:
 - If more reference images are attached after the template: the logo (place it where the template's logo is) and/or real photos to use in the template's image area.
 Return only the prompt, max 260 words.`;
 
+// cutout: one subject on a transparent background, for decks and documents (placed beside text, off the grid)
+const CUTOUT = `You are the art director of a premium design studio that serves Israeli municipalities.
+Write ONE image-generation prompt in English for a CUTOUT: a single subject isolated on a fully transparent background, nothing else in the frame.
+Hard rules:
+- One subject only: a person (full figure or three-quarter, natural pose, candid, modest clothing, diverse Israeli residents or municipal staff) or one object relevant to the message. No scene, no floor, no shadow on the ground, no backdrop, no text, no logos.
+- Photographic, natural daylight, soft shadows on the subject itself, sharp edges, high resolution.
+- The subject faces slightly toward the centre of a page (it will sit on the LEFT of Hebrew text), looking natural, not posed for an ad.
+- Brand colours may appear in a garment or accessory only.
+Return only the prompt, max 90 words.`;
+
 const TEMPLATE_SCAN = `You analyse an organisation's graphic design template so it can be reproduced exactly with different texts and imagery. Answer with JSON only.`;
 
 async function openaiImage(okey: string, prompt: string, size: string, quality: string, refs: string[], n = 1, mask?: Uint8Array, prefer = '') {
@@ -311,15 +321,18 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const style = p.style === 'illustration' ? 'Style: refined editorial vector illustration, flat shapes with subtle grain, limited palette.' : 'Style: high-end editorial photography, natural light, shallow depth of field.';
       const side = p.space ?? (p.size === 'portrait' ? 'top half' : 'left side');
       const bc = ((p.colors ?? []) as string[]).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 4).join(', ');
-      prompt = (await claude(ckey, DIRECTOR, `Brief (Hebrew): ${p.title ?? ''}\n${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\n${people}\n${style}\nBrand colours (light accent only): ${bc || 'none given'}\nNegative space for text: ${side}.`)).trim();
+      prompt = p.cutout
+        ? (await claude(ckey, CUTOUT, `Brief (Hebrew): ${p.title ?? ''}\n${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nBrand colours: ${bc || 'none given'}`)).trim()
+        : (await claude(ckey, DIRECTOR, `Brief (Hebrew): ${p.title ?? ''}\n${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\n${people}\n${style}\nBrand colours (light accent only): ${bc || 'none given'}\nNegative space for text: ${side}.`)).trim();
     }
+    const cutout = !!p.cutout;
     const size = SIZES[p.size] ?? SIZES.square;
     let b64 = '', used = '', last = '';
     for (const model of await modelsFor(okey, p.model)) {
       const r = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` },
-        body: JSON.stringify({ model, prompt, size, quality: p.quality ?? 'high', n: 1, output_format: 'jpeg', output_compression: 90 }),
+        body: JSON.stringify({ model, prompt, size, quality: p.quality ?? 'high', n: 1, ...(cutout ? { output_format: 'png', background: 'transparent' } : { output_format: 'jpeg', output_compression: 90 }) }),
       });
       if (r.ok) { b64 = (await r.json()).data?.[0]?.b64_json ?? ''; used = model; logUse({ kind: 'openai', model, [qKey(p.quality ?? 'high')]: 1 }); break; }
       last = model + ': ' + (await r.text());
@@ -327,11 +340,11 @@ fixed=true for texts that belong to the template itself and must stay (organisat
     }
     if (!b64) throw new Error('openai_error: ' + last.slice(0, 300));
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.jpg`;
-    const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
+    const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${cutout ? 'png' : 'jpg'}`;
+    const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: cutout ? 'image/png' : 'image/jpeg', upsert: false, cacheControl: '31536000' });
     if (up.error) throw up.error;
     const url = d.storage.from('v2-content').getPublicUrl(path).data.publicUrl;
-    return json(req, { ok: true, url, prompt, model: used, size });
+    return json(req, { ok: true, url, prompt, model: used, size, cutout });
   } catch (e) {
     return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
   }

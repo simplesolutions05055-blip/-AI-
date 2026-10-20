@@ -1097,6 +1097,30 @@ function videoColors(colors = [], roles = {}) {
   if (lum(accent) < 0.12) accent = mix(accent, '#FFFFFF', 0.45);
   return { deep: r.deep, main: r.base, accent, light: mix(r.base, '#FFFFFF', 0.72) };
 }
+
+/**
+ * Roles for printed matter (documents, decks). A vivid or neon brand colour is wrong as the main colour of a page:
+ * the base becomes the strongest dark colour of the brand (dark blue preferred), structural accents are muted,
+ * and the vivid colour survives only as `hot` for a few small highlights (rules, bullets, one number).
+ */
+function printRoles(colors = [], roles = {}) {
+  const r = paletteRoles(colors, roles);
+  const list = [...new Set((Array.isArray(colors) ? colors : []).map((c) => hex(Array.isArray(c) ? c[1] : c)).filter(Boolean))];
+  const vivid = (c) => sat(c) > 0.55 && lum(c) > 0.35;
+  const blueish = (c) => { const h = hue(c); return h >= 190 && h <= 262; };
+  let base = hex(roles && roles.docBase) || null;
+  if (!base) {
+    // strong dark candidates: any saturated colour taken down to a deep tone; blues first, then the derived base
+    const cand = list.filter((c) => sat(c) >= 0.35 && !vivid(c) || blueish(c) && sat(c) >= 0.5).map((c) => darken(c, 0.07));
+    const blue = cand.find(blueish);
+    base = blue || (vivid(r.base) ? darken(r.base, 0.07) : r.base);
+  }
+  const hot = r.accent;
+  const accent = vivid(hot) ? (r.secondary && !vivid(r.secondary) && lum(r.secondary) < 0.35 ? r.secondary : mix(hot, base, 0.55)) : hot;
+  // a light ground tinted toward the vivid colour (lime, pink) is wrong on a page: a near-white tint of the base instead
+  const light = sat(r.light) > 0.04 && hueDist(r.light, base) > 40 ? mix(base, '#FFFFFF', 0.94) : r.light;
+  return { base, deep: darken(base, Math.max(0.01, lum(base) * 0.55)), secondary: vivid(r.secondary) ? mix(r.secondary, base, 0.4) : r.secondary, accent, hot, light, ink: mix(base, '#41506A', 0.6), accentText: contrast(accent, light) >= 3 ? accent : base };
+}
 /* @palette-end */
     return { paletteRoles, videoColors, lum, mix, contrast };
   })();
@@ -1124,19 +1148,21 @@ function videoColors(colors = [], roles = {}) {
     return { org: aiCtx().org, dept: dept || aiCtx().dept || '', colors: c.map((x) => (Array.isArray(x) ? x[1] : x)), roles: (typeof BRAND !== 'undefined' && BRAND.roles) || {} };
   }
   async function aiImage(o) {
-    const r = await fx('image', { brief: o.brief || '', title: o.title || '', dept: o.dept || '', people: o.people || 'auto', style: o.style || 'photo', size: o.size || 'square', quality: o.quality || 'high', model: o.model || undefined, colors: brandFor(o.dept).colors }, 150000);
+    const r = await fx('image', { brief: o.brief || '', title: o.title || '', dept: o.dept || '', people: o.people || 'auto', style: o.style || 'photo', size: o.size || 'square', quality: o.quality || 'high', model: o.model || undefined, colors: brandFor(o.dept).colors, cutout: !!o.cutout }, 150000);
     return r.url;
   }
   /* a photo for every slide of a presentation (fast image model, medium quality); reused by slide title between re-renders */
   async function deckImages(w, m, d) {
     const sl = d.slides || [];
     m.imgBy = m.imgBy || {};
-    const keyOf = (s, i) => (s.kind || 'b') + '|' + (i === 0 ? (d.title || s.t || '') : (s.t || '')) + '|' + ((s.pts || []).slice(0, 2).join(' '));
+    // cover / end / quote get a wide atmosphere photo; content slides get a cutout figure (transparent PNG) that stands beside the text
+    const full = (s, i) => i === 0 || s.kind === 'end' || s.kind === 'quote' || s.kind === 'cover';
+    const keyOf = (s, i) => (s.kind || 'b') + '|' + (full(s, i) ? 'f' : 'c') + '|' + (i === 0 ? (d.title || s.t || '') : (s.t || '')) + '|' + ((s.pts || []).slice(0, 2).join(' '));
     const briefOf = (s, i) => ((m.imgNote && m.imgNote[i]) ? m.imgNote[i] + '\n' : '') + (i === 0 ? 'תמונת שער רחבה ואווירתית למצגת: ' + (d.title || w.title) : s.kind === 'end' ? 'תמונת סיום חמה ואופטימית למצגת: ' + (d.title || w.title) : 'תמונה שמלווה את השקף "' + (s.t || '') + '": ' + (s.pts || []).slice(0, 3).join('. ')) + '\n' + (w.prompt || '');
     const todo = sl.map((s, i) => [s, i]).filter(([s, i]) => !m.imgBy[keyOf(s, i)]);
     // up to 4 images at a time
     let at = 0;
-    const worker = async () => { while (at < todo.length) { const [s, i] = todo[at++]; try { m.imgBy[keyOf(s, i)] = await aiImage({ title: w.title, brief: briefOf(s, i), size: 'landscape', quality: 'medium', model: FAST_IMG }); } catch (e) { /* that slide stays without a photo */ } } };
+    const worker = async () => { while (at < todo.length) { const [s, i] = todo[at++]; try { m.imgBy[keyOf(s, i)] = full(s, i) ? await aiImage({ title: w.title, brief: briefOf(s, i), size: 'landscape', quality: 'medium', model: FAST_IMG }) : await aiImage({ title: w.title, brief: 'דמות או אובייקט שממחישים את השקף "' + (s.t || '') + '": ' + (s.pts || []).slice(0, 3).join('. '), size: 'portrait', quality: 'medium', model: FAST_IMG, cutout: true }); } catch (e) { /* that slide stays without a photo */ } } };
     await Promise.all(Array.from({ length: Math.min(4, todo.length) }, worker));
     const out = {};
     sl.forEach((s, i) => { const u = m.imgBy[keyOf(s, i)]; if (u) out['s' + i] = u; });
