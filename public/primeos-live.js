@@ -1635,7 +1635,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const m = w && w.media;
     _dwDoneL(st);
     const it = items[0];
-    if (m && m.url && it && it.ty === 'doc') { it.media = { kind: 'doc', url: m.url, docx: m.docx, thumb: m.thumb, ar: '210/297', style: w.style }; if (w.doc) it.doc = w.doc; flush(); }
+    if (m && m.url && it && it.ty === 'doc') { it.media = { kind: 'doc', url: m.url, docx: m.docx, thumb: m.thumb, ar: '210/297', style: w.style, qa: (w.doc && w.doc.qa) || null }; if (w.doc) it.doc = w.doc; flush(); }
   };
 
   /* ---------- presentations: 3 styles, real PDF + PowerPoint + slide previews ---------- */
@@ -1760,7 +1760,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const m = w && w.media;
     _dkDoneL(st);
     const it = items[0];
-    if (m && m.url && it && it.ty === 'deck') { it.media = { kind: 'deck', url: m.url, pptx: m.pptx, slides: m.slides, thumb: m.thumb, ar: '16/9', style: w.style }; if (w.deck) it.deck = w.deck; flush(); }
+    if (m && m.url && it && it.ty === 'deck') { it.media = { kind: 'deck', url: m.url, pptx: m.pptx, slides: m.slides, thumb: m.thumb, ar: '16/9', style: w.style, qa: (w.deck && w.deck.qa) || null }; if (w.deck) it.deck = w.deck; flush(); }
   };
   // item page: download links for every real file
   const _itemRL = SCREENS.item.render;
@@ -1772,7 +1772,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const links = [[m.kind === 'video' ? 'הורדת הסרטון' : m.kind === 'graphic' ? 'הורדת הגרפיקה' : 'PDF', m.url]];
     if (m.pptx) links.push(['PowerPoint', m.pptx]);
     if (m.docx) links.push(['Word', m.docx]);
-    const box = '<div class="note">' + ic('down', 16) + '<span>הקובץ המקורי: ' + links.map((l) => '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" style="font-weight:700;color:var(--brand)">' + l[0] + '</a>').join(' · ') + (m.kind === 'video' && !m.ready ? ' (הסרטון עדיין ברינדור)' : '') + '</span></div>';
+    const box = '<div class="note">' + ic('down', 16) + '<span>הקובץ המקורי: ' + links.map((l) => '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" style="font-weight:700;color:var(--brand)">' + l[0] + '</a>').join(' · ') + (m.kind === 'video' && !m.ready ? ' (הסרטון עדיין ברינדור)' : '') + (m.qa ? ' ' + qaHtml(m.qa) + (m.qa.issues && m.qa.issues.length ? '<br><small>בודק התוכן: ' + esc(m.qa.issues.slice(0, 3).join(' · ')) + (m.qa.fixed ? ' (תוקן אוטומטית)' : '') + '</small>' : '') : '') + '</span></div>';
     return h.replace('<div class="note">' + ic('help', 16), box + '<div class="note">' + ic('help', 16));
   };
 

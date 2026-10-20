@@ -5,7 +5,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import JSZip from 'https://esm.sh/jszip@3.10.1';
 import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES } from './video.ts';
-import { STYLE_PICK_HE, styleOf, PALETTE_MODES, DOC_RULES_HE, DOC_TYPES, DECK_RULES_HE, DECK_STYLES, VIDEO_RULES_HE } from './design.ts';
+import { STYLE_PICK_HE, styleOf, PALETTE_MODES, DOC_RULES_HE, DOC_TYPES, DECK_RULES_HE, DECK_STYLES, VIDEO_RULES_HE, QA_PASS } from './design.ts';
+import { REVIEW_SYS, reviewPrompt } from './agency.ts';
 
 const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-7-sonnet-latest'];
 let goodModel: string | null = null;
@@ -240,6 +241,24 @@ async function proof(key: string, obj: Record<string, unknown>) {
   }
 }
 
+const STR = { type: 'string' };
+// supervisor pass: an independent reviewer scores the result against the brief and the rules and returns a corrected copy
+async function reviewContent(key: string, kind: 'doc' | 'deck' | 'video', brief: string, result: any) {
+  try {
+    const j = await claudeObj(key, REVIEW_SYS, reviewPrompt(kind, brief, result), 9000, [], { type: 'object', properties: { score: { type: 'number' }, issues: { type: 'array', items: STR }, stop: { type: 'boolean' }, stopWhy: STR, fixed: { type: 'object', additionalProperties: true } }, required: ['score', 'issues'] });
+    const score = Math.max(0, Math.min(100, Math.round(+j.score || 0)));
+    const fixed = j.fixed && typeof j.fixed === 'object' && Object.keys(j.fixed).length > 2 ? j.fixed : null;
+    return { score, issues: (Array.isArray(j.issues) ? j.issues : []).slice(0, 6).map(String), stop: !!j.stop, stopWhy: String(j.stopWhy ?? '').slice(0, 200), fixed };
+  } catch (e) { console.error('review', e instanceof Error ? e.message : e); return null; }
+}
+// the reviewed result: the reviewer's corrected copy when the first draft fell short, with the review attached
+async function supervised(key: string, kind: 'doc' | 'deck' | 'video', brief: string, draft: any) {
+  const r = await reviewContent(key, kind, brief, draft);
+  if (!r) return { out: draft, qa: null };
+  const out = r.score < QA_PASS && r.fixed && !r.stop ? r.fixed : draft;
+  return { out, qa: { score: r.score, issues: r.issues, stop: r.stop, stopWhy: r.stopWhy, fixed: out !== draft } };
+}
+
 const RULES = `כללי כתיבה מחייבים:
 - עברית תקנית, פנייה לתושבים בלשון רבים.
 - מקף רגיל בלבד (-), אף פעם לא מקף ארוך.
@@ -258,7 +277,6 @@ ${RULES}`;
 interface Ctx { org: string; dept?: string; tone?: string; good?: string[]; bad?: string[]; facts?: string }
 
 // the director's answer, as a tool schema (the model fills it field by field, so the plan always arrives whole)
-const STR = { type: 'string' };
 const BRIEF_SCHEMA = {
   type: 'object',
   properties: {
@@ -503,7 +521,8 @@ ${brief}
       const ask = () => claudeObj(key, DIRECTOR_SYS + '\n' + VIDEO_RULES_HE + '\n' + s, directorPrompt(p, c, voices), 8000, [...imgs, ...fb], BRIEF_SCHEMA);
       let plan: any;
       try { plan = await ask(); } catch (e) { console.error('vbrief', e instanceof Error ? e.message : e); plan = await ask(); } // one retry
-      return json(req, { ok: true, caps: c, ...sanitizeBrief(plan, p, voices) });
+      const rv = p.review === false ? { out: plan, qa: null } : await supervised(key, 'video', `${p.title || ''}\n${p.desc || ''}\nסוג: ${p.goal || ''} | קהל: ${p.aud || ''} | אורך: ${p.duration || 30} שניות`, plan);
+      return json(req, { ok: true, caps: c, ...sanitizeBrief(rv.out, p, voices), qa: rv.qa });
     }
     if (mode === 'vsample') {
       const text = String(p.text || 'שלום, אני הקול של PrimeOS. ביום חמישי הקרוב מחכה לכם פסטיבל הסתיו בפארק העירוני, עם הופעות, אוכל ופינת ילדים. נתראה שם!').slice(0, 300);
@@ -547,7 +566,8 @@ ${DOC_RULES_HE}${p.style === 'data' ? `
 סגנון גרפים וטבלאות: הוסף גם "charts":[{"title":"כותרת","unit":"יחידה","type":"bar|pie","items":[{"l":"תווית","v":מספר}]}] (1-2 גרפים) ו-"table":{"head":["עמודה"],"rows":[["תא"]]}. רק מספרים שמופיעים בבריף - אסור להמציא נתונים. אם אין מספרים בבריף, החזר מערך charts ריק.` : ''}${p.style === 'designed' ? `
 סגנון מעוצב: הוסף "highlights":[{"icon":"cal|clock|pin|info|phone|users|check","t":"כותרת קצרה","d":"משפט קצר"}] (3-4 פריטים) ו-"quote":"משפט מוביל קצר להדגשה".` : ''}`, 3500, fb);
       const dj = parseJson(raw); if (!DOC_TYPES[dj.dtype]) dj.dtype = 'notice';
-      return json(req, { ok: true, ...dj });
+      const rv = await supervised(key, 'doc', brief, dj);
+      return json(req, { ok: true, ...rv.out, qa: rv.qa });
     }
 
     if (mode === 'deck2') {
@@ -562,7 +582,8 @@ ${fb.length && p.keep ? 'מספר השקפים כמו בקובץ המצורף (�
 סגנון גרפים וטבלאות: מותר גם kind "chart" עם "chart":{"type":"bar|pie|line","unit":"יחידה","items":[{"l":"תווית","v":מספר}]}, ו-kind "table" עם "table":{"head":["עמודה"],"rows":[["תא"]]}. רק מספרים מהבריף - אסור להמציא.` : ''}${p.style === 'designed' ? `
 סגנון מעוצב: העדף kinds מגוונים: "cover","bullets","cards" (pts של 3-4 כרטיסים קצרים),"quote","timeline","end".` : ''}`, 4000, fb);
       const kj = parseJson(raw); if (!DECK_STYLES[kj.dstyle]) kj.dstyle = 'project';
-      return json(req, { ok: true, ...kj });
+      const rv = await supervised(key, 'deck', brief, kj);
+      return json(req, { ok: true, ...rv.out, qa: rv.qa });
     }
 
     return json(req, { error: 'unknown_mode' }, 400);

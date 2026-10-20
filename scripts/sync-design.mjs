@@ -10,6 +10,7 @@ writeFileSync('supabase/functions/_shared/palette.ts', '// deno-lint-ignore-file
 for (const fn of ['generate', 'image', 'produce', 'smartsend-webhook']) {
   copyFileSync('supabase/functions/_shared/palette.ts', `supabase/functions/${fn}/palette.ts`);
   copyFileSync('supabase/functions/_shared/design.ts', `supabase/functions/${fn}/design.ts`);
+  copyFileSync('supabase/functions/_shared/agency.ts', `supabase/functions/${fn}/agency.ts`);
 }
 // the browser gets the same palette code between the markers in public/primeos-live.js
 const live = 'public/primeos-live.js';
