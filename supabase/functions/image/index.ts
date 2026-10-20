@@ -4,7 +4,8 @@
 // action 'fixtext': edits an existing design to correct only the flagged Hebrew.
 // POST { action:'check' } | { action:'models' } | { action:'tplscan', url } | design + template:{url,desc,slots} | { action:'design', texts, brief, colors, refs, logo, size, note?, n? } | { action:'fixtext', url, fixes, issues, want, size } | { brief, title?, dept?, size?, prompt? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { designDirective, qaPrompt, QA_SYS, QA_REDO, styleOf } from './design.ts';
+import { designDirective, qaPrompt, QA_SYS, QA_REDO, styleOf, kitDirective, KIT_SCAN, STYLES } from './design.ts';
+import type { BrandKit } from './design.ts';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
@@ -95,6 +96,18 @@ Hard rules:
 - People only when it serves the message: real, diverse Israeli residents, modest, natural. No flags with emblems, no political symbols, no alarming scenes.
 Return only the prompt, max 260 words.`;
 
+// brand kit: the organisation's graphic language (from its logo) + the fixed municipal skeleton; the designer only fills it
+const KIT_DESIGNER = `You are the senior art director of a premium studio that designs official social-media graphics for Israeli municipalities. Every organisation has ONE fixed skeleton and ONE graphic language derived from its logo; your job is to fill them for this message, never to invent a new layout.
+Write ONE prompt in English for an image model that will render the COMPLETE finished graphic, including its Hebrew typography.
+Hard rules:
+- Describe the canvas top to bottom following the BRAND KIT and the FIXED SKELETON exactly: template, logo position, tag, headline treatment, sub line, motif rule, details / icon row, button, photo, motif shapes in the corners. Name every colour by hex. Nothing outside the skeleton.
+- The photo: describe the scene concretely (place, light, people, action, mood) and the embedded branding item in the logo colours. Describe the illustrated object when the message has one.
+- Hebrew text is written right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in a heavy bold Hebrew sans-serif. Never add any other words, letters, numbers, fake text or English. The icon labels are Hebrew strings too.
+- Include every text line given, all of them, and only them (a missing line is a failure). Say which word(s) of the headline take the hot colour.
+- Reference image 1 is the logo: place it large and unchanged at the logo position; never redraw it, never add another emblem. Other attached images are real photos to use as the photo.
+- People: real, diverse Israeli residents or municipal staff, modest, natural, warm. No flags with emblems, no political symbols, no alarming scenes, no minors in sensitive topics.
+Return only the prompt, max 300 words.`;
+
 // personal template: the organisation's own design is the fixed structure, only texts and imagery change
 const TEMPLATE_DESIGNER = `You are the senior art director of a studio that produces official social-media graphics for an Israeli municipality from the municipality's OWN fixed design template.
 Write ONE prompt in English for an image model. Reference image 1 attached to the image model is the template.
@@ -155,7 +168,7 @@ async function proofImage(ckey: string, b64: string, want: string) {
 }
 const issuesOf = (c: any) => (c && !c.ok ? (c.issues ?? []).length || 1 : 0);
 // independent reviewer: score 0-100 by the PrimeOS rubric, a redo note, and a hard stop for facts / minors / unreadable text
-async function qaReview(ckey: string, b64: string, o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string> }) {
+async function qaReview(ckey: string, b64: string, o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string>; kit?: boolean }) {
   try {
     const raw = await claude(ckey, QA_SYS, [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
@@ -165,7 +178,7 @@ async function qaReview(ckey: string, b64: string, o: { brief: string; texts: st
     if (!m) { console.error('qa: no json', raw.slice(0, 200)); return null; }
     let j: any;
     try { j = JSON.parse(m[0]); } catch { j = JSON.parse(m[0].replace(/([\u05d0-\u05ea])"(?=[\u05d0-\u05ea])/g, '$1\u05f4').replace(/,\s*([}\]])/g, '$1')); }
-    return { score: Math.max(0, Math.min(100, Math.round(+j.score || 0))), parts: j.parts ?? {}, issues: (Array.isArray(j.issues) ? j.issues : []).slice(0, 5).map(String), redo: String(j.redo ?? '').slice(0, 500), stop: !!j.stop, stopWhy: String(j.stopWhy ?? '').slice(0, 200) };
+    return { score: Math.max(0, Math.min(100, Math.round(+j.score || 0))), parts: j.parts ?? {}, issues: (Array.isArray(j.issues) ? j.issues : []).slice(0, 5).map(String), redo: String(j.redo ?? '').slice(0, 500), stop: !!j.stop, stopWhy: String(j.stopWhy ?? '').slice(0, 200), skeleton: j.skeleton && typeof j.skeleton === 'object' ? j.skeleton : undefined };
   } catch (e) { console.error('qa', e instanceof Error ? e.message : e); return null; }
 }
 // PNG mask for a masked edit: transparent inside the boxes (only there the model may draw), opaque elsewhere
@@ -254,6 +267,38 @@ fixed=true for texts that belong to the template itself and must stay (organisat
     }
   }
 
+  // derive the organisation's graphic language from its logo, once (saved on the organisation by the client)
+  if (p.action === 'brandkit') {
+    const ckey = Deno.env.get('ANTHROPIC_API_KEY');
+    if (!ckey) return json(req, { error: 'claude_not_configured' }, 503);
+    try {
+      const src = String(p.logo ?? '');
+      if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(src)) throw new Error('bad_url');
+      const colors = ((p.colors ?? []) as string[]).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 8).join(', ');
+      const raw = await claude(ckey, KIT_SCAN, [
+        { type: 'image', source: { type: 'url', url: src } },
+        { type: 'text', text: `Organisation: ${p.org ?? ''}\nColours extracted from the logo: ${colors || 'none'}\nReturn the JSON.` },
+      ]);
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error('scan_failed');
+      const k = JSON.parse(m[0]);
+      const pick = <T extends string>(v: unknown, ok: T[], d: T): T => (ok.includes(v as T) ? (v as T) : d);
+      const kit: BrandKit = {
+        motif: { shape: String(k.motif?.shape ?? 'other').slice(0, 20), en: String(k.motif?.en ?? '').slice(0, 120), he: String(k.motif?.he ?? '').slice(0, 40) },
+        logoPos: pick(k.logoPos, ['top-center', 'top-right', 'top-left'], 'top-center'),
+        template: pick(k.template, ['panel', 'fullbleed', 'bands'], 'panel'),
+        icons: pick(k.icons, ['line-circle', 'solid-circle', 'solid'], 'line-circle'),
+        headline: pick(k.headline, ['colored', 'bands'], 'colored'),
+        hot: /^#[0-9a-f]{6}$/i.test(String(k.hot ?? '')) ? String(k.hot).toUpperCase() : '',
+        colorsEn: String(k.colorsEn ?? '').slice(0, 200), summary: String(k.summary ?? '').slice(0, 200), at: new Date().toISOString().slice(0, 10),
+      };
+      if (kit.template !== 'bands') kit.headline = 'colored';
+      return json(req, { ok: true, kit });
+    } catch (e) {
+      return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
+    }
+  }
+
   if (p.action === 'design') {
     const ckey = Deno.env.get('ANTHROPIC_API_KEY');
     if (!ckey) return json(req, { error: 'claude_not_configured' }, 503);
@@ -261,7 +306,8 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const tx = p.texts ?? {};
       // a template that carries its own organisation line keeps it; the org name is not added again
       const ownOrg = !!p.template && ((p.template.slots ?? []) as any[]).some((x) => x?.fixed && (x.role === 'org' || x.role === 'footer'));
-      const lines = [['kicker', tx.kicker], ['headline', tx.headline], ['sub', tx.sub], ...((tx.details ?? []) as any[]).map((d: any, i: number) => ['detail ' + (i + 1), typeof d === 'string' ? d : d?.text]), ['call to action', tx.cta], ['organisation name', ownOrg ? '' : p.org]]
+      const kit: BrandKit | null = p.kit && typeof p.kit === 'object' && !p.template ? p.kit as BrandKit : null;
+      const lines = [['kicker', tx.kicker], ['headline', tx.headline], ['sub', tx.sub], ...((tx.details ?? []) as any[]).map((d: any, i: number) => ['detail ' + (i + 1), typeof d === 'string' ? d : d?.text]), ...((kit ? (tx.icons ?? []) : []) as any[]).slice(0, 4).map((d: any, i: number) => ['icon label ' + (i + 1), typeof d === 'string' ? d : d?.label]), ['call to action', tx.cta], ['organisation name', ownOrg || kit ? '' : p.org]]
         .filter((x) => x[1]).map((x) => `${x[0]}: "${x[1]}"`).join('\n');
       const colors = ((p.colors ?? []) as string[]).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 6).join(', ') || '#0E3B6B, #0A2C51, #9A6B1F, #1E6BA8';
       const okUrl = (u: string) => /^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(u);
@@ -270,8 +316,15 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const fmt = p.size === 'portrait' ? 'vertical portrait' : p.size === 'landscape' ? 'wide landscape' : 'square';
       const slots = tpl ? ((tpl.slots ?? []) as any[]).map((x) => `- ${x.role}${x.fixed ? ' (fixed, keep)' : ''}: ${x.he ?? ''}${x.text ? ' - currently "' + x.text + '"' : ''}`).join('\n') : '';
       const style = styleOf(p.style);
-      const directive = designDirective({ style, palette: p.palette, colors: p.colors, roles: p.roles, fmt: p.size === 'portrait' ? 'portrait' : p.size === 'landscape' ? 'landscape' : 'square', photos: refs.length - (p.logo && !tpl ? 1 : 0) - (tpl ? 1 : 0), logo: !!p.logo });
-      let prompt = tpl
+      const fmtId = p.size === 'portrait' ? 'portrait' : p.size === 'landscape' ? 'landscape' : 'square';
+      const nPhotos = refs.length - (p.logo && !tpl ? 1 : 0) - (tpl ? 1 : 0);
+      const directive = kit
+        ? kitDirective(kit, { colors: p.colors, roles: p.roles, emergency: style === 'service', fmt: fmtId, photos: nPhotos })
+        : designDirective({ style, palette: p.palette, colors: p.colors, roles: p.roles, fmt: fmtId, photos: nPhotos, logo: !!p.logo });
+      const iconsTx = kit ? ((tx.icons ?? []) as any[]).slice(0, 4).map((d: any) => typeof d === 'string' ? d : `${d?.icon ?? ''} "${d?.label ?? ''}"`).filter(Boolean).join(', ') : '';
+      let prompt = kit
+        ? (await claude(ckey, KIT_DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nMood of the style "${style}": ${STYLES[style]?.he ?? ''} (energy ${STYLES[style]?.energy ?? 'mid'}).\n${directive}\nTexts to place (exactly):\n${lines}\n${tx.keyword ? `Key word(s) of the headline in the hot colour: "${tx.keyword}"\n` : ''}${iconsTx ? `Icon row (icon name then Hebrew label): ${iconsTx}\n` : 'No icon row for this message.\n'}${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the logo; ' : ''}${nPhotos} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim()
+        : tpl
         ? (await claude(ckey, TEMPLATE_DESIGNER, [
           { type: 'image', source: { type: 'url', url: String(tpl.url) } },
           { type: 'text', text: `The attached image is the template (it will be reference image 1 for the image model).\nStructural description: ${tpl.desc ?? ''}\nText areas of the template:\n${slots || '(read them from the image)'}\nNew message brief (Hebrew): ${p.brief ?? ''}\nNew texts to place (exactly):\n${lines}\n${refs.length > 1 ? `More reference images after the template: ${p.logo ? 'the logo, then ' : ''}${refs.length - 1 - (p.logo ? 1 : 0)} photo(s).` : ''}\n${p.note ? 'Change request from the user: ' + p.note : ''}` },
@@ -288,7 +341,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
         const checks = await Promise.all(gen.all.map((x) => proofImage(ckey, x, wantTxt)));
         let best = 0;
         checks.forEach((c, i) => { if (issuesOf(c) < issuesOf(checks[best])) best = i; });
-        const qa = p.qa === false ? null : await qaReview(ckey, gen.all[best], { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles });
+        const qa = p.qa === false ? null : await qaReview(ckey, gen.all[best], { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles, kit: !!kit });
         return { b64: gen.all[best], check: checks[best], model: gen.model, qa, prompt: pr };
       };
       // a weak result (missing / misspelled Hebrew, or a low review score) gets one more attempt with the reviewer's note (the edge
@@ -303,10 +356,10 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const r1 = tries.sort((a, b) => issuesOf(a.check) - issuesOf(b.check) || (b.qa?.score ?? 0) - (a.qa?.score ?? 0))[0];
       const { b64, check, model } = r1; prompt = r1.prompt; const qa = r1.qa ? { ...r1.qa, tries: tries.length } : null;
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${tpl ? 't' : 'd'}-${crypto.randomUUID().slice(0, 8)}.jpg`;
+      const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${tpl ? 't' : kit ? 'k' : 'd'}-${crypto.randomUUID().slice(0, 8)}.jpg`;
       const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
       if (up.error) throw up.error;
-      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: wantList, prompt, model, size, style, qa });
+      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: wantList, prompt, model, size, style, qa, kit: !!kit });
     } catch (e) {
       return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
     }

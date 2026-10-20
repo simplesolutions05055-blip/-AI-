@@ -1327,7 +1327,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       w.tags = tags.slice(0, 4);
       w.ver = 1;
       if (gfx) {
-        w.design = { kicker: r.kicker || '', sub: r.sub || '', details: r.details || [], cta: r.cta || '', style: r.style || 'official', palette: r.palette || '', styleWhy: r.styleWhy || '' };
+        w.design = { kicker: r.kicker || '', sub: r.sub || '', details: r.details || [], cta: r.cta || '', keyword: r.keyword || '', icons: Array.isArray(r.icons) ? r.icons.filter((x) => x && x.label).slice(0, 4) : [], style: r.style || 'official', palette: r.palette || '', styleWhy: r.styleWhy || '' };
         w.media = { kind: 'graphic', layout: pickLayout(r, w.brief.free) };
       }
       render();
@@ -1999,9 +1999,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         m.busy = tpl ? 'ממלאים את התבנית „' + tpl.n + '” בתוכן החדש... (כדקה)' : 'ChatGPT מעצב את הגרפיקה... (כדקה)';
         m.warn = null;
         render();
+        const kit = !tpl && logo ? await ensureKit() : null;
+        if (S.wiz !== w || m.job !== job) return;
         const r = await fx('image', {
           action: 'design', org: aiCtx().org, dept: w.brief.dept, size, brief: (w.brief.title || '') + '\n' + (w.brief.free || ''),
-          colors: brandFor(w.brief.dept).colors, roles: brandFor(w.brief.dept).roles, style: w.design.style || 'official', palette: w.design.palette || '', texts: { kicker: w.design.kicker, headline: w.t, sub: w.design.sub, details: w.design.details, cta: w.design.cta },
+          colors: brandFor(w.brief.dept).colors, roles: brandFor(w.brief.dept).roles, style: w.design.style || 'official', palette: w.design.palette || '', kit: kit || undefined, texts: { kicker: w.design.kicker, headline: w.t, sub: w.design.sub, details: w.design.details, cta: w.design.cta, icons: w.design.icons || [], keyword: w.design.keyword || '' },
           refs: [...(logo && !tpl ? [logo] : []), ...photos].slice(0, tpl ? 3 : 4), logo: !!logo && !tpl, note: opts.note || '', quality: 'high', n: 2,
           template: tpl ? { url: tpl.url, desc: tpl.desc || '', slots: tpl.slots || [] } : undefined,
         }, 150000);
@@ -2273,6 +2275,51 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       toast('עיבוד הלוגו נכשל', 'נסו קובץ PNG, JPG או SVG אחר.', 'err');
     }
   }
+  /* ---------- brand kit: the graphic language derived from the logo (motif, template, logo position, icon style, hot colour) ---------- */
+  const KIT_HE = { template: { panel: 'פאנל בהיר + תמונה בצד', fullbleed: 'תמונה מלאה, טקסט על שמיים', bands: 'כותרת על פסי צבע מוטים' }, logoPos: { 'top-center': 'מרכז-עליון', 'top-right': 'ימין-עליון', 'top-left': 'שמאל-עליון' }, icons: { 'line-circle': 'קו דק בעיגול בהיר', 'solid-circle': 'מלא בעיגול צבעוני', solid: 'מלא, בלי עיגול' } };
+  let kitBusy = null;
+  async function ensureKit(force) {
+    if (!force && BRAND.kit && BRAND.kit.logo === logoOf()) return BRAND.kit;
+    if (kitBusy) return kitBusy;
+    const logo = logoOf();
+    if (!logo) return null;
+    kitBusy = (async () => {
+      try {
+        const r = await fx('image', { action: 'brandkit', org: aiCtx().org, logo, colors: brandFor().colors }, 60000);
+        if (!r || !r.kit) return BRAND.kit || null;
+        const kit = Object.assign({}, r.kit, { logo });
+        if (BRAND.kit && BRAND.kit.pin) ['template', 'logoPos', 'icons', 'headline'].forEach((k) => { if (BRAND.kit[k]) kit[k] = BRAND.kit[k]; });
+        if (kit.template !== 'bands') kit.headline = 'colored';
+        if (BRAND.kit && BRAND.kit.pin) kit.pin = BRAND.kit.pin;
+        BRAND.kit = kit; if (S.brandDraft) S.brandDraft.kit = kit;
+        flush(); render();
+        return kit;
+      } catch (e) { return BRAND.kit || null; }
+      finally { kitBusy = null; }
+    })();
+    return kitBusy;
+  }
+  ACT.kitRedo = async () => { S.kitBusy = true; render(); await ensureKit(true); S.kitBusy = false; render(); toast('השפה הגרפית זוהתה מחדש', (BRAND.kit && BRAND.kit.summary) || ''); };
+  ACT.kitSet = (k, v) => { if (!BRAND.kit) return; BRAND.kit[k] = v; if (k === 'template' && v !== 'bands') BRAND.kit.headline = 'colored'; if (k === 'template' && v === 'bands') BRAND.kit.headline = 'bands'; BRAND.kit.pin = true; if (S.brandDraft) S.brandDraft.kit = BRAND.kit; flush(); render(); };
+  const _logoApply = logoApply;
+  logoApply = async function (file, quiet) { await _logoApply(file, quiet); if (logoOf()) { BRAND.kit = null; ensureKit(true); } };
+  function kitCard() {
+    const k = BRAND.kit, busy = S.kitBusy || !!kitBusy;
+    if (!logoOf()) return '';
+    const sel = (key, opts) => '<select data-kit="' + key + '"' + (busy ? ' disabled' : '') + '>' + Object.keys(opts).map((o) => '<option value="' + o + '"' + (k && k[key] === o ? ' selected' : '') + '>' + esc(opts[o]) + '</option>').join('') + '</select>';
+    return '<div class="card card-pad" style="margin-bottom:16px"><h3>השפה הגרפית של הארגון</h3><span class="t-sub">נגזרת מהלוגו פעם אחת. כל גרפיקה בנויה על אותו שלד קבוע: לוגו, תגית, כותרת, שורת משנה, קו מוטיב, פרטים ואייקונים, כפתור, תמונה. ככה כל הפוסטים נראים כסדרה אחת.</span>' +
+      (busy ? '<div class="lo-busy" style="margin-top:10px">' + thinkBox(1) + '</div>' : k ? '<div class="kit-grid">' +
+        '<div><b>מוטיב</b><span>' + esc(k.motif && k.motif.he || '') + '</span></div>' +
+        '<div><b>צבע הדגשה</b><span dir="ltr" style="display:flex;gap:6px;align-items:center;justify-content:flex-end"><i style="display:inline-block;width:16px;height:16px;border-radius:5px;background:' + esc(k.hot || '#999') + '"></i>' + esc(k.hot || '') + '</span></div>' +
+        '<div><b>תבנית</b>' + sel('template', KIT_HE.template) + '</div>' +
+        '<div><b>מיקום הלוגו</b>' + sel('logoPos', KIT_HE.logoPos) + '</div>' +
+        '<div><b>אייקונים</b>' + sel('icons', KIT_HE.icons) + '</div>' +
+        '</div><div class="t-sub" style="margin-top:8px">' + esc(k.summary || '') + (k.at ? ' · זוהה ' + esc(k.at) : '') + '</div>' : '<div class="t-sub" style="margin-top:10px">עוד לא זוהתה. תזוהה אוטומטית בגרפיקה הראשונה.</div>') +
+      '<div style="margin-top:10px"><button class="btn btn-sm" data-act="kitRedo"' + (busy ? ' disabled' : '') + '>' + ic('refresh', 14) + ' זיהוי מחדש מהלוגו</button></div></div>';
+  }
+  document.addEventListener('change', (e) => { const t = e.target; if (t && t.dataset && t.dataset.kit) ACT.kitSet(t.dataset.kit, t.value); });
+  css.textContent += `
+.kit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:12px}.kit-grid>div{display:flex;flex-direction:column;gap:4px;min-width:0}.kit-grid b{font-size:12.5px;color:var(--ink-3,#5A6386)}.kit-grid select{font:inherit;padding:6px 8px;border:1px solid var(--line,#DDE3EC);border-radius:8px;background:var(--surface,#fff)}`;
   // a logo saved before the automatic processing existed: process it once, so the brand colours come from it
   let logoMigrating = false;
   async function migrateLogo() {
@@ -2330,7 +2377,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       (l ? '<div class="note warn" id="loLow" role="status"' + (info.low ? '' : ' hidden') + '>' + ic('alert', 15) + '<span><b>הלוגו ברזולוציה נמוכה</b> ולכן עלול להיראות מטושטש בגרפיקות ובסרטונים. העלו את קובץ המקור: SVG, או PNG ברוחב 1000 פיקסלים לפחות.</span></div>' : '') +
       '<div><button class="btn btn-primary" data-act="logoUp"' + (S.logoBusy ? ' disabled' : '') + '>' + ic('upload', 16) + ' ' + (l ? 'החלפת לוגו' : 'העלאת לוגו') + '</button></div>' +
       '<span class="t-sub">מומלץ SVG, או PNG ברוחב 1000 פיקסלים לפחות. רקע אחיד מוסר אוטומטית.</span></div></div>';
-    return h.replace(/<div class="grid g-4">[\s\S]*?(<div class="card card-pad lp-card">)/, panel + '$1');
+    return h.replace(/<div class="grid g-4">[\s\S]*?(<div class="card card-pad lp-card">)/, panel + kitCard() + '$1');
   };
   // the logo position preview shows the real logo
   const _lpp = logoPosPreview;
@@ -2643,7 +2690,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     try {
       m.busy = 'ChatGPT מעצב את הגרפיקה...'; rerenderCamp();
       const tx = { kicker: x.kicker || '', headline: x.t, sub: x.sub || '', details: [], cta: '' };
-      let r = await fx('image', { action: 'design', org: aiCtx().org, dept: c.dept, size, brief: x.t + '\n' + (x.body || ''), colors: brandFor(c.dept).colors, roles: brandFor(c.dept).roles, style: x.style || 'official', texts: tx,
+      const kitS = logoOf() ? await ensureKit() : null;
+      let r = await fx('image', { action: 'design', org: aiCtx().org, dept: c.dept, size, brief: x.t + '\n' + (x.body || ''), colors: brandFor(c.dept).colors, roles: brandFor(c.dept).roles, style: x.style || 'official', kit: kitS || undefined, texts: tx,
         refs: logo ? [logo] : [], logo: !!logo, note: note || '', quality: 'high', n: 1, model: FAST_IMG }, 150000);
       let url = r.url, check = r.check || { ok: true }; m.model = r.model || ''; m.qa = r.qa || null; m.style = r.style || x.style;
       // up to two masked fix rounds; the version with the fewest text errors is kept

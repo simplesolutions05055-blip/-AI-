@@ -79,7 +79,7 @@ export const QA_PASS = 80;
 export const QA_REDO = 70;
 export const QA_SYS = `You are an independent senior design reviewer for official municipal social-media graphics in Hebrew. You have not seen how this graphic was made. Judge only what is in the image against the brief and the rules. Be concrete and short. Answer with JSON only.
 Calibration: 85-100 = publish as is; 80-84 = publish, minor notes; 70-79 = acceptable, a resident would not notice a problem; below 70 only for a real problem a resident would notice: unreadable or wrong text, a missing required line, clutter that hides the message, off-brand colours, a dated or unprofessional look. A band that is a bit large, a margin a little under 72px, or one extra icon are notes, not failures. The ten rubric parts must add up to the score.`;
-export function qaPrompt(o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string> }) {
+export function qaPrompt(o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string>; kit?: boolean }) {
   const r = paletteRoles((o.colors ?? []) as string[], o.roles ?? {});
   const st = STYLES[styleOf(o.style)];
   return `Brief (Hebrew): ${o.brief}
@@ -87,9 +87,9 @@ Intended style: ${styleOf(o.style)} - ${st.en}
 Texts that must appear exactly: ${o.texts.map((t) => `"${t}"`).join(' ; ')}
 Brand roles: base ${r.base}, secondary ${r.secondary}, accent ${r.accent}, light ${r.light}.
 Rules: ${graphicRulesEn('square')}
-
+${o.kit ? KIT_QA_EN + '\n' : ''}
 Score each part (max in brackets): ${QA_PARTS.map(([k, he, max]) => `${k} (${max}) ${he}`).join(', ')}.
-Return JSON: {"score":0-100,"parts":{"mobile":0,"hierarchy":0,"composition":0,"imagery":0,"brand":0,"access":0,"originality":0},"issues":["short Hebrew sentence per problem, most important first, max 5"],"redo":"English art-direction note for a second attempt, max 60 words, empty if score >= ${QA_PASS}","stop":false,"stopWhy":""}
+Return JSON: {"score":0-100,"parts":{"mobile":0,"hierarchy":0,"composition":0,"imagery":0,"brand":0,"access":0,"originality":0},"issues":["short Hebrew sentence per problem, most important first, max 5"],"redo":"English art-direction note for a second attempt, max 60 words, empty if score >= ${QA_PASS}","stop":false,"stopWhy":""${o.kit ? ',"skeleton":{"logo":true,"tag":true,"headline":true,"sub":true,"motif":true,"details":true,"cta":true,"photo":true}' : ''}}
 stop=true (regardless of score) when: a fact appears that is not in the brief or texts (date, time, place, number), a minor is the identifiable main subject in a sensitive topic, text is unreadable, or a public symbol/flag with emblem is used. Then stopWhy is one Hebrew sentence.`;
 }
 
@@ -149,3 +149,66 @@ export const VIDEO_RULES_HE = `חוקי הפקה מחייבים:
 - תמונות וסרטונים נשארים בהירים וחדים: tint עד 0.2, בלי שכבת צבע על כל הפריים. סצנת טקסט בלבד על רקע studio (לבן פנינה), לא על גרדיאנט כהה.
 - המחשה: תאריך ב-calendar, מקום ב-pin, תהליך ב-steps, דרישות ב-check, שינוי ב-compare, אפליקציה ב-mockup:phone. מספרים ב-stat.
 - רק עובדות מהבריף. בלי תאריך, שעה, מקום או מספר שלא נמסרו.`;
+
+/* ---------------- brand kit: the organisation's graphic language, derived once from its logo ---------------- */
+// Learned from 24 municipal graphics (6 cities): every post follows one fixed skeleton; what changes per organisation is
+// derived from the logo alone - colours, the motif shape, where the logo sits, one of three composition templates,
+// the icon style and the headline treatment. The kit is derived by a vision model when the logo is uploaded and saved
+// on the organisation; the designer only fills the skeleton.
+export interface BrandKit {
+  motif: { shape: string; en: string; he: string };
+  logoPos: 'top-center' | 'top-right' | 'top-left';
+  template: 'panel' | 'fullbleed' | 'bands';
+  icons: 'line-circle' | 'solid-circle' | 'solid';
+  headline: 'colored' | 'bands';
+  hot: string;        // the warm/vivid logo colour for the keyword and the button
+  colorsEn: string;   // short EN description of the logo colours
+  summary: string;    // one Hebrew sentence for the user
+  at?: string;
+}
+export const KIT_TEMPLATES: Record<BrandKit['template'], { he: string; en: string }> = {
+  panel: { he: 'פאנל בהיר + תמונה בצד', en: 'LIGHT PANEL + SIDE PHOTO: a white or near-white panel takes 50-60% of the width on the text side and holds the whole skeleton; the photo fills the other side full height and meets the panel with a soft organic curve or a soft diagonal fade (never a hard straight line). Motif shapes in two corners of the panel.' },
+  fullbleed: { he: 'תמונה מלאה, טקסט על שמיים', en: 'FULL-BLEED PHOTO: the photograph fills the whole canvas and is lit so its upper 45-55% is a bright, quiet area (sky, bright wall, haze) where the skeleton sits; the person or subject is in the lower part on one side. A soft white glow may sit behind the text block. Motif shapes cut two opposite corners.' },
+  bands: { he: 'כותרת על פסי צבע מוטים', en: 'SKEWED COLOUR BANDS: a light panel on the text side with a soft diagonal edge toward the photo; each headline line is white text on its own filled band in a logo colour (one band per line, bands skewed 3-6 degrees, stacked tight), the key line on the hot colour. Motif shapes scattered small along the edges.' },
+};
+export const KIT_ICONS: Record<BrandKit['icons'], string> = {
+  'line-circle': 'thin line icons in the base colour inside pale circles, a tiny motif shape tucked beside each icon',
+  'solid-circle': 'white solid icons inside filled circles, each circle a different logo colour',
+  solid: 'solid icons in the base colour, no circles',
+};
+export const KIT_SCAN_HE = 'מזהה את השפה הגרפית מהלוגו';
+export const KIT_SCAN = `You analyse a municipality's logo to derive its social-media graphic language. Answer with JSON only:
+{"motif":{"shape":"leaf|arrow|sail|ray|bubble|ring|wave|star|tower|other","en":"the motif as a reusable decorative element in 6-12 English words (e.g. 'thick quarter-ring arcs in the logo colours', 'small rounded leaves')","he":"2-4 מילים בעברית"},
+"logoPos":"top-center|top-right|top-left","template":"panel|fullbleed|bands","icons":"line-circle|solid-circle|solid","headline":"colored|bands","hot":"#hex of the warmest / most vivid logo colour (magenta, red, orange, yellow, lime); if none, the most saturated one","colorsEn":"the logo colours in 8-15 English words with hex values","summary":"משפט אחד בעברית: המוטיב, התבנית וצבע ההדגשה"}
+Rules: template 'bands' only for a bold multi-colour logo with sharp or angular shapes; 'fullbleed' for a logo with light, airy or sea/sun shapes; otherwise 'panel'. headline 'bands' only with template 'bands'. icons 'solid-circle' when the logo has 3+ vivid colours, 'line-circle' for a calm 1-2 colour logo, 'solid' for a dark single-colour emblem. logoPos 'top-center' unless the logo is a wide horizontal lockup (then 'top-right').`;
+
+export const SKELETON_EN = `FIXED SKELETON (every element, in this order, top to bottom on the text side; nothing else):
+1. LOGO: the attached logo, large (10-14% of the canvas height), unchanged, at the logo position given. No other emblem, crest or invented logo anywhere.
+2. TAG: a small filled pill with a tiny icon (megaphone / info) and the tag text, white text on a logo colour.
+3. HEADLINE: 1-3 lines, heavy black Hebrew sans-serif, 110-160px on 1080, tight leading. Headline treatment as given. The key word(s) in the hot colour.
+4. SUB LINE: one line, 36-44px, regular weight, dark base colour.
+5. MOTIF RULE: a short decorative rule or arc under the headline block, drawn from the motif in the logo colours.
+6. DETAILS: date / time / place as pills or rows with a calendar / clock / pin icon, 28-34px; and, when icon items are given, a row of 3-4 icons with 2-4 word labels in the icon style given (a white bar with thin dividers is fine).
+7. CALL TO ACTION: one rounded, fully filled button in the hot colour, white text 34-40px, with an arrow in a small white circle.
+8. PHOTO: one photoreal photograph (40-100% of the canvas by the template), golden-hour or full sun, an Israeli street / square / park / mall, one or two people in focus with a mood that fits the message. The organisation's branding is embedded in the scene: a vest, helmet, sign, bin, flag or chalkboard in the logo colours (no readable text on them). When the message has a clear object (heat: thermometer; garbage: clock or bin; power: lightning; registration: phone; roadworks: cone), one large illustrated object of it sits beside the headline.
+MOTIF: the logo's own shape repeated as large decorative elements cutting two corners and as 2-3 small 'sparks' near the headline, in the logo colours, semi-transparent where over the photo. Only the logo colours (+ red for emergencies). No other hue, no gradients on text, no stock shapes unrelated to the logo.
+EMERGENCY VARIANT (service notices, hazards, outages): identical skeleton; the tag, key word and button turn red (#E0202A), a warning triangle or siren icon joins the tag, and the button may become a white bar "emergency phone" row. Photo of crews at work, calm, no damage or injuries.
+UNIFORMITY: a festival and an outage from the same organisation must look like two posts of one series - same logo position, same template, same motif, same icon style, same button.`;
+
+export function kitDirective(kit: BrandKit, o: { colors?: unknown[]; roles?: Record<string, string>; emergency?: boolean; fmt?: 'square' | 'portrait' | 'landscape'; photos?: number }) {
+  const r = paletteRoles((o.colors ?? []) as string[], o.roles ?? {});
+  const tpl = KIT_TEMPLATES[kit.template] ?? KIT_TEMPLATES.panel;
+  const hot = /^#[0-9a-f]{6}$/i.test(kit.hot || '') ? kit.hot : r.accent;
+  return `BRAND KIT (derived from this organisation's logo - follow exactly):
+LOGO COLOURS - ${kit.colorsEn}. Base (type, dark elements): ${r.base}. Hot colour (key word, button, tag): ${hot}. Light ground: ${r.light}.
+MOTIF - ${kit.motif?.en ?? 'soft rounded shapes'} (shape: ${kit.motif?.shape ?? 'other'}).
+LOGO POSITION - ${kit.logoPos ?? 'top-center'} of the text side.
+TEMPLATE - ${tpl.en}
+HEADLINE - ${kit.headline === 'bands' ? 'white text on skewed filled bands, one band per line, the key line on the hot colour' : 'coloured text on the light ground: base colour, with the key word(s) in the hot colour (2-3 logo colours by line at most)'}.
+ICONS - ${KIT_ICONS[kit.icons] ?? KIT_ICONS['line-circle']}.
+${o.emergency ? 'THIS IS AN EMERGENCY / SERVICE NOTICE: apply the emergency variant.' : 'Regular post: warm, optimistic, premium-app feel.'}
+${o.photos ? `Use the ${o.photos} attached photo(s) as the photo of the skeleton, embedding the branding treatment only if natural.` : 'No photo attached: create the photo as described in the skeleton.'}
+${SKELETON_EN}
+${graphicRulesEn(o.fmt ?? 'square')}`;
+}
+export const KIT_QA_EN = `SKELETON CHECK: this organisation uses a fixed skeleton. Report in "skeleton" which parts are present: logo (the real logo, not an invented crest), tag pill, headline with a hot-colour key word, sub line, motif rule/shapes from the logo, details or icon row, filled CTA button with arrow, photo with embedded branding. Each missing part is an issue and costs 6-10 points; an invented crest or logo instead of the real one is a stop.`;
