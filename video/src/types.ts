@@ -8,14 +8,16 @@ export const SIZES: Record<Format, [number, number]> = { '9x16': [1080, 1920], '
 export type Motion = 'zoomIn' | 'zoomOut' | 'panLeft' | 'panRight' | 'panUp' | 'panDown' | 'static' | 'drift';
 export type TextStyle =
   | 'headline' | 'pop' | 'box' | 'typewriter' | 'stamp' | 'lowerThird' | 'stat'
-  | 'quote' | 'list' | 'cinematic' | 'outline' | 'split' | 'neon';
+  | 'quote' | 'list' | 'cinematic' | 'outline' | 'split' | 'neon'
+  | 'steps' | 'check' | 'calendar' | 'pin' | 'compare';
 export type TextPos = 'top' | 'center' | 'bottom' | 'lower';
 export type TransitionKind = 'cut' | 'fade' | 'slide' | 'wipe' | 'iris' | 'clockWipe' | 'flip' | 'flash' | 'zoom' | 'whip' | 'push';
 export type Dir = 'left' | 'right' | 'up' | 'down';
-export type Fx = 'grain' | 'vignette' | 'lightLeak' | 'particles' | 'bokeh' | 'shapes' | 'letterbox' | 'scanlines';
+export type Fx = 'grain' | 'vignette' | 'lightLeak' | 'particles' | 'bokeh' | 'shapes' | 'letterbox' | 'scanlines' | 'confetti' | 'rays' | 'spotlight' | 'sparkle';
 
 export interface Visual {
-  kind: 'image' | 'video' | 'gradient' | 'color';
+  kind: 'image' | 'video' | 'gradient' | 'color' | 'studio' | 'mockup';
+  mock?: 'phone' | 'app';   // mockup: a phone with the organisation logo, or with an app screenshot (src)
   src?: string;              // image / video URL
   motion?: Motion;
   tint?: number;             // 0..1 dark overlay so text reads
@@ -38,6 +40,8 @@ export interface SceneText {
   unit?: string;             // stat: unit after the number
   size?: number;             // scale factor 0.6..1.6
   delay?: number;            // seconds after scene start
+  onLight?: boolean;         // set by the engine: the scene background is light, so type is dark
+  items?: { t: string; sub?: string; d?: string }[]; // steps / check / calendar / compare content
 }
 
 export interface Transition { kind: TransitionKind; dir?: Dir; dur?: number }
@@ -65,4 +69,5 @@ export interface Plan {
   audio?: { voice?: { src: string; vol?: number; start?: number }; music?: { src: string; vol?: number } };
   fx?: Fx[];                 // global effects over the whole video
   showLogo?: boolean;
+  scale?: 1 | 2;             // 2 = 4K render (2160x3840 portrait)
 }

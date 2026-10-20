@@ -122,8 +122,10 @@ async function advance(d: DB, j: Job) {
       const stockItems: any[] = ok(res.stock) ? res.stock.json.items || [] : [];
       const vis = scenes.map((s, i) => {
         const src = String(s.visual?.src ?? 'gradient');
-        const base = { motion: s.visual?.motion, tint: s.visual?.tint != null ? s.visual.tint : 0.35 };
+        const base = { motion: s.visual?.motion, tint: s.visual?.tint != null ? Math.min(0.25, +s.visual.tint) : 0.12 };
         let m: RegExpExecArray | null;
+        if (src === 'studio') return { ...base, kind: 'studio' };
+        if ((m = /^mockup:(phone|app)/.exec(src))) return { ...base, kind: 'mockup', mock: m[1] };
         if ((m = /^upload:(\d+)/.exec(src)) && imgs[+m[1]]) return { ...base, kind: imgs[+m[1]].v ? 'video' : 'image', src: imgs[+m[1]].url };
         if (/^stockv?:/.test(src)) { const k = stockQ.findIndex((x) => x.i === i); const it = stockItems[k]; if (it && it.src) return { ...base, kind: it.v ? 'video' : 'image', src: it.src }; }
         if (/^ai:/.test(src) && ok(res['ai' + i]) && res['ai' + i].json.url) return { ...base, kind: 'image', src: res['ai' + i].json.url };

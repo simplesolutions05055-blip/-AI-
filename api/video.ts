@@ -45,10 +45,10 @@ export function cleanPlan(p: any) {
   if (!p || typeof p !== 'object' || !Array.isArray(p.scenes) || !p.scenes.length) throw new Error('bad_plan');
   const scenes = p.scenes.slice(0, 30).map((s: any) => {
     const v = s?.visual ?? {};
-    const visual = { ...v, kind: ['image', 'video', 'gradient', 'color'].includes(v.kind) ? v.kind : 'gradient' };
+    const visual = { ...v, kind: ['image', 'video', 'gradient', 'color', 'studio', 'mockup'].includes(v.kind) ? v.kind : 'gradient', tint: v.tint == null ? undefined : num(v.tint, 0, 0.3, 0.12) };
     if (visual.src && !okSrc(visual.src)) { delete visual.src; visual.kind = 'gradient'; }
     const t = s?.text;
-    const text = t && Array.isArray(t.lines) ? { ...t, lines: t.lines.slice(0, 6).map((l: unknown) => str(l, 90) ?? ''), kicker: str(t.kicker, 60), sub: str(t.sub, 140) } : undefined;
+    const text = t && Array.isArray(t.lines) ? { ...t, lines: t.lines.slice(0, 6).map((l: unknown) => str(l, 90) ?? ''), kicker: str(t.kicker, 60), sub: str(t.sub, 140), items: Array.isArray(t.items) ? t.items.slice(0, 6).map((x: any) => ({ t: str(x?.t, 80) ?? '', sub: str(x?.sub, 80) })) : undefined } : undefined;
     const vo = s?.voice;
     const voice = vo && okSrc(vo.src) ? { src: vo.src, at: num(vo.at, 0, 3, 0.25), vol: num(vo.vol, 0, 1.5, 1), words: cleanWords(vo.words) } : undefined;
     return { ...s, dur: num(s?.dur, 0.8, 20, 3), visual, text, voice };
@@ -64,6 +64,7 @@ export function cleanPlan(p: any) {
     ...p,
     format: ['9x16', '1x1', '4x5', '16x9'].includes(p.format) ? p.format : '9x16',
     fps: 30,
+    scale: p.scale === 2 ? 2 : 1,
     brand: { ...p.brand, org: str(p.brand?.org, 80) ?? '', logo, colors: { deep: '#0B1F3A', main: '#1F5FBF', accent: '#FFC93C', light: '#BFD7FF', ...(p.brand?.colors ?? {}) } },
     scenes,
     outro: cleanOutro(p.outro),

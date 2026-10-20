@@ -46,7 +46,7 @@ export const Main: React.FC<{ plan: Plan }> = ({ plan }) => {
         <AbsoluteFill>
           <Background v={s.visual} plan={plan} durF={durF} />
           <FxLayer fx={s.fx} plan={plan} />
-          {s.text && <SceneTextLayer t={s.text} plan={plan} durF={durF} />}
+          {s.text && <SceneTextLayer t={{ ...s.text, onLight: s.visual.kind === 'studio' || s.visual.kind === 'mockup' }} plan={plan} durF={durF} />}
         </AbsoluteFill>
       </TransitionSeries.Sequence>,
     );

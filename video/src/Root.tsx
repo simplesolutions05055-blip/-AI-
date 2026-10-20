@@ -16,7 +16,8 @@ export const Root: React.FC = () => (
     calculateMetadata={({ props }) => {
       const plan = (props as { plan: Plan }).plan;
       const fps = plan.fps ?? 30;
-      const [width, height] = SIZES[plan.format] ?? SIZES['9x16'];
+      const sc = plan.scale === 2 ? 2 : 1;
+      const [width, height] = (SIZES[plan.format] ?? SIZES['9x16']).map((x) => x * sc) as [number, number];
       // hard cap: 90 seconds
       return { fps, width, height, durationInFrames: Math.min(totalFrames(plan, fps), 90 * fps) };
     }}

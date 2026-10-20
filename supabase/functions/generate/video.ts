@@ -62,7 +62,7 @@ export function cleanSay(t: string) {
 }
 const untag = (t: string) => String(t ?? '').replace(/\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim();
 
-export const TEXT_STYLES = ['headline', 'pop', 'box', 'typewriter', 'stamp', 'lowerThird', 'stat', 'quote', 'list', 'cinematic', 'outline', 'split', 'neon'];
+export const TEXT_STYLES = ['headline', 'pop', 'box', 'typewriter', 'stamp', 'lowerThird', 'stat', 'quote', 'list', 'cinematic', 'outline', 'split', 'neon', 'steps', 'check', 'calendar', 'pin', 'compare'];
 const FONTS = ['Heebo', 'Rubik', 'Assistant', 'Secular One', 'Suez One', 'Karantina', 'Varela Round', 'Amatic SC', 'Bellefair', 'IBM Plex Sans Hebrew'];
 
 // ---- the director: deep read of the request -> brief for approval + full scene plan ----
@@ -73,9 +73,9 @@ export function directorPrompt(p: Record<string, any>, c: ReturnType<typeof caps
   const src: string[] = [];
   if (p.style === 'existing') src.push('"clip:<שנייה בסרטון המקורי>" - קטע מהסרטון שהמשתמש העלה, מתחיל בשנייה שתבחר (סרטון המקור באורך ' + (p.clipSec || 'לא ידוע') + ' שניות)');
   if ((p.media ?? []).length) src.push('"upload:<מספר>" - חומר שהמשתמש העלה (התמונות מצורפות כדי שתראה אותן)');
-  if (p.style !== 'anim' && p.style !== 'existing') src.push('"ai:<English image prompt>" - תמונה שתיווצר ב-AI. תאר צילום ריאליסטי בישראל, בלי טקסט בתמונה');
-  if (c.pexels && p.style !== 'anim') src.push('"stock:<English search query>" - צילום סטוק אמיתי (מילות חיפוש קצרות באנגלית, 2-4 מילים)', '"stockv:<English search query>" - קטע וידאו סטוק אמיתי (מילות חיפוש קצרות באנגלית)');
-  src.push('"gradient" - רקע מונפש בצבעי המותג (מתאים לטקסט גדול, נתונים, רשימות)', '"color" - רקע צבע אחיד כהה');
+  if (p.style !== 'existing') src.push('"ai:<English image prompt>" - תמונה שתיווצר ב-AI. תאר צילום ריאליסטי בישראל, בלי טקסט בתמונה');
+  if (c.pexels) src.push('"stock:<English search query>" - צילום סטוק אמיתי (מילות חיפוש קצרות באנגלית, 2-4 מילים)', '"stockv:<English search query>" - קטע וידאו סטוק אמיתי (מילות חיפוש קצרות באנגלית)');
+  src.push('"studio" - רקע לבן פנינה יוקרתי וחלק כמו צילום סטודיו (הטקסט עליו כהה). ברירת המחדל לסצנה של טקסט בלבד, רשימה, שלבים או נתון', '"mockup:phone" - טלפון נייד על רקע סטודיו עם הלוגו של הארגון על המסך. חובה כשמדברים על אפליקציה, אתר או שירות דיגיטלי', '"gradient" - רקע מונפש כהה בצבעי המותג (רק לרגע שיא אחד או לפתיחה)', '"color" - רקע צבע אחיד כהה');
   const vlist = voices.map((v) => `${v.id} | ${v.n} | ${v.g === 'm' ? 'גבר' : 'אישה'} | ${v.tone}`).join('\n');
   const user = `בקשת הסרטון:
 שם: ${p.title || ''}
@@ -94,11 +94,11 @@ ${p.change ? '\nזו גרסה מתוקנת של בריף קודם. הבריף ה
 ${src.map((s) => '- ' + s).join('\n')}
 
 סגנונות טקסט על המסך (text.style), כל אחד לתפקיד אחר:
-headline - כותרת גדולה, מילים עולות אחת אחרי השנייה | pop - מילים קופצות, מילת מפתח בצבע | box - שורות על פסי צבע | typewriter - מכונת כתיבה, לפרטים (תאריך, שעה, מקום) | stamp - חותמת שנוחתת, לתאריך או הכרזה קצרה | lowerThird - פס שם ותפקיד בתחתית, לדובר/ת | stat - מספר שרץ (value + unit + lines כתווית) | quote - ציטוט עם שם | list - רשימה ממוספרת 2-4 פריטים | cinematic - קולנועי עם פסים שחורים, לרגעים רגשיים | outline - מתאר שמתמלא | split - שורות שנחשפות ממסכה | neon - זוהר, לערב ומסיבות
+steps - שלבים ממוספרים בכרטיסים (items: t + sub), להסבר תהליך | check - רשימת וי שמסתמנת (items), לדרישות או יתרונות | calendar - כרטיס לוח שנה: items[0].t התאריך (מספר), items[0].sub שם החודש או היום, items[1].t שעה או מקום | pin - סיכה נוחתת על שם מקום: items[0].t המקום, items[1].t כתובת או הערה | compare - לפני/אחרי: items[0] לפני (t + sub), items[1] אחרי | headline - כותרת גדולה, מילים עולות אחת אחרי השנייה | pop - מילים קופצות, מילת מפתח בצבע | box - שורות על פסי צבע | typewriter - מכונת כתיבה, לפרטים (תאריך, שעה, מקום) | stamp - חותמת שנוחתת, לתאריך או הכרזה קצרה | lowerThird - פס שם ותפקיד בתחתית, לדובר/ת | stat - מספר שרץ (value + unit + lines כתווית) | quote - ציטוט עם שם | list - רשימה ממוספרת 2-4 פריטים | cinematic - קולנועי עם פסים שחורים, לרגעים רגשיים | outline - מתאר שמתמלא | split - שורות שנחשפות ממסכה | neon - זוהר, לערב ומסיבות
 מיקום text.pos: top | center | bottom | lower. highlight: מילים לצביעה.
 מעברים (transition.kind): cut, fade, slide, wipe, push, iris, clockWipe, flip, flash, zoom, whip. dir: left|right|up|down. dur בשניות (0.3-0.8).
-אפקטים (fx): grain, vignette, lightLeak, particles, bokeh, shapes, letterbox, scanlines.
-תנועת מצלמה (visual.motion): zoomIn, zoomOut, panLeft, panRight, panUp, panDown, drift, static. tint 0-0.7 להכהיה מתחת לטקסט.
+אפקטים (fx): grain, vignette, lightLeak, particles, bokeh, shapes, letterbox, scanlines, confetti (אירועים וחגיגות), rays (קרני אור), spotlight (מיקוד בדבר אחד), sparkle (הישג, פרימיום).
+תנועת מצלמה (visual.motion): zoomIn, zoomOut, panLeft, panRight, panUp, panDown, drift, static. tint 0-0.2 בלבד (הכהיה קלה מתחת לטקסט; התמונות נשארות בהירות וחדות).
 גופנים (font.head / font.body): ${FONTS.join(', ')}.
 ${p.voice !== false ? `קולות זמינים (id | שם | מין | אופי):\n${vlist || '(אין ספק קריינות מחובר - כתוב את הקריינות בכל זאת)'}` : ''}
 
@@ -110,7 +110,7 @@ ${p.voice !== false ? `קולות זמינים (id | שם | מין | אופי):\
 "font":{"head":"","body":""},
 "fx":["אפקטים גלובליים, 0-2"],
 "captions":"karaoke|pop|clean|none",
-"scenes":[{"dur":3.2,"say":"מה הקריין אומר בסצנה","visual":{"src":"...","motion":"zoomIn","tint":0.4},"text":{"style":"headline","lines":["שורה"],"kicker":"","sub":"","highlight":[],"pos":"bottom"},"transition":{"kind":"fade","dur":0.4},"fx":[]}],
+"scenes":[{"dur":3.2,"say":"מה הקריין אומר בסצנה","visual":{"src":"...","motion":"zoomIn","tint":0.15},"text":{"style":"headline","lines":["שורה"],"kicker":"","sub":"","highlight":[],"pos":"center","items":[{"t":"","sub":""}]},"transition":{"kind":"fade","dur":0.4},"fx":[]}],
 "outro":{"cta":"קריאה לפעולה קצרה","details":[{"text":"פרט קצר"}]},
 "caption":"טקסט הפוסט שילווה את הסרטון, 2-3 משפטים","tags":["#האשטג"]}
 
@@ -118,7 +118,10 @@ ${p.voice !== false ? `קולות זמינים (id | שם | מין | אופי):\
 - סכום dur של הסצנות + 3 שניות סיום = ${dur} בערך. סצנה 1.5-6 שניות. ${Math.max(3, Math.round(dur / 4))}-${Math.max(4, Math.round(dur / 2.6))} סצנות.
 - כל סצנה שונה מקודמתה בסגנון הטקסט או במעבר. סגנון אחד לא יותר מפעמיים ברצף. בחר סגנונות שמתאימים לתוכן ולא את כולם.
 - המעברים לפי האופי: אנרגטי - flash, whip, zoom, slide; רגשי/רשמי - fade, iris, push איטי. עקביות בתוך הסרטון.
-- טקסט על המסך קצר: עד 6 מילים בשורה, עד 3 שורות. אסור לשכפל את הקריינות למסך.
+- טקסט על המסך קצר: עד 5 מילים בשורה, עד 2 שורות. אסור לשכפל את הקריינות למסך.
+- כשיש כתוביות (captions לא none) הכתוביות יושבות בתחתית, ולכן כל טקסט על המסך הוא pos center או top. אף פעם לא bottom או lower.
+- לפחות מחצית הסצנות עם תמונה, וידאו או mockup. gradient לכל היותר בסצנה אחת. סצנת טקסט/רשימה/שלבים על studio.
+- מדברים על אפליקציה, אתר או שירות דיגיטלי: סצנה אחת לפחות עם mockup:phone, ועליה steps או check.
 - קריאות בלי ניקוד: הטקסט על המסך והקריינות (שמוצגת גם ככתוביות) נקראים בלי ניקוד, לכן רק מילים שאי אפשר לקרוא אחרת. להימנע ממילים שבלי ניקוד נראות כמו מילה אחרת, בעיקר סביל עתידי (תוסט נקרא כמו טוסט, יוסר, תוקם). לנסח אחרת: "הסטת תנועה לרחוב ויצמן", "התנועה תופנה", "הכביש ייסגר". לפני שמחזירים, לעבור על כל שורה ולשאול: האם תושב יכול לקרוא אותה לא נכון?
 - הסרטון מסוג "${K.he}". הכל נגזר מזה:
   קריינות: ${K.voice}.
@@ -141,11 +144,13 @@ export const DIRECTOR_SYS = `אתה במאי ועורך וידאו בכיר שמ
 // ---- director plan -> engine plan (src references resolved later by the client) ----
 const strip = (s: string) => s.replace(/[\u0591-\u05C7]/g, '');
 export function sanitizeBrief(j: any, p: Record<string, any>, voices: Voice[]) {
+  const captionsOn = p.voice !== false && j.captions !== 'none';
   const scenes = (Array.isArray(j.scenes) ? j.scenes : []).slice(0, 30).map((s: any) => ({
     dur: Math.max(1.2, Math.min(8, +s.dur || 3)),
     say: p.voice === false ? '' : cleanSay(String(s.say ?? '').slice(0, 300)),
-    visual: { src: String(s.visual?.src ?? 'gradient').slice(0, 400), motion: s.visual?.motion, tint: s.visual?.tint },
-    text: s.text && Array.isArray(s.text.lines) ? { ...s.text, style: TEXT_STYLES.includes(s.text.style) ? s.text.style : 'headline' } : undefined,
+    visual: { src: String(s.visual?.src ?? 'gradient').slice(0, 400), motion: s.visual?.motion, tint: Math.max(0, Math.min(0.25, +s.visual?.tint || 0.12)) },
+    // captions own the bottom of the frame: on-screen text moves to the centre so the two never overlap
+    text: s.text && Array.isArray(s.text.lines) ? { ...s.text, style: TEXT_STYLES.includes(s.text.style) ? s.text.style : 'headline', pos: captionsOn && (s.text.pos === 'bottom' || s.text.pos === 'lower') ? 'center' : s.text.pos, items: Array.isArray(s.text.items) ? s.text.items.slice(0, 6).map((x: any) => ({ t: String(x?.t ?? '').slice(0, 80), sub: x?.sub ? String(x.sub).slice(0, 80) : undefined })) : undefined } : undefined,
     transition: s.transition,
     fx: Array.isArray(s.fx) ? s.fx.slice(0, 3) : [],
   }));

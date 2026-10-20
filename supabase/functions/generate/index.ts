@@ -274,7 +274,7 @@ const BRIEF_SCHEMA = {
         properties: {
           dur: { type: 'number' }, say: STR,
           visual: { type: 'object', properties: { src: STR, motion: STR, tint: { type: 'number' } }, required: ['src'] },
-          text: { type: 'object', properties: { style: STR, lines: { type: 'array', items: STR }, kicker: STR, sub: STR, highlight: { type: 'array', items: STR }, pos: STR, value: STR, unit: STR } },
+          text: { type: 'object', properties: { style: STR, lines: { type: 'array', items: STR }, kicker: STR, sub: STR, highlight: { type: 'array', items: STR }, pos: STR, value: STR, unit: STR, items: { type: 'array', items: { type: 'object', properties: { t: STR, sub: STR } } } } },
           transition: { type: 'object', properties: { kind: STR, dir: STR, dur: { type: 'number' } } },
           fx: { type: 'array', items: STR },
         },

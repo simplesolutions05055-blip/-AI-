@@ -3612,9 +3612,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const ai = [];
       scenes.forEach((s, i) => {
         const src = String((s.visual && s.visual.src) || 'gradient');
-        const base = { motion: s.visual && s.visual.motion, tint: s.visual && s.visual.tint != null ? s.visual.tint : 0.35 };
+        const base = { motion: s.visual && s.visual.motion, tint: s.visual && s.visual.tint != null ? Math.min(0.25, s.visual.tint) : 0.12 };
         let m;
-        if ((m = /^upload:(\d+)/.exec(src)) && media[+m[1]]) { const u = media[+m[1]]; out[i] = Object.assign(base, { kind: u.v ? 'video' : 'image', src: u.url }); }
+        if (src === 'studio') out[i] = Object.assign(base, { kind: 'studio' });
+        else if ((m = /^mockup:(phone|app)/.exec(src))) out[i] = Object.assign(base, { kind: 'mockup', mock: m[1] });
+        else if ((m = /^upload:(\d+)/.exec(src)) && media[+m[1]]) { const u = media[+m[1]]; out[i] = Object.assign(base, { kind: u.v ? 'video' : 'image', src: u.url }); }
         else if ((m = /^clip:([\d.]+)/.exec(src)) && v.clip && v.clip.url) out[i] = Object.assign(base, { kind: 'video', src: v.clip.url, trimStart: +m[1] });
         else if (/^stockv?:/.test(src)) stockQ.push({ i, q: src.replace(/^stockv?:/, ''), v: /^stockv:/.test(src), base });
         else if (/^ai:/.test(src)) ai.push({ i, q: src.slice(3), base });

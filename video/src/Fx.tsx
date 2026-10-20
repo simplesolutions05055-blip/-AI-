@@ -68,6 +68,46 @@ const Letterbox: React.FC = () => {
 };
 const Scanlines: React.FC = () => <AbsoluteFill style={{ pointerEvents: 'none', opacity: 0.12, background: 'repeating-linear-gradient(0deg, #000 0px, #000 2px, transparent 2px, transparent 5px)' }} />;
 
+// confetti: coloured paper falling and tumbling (events, celebrations)
+const Confetti: React.FC<{ plan: Plan }> = ({ plan }) => {
+  const f = useCurrentFrame(); const { width, height } = useVideoConfig(); const c = plan.brand.colors;
+  const cols = [c.accent, c.main, '#FFFFFF', '#FFD166', '#EF476F'];
+  return (
+    <AbsoluteFill style={{ pointerEvents: 'none' }}>
+      {Array.from({ length: 70 }, (_, i) => {
+        const x = random(`cx${i}`) * width + Math.sin((f + i * 13) / 22) * 40;
+        const y = ((random(`cy${i}`) * height + f * (3 + random(`cs${i}`) * 4)) % (height + 60)) - 40;
+        const w = 10 + random(`cw${i}`) * 14;
+        return <div key={i} style={{ position: 'absolute', left: x, top: y, width: w, height: w * 0.5, background: cols[i % cols.length], transform: `rotate(${f * (2 + random(`cr${i}`) * 5)}deg) skewX(${Math.sin(f / 9 + i) * 40}deg)`, opacity: 0.9, borderRadius: 2 }} />;
+      })}
+    </AbsoluteFill>
+  );
+};
+// rays: soft light rays turning slowly behind the content
+const Rays: React.FC<{ plan: Plan }> = ({ plan }) => {
+  const f = useCurrentFrame(); const c = plan.brand.colors;
+  return <AbsoluteFill style={{ pointerEvents: 'none', mixBlendMode: 'screen', opacity: 0.5, background: `repeating-conic-gradient(from ${f / 6}deg at 50% 30%, ${c.accent}00 0deg, ${c.accent}55 6deg, ${c.accent}00 14deg)` }} />;
+};
+// spotlight: everything dims except a moving circle of light (focus on one thing)
+const Spotlight: React.FC = () => {
+  const f = useCurrentFrame(); const { durationInFrames } = useVideoConfig();
+  const p = f / Math.max(1, durationInFrames);
+  return <AbsoluteFill style={{ pointerEvents: 'none', background: `radial-gradient(38% 30% at ${35 + p * 30}% ${40 + Math.sin(p * 6) * 10}%, transparent 0%, transparent 60%, rgba(0,0,0,.55) 100%)` }} />;
+};
+// sparkle: small four-point stars twinkling (achievements, premium)
+const Sparkle: React.FC<{ plan: Plan }> = ({ plan }) => {
+  const f = useCurrentFrame(); const { width, height } = useVideoConfig();
+  return (
+    <AbsoluteFill style={{ pointerEvents: 'none' }}>
+      {Array.from({ length: 22 }, (_, i) => {
+        const x = random(`sx${i}`) * width, y = random(`sy${i}`) * height, ph = random(`sp${i}`) * 60;
+        const o = Math.max(0, Math.sin((f + ph) / 11)); const s = 14 + random(`ss${i}`) * 26;
+        return <svg key={i} width={s} height={s} viewBox="0 0 20 20" style={{ position: 'absolute', left: x, top: y, opacity: o, transform: `scale(${0.6 + o * 0.6})` }}><path d="M10 0 L12 8 L20 10 L12 12 L10 20 L8 12 L0 10 L8 8 Z" fill={i % 4 === 0 ? plan.brand.colors.accent : '#fff'} /></svg>;
+      })}
+    </AbsoluteFill>
+  );
+};
+
 export const FxLayer: React.FC<{ fx?: Fx[]; plan: Plan }> = ({ fx, plan }) => (
   <>
     {(fx ?? []).map((k, i) => {
@@ -80,6 +120,10 @@ export const FxLayer: React.FC<{ fx?: Fx[]; plan: Plan }> = ({ fx, plan }) => (
         case 'shapes': return <Shapes key={i} plan={plan} />;
         case 'letterbox': return <Letterbox key={i} />;
         case 'scanlines': return <Scanlines key={i} />;
+        case 'confetti': return <Confetti key={i} plan={plan} />;
+        case 'rays': return <Rays key={i} plan={plan} />;
+        case 'spotlight': return <Spotlight key={i} />;
+        case 'sparkle': return <Sparkle key={i} plan={plan} />;
         default: return null;
       }
     })}
