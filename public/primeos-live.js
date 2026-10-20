@@ -4394,8 +4394,10 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         else {
           // a pull never overwrites series that changed locally and were not saved yet (a generation in progress)
           let synced = []; try { synced = (JSON.parse(SY.mstate).memberCamps || {})[L.me.id] || []; } catch (e) { /* none */ }
-          const dirty = JSON.stringify(S.camps || []) !== JSON.stringify(synced);
-          if (!dirty && srv && JSON.stringify(srv) !== JSON.stringify(S.camps || [])) S.camps = srv;
+          const canon = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x)) ? Object.keys(x).sort().reduce((o, kk) => { o[kk] = x[kk]; return o; }, {}) : x);
+          const dirty = canon(S.camps || []) !== canon(synced);
+          // the database reorders keys: only a real content change on the server replaces the local series
+          if (!dirty && srv && canon(srv) !== canon(S.camps || [])) S.camps = srv;
           if (!Array.isArray(S.camps)) S.camps = srv || [];
         }
         const mb = st && st.memberBrand && st.memberBrand[L.me.id];
