@@ -4478,13 +4478,13 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       };
     }
     css.textContent += `
-.ap-list{display:flex;flex-direction:column;gap:8px;max-width:1100px}
-.ap-row{display:flex;gap:14px;align-items:stretch;padding:10px 14px;min-height:0}
-.ap-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;justify-content:center}
+.ap-list{display:flex;flex-direction:column;gap:6px;max-width:1100px}
+.ap-row{display:flex;gap:12px;align-items:center;padding:7px 12px;min-height:0}
+.ap-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;justify-content:center}
 .ap-t{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14.5px}.ap-t b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.ap-m{font-size:12.5px}.ap-b{font-size:12.5px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ap-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}.ap-acts .btn-sm{padding:4px 10px;font-size:12.5px}
-.ap-th{width:96px;height:96px;flex:none;border-radius:12px;overflow:hidden;background:var(--surface-2,#F3F5F9);display:grid;place-items:center;position:relative;cursor:pointer;border:1px solid var(--line-2,#E6EAF2)}
+.ap-m{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ap-b{display:none}
+.ap-acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}.ap-acts .btn-sm{padding:3px 9px;font-size:12px;min-height:0}
+.ap-th{width:66px;height:66px;flex:none;border-radius:12px;overflow:hidden;background:var(--surface-2,#F3F5F9);display:grid;place-items:center;position:relative;cursor:pointer;border:1px solid var(--line-2,#E6EAF2)}
 .ap-th img{width:100%;height:100%;object-fit:cover;display:block}.ap-play{position:absolute;inset:0;display:grid;place-items:center;color:#fff;background:rgba(0,0,0,.25)}
 .ap-noimg{color:var(--ink-3)}
 .ap-view{display:grid;place-items:center;max-height:78vh}.ap-view img,.ap-view video{max-width:100%;max-height:72vh;border-radius:12px;display:block}
@@ -4545,7 +4545,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       layPickHtml = function (m, busy) {
         let h = _layPick(m, busy);
         const on = m.layout === 'own';
-        return h.replace('</div>', '<button class="' + (on ? 'on' : '') + '" data-act="gOwn"' + (busy ? ' disabled' : '') + ' role="radio" aria-checked="' + on + '">' + ic('upload', 13) + ' העלאת גרפיקה מוכנה (בלי AI)</button></div>') +
+        const i = h.lastIndexOf('</div>');
+        return h.slice(0, i) + '<button class="' + (on ? 'on' : '') + '" data-act="gOwn"' + (busy ? ' disabled' : '') + ' role="radio" aria-checked="' + on + '">' + ic('upload', 13) + ' העלאת גרפיקה מוכנה (בלי AI)</button>' + h.slice(i) +
           (on && m.url ? '<div class="t-sub" style="margin-top:6px">' + ic('checkc', 13) + ' הקובץ שהעליתם מוצג כמו שהוא. <button class="link-btn" data-act="gOwn" style="background:none;border:0;padding:0;font:inherit;color:var(--brand);font-weight:700;cursor:pointer">החלפת קובץ</button></div>' : '');
       };
     }
@@ -4561,6 +4562,25 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       m.model = ''; m.qa = null; m.warn = null; m.stale = false; m.busy = ''; m.ready = true; m.uploaded = true; m.fmt = w.fmt || '1:1'; m.ar = m.ar || '1/1';
       render();
       toast('הקובץ הועלה', 'הגרפיקה שלכם תפורסם כמו שהיא, בלי שינוי.');
+    };
+    // the brief step: a finished post the user made, straight to the studio without AI text
+    const _wizRB = SCREENS.wizard.render;
+    SCREENS.wizard.render = function () {
+      let h = _wizRB.apply(this, arguments);
+      const w = S.wiz;
+      if (!w || w.step !== 0 || !isGfx(w)) return h;
+      return h.replace(/(<div class="brief-tools">)/, '$1<button class="btn btn-sm" data-act="wOwnStart" type="button">' + ic('upload', 14) + ' יש לי פוסט מוכן (בלי AI)</button>');
+    };
+    ACT.wOwnStart = async () => {
+      const w = S.wiz; if (!w) return;
+      collectWiz();
+      const [f] = await uploadPicked('image/*,video/*');
+      if (!f || S.wiz !== w) return;
+      const vid = isVid(f.name);
+      w.step = 1; w.t = w.brief.title || f.name.replace(/\.[a-z0-9]+$/i, ''); w.body = w.brief.free || ''; w.tags = w.tags || []; w.sugg = w.sugg || []; w.ver = 1; w.design = null;
+      w.media = { kind: vid ? 'video' : 'graphic', layout: 'own', url: f.url, design: f.url, thumb: vid ? '' : f.url, image: vid ? '' : f.url, ready: true, uploaded: true, fmt: w.fmt || '1:1', ar: '1/1' };
+      render(); window.scrollTo({ top: 0 });
+      toast('הפוסט שלכם נטען', 'הקובץ יפורסם כמו שהוא. אפשר לערוך את הטקסט ולשלוח.');
     };
     // the preview shows the uploaded file as is
     const _wizR = SCREENS.wizard && SCREENS.wizard.mount;
