@@ -281,11 +281,11 @@ fixed=true for texts that belong to the template itself and must stay (organisat
         const qa = p.qa === false ? null : await qaReview(ckey, gen.all[best], { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles });
         return { b64: gen.all[best], check: checks[best], model: gen.model, qa, prompt: pr };
       };
-      // a weak result (missing / misspelled Hebrew, or a low review score) gets up to two more attempts with the reviewer's note;
-      // the best attempt wins: fewest text errors first, then the higher score
+      // a weak result (missing / misspelled Hebrew, or a low review score) gets one more attempt with the reviewer's note (the edge
+      // runtime allows 150s per call, two rounds fit); the best attempt wins: fewest text errors first, then the higher score
       const tries: Awaited<ReturnType<typeof round>>[] = [await round(prompt)];
       const weak = (r: typeof tries[0]) => issuesOf(r.check) > 0 || (r.qa && !r.qa.stop && r.qa.score < QA_REDO);
-      for (let k = 0; k < 2 && p.redo !== false && weak(tries[tries.length - 1]); k++) {
+      for (let k = 0; k < 1 && p.redo !== false && weak(tries[tries.length - 1]); k++) {
         const last = tries[tries.length - 1];
         const note = [issuesOf(last.check) ? 'The previous attempt had Hebrew text errors: ' + (last.check.issues ?? []).join('; ') + '. Every text line must appear, spelled exactly.' : '', last.qa?.redo ? 'REVIEWER NOTE (must be applied): ' + last.qa.redo : ''].filter(Boolean).join('\n');
         try { tries.push(await round(prompt + '\n' + note)); } catch (_) { break; }
