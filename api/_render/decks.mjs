@@ -78,7 +78,7 @@ h2{position:relative;z-index:1;font-size:74px;font-weight:900;color:${k.navy};le
 .bi{display:flex;align-items:center;gap:32px;font-size:50px;font-weight:600;line-height:1.3}
 .bn{flex:none;width:84px;height:84px;border-radius:24px;background:${k.bg};color:${k.navy};display:grid;place-items:center;font-size:40px;font-weight:900}.bi:first-child .bn{background:${k.navy};color:#fff}
 .sideimg{flex:none;width:520px;align-self:stretch;max-height:700px;border-radius:40px;overflow:hidden;box-shadow:0 30px 60px rgba(14,59,107,.25);order:2}.sideimg img{width:100%;height:100%;object-fit:cover}
-.stat{display:flex;align-items:baseline;gap:56px;flex-wrap:wrap}.sv{font-size:230px;font-weight:900;color:${k.gold};line-height:1;letter-spacing:-.03em;white-space:nowrap}
+.stat{display:flex;align-items:baseline;gap:56px;flex-wrap:wrap}.sv{font-size:230px;font-weight:900;color:${k.accentText || k.gold};line-height:1;letter-spacing:-.03em;white-space:nowrap}
 .sl2{font-size:54px;font-weight:800;color:${k.navy};max-width:820px;line-height:1.22}
 .sp{list-style:none;padding:0;margin-top:56px;display:flex;flex-wrap:wrap;gap:20px 60px}.sp li{font-size:38px;color:${k.ink};font-weight:600;padding-inline-start:30px;position:relative}.sp li::before{content:"";position:absolute;right:0;top:20px;width:14px;height:14px;border-radius:50%;background:${k.gold}}
 .chw{display:flex;align-items:center;gap:80px}.viz{flex:none}.pie{display:flex;align-items:center;gap:70px}.pie .lg{min-width:520px}
@@ -162,7 +162,7 @@ export async function deckPptx(PptxGenJS, k, d, style = 'formal', o = {}) {
     if (hasPic) sl.addImage({ data: imgs[su], x: M, y: top, w: 3.6, h: 4.6, rounding: false, sizing: { type: 'cover', w: 3.6, h: 4.6 } });
     const X0 = hasPic ? M + 4.0 : M, WD = W - M - X0; // content column (right side in RTL)
     if (s.kind === 'stat' && s.stat) {
-      sl.addText(s.stat.v, { ...T, x: X0 + WD / 2 - 1.2, y: top + 0.2, w: WD / 2 + 1.2, h: 1.9, fontSize: hasPic ? 80 : 92, bold: true, color: hx(k.gold), fit: 'shrink' });
+      sl.addText(s.stat.v, { ...T, x: X0 + WD / 2 - 1.2, y: top + 0.2, w: WD / 2 + 1.2, h: 1.9, fontSize: hasPic ? 80 : 92, bold: true, color: hx(k.accentText || k.gold), fit: 'shrink' });
       sl.addText(s.stat.l, { ...T, x: X0, y: top + 0.55, w: WD / 2 - 1.5, h: 1.4, fontSize: 26, bold: true, color: hx(k.navy) });
       if (pts.length) sl.addText(pts.map((p) => ({ text: p, options: { bullet: true, breakLine: true } })), { ...T, x: X0, y: top + 2.6, w: WD, h: 2.0, fontSize: 18, color: hx(k.ink) });
     } else if (s.kind === 'chart' && s.chart) {

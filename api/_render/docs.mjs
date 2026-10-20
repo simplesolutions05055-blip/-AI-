@@ -1,6 +1,7 @@
 // Designed documents (A4) in the three mockup styles: formal | data | designed
 import { esc, crest, icon, page } from './brand.mjs';
 import { barChart, donutChart, lineChart, chartCss } from './charts.mjs';
+import { lum } from './palette.mjs';
 
 export const DOC_STYLES = { formal: 'רשמי', data: 'גרפים וטבלאות', designed: 'מעוצב' };
 
@@ -42,7 +43,7 @@ li::before{content:"";position:absolute;inset-inline-start:1.2mm;top:2.1mm;width
 .sign{margin-top:6mm;break-inside:avoid}.sign span{color:${k.ink}}.sign b{display:block;font-size:13pt;color:${k.navy};font-weight:800;margin-top:1mm}
 /* data */
 .kpis{display:grid;grid-template-columns:repeat(var(--n),1fr);gap:4mm;margin-top:5mm}
-.kpi{border-radius:3mm;padding:4mm 5mm;background:${k.navy};color:#fff}.kpi:nth-child(2){background:${k.gold}}.kpi:nth-child(3){background:${k.sky}}
+.kpi{border-radius:3mm;padding:4mm 5mm;background:${k.navy};color:#fff}.kpi:nth-child(2){background:${k.gold};color:${lum(k.gold) > 0.35 ? k.navy : '#fff'}}.kpi:nth-child(3){background:${k.sky};color:${lum(k.sky) > 0.35 ? k.navy : '#fff'}}
 .kpi b{display:block;font-size:22pt;font-weight:900;line-height:1.1;letter-spacing:-.01em}.kpi span{font-size:9.5pt;opacity:.9}
 .charts{display:grid;grid-template-columns:1fr 1fr;gap:5mm;margin-top:5mm;break-inside:avoid}
 .ch{margin:0;min-width:0;border:1pt solid #E1E6EF;border-radius:3mm;padding:3.5mm 4mm;display:flex;flex-direction:column}.ch figcaption{font-size:10.5pt;font-weight:800;color:${k.navy};margin-bottom:2mm}.ch figcaption small{font-weight:500;color:${k.ink}}
