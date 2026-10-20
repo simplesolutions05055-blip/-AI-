@@ -4386,8 +4386,15 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         _slices(st);
         if (!isMember()) return;
         // a department's series live under its own id (the organisation state holds only the organisation's)
-        S.camps = Array.isArray(st && st.memberCamps && st.memberCamps[L.me.id]) ? st.memberCamps[L.me.id] : (S.campsOwn || []);
-        S.campsOwn = S.camps;
+        const srv = st && st.memberCamps && Array.isArray(st.memberCamps[L.me.id]) ? st.memberCamps[L.me.id] : null;
+        if (!SY.mstate) S.camps = srv || [];
+        else {
+          // a pull never overwrites series that changed locally and were not saved yet (a generation in progress)
+          let synced = []; try { synced = (JSON.parse(SY.mstate).memberCamps || {})[L.me.id] || []; } catch (e) { /* none */ }
+          const dirty = JSON.stringify(S.camps || []) !== JSON.stringify(synced);
+          if (!dirty && srv && JSON.stringify(srv) !== JSON.stringify(S.camps || [])) S.camps = srv;
+          if (!Array.isArray(S.camps)) S.camps = srv || [];
+        }
         const mb = st && st.memberBrand && st.memberBrand[L.me.id];
         S.ownBrandKeep = mb && mb.brand ? mb.brand : null;
         if (!S.ownBrand && mb && mb.which === 'second' && BRAND.alt && BRAND.which !== 'second') swapBrand();
