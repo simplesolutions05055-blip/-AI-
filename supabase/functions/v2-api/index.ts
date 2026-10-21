@@ -142,7 +142,7 @@ async function statePatch(d: DB, orgId: string, memberId: string | null, patch: 
   // a manager may change another member's slot (approving a department's series); a member only its own
   const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
   const any = !memberId || isManager(me);
-  for (const k of ['memberBrand', 'memberChannels', 'memberCamps']) {
+  for (const k of ['memberBrand', 'memberChannels', 'memberCamps', 'memberDrafts']) {
     if (!patch[k] || typeof patch[k] !== 'object') continue;
     const slot: Record<string, any> = (cur[k] && typeof cur[k] === 'object') ? { ...cur[k] } : {};
     for (const mid of Object.keys(patch[k])) if (any || mid === memberId) slot[mid] = patch[k][mid];

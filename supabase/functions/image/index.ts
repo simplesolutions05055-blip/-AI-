@@ -4,7 +4,7 @@
 // action 'fixtext': edits an existing design to correct only the flagged Hebrew.
 // POST { action:'check' } | { action:'models' } | { action:'tplscan', url } | design + template:{url,desc,slots} | { action:'design', texts, brief, colors, refs, logo, size, note?, n? } | { action:'fixtext', url, fixes, issues, want, size } | { brief, title?, dept?, size?, prompt? }
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { designDirective, qaPrompt, QA_SYS, QA_REDO, styleOf, kitDirective, KIT_SCAN, STYLES } from './design.ts';
+import { designDirective, qaPrompt, QA_SYS, QA_REDO, styleOf, kitDirective, KIT_SCAN, STYLES, EVENT_EN } from './design.ts';
 import type { BrandKit } from './design.ts';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
@@ -313,17 +313,19 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const okUrl = (u: string) => /^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(u);
       const tpl = p.template && okUrl(String(p.template.url ?? '')) ? p.template : null;
       const refs = [...(tpl ? [String(tpl.url)] : []), ...((p.refs ?? []) as string[]).filter(okUrl)].slice(0, 4);
+      if (p.eventLogo && okUrl(String(p.eventLogo)) && !tpl) { refs.splice(p.logo ? 1 : 0, 0, String(p.eventLogo)); if (refs.length > 4) refs.length = 4; }
       const fmt = p.size === 'portrait' ? 'vertical portrait' : p.size === 'landscape' ? 'wide landscape' : 'square';
       const slots = tpl ? ((tpl.slots ?? []) as any[]).map((x) => `- ${x.role}${x.fixed ? ' (fixed, keep)' : ''}: ${x.he ?? ''}${x.text ? ' - currently "' + x.text + '"' : ''}`).join('\n') : '';
       const style = styleOf(p.style);
       const fmtId = p.size === 'portrait' ? 'portrait' : p.size === 'landscape' ? 'landscape' : 'square';
       const nPhotos = refs.length - (p.logo && !tpl ? 1 : 0) - (tpl ? 1 : 0);
-      const directive = kit
-        ? kitDirective(kit, { colors: p.colors, roles: p.roles, emergency: style === 'service', fmt: fmtId, photos: nPhotos })
-        : designDirective({ style, palette: p.palette, colors: p.colors, roles: p.roles, fmt: fmtId, photos: nPhotos, logo: !!p.logo });
+      const evLogo = !!p.eventLogo;
+      const directive = (kit
+        ? kitDirective(kit, { colors: p.colors, roles: p.roles, emergency: style === 'service', fmt: fmtId, photos: nPhotos - (evLogo ? 1 : 0) })
+        : designDirective({ style, palette: p.palette, colors: p.colors, roles: p.roles, fmt: fmtId, photos: nPhotos - (evLogo ? 1 : 0), logo: !!p.logo })) + (p.event ? '\n' + EVENT_EN : '');
       const iconsTx = kit ? ((tx.icons ?? []) as any[]).slice(0, 4).map((d: any) => typeof d === 'string' ? d : `${d?.icon ?? ''} "${d?.label ?? ''}"`).filter(Boolean).join(', ') : '';
       let prompt = kit
-        ? (await claude(ckey, KIT_DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nMood of the style "${style}": ${STYLES[style]?.he ?? ''} (energy ${STYLES[style]?.energy ?? 'mid'}).\n${directive}\nTexts to place (exactly):\n${lines}\n${tx.keyword ? `Key word(s) of the headline in the hot colour: "${tx.keyword}"\n` : ''}${tx.cta ? '' : 'No call to action on this graphic: omit the button (skeleton item 7) entirely, leave that space empty.\n'}${iconsTx ? `Icon row (icon name then Hebrew label): ${iconsTx}\n` : 'No icon row for this message.\n'}${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the logo; ' : ''}${nPhotos} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim()
+        ? (await claude(ckey, KIT_DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nMood of the style "${style}": ${STYLES[style]?.he ?? ''} (energy ${STYLES[style]?.energy ?? 'mid'}).\n${directive}\nTexts to place (exactly):\n${lines}\n${tx.keyword ? `Key word(s) of the headline in the hot colour: "${tx.keyword}"\n` : ''}${tx.cta ? '' : 'No call to action on this graphic: omit the button (skeleton item 7) entirely, leave that space empty.\n'}${iconsTx ? `Icon row (icon name then Hebrew label): ${iconsTx}\n` : 'No icon row for this message.\n'}${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the organisation logo; ' : ''}${evLogo ? `image ${p.logo ? 2 : 1} is the EVENT logo (place it large near the headline, unchanged); ` : ''}${nPhotos - (evLogo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim()
         : tpl
         ? (await claude(ckey, TEMPLATE_DESIGNER, [
           { type: 'image', source: { type: 'url', url: String(tpl.url) } },

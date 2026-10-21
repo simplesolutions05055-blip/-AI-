@@ -3937,13 +3937,18 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         let d = p.design || { kicker: e.name, headline: p.t, sub: '', details: [], cta: '' };
         if (change) { const r = await gen({ mode: 'revise', content: d, instruction: change }); if (r.content && r.content.headline) d = r.content; }
         p.design = d;
-        const photos = (e.media || []).filter((x) => x.url && !x.v);
-        let image = photos.length ? photos[(['soon', 'd2', 'day'].indexOf(p.k) + 3) % photos.length].url : '';
-        if (!image) image = await aiImage({ title: e.name, brief: evInfo(e), dept: e.dept, size: 'square' }).catch(() => '');
-        const r = await produce([{ id: 'g', kind: 'graphic', layout: image ? 'photo' : 'official', format: '1x1', data: { kicker: d.kicker || '', headline: d.headline || p.t, sub: d.sub || '', details: d.details || [], cta: d.cta || '', image }, thumb: false }], e.dept);
-        const x = (r.results || [])[0];
-        if (!x || !x.ok) throw new Error((x && x.error) || 'render_failed');
-        p.mg = { kind: 'graphic', url: x.urls.main, layout: image ? 'photo' : 'official', fmt: '1:1', ar: '1/1', image, design: d, ready: true };
+        const photos = (e.media || []).filter((x) => x.url && !x.v).map((x) => x.url);
+        const logo = logoOf(); const evLogo = e.logo && e.logo.url && !e.logo.auto ? e.logo.url : '';
+        const kitS = logo ? await ensureKit() : null;
+        const stage = { soon: 'הכרזה ראשונה: שריינו את התאריך', d2: 'עוד יומיים לאירוע', day: 'היום! האירוע מתחיל' }[p.k] || p.l;
+        const rr = await fx('image', {
+          action: 'design', org: aiCtx().org, dept: e.dept, size: 'square', brief: 'פוסטר לאירוע. ' + stage + '\n' + evInfo(e) + '\n' + (p.body || '') + (change ? '\nבקשת שינוי: ' + change : ''),
+          colors: brandFor(e.dept).colors, roles: brandFor(e.dept).roles, style: 'marketing', kit: kitS || undefined, event: true, eventLogo: evLogo || undefined,
+          texts: { kicker: d.kicker || '', headline: d.headline || p.t, sub: d.sub || '', details: d.details || [], cta: d.cta || '', icons: d.icons || [], keyword: d.keyword || '' },
+          refs: [...(logo ? [logo] : []), ...photos.slice(0, 2)].slice(0, 3), logo: !!logo, note: change || '', quality: 'high', n: 2,
+        }, 150000);
+        if (!rr || !rr.url) throw new Error('design_failed');
+        p.mg = { kind: 'graphic', url: rr.url, layout: 'ai', fmt: '1:1', ar: '1/1', image: rr.url, design: d, ready: true, qa: rr.qa || null, model: rr.model || '', warn: rr.check && !rr.check.ok ? rr.check.issues : null };
         p.ver = (p.ver || 1) + (change ? 1 : 0);
         evSyncItem(p);
       } catch (err) { m.busy = ''; m.err = true; toast('הגרפיקה לא נוצרה', p.l + '. אפשר לנסות שוב מהכרטיס.', 'err'); }
@@ -3960,8 +3965,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         const b = await genLong(briefReq(v, o.change));
         v.brief = b;
         // the render runs on the server: the window can close, the card picks the job up again on return
-        const sting = { logo: e.logo && e.logo.url, motion: e.sting.style, bg: stingBg(e) };
-        const j = await call('job.create', { brief: b, title: o.name, desc: o.desc, goal: o.goal, dur: o.dur, imgs: o.imgs, dept: e.dept, outro: { sting } });
+        const sting = e.sting.skip ? null : { logo: e.logo && e.logo.url, motion: e.sting.style, bg: stingBg(e) };
+        const j = await call('job.create', { brief: b, title: o.name, desc: o.desc, goal: o.goal, dur: o.dur, imgs: o.imgs, dept: e.dept, outro: sting ? { sting } : undefined });
         Object.assign(m, { job: j.id, busy: 'מכינים תמונות, קריינות ומוזיקה', pct: 0.08, vmeta: slimV(v), cta: (b.outro && b.outro.cta) || '', name: o.name });
         evSave();
         await evWatch(e, holder, key, o.done);
@@ -4091,7 +4096,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const ps = evPosts(e);
       try {
         const r = await gen({ mode: 'event', dept: e.dept, name: e.name, date: fmtD(e.date), start: e.start, place: e.place, desc: e.desc, slots: ps.map((p) => ({ l: p.l, sub: p.sub, kind: p.kind, date: fmtD(p.date), time: p.time })) });
-        (r.posts || []).forEach((x, k) => { const p = ps[(+x.i || k + 1) - 1]; if (!p) return; if (x.title) p.t = x.title; if (x.body) p.body = x.body; p.tags = x.tags || []; p.design = { kicker: x.kicker || '', headline: x.headline || x.title || p.t, sub: x.sub || '', details: x.details || [], cta: x.cta || '' }; });
+        (r.posts || []).forEach((x, k) => { const p = ps[(+x.i || k + 1) - 1]; if (!p) return; if (x.title) p.t = x.title; if (x.body) p.body = x.body; p.tags = x.tags || []; p.design = { kicker: x.kicker || '', headline: x.headline || x.title || p.t, sub: x.sub || '', details: x.details || [], cta: x.cta || '', keyword: x.keyword || '', icons: Array.isArray(x.icons) ? x.icons.filter((y) => y && y.label).slice(0, 3) : [] }; });
       } catch (err) { aiFail(err); }
       if (S.ev !== e) return;
       e.gen = null; e.posts = ps; e.step = 2; render(); window.scrollTo({ top: 0 });
@@ -5008,6 +5013,83 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!e.logo || !e.logo.url) { const u = logoOf(); e.logo = u ? { k: 'png', n: 'לוגו ' + (aiCtx().org || 'הארגון'), url: u, auto: true } : null; }
       e.step = 1; render(); window.scrollTo({ top: 0 });
     };
+  })();
+
+
+  /* ---------------- 21.10 night: skip the sting without an event logo; drafts survive a closed window; event posters by the AI designer ---------------- */
+  (function () {
+    /* --- sting: optional when no event logo was uploaded --- */
+    if (SCREENS.eventKit) {
+      const _r = SCREENS.eventKit.render;
+      SCREENS.eventKit.render = function () {
+        let h = _r.apply(this, arguments);
+        const e = S.ev; if (!e || e.step !== 1) return h;
+        const noLogo = !e.logo || !e.logo.url || e.logo.auto;
+        if (noLogo) h = h.replace('<button class="btn btn-primary btn-lg" data-act="evNext1">', '<button class="btn" data-act="evSkipSting">' + ic('fwd', 16) + ' דילוג על הסיומת</button><button class="btn btn-primary btn-lg" data-act="evNext1">');
+        return h;
+      };
+    }
+    ACT.evSkipSting = () => { const e = S.ev; if (!e) return; e.sting.skip = true; toast('בלי סיומת לוגו', 'הסרטונים ייסגרו בסיום הרגיל של המותג.'); ACT.evNext1(); };
+
+    /* --- drafts: the work in progress of every wizard is saved and offered back on the create screen --- */
+    const isMember = () => !!(L.me && L.me.role === 'member');
+    const mid = () => (L.me && L.me.id) || 'me';
+    const KINDS = [
+      { k: 'wiz', key: 'wiz', route: 'wizard', he: (w) => (TYPES[w.type] ? TYPES[w.type].t : 'תוכן') + ': ' + (w.t || w.brief && w.brief.title || 'בלי כותרת'), test: (w) => !!(w && (w.brief && (w.brief.title || w.brief.free) || w.t)) },
+      { k: 'vd', key: 'vd', route: 'vidWiz', he: (v) => 'סרטון: ' + (v.name || 'בלי שם'), test: (v) => !!(v && (v.name || v.desc)) },
+      { k: 'dw', key: 'dw', route: 'docWiz', he: (w) => 'מסמך: ' + (w.title || w.t || (w.brief && w.brief.title) || 'בלי כותרת'), test: (w) => !!w },
+      { k: 'dk', key: 'dk', route: 'deckWiz', he: (w) => 'מצגת: ' + (w.title || w.t || (w.brief && w.brief.title) || 'בלי כותרת'), test: (w) => !!w },
+      { k: 'ev', key: 'ev', route: 'eventKit', he: (e) => 'אירוע: ' + (e.name || 'בלי שם'), test: (e) => !!(e && e.name && e.st !== 'scheduled' && e.st !== 'after' && e.st !== 'done') },
+    ];
+    const store = () => { if (isMember()) { S.myDrafts = S.myDrafts || {}; return S.myDrafts; } S.draftsAll = S.draftsAll || {}; return (S.draftsAll[mid()] = S.draftsAll[mid()] || {}); };
+    const slim = (o) => { try { return JSON.parse(JSON.stringify(o, (k, v) => (k === 'busy' ? '' : typeof v === 'function' ? undefined : v))); } catch (e) { return null; } };
+    // a draft is deleted only when a wizard that was open in THIS session closes (saved, sent or exited); a window that
+    // closed in the middle never reaches that branch, so its draft waits on the create screen
+    const seen = {};
+    setInterval(() => {
+      if (!L.ready || L.kind !== 'client') return;
+      const d = store();
+      KINDS.forEach((K) => {
+        const cur = S[K.key];
+        if (cur && K.test(cur) && K.route === S.route) { seen[K.k] = true; const sl = slim(cur); if (sl) { const j = JSON.stringify(sl); if (!d[K.k] || JSON.stringify(d[K.k].data) !== j) d[K.k] = { data: sl, at: Date.now(), he: K.he(cur) }; } }
+        else if (!cur && d[K.k] && seen[K.k]) { delete d[K.k]; seen[K.k] = false; }
+      });
+    }, 3000);
+    const _cs = clientState;
+    clientState = function () { const o = _cs.apply(this, arguments); if (!isMember()) o.drafts = S.draftsAll || {}; return o; };
+    const _hyd = hydrateClient;
+    hydrateClient = function (st) {
+      const r = _hyd.apply(this, arguments);
+      if (!isMember() && st && st.drafts && typeof st.drafts === 'object') { if (!S.draftsAll || JSON.stringify(S.draftsAll) !== JSON.stringify(st.drafts)) S.draftsAll = st.drafts; }
+      if (isMember() && st && st.memberDrafts && st.memberDrafts[mid()] && !S.myDrafts) S.myDrafts = st.memberDrafts[mid()];
+      return r;
+    };
+    const _mp = L.memberPatch;
+    L.memberPatch = function () { const o = _mp ? _mp.apply(this, arguments) : null; if (!o) return o; o.memberDrafts = { [mid()]: S.myDrafts || {} }; return o; };
+    const rel = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'עכשיו' : m < 60 ? 'לפני ' + m + ' דק׳' : m < 1440 ? 'לפני ' + Math.round(m / 60) + ' שע׳' : 'לפני ' + Math.round(m / 1440) + ' ימים'; };
+    if (SCREENS.create) {
+      const _cr = SCREENS.create.render;
+      SCREENS.create.render = function () {
+        let h = _cr.apply(this, arguments);
+        const d = store(); const ks = Object.keys(d).filter((k) => d[k] && d[k].data);
+        if (!ks.length) return h;
+        const list = '<h2 class="sec-h">טיוטות בעבודה</h2><div class="t-sub" style="margin:-4px 0 10px">תוכן שהתחלתם ולא נשלח. נשמר אוטומטית, אפשר להמשיך מהנקודה שעצרתם.</div><div class="grid g-3">' + ks.map((k) => '<div class="card card-pad" style="display:flex;flex-direction:column;gap:8px"><b>' + esc(d[k].he || 'טיוטה') + '</b><span class="t-sub">' + ic('clock', 13) + ' נשמר ' + rel(d[k].at || Date.now()) + '</span><div style="display:flex;gap:6px;margin-top:4px"><button class="btn btn-sm btn-primary" data-act="draftGo:' + k + '">' + ic('edit', 14) + ' המשך מאיפה שעצרתי</button><button class="btn btn-sm btn-quiet-bad" data-act="draftX:' + k + '">' + ic('x', 14) + '</button></div></div>').join('') + '</div>';
+        const i = h.indexOf('<h2 class="sec-h">אירועים פעילים</h2>');
+        if (i >= 0) return h.slice(0, i) + list + h.slice(i);
+        const j = h.lastIndexOf('</span></button>');
+        return j >= 0 ? h.slice(0, j + '</span></button>'.length) + list + h.slice(j + '</span></button>'.length) : h + list;
+      };
+    }
+    ACT.draftGo = (k) => {
+      const d = store(); const K = KINDS.find((x) => x.k === k); const dr = d[k];
+      if (!K || !dr || !dr.data) return;
+      S[K.key] = JSON.parse(JSON.stringify(dr.data)); seen[K.k] = true;
+      if (K.k === 'ev') { const e = S[K.key]; (e.posts || []).forEach((p) => { if (p.mg && p.mg.busy) p.mg = null; if (p.mv && p.mv.busy && !p.mv.job) p.mv = null; }); }
+      if (K.k === 'wiz' && S.wiz.media && S.wiz.media.busy) S.wiz.media.busy = '';
+      S.dirty = true; go(K.route); window.scrollTo({ top: 0 });
+      toast('ממשיכים מהטיוטה', dr.he || '');
+    };
+    ACT.draftX = (k) => { const d = store(); delete d[k]; render(); flush(); toast('הטיוטה נמחקה', ''); };
   })();
 
   /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */

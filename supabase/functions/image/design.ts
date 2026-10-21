@@ -214,3 +214,7 @@ ${SKELETON_EN}
 ${graphicRulesEn(o.fmt ?? 'square')}`;
 }
 export const KIT_QA_EN = `SKELETON CHECK: this organisation uses a fixed skeleton. Report in "skeleton" which parts are present: logo (the real logo, not an invented crest), tag pill, headline with a hot-colour key word, sub line, motif rule/shapes from the logo, details or icon row, filled CTA button with arrow, photo with embedded branding. Each missing part is an issue and costs 6-10 points; an invented crest or logo instead of the real one is a stop.`;
+
+/* ---------------- event posters: the same skeleton, festival energy ---------------- */
+export const EVENT_EN = `EVENT POSTER MODE: this graphic sells an event, so it must feel big and festive: the event name is the hero, set as large as the canvas allows (140-180px on 1080), with the stage tag (coming soon / two days to go / today) as a bold pill above it. Date, time and place in three clear pills with icons. One hero photo full of people, lights and movement (festival, concert, crowd, fireworks, stage) at golden hour or night with warm lights; confetti, light rays or bokeh sparkles in the logo colours are welcome as motif sparks. If an event logo is attached, it sits large above or beside the headline; the organisation's logo stays smaller in its usual place. Keep the fixed skeleton, the brand colours and the Hebrew texts exactly; the energy comes from scale, light and the photo, not from extra words.`;
+
