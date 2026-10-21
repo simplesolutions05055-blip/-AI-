@@ -1,7 +1,7 @@
 // Server job runner: graphics and videos made without a browser.
 // Each step sends its long calls through pg_net (v2_http) and the next tick reads the answers,
 // so no edge function waits minutes on a render. A cron tick runs every minute and loops ~50s.
-import { APP, FN, DB, api, brandOf, callFn, httpLater, httpResults, newUiId, saveItem, videoBrand } from './common.ts';
+import { APP, FN, DB, api, brandOf, callFn, httpLater, httpResults, kitOf, newUiId, saveItem, videoBrand } from './common.ts';
 import { sendImage as waImage, sendText as waText } from './wa.ts';
 import { remember } from './session.ts';
 
@@ -66,15 +66,17 @@ async function advance(d: DB, j: Job) {
       if (!ids.length) { const id = await httpLater(d, FN('generate'), token, { mode: 'graphic', org, dept: inp.dept || '', title: inp.title || '', brief: inp.brief || '' }); return upd(d, j, { pend: { t: id }, next_at: later(6) }); }
       if (!ok(res.t)) return retry('texts');
       const x = res.t.json;
-      data.texts = { kicker: x.kicker || '', headline: x.headline || inp.title || '', sub: x.sub || '', details: x.details || [], cta: x.cta || '' };
-      data.caption = x.caption || ''; data.tags = x.tags || [];
+      data.texts = { kicker: x.kicker || '', headline: x.headline || inp.title || '', sub: x.sub || '', details: x.details || [], cta: x.cta || '', icons: Array.isArray(x.icons) ? x.icons.slice(0, 4) : [], keyword: x.keyword || '' };
+      data.caption = x.caption || ''; data.tags = x.tags || []; data.style = x.style || 'official'; data.palette = x.palette || '';
       return go('design');
     }
     if (j.step === 'design') {
       if (!ids.length) {
         const b = await brandOf(d, j.org_id);
         data.logo = b.logo;
-        const id = await httpLater(d, FN('image'), token, { action: 'design', org, dept: inp.dept || '', size: 'square', brief: (inp.title || '') + '\n' + (inp.brief || ''), colors: b.colors, texts: data.texts, refs: [...(b.logo ? [b.logo] : []), ...(inp.photos || [])].slice(0, 4), logo: !!b.logo, note: inp.note || '', quality: 'high', n: 2 }, 170000);
+        // the same call the app makes: brand kit from the logo, palette roles, style, keyword and icons. One image, so the answer comes faster.
+        const kit = await kitOf(d, j.org_id, token, b, org);
+        const id = await httpLater(d, FN('image'), token, { action: 'design', org, dept: inp.dept || '', size: 'square', brief: (inp.title || '') + '\n' + (inp.brief || ''), colors: b.colors, roles: b.roles, style: data.style || 'official', palette: data.palette || '', kit: kit || undefined, texts: data.texts, refs: [...(b.logo ? [b.logo] : []), ...(inp.photos || [])].slice(0, 4), logo: !!b.logo, note: inp.note || '', quality: 'high', n: 1 }, 170000);
         await upd(d, j, { data, lock_until: later(120) }); return upd(d, j, { pend: { g: id }, next_at: later(20) });
       }
       if (!ok(res.g)) return retry('design');
@@ -174,6 +176,8 @@ async function advance(d: DB, j: Job) {
 }
 
 // ---------------- results ----------------
+export const MENU = 'מה נעשה עכשיו?\n1. לתקן את התמונה?\n2. לתקן את הטקסט?\n3. לתזמן את הפוסט?\n4. ליצור חדש?\nאפשר להשיב במספר או פשוט לכתוב לי.';
+
 async function finishGraphic(d: DB, j: Job, token: string, org: string) {
   const data = j.data, inp = j.input, mem = await memberOf(d, j.member_id);
   const id = j.ui_id ?? await newUiId(d, j.org_id);
@@ -185,9 +189,11 @@ async function finishGraphic(d: DB, j: Job, token: string, org: string) {
   await saveItem(token, ui);
   await upd(d, j, { state: 'done', step: 'done', ui_id: id, result: { url: data.url }, pend: {} });
   if (j.phone) {
+    // three messages, in order: the image, the post text, then the menu
     try { await sendImage(j.phone, data.url, org); } catch (e) { await sendText(j.phone, 'הגרפיקה מוכנה: ' + data.url); }
-    await sendText(j.phone, (data.caption ? data.caption + '\n\n' : '') + 'לתזמן? כתבו מתי ובאילו רשתות (למשל: מחר ב-18:00 בפייסבוק ובאינסטגרם).\nלשינוי, כתבו מה לתקן.');
-    await remember(d, j.phone, { last: { ui: id, kind: 'graphic', job: j.id, title: ui.t } });
+    if (data.caption) await sendText(j.phone, data.caption + ((data.tags || []).length ? '\n' + (data.tags as string[]).slice(0, 5).join(' ') : ''));
+    await sendText(j.phone, MENU);
+    await remember(d, j.phone, { last: { ui: id, kind: 'graphic', job: j.id, title: ui.t }, menu: true, menuFix: null, menuSched: null });
   }
 }
 async function finishVideo(d: DB, j: Job, token: string) {

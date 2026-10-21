@@ -88,7 +88,24 @@ export async function brandOf(d: DB, orgId: string) {
   const colors: string[] = (B.colors ?? []).map((x: any) => (Array.isArray(x) ? x[1] : x)).filter((c: string) => /^#[0-9a-f]{6}$/i.test(c ?? ''));
   const logos: any[] = B.logos ?? [];
   const l = logos.find((x) => x.url && !/הפוך|לבן/.test(x.n ?? '')) ?? logos.find((x) => x.url);
-  return { colors, logo: l ? String(l.url) : '' };
+  const roles: Record<string, string> = B.roles && typeof B.roles === 'object' ? B.roles : {};
+  const kit = B.kit && typeof B.kit === 'object' && l && B.kit.logo === String(l.url) ? B.kit : null;
+  return { colors, roles, logo: l ? String(l.url) : '', kit };
+}
+// The brand kit (graphic language read from the logo), as the app computes it. Cached per org and logo, so the bot pays the scan once.
+export async function kitOf(d: DB, orgId: string, token: string, b: { logo: string; colors: string[]; kit?: any }, org = '') {
+  if (!b.logo) return null;
+  if (b.kit) return b.kit;
+  const { data: c } = await d.from('v2_brand_kits').select('logo,kit').eq('org_id', orgId).maybeSingle();
+  if (c && c.logo === b.logo && c.kit) return c.kit;
+  try {
+    const r = await callFn('image', token, { action: 'brandkit', org, logo: b.logo, colors: b.colors }, 60000);
+    if (!r || !r.kit) return null;
+    const kit = { ...r.kit, logo: b.logo };
+    if (kit.template !== 'bands') kit.headline = 'colored';
+    await d.from('v2_brand_kits').upsert({ org_id: orgId, logo: b.logo, kit, updated_at: new Date().toISOString() });
+    return kit;
+  } catch (e) { console.error('kit', e instanceof Error ? e.message : e); return null; }
 }
 const hex = (n: number) => Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, '0');
 export const rgbOf = (h: string) => { const x = h.replace('#', ''); return [0, 2, 4].map((i) => parseInt(x.slice(i, i + 2), 16)); };
