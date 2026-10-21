@@ -4965,7 +4965,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const ta = document.querySelector('.top-actions'), bar = document.querySelector('.topbar'); if (!ta || !bar) return;
       const q = (sel) => bar.querySelector(sel);
       const help = q('#btnHelp'); if (help) (help.closest('.tip') || help).remove();
-      const org = q('#btnOrg'); if (org) org.hidden = true;
+      const org = q('#btnOrg'); if (org) org.style.display = 'none';
       const search = q('.search'), create = q('#btnNewTop'), notif = q('#btnNotif'), a11y = q('#a11yTop'), user = q('#btnUser'), demo = q('.demo-chip');
       // DOM order in RTL = right to left
       [demo, create, search, notif && (notif.closest('.tip') || notif), a11y && (a11y.closest('.tip') || a11y), user].forEach((el) => { if (el) ta.appendChild(el); });
