@@ -3307,7 +3307,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     openDrawer = function (h) { return _od(isSingle() && typeof h === 'string' ? strip(h) : h); };
     ['approve', 'askfix', 'reject', 'cApproveAll'].forEach((k) => { const f = ACT[k]; ACT[k] = (...a) => { if (isSingle()) { toast('אישור תוכן', 'את התוכן מאשר משתמש הארגון.', ''); return; } return f.apply(null, a); }; });
     // publishing without the direct-publish permission: the content goes to approval instead
-    ['wizPublish', 'sched', 'cPublish', 'publish'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => { if (isSingle() && !canDirect()) { toast('הפרסום דורש אישור', 'התוכן נשלח לאישור של משתמש הארגון.', ''); return ACT.wizSend ? ACT.wizSend() : undefined; } return f.apply(null, a); }; });
+    ['wizPublish', 'sched', 'cPublish', 'publish'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => { if (isSingle() && !canDirect()) { toast('הפרסום דורש אישור', 'התוכן נשלח לאישור של הרשאת מנהל.', ''); if (k === 'cPublish') return ACT.cSend(); return S.wiz && ACT.wizSend ? ACT.wizSend() : undefined; } return f.apply(null, a); }; });
   })();
   /* ---------------- publishing: real channels and real posts through the provider layer ----------------
    * The server talks to the publishing provider (Zernio today, replaceable). The UI only knows:
@@ -4876,6 +4876,104 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       render(); flush();
       toast('מעצבים את החודש הבא', batch.length + ' גרפיקות בתור.');
     };
+  })();
+
+
+  /* ---------------- last details 21.10: departments' series reach the manager; calendar status chips; pause / resume; top bar order ---------------- */
+  (function () {
+    const isMember = () => !!(L.me && L.me.role === 'member');
+    const isManagerUser = () => !!(L.me && L.me.role !== 'member' && L.kind === 'client');
+    /* --- departments' series are visible to the manager and approved from there --- */
+    const _cs = clientState;
+    clientState = function () { const o = _cs.apply(this, arguments); o.camps = (S.camps || []).filter((c) => !c.mid); return o; };
+    const _hyd = hydrateClient;
+    hydrateClient = function (st) {
+      const r = _hyd.apply(this, arguments);
+      if (isManagerUser() && st && st.memberCamps && typeof st.memberCamps === 'object') {
+        S.memberCampsAll = st.memberCamps;
+        const mine = (S.camps || []).filter((c) => !c.mid);
+        const theirs = Object.keys(st.memberCamps).flatMap((mid) => (Array.isArray(st.memberCamps[mid]) ? st.memberCamps[mid] : []).map((c) => Object.assign(c, { mid })));
+        S.camps = [...mine, ...theirs];
+        S.memberCampsSynced = {}; Object.keys(st.memberCamps).forEach((mid) => { S.memberCampsSynced[mid] = JSON.stringify(st.memberCamps[mid]); });
+      }
+      return r;
+    };
+    // a manager's change to a department's series (approval, return) is written to that department's slot
+    let patching = false;
+    setInterval(async () => {
+      if (!L.ready || !isManagerUser() || patching || !S.memberCampsSynced) return;
+      const by = {};
+      (S.camps || []).forEach((c) => { if (c.mid) (by[c.mid] = by[c.mid] || []).push(c); });
+      for (const mid of Object.keys(by)) {
+        const list = by[mid].map((c) => { const x = Object.assign({}, c); delete x.mid; return x; });
+        const j = JSON.stringify(list);
+        if (j === S.memberCampsSynced[mid]) continue;
+        patching = true;
+        try { await call('state.patch', { data: { memberCamps: { [mid]: list } } }); S.memberCampsSynced[mid] = j; } catch (e) { /* next tick */ }
+        patching = false;
+      }
+    }, 2500);
+    /* --- calendar: the status chips filter --- */
+    if (SCREENS.calendar) {
+      const _cR = SCREENS.calendar.render;
+      SCREENS.calendar.render = function () {
+        let h = _cR.apply(this, arguments);
+        const f = S.calF || {};
+        const chips = ['draft', 'pending', 'approved', 'scheduled', 'paused', 'published'].map((k) => { const on = f.st === ST[k].t; return '<button class="badge ' + ST[k].c + (on ? ' cal-on' : '') + '" data-act="calSt:' + k + '" aria-pressed="' + on + '">' + ic(ST[k].i, 13, 2) + ST[k].t + '</button>'; }).join('') +
+          (f.st ? '<button class="chip" data-act="calSt:">' + ic('x', 13) + ' כל הסטטוסים</button>' : '<span class="t-sub" style="align-self:center">לחיצה על סטטוס מסננת את הלוח</span>');
+        return h.replace(/<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">[\s\S]*?<\/div>(?=<div class="cal">|<div class="tbl-wrap">|<div class="card card-pad")/, '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">' + chips + '</div>');
+      };
+    }
+    ACT.calSt = (k) => { S.calF = S.calF || { dept: '', ch: '', st: '' }; S.calF.st = k && ST[k] ? ST[k].t : ''; render(); };
+    css.textContent += `.badge.cal-on{outline:2px solid var(--brand);outline-offset:1px}button.badge{cursor:pointer;font:inherit}
+.pz-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.pz-row input{width:100%}`;
+    /* --- a scheduled post: pause / resume; an expired pause needs a new date; without permission it goes back to approval --- */
+    ST.paused = { t: 'מושהה', c: 's-archived', e: 'ev-draft', i: 'pause' };
+    const future = (pub) => !!pub && Date.parse(String(pub).replace(' ', 'T') + ':00+03:00') > Date.now() + 60000;
+    const _peek = peekDrawer;
+    peekDrawer = function (it) {
+      let h = _peek(it);
+      if (it.s !== 'scheduled' && it.s !== 'paused') return h;
+      const exp = it.s === 'paused' && !future(it.pub);
+      const d = (it.pub || '').slice(0, 10), t = (it.pub || '').slice(11, 16);
+      const box = '<div class="note" style="margin-top:12px;display:block">' +
+        (it.s === 'scheduled' ? '<div style="display:flex;gap:10px;align-items:center">' + ic('pause', 16) + '<span><b>מתוזמן ל-' + esc(it.pub) + '.</b> השהיה מורידה את הפוסט מהתור; הפעלה מחדש מחזירה אותו.</span><button class="btn btn-sm" style="margin-inline-start:auto" data-act="pzPause:' + it.id + '">' + ic('pause', 14) + ' השהיה</button></div>'
+          : '<div style="display:flex;gap:10px;align-items:center">' + ic('pause', 16) + '<span><b>מושהה.</b> ' + (exp ? 'המועד ' + esc(it.pub) + ' עבר. לפרסום צריך לקבוע מועד חדש.' : 'מתוזמן ל-' + esc(it.pub) + '.') + (isMember() && !canDirect() ? ' הפעלה מחדש מחזירה את הפוסט לאישור.' : '') + '</span></div>' +
+            '<div class="pz-row"><input type="date" id="pzDate" value="' + esc(d) + '" aria-label="תאריך"><input type="time" id="pzTime" value="' + esc(t || '10:00') + '" aria-label="שעה"></div>' +
+            '<div style="margin-top:8px"><button class="btn btn-sm btn-primary" data-act="pzResume:' + it.id + '">' + ic('play', 14) + ' ' + (isMember() && !canDirect() ? 'הפעלה מחדש ושליחה לאישור' : 'הפעלה מחדש') + '</button></div>') +
+        '</div>';
+      return h.replace(/<div class="note">(?=[\s\S]*?התאמת הפרסום)/, box + '<div class="note">');
+    };
+    ACT.pzPause = (id) => {
+      const it = itemById(id); if (!it || it.s !== 'scheduled') return;
+      it.s = 'paused'; it.u = 'עכשיו';
+      closeDrawer(); render(); flush();
+      toast('הפוסט הושהה', 'ירד מהתור. אפשר להפעיל מחדש מתוך הפוסט בלוח.');
+    };
+    ACT.pzResume = (id) => {
+      const it = itemById(id); if (!it || it.s !== 'paused') return;
+      const d = $('#pzDate') && $('#pzDate').value, t = $('#pzTime') && $('#pzTime').value;
+      if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) it.pub = d + ' ' + (t || '10:00');
+      if (!future(it.pub)) { toast('המועד עבר', 'קבעו תאריך ושעה עתידיים לפני ההפעלה מחדש.', 'err'); return; }
+      const needs = isMember() && !canDirect();
+      it.s = needs ? 'pending' : 'scheduled'; it.u = 'עכשיו'; it.wait = 'דקה';
+      closeDrawer(); render(); flush();
+      toast(needs ? 'נשלח לאישור' : 'הפוסט הופעל מחדש', needs ? 'הפוסט חזר למרכז האישורים ויתוזמן ל-' + it.pub + ' עם האישור.' : 'יוצא במועד ' + it.pub + '.');
+    };
+    /* --- top bar order, left to right: department name, accessibility, notifications, search, create --- */
+    function orderTopbar() {
+      const ta = document.querySelector('.top-actions'), bar = document.querySelector('.topbar'); if (!ta || !bar) return;
+      const q = (sel) => bar.querySelector(sel);
+      const help = q('#btnHelp'); if (help) (help.closest('.tip') || help).remove();
+      const org = q('#btnOrg'); if (org) org.hidden = true;
+      const search = q('.search'), create = q('#btnNewTop'), notif = q('#btnNotif'), a11y = q('#a11yTop'), user = q('#btnUser'), demo = q('.demo-chip');
+      // DOM order in RTL = right to left
+      [demo, create, search, notif && (notif.closest('.tip') || notif), a11y && (a11y.closest('.tip') || a11y), user].forEach((el) => { if (el) ta.appendChild(el); });
+      if (search) { search.style.margin = '0'; search.style.maxWidth = '340px'; search.style.flex = '1'; }
+      if (user) user.style.marginInlineStart = 'auto';
+      ta.style.flex = '1'; ta.style.justifyContent = 'flex-start'; ta.style.gap = '10px';
+    }
+    const tick = setInterval(() => { if (document.body.classList.contains('in-app') && document.querySelector('#a11yTop')) { orderTopbar(); clearInterval(tick); } }, 400);
   })();
 
   /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */

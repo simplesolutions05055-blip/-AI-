@@ -139,10 +139,13 @@ async function memberUpdate(d: DB, orgId: string, memberId: string | null, p: Re
 async function statePatch(d: DB, orgId: string, memberId: string | null, patch: Record<string, any>) {
   const { data: st } = await d.from('org_state').select('data').eq('org_id', orgId).maybeSingle();
   const cur: Record<string, any> = (st?.data && typeof st.data === 'object') ? { ...st.data } : {};
+  // a manager may change another member's slot (approving a department's series); a member only its own
+  const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
+  const any = !memberId || isManager(me);
   for (const k of ['memberBrand', 'memberChannels', 'memberCamps']) {
     if (!patch[k] || typeof patch[k] !== 'object') continue;
     const slot: Record<string, any> = (cur[k] && typeof cur[k] === 'object') ? { ...cur[k] } : {};
-    for (const mid of Object.keys(patch[k])) if (!memberId || mid === memberId) slot[mid] = patch[k][mid];
+    for (const mid of Object.keys(patch[k])) if (any || mid === memberId) slot[mid] = patch[k][mid];
     cur[k] = slot;
   }
   if (cur.fresh) delete cur.fresh;
