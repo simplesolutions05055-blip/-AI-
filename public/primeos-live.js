@@ -4976,6 +4976,40 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const tick = setInterval(() => { if (document.body.classList.contains('in-app') && document.querySelector('#a11yTop')) { orderTopbar(); clearInterval(tick); } }, 400);
   })();
 
+
+  /* ---------------- 21.10 evening: no check circles; event logo optional with one button; media optional; full preview in the event editor ---------------- */
+  (function () {
+    css.textContent += `
+.pk{display:none!important}
+.ev-th.big.ev-real{height:auto!important;min-height:360px;aspect-ratio:4/5;max-height:70vh}
+.ev-th.big.ev-real video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+#drawer .ev-th.big{width:100%}`;
+    if (SCREENS.eventKit) {
+      const _r = SCREENS.eventKit.render;
+      SCREENS.eventKit.render = function () {
+        let h = _r.apply(this, arguments);
+        const e = S.ev; if (!e || e.step !== 0) return h;
+        // one logo button, optional
+        h = h.replace(/<div class="field full"><label>לוגו האירוע<\/label>[\s\S]*?<\/div>(?=<div class="field full"><label>תמונות וסרטונים)/, '<div class="field full"><label>לוגו האירוע <span class="hint">לא חובה. בלי לוגו משתמשים בלוגו מנכסי המותג</span></label>' +
+          (e.logo && e.logo.url ? '<div class="up-chips"><span class="file-chip up-chip"><img src="' + esc(e.logo.url) + '" alt=""><b>' + esc(e.logo.n || 'לוגו') + '</b><button class="icon-btn" data-act="evLogoX" aria-label="הסרה">' + ic('x', 14) + '</button></span></div>' : '<div class="up-row"><button class="up-opt" data-act="evLogo:png"><span class="fi png">' + ic('upload', 14) + '</span>לוגו האירוע</button></div>') + '</div>');
+        h = h.replace('תמונות וסרטונים <span class="hint">לפחות 3 קבצים</span>', 'תמונות וסרטונים <span class="hint">לא חובה. כל תמונה או סרטון שתעלו ישמשו בגרפיקות ובסרטונים</span>');
+        return h;
+      };
+    }
+    ACT.evLogoX = () => { if (S.ev) { S.ev.logo = null; render(); } };
+    ACT.evNext0 = () => {
+      evCollect(); const e = S.ev;
+      if (!e.name.trim()) { toast('חסר שם אירוע', '', 'err'); return; }
+      if (!e.date || !e.start) { toast('חסרים תאריך ושעה', '', 'err'); return; }
+      if (evDays(e) < 3) { toast('האירוע קרוב מדי', 'צריך לפחות 3 ימים עד האירוע כדי לבנות את רצף הפרסומים.', 'err'); return; }
+      if (!e.place.trim()) { toast('חסר מקום', '', 'err'); return; }
+      if (!e.ch.length) { toast('לא נבחרה פלטפורמה', '', 'err'); return; }
+      // no event logo: the organisation's logo; no media: the AI creates the imagery
+      if (!e.logo || !e.logo.url) { const u = logoOf(); e.logo = u ? { k: 'png', n: 'לוגו ' + (aiCtx().org || 'הארגון'), url: u, auto: true } : null; }
+      e.step = 1; render(); window.scrollTo({ top: 0 });
+    };
+  })();
+
   /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */
   (function () {
     const KEY = 'pos_a11y';
