@@ -11,7 +11,14 @@ async function logMsg(d: DB, row: Record<string, unknown>) {
   return !error;
 }
 async function say(d: DB, phone: string, text: string, who?: Who | null) {
-  await sendText(phone, text);
+  try { await sendText(phone, text); }
+  catch (e) {
+    // a failed send is kept as a row, so the reason is visible in the data without the function logs
+    const why = e instanceof Error ? e.message : String(e);
+    console.error('send', why);
+    await logMsg(d, { id: 'err-' + crypto.randomUUID(), phone, org_id: who?.orgId ?? null, member_id: who?.memberId ?? null, dir: 'err', body: why.slice(0, 500) });
+    throw e;
+  }
   await logMsg(d, { id: 'out-' + crypto.randomUUID(), phone, org_id: who?.orgId ?? null, member_id: who?.memberId ?? null, dir: 'out', body: text.slice(0, 2000) });
 }
 
