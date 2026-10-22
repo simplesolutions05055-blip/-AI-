@@ -1,5 +1,5 @@
 // The PrimeOS WhatsApp bot: one number for every client. Only phones of system users are served.
-import { CH_HE, DB, Who, api, env, fmtIL, heWhen, itemOf, nowIL, phoneKey, saveItem, toIntl, whoIs } from './common.ts';
+import { CH_HE, DB, Who, api, callFn, env, fmtIL, heWhen, itemOf, newUiId, nowIL, phoneKey, saveItem, toIntl, whoIs } from './common.ts';
 import { DRY, InMsg, download, sendText } from './wa.ts';
 import { remember, sessionOf } from './session.ts';
 import { MENU, kick } from './jobs.ts';
@@ -42,6 +42,7 @@ const SYS = `אתה הבוט של PrimeOS ב-WhatsApp. משתמשי רשויות
 פעולות אפשריות:
 graphic - גרפיקה לרשתות (פוסט עם תמונה מעוצבת).
 video - סרטון קצר לרשתות.
+own - המשתמש שלח גרפיקה או סרטון מוכנים ורוצה לפרסם אותם כמו שהם: לכתוב להם טקסט, לתזמן אותם, "זה הפוסט", "תעלה את זה", "תזמן את התמונה ששלחתי". brief: מה המשתמש סיפר על החומר (אם סיפר). when/channels אם ציין.
 change - שינוי בבריף שממתין לאישור או בתוצר האחרון. target: image אם מבקשים לשנות את התמונה או העיצוב, text אם את הטקסט, הכיתוב או הניסוח.
 schedule - תזמון התוצר האחרון לפרסום. when: "now" אם ביקשו מיידי / עכשיו / כבר.
 status - מה מתוזמן בקרוב.
@@ -50,7 +51,7 @@ ask - חסר פרט הכרחי: שאל שאלה אחת קצרה.
 chat - שאלה כללית, ברכה או עזרה: ענה קצר והסבר מה אפשר לבקש.
 החזר JSON בלבד:
 {"action":"...","title":"כותרת קצרה","brief":"כל הפרטים שנמסרו לגרפיקה או לסרטון, כולל תאריך, שעה, מקום ופרטים","kind":"official|marketing|event|showcase|greeting|memorial","dur":25,"change":"מה לשנות","target":"image|text","when":"YYYY-MM-DD HH:MM או now","channels":["fb","ig","tk","x","li","yt","th","gb","tg"],"reply":"תשובה למשתמש ב-ask וב-chat"}
-כללים: גרפיקה היא ברירת המחדל כשמבקשים פוסט, מודעה, הודעה או פרסום בלי לציין סרטון. סרטון רק כשביקשו סרטון, וידאו, ריל או קליפ.
+כללים: גרפיקה היא ברירת המחדל כשמבקשים פוסט, מודעה, הודעה או פרסום בלי לציין סרטון. אם המשתמש שלח חומר ומבקש לפרסם, לתזמן או לכתוב טקסט ל"זה" בלי לבקש ליצור או לעצב - זה own, לא graphic. סרטון רק כשביקשו סרטון, וידאו, ריל או קליפ.
 אל תשאל שאלות על פרטים שלא חובה. אם יש נושא ברור - צור. לא להמציא פרטים.
 when: לפי זמן ישראל, חשב תאריכים יחסיים (מחר, יום חמישי) מהתאריך הנוכחי. channels: רק מה שנכתב; ריק אם לא צוין.
 מקף רגיל בלבד. reply קצר, בלי פתיחים.`;
@@ -68,6 +69,8 @@ async function understand(who: Who, s: Record<string, any>, text: string, usage:
     s.approve && s.approve.length ? `ממתינים לאישורו ${s.approve.length} פרסומים` : '',
     s.menu && s.last ? 'המשתמש קיבל עכשיו גרפיקה ותפריט: 1 לתקן את התמונה, 2 לתקן את הטקסט, 3 לתזמן, 4 ליצור חדש. תשובה כמו "את התמונה" או "התמונה לא טובה" היא change עם target image; "הטקסט" היא change עם target text; "לתזמן" היא schedule.' : '',
     s.menuSched && s.last ? 'המשתמש עונה על השאלה מתי לפרסם את הגרפיקה האחרונה: החזר schedule עם when (now אם מיידי).' : '',
+    s.mediaMenu ? 'המשתמש שלח עכשיו חומר מוכן וקיבל תפריט: 1 לפרסם כמו שהוא (own), 2 ליצור ממנו גרפיקה (graphic), 3 ליצור ממנו סרטון (video).' : '',
+    s.ownWait ? 'המשתמש שלח סרטון מוכן ונשאל על מה הסרטון. התשובה שלו היא own עם brief = מה שכתב.' : '',
     s.menuFix && s.last ? `המשתמש מתאר מה לתקן ב${s.menuFix === 'image' ? 'תמונה' : 'טקסט'} של הגרפיקה האחרונה: החזר change עם target ${s.menuFix}.` : '',
   ].filter(Boolean).join('\n');
   for (const model of ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5']) {
@@ -100,6 +103,10 @@ async function newJob(d: DB, who: Who, phone: string, kind: string, step: string
 
 // a fix on the last graphic: the image only (same texts, new design with the change request) or the texts (rewritten, then redesigned)
 async function fixGraphic(d: DB, who: Who, phone: string, s: Record<string, any>, target: 'image' | 'text', ch: string) {
+  if (s.last && s.last.kind === 'own') {
+    if (target === 'image' && s.menuFix !== 'text') return say(d, phone, 'זה חומר שהעליתם, ולכן אני יכול לתקן רק את טקסט הפוסט. מה לשנות בטקסט?', who);
+    return fixOwn(d, who, phone, s, ch);
+  }
   const { data: prev } = s.last ? await d.from('v2_jobs').select('input,data,kind').eq('id', s.last.job).maybeSingle() : { data: null };
   if (!prev || prev.kind !== 'graphic') return say(d, phone, 'אין גרפיקה לתקן. בקשו גרפיקה חדשה.', who);
   await remember(d, phone, { menu: null, menuFix: null, menuSched: null });
@@ -110,6 +117,54 @@ async function fixGraphic(d: DB, who: Who, phone: string, s: Record<string, any>
   }
   await newJob(d, who, phone, 'graphic', 'texts', { ...prev.input, brief: (prev.input.brief || '') + '\nבקשת שינוי בטקסט: ' + ch, note: '' }, s.last.ui);
   return say(d, phone, 'מתקן את הטקסט ומעדכן את הגרפיקה. אשלח גרסה חדשה תוך דקה-שתיים.', who);
+}
+
+const MENU_OWN = 'מה נעשה עכשיו?\n1. לתקן את הטקסט?\n2. לתזמן את הפוסט?\n3. ליצור חדש?\nאפשר להשיב במספר או פשוט לכתוב לי.';
+
+// a post text for material the user sent (Claude reads an image; a video needs a line from the user)
+async function captionFor(who: Who, f: { url: string; v: boolean }, brief: string, note = '') {
+  const b = brief + (note ? '\nבקשת שינוי: ' + note : '');
+  if (!f.v) {
+    const r = await callFn('generate', who.token, { mode: 'caption', image: f.url, title: '', brief: b, dept: who.dept }, 90000);
+    return { title: String(r.title || ''), body: String(r.body || '') + (r.cta ? '\n\n' + r.cta : ''), tags: (r.tags || []).slice(0, 5) as string[] };
+  }
+  const r = await callFn('generate', who.token, { mode: 'graphic', org: who.orgName, dept: who.dept, title: '', brief: 'סרטון מוכן שהמשתמש העלה. על הסרטון: ' + b + '\nכתוב רק את טקסט הפוסט שילווה את הסרטון.' }, 90000);
+  return { title: String(r.headline || ''), body: String(r.caption || ''), tags: (r.tags || []).slice(0, 5) as string[] };
+}
+
+// material the user sent becomes a post: text written for it, saved as a draft, then the menu (or straight to scheduling)
+async function ownStart(d: DB, who: Who, phone: string, s: Record<string, any>, brief: string, when?: string, chans?: string[]) {
+  const fresh = (s.media ?? []).filter((x: any) => Date.now() - x.at < 3600000);
+  const f = fresh[fresh.length - 1];
+  if (!f) return say(d, phone, 'שלחו את התמונה או הסרטון שרוצים לפרסם, ואכתוב להם טקסט.', who);
+  if (f.v && !brief.trim()) { await remember(d, phone, { ownWait: { when: when || null, chans: chans || [] }, mediaMenu: null }); return say(d, phone, 'על מה הסרטון? משפט אחד ואכתוב את טקסט הפוסט.', who); }
+  await remember(d, phone, { mediaMenu: null, ownWait: null });
+  let c: { title: string; body: string; tags: string[] };
+  try { c = await captionFor(who, f, brief); } catch (e) { console.error('caption', e instanceof Error ? e.message : e); return say(d, phone, 'לא הצלחתי לקרוא את החומר. נסו לשלוח שוב, או כתבו לי במשפט מה כתוב בו.', who); }
+  const id = await newUiId(d, who.orgId);
+  const ui: Record<string, unknown> = {
+    id, t: c.title || (f.v ? 'סרטון מ-WhatsApp' : 'פוסט מ-WhatsApp'), ty: f.v ? 'video' : 'graphic', d: who.dept || '', s: 'draft', o: who.name, u: 'עכשיו', pub: '', ch: [], th: '',
+    body: c.body, cta: '', tags: c.tags, wait: 'דקה', src: 'wa', ...(f.v ? { fmts: ['9:16'] } : {}),
+    media: { kind: f.v ? 'video' : 'graphic', layout: 'own', url: f.url, design: f.url, thumb: f.v ? '' : f.url, image: f.v ? '' : f.url, ready: true, uploaded: true, fmt: f.v ? '9:16' : '1:1', ar: f.v ? '9/16' : '1/1' },
+  };
+  await saveItem(who.token, ui);
+  const ns = await remember(d, phone, { last: { ui: id, kind: 'own', title: ui.t, brief, v: !!f.v, url: f.url }, media: null, menu: true, menuKind: 'own', menuFix: null, menuSched: null });
+  await say(d, phone, c.body + (c.tags.length ? '\n' + c.tags.join(' ') : ''), who);
+  if (when === 'now') return publishNow(d, who, phone, ns);
+  if (when) return schedule(d, who, phone, ns, when, chans || []);
+  return say(d, phone, MENU_OWN, who);
+}
+async function fixOwn(d: DB, who: Who, phone: string, s: Record<string, any>, ch: string) {
+  const L = s.last;
+  const ui = L ? await itemOf(d, who.orgId, L.ui) : null;
+  if (!ui) return say(d, phone, 'לא מצאתי את הפוסט. שלחו את החומר שוב.', who);
+  await remember(d, phone, { menuFix: null });
+  let c: { title: string; body: string; tags: string[] };
+  try { c = await captionFor(who, { url: L.url, v: !!L.v }, L.brief || '', ch); } catch (e) { console.error('caption', e instanceof Error ? e.message : e); return say(d, phone, 'לא הצלחתי לכתוב מחדש. נסו שוב בעוד רגע.', who); }
+  ui.body = c.body; ui.tags = c.tags; ui.u = 'עכשיו';
+  await saveItem(who.token, ui);
+  await say(d, phone, c.body + (c.tags.length ? '\n' + c.tags.join(' ') : ''), who);
+  return say(d, phone, MENU_OWN, who);
 }
 
 // the last graphic goes out now (or to approval when the user needs one)
@@ -226,7 +281,10 @@ export async function handle(d: DB, m: InMsg) {
         const fresh = (s.media ?? []).filter((x: any) => Date.now() - x.at < 3600000);
         s = await remember(d, m.phone, { media: [...fresh, { url, v: vid, name: 'whatsapp.' + ext, at: Date.now() }].slice(-8) });
         if (!text) {
-          if (!s.mediaAck || Date.now() - s.mediaAck > 90000) { await remember(d, m.phone, { mediaAck: Date.now() }); await say(d, m.phone, 'קיבלתי. מה ליצור מזה? למשל: "סרטון סיכום לאירוע" או "גרפיקה להודעה".', who); }
+          if (!s.mediaAck || Date.now() - s.mediaAck > 90000) {
+            await remember(d, m.phone, { mediaAck: Date.now(), mediaMenu: true, menu: null, menuFix: null, menuSched: null });
+            await say(d, m.phone, (vid ? 'קיבלתי את הסרטון.' : 'קיבלתי את התמונה.') + ' מה לעשות איתו?\n1. לפרסם כמו שהוא: אכתוב טקסט לפוסט ונתזמן\n2. ליצור ממנו גרפיקה חדשה\n3. ליצור ממנו סרטון\nאפשר להשיב במספר או פשוט לכתוב לי.', who);
+          }
           return;
         }
       }
@@ -252,6 +310,24 @@ export async function handle(d: DB, m: InMsg) {
   if (/^(עזרה|תפריט|help|\?)$/i.test(t)) return say(d, m.phone, HELP, who);
   // the menu after a graphic: a number (typed or spoken) is enough
   const menuNo = /^(1|אחד|אחת|1\.|תמונה|את התמונה)$/.test(t) ? 1 : /^(2|שתיים|שניים|2\.|טקסט|את הטקסט)$/.test(t) ? 2 : /^(3|שלוש|שלושה|3\.|לתזמן|תזמון)$/.test(t) ? 3 : /^(4|ארבע|ארבעה|4\.|חדש|ליצור חדש)$/.test(t) ? 4 : 0;
+  if (s.mediaMenu && menuNo && menuNo <= 3) {
+    if (menuNo === 1) return ownStart(d, who, m.phone, s, '');
+    await remember(d, m.phone, { mediaMenu: null });
+    return say(d, m.phone, menuNo === 2 ? 'מה לכתוב בגרפיקה? נושא, תאריך, שעה ומקום אם יש.' : 'מה הסרטון צריך להגיד? נושא ופרטים, ואכין בריף לאישור.', who);
+  }
+  // the line about the video the user sent: straight to the post text, no interpretation needed
+  if (s.ownWait && !menuNo) { const w = s.ownWait; return ownStart(d, who, m.phone, s, text, w.when || undefined, w.chans || []); }
+  if (s.menu && s.last && s.menuKind === 'own' && menuNo && menuNo <= 3) {
+    if (menuNo === 1) { await remember(d, m.phone, { menuFix: 'text', menuSched: null }); return say(d, m.phone, 'מה לתקן בטקסט? כתבו או הקליטו, למשל: "קצר יותר", "להוסיף טלפון", "פחות רשמי".', who); }
+    if (menuNo === 2) {
+      const have = await connected(who);
+      if (!have.length) return say(d, m.phone, 'עוד לא חוברו רשתות חברתיות לחשבון. מחברים במערכת, במסך "ערוצים מחוברים", ואז אפשר לתזמן מכאן.', who);
+      await remember(d, m.phone, { menuSched: true, menuFix: null });
+      return say(d, m.phone, `הפוסט יפורסם ב${have.map((c) => CH_HE[c] ?? c).join(', ')}.\nמתי לפרסם? מיידי? או כתבו לי תאריך ושעה.`, who);
+    }
+    await remember(d, m.phone, { menu: null, menuKind: null, menuFix: null, menuSched: null, media: null });
+    return say(d, m.phone, 'תארו לי מה המשימה ואני אבצע.', who);
+  }
   if (s.menu && s.last && menuNo) {
     if (menuNo === 1) { await remember(d, m.phone, { menuFix: 'image', menuSched: null }); return say(d, m.phone, 'מה לתקן בתמונה? כתבו או הקליטו, למשל: "רקע בהיר יותר", "בלי התמונה של האנשים", "הלוגו גדול יותר".', who); }
     if (menuNo === 2) { await remember(d, m.phone, { menuFix: 'text', menuSched: null }); return say(d, m.phone, 'מה לתקן בטקסט? כתבו או הקליטו, למשל: "כותרת קצרה יותר", "להוסיף את השעה", "פחות רשמי".', who); }
@@ -274,16 +350,18 @@ export async function handle(d: DB, m: InMsg) {
   const photos = (s.media ?? []).filter((x: any) => Date.now() - x.at < 3600000);
   try {
     switch (it.action) {
+      case 'own': return ownStart(d, who, m.phone, s, it.brief || (s.ownWait ? text : ''), it.when, it.channels || []);
       case 'graphic': {
+        if (s.ownWait) return ownStart(d, who, m.phone, s, text, s.ownWait.when || undefined, s.ownWait.chans || []);
         if (s.menuFix && s.last) return fixGraphic(d, who, m.phone, s, s.menuFix === 'image' ? 'image' : 'text', text);
         await newJob(d, who, m.phone, 'graphic', 'texts', { title: it.title || '', brief: it.brief || text, photos: photos.filter((x: any) => !x.v).map((x: any) => x.url), dept: who.dept });
-        await remember(d, m.phone, { media: null, menu: null, menuFix: null, menuSched: null });
+        await remember(d, m.phone, { media: null, menu: null, menuKind: null, menuFix: null, menuSched: null, mediaMenu: null, ownWait: null });
         return say(d, m.phone, 'מעצבים את הגרפיקה. אשלח אותה כאן תוך דקה-שתיים.', who);
       }
       case 'video': {
         const dur = Math.max(10, Math.min(60, Math.round(+it.dur || 25)));
         await newJob(d, who, m.phone, 'video', 'brief', { title: it.title || '', desc: it.brief || text, goal: it.kind || 'marketing', dur, imgs: photos.map((x: any) => ({ url: x.url, v: !!x.v, name: x.name })), dept: who.dept });
-        await remember(d, m.phone, { media: null, menu: null, menuFix: null, menuSched: null });
+        await remember(d, m.phone, { media: null, menu: null, menuKind: null, menuFix: null, menuSched: null, mediaMenu: null, ownWait: null });
         return say(d, m.phone, 'בונה בריף לסרטון. אשלח אותו לאישור תוך כדקה.', who);
       }
       case 'change': {
@@ -294,6 +372,7 @@ export async function handle(d: DB, m: InMsg) {
           await remember(d, m.phone, { await: null });
           return say(d, m.phone, 'מעדכן את הבריף. אשלח גרסה חדשה לאישור.', who);
         }
+        if (s.last && s.last.kind === 'own') return fixGraphic(d, who, m.phone, s, it.target === 'image' ? 'image' : 'text', ch);
         if (s.last) {
           const { data: prev } = await d.from('v2_jobs').select('input,data,kind').eq('id', s.last.job).maybeSingle();
           if (prev && prev.kind === 'graphic') {
@@ -316,6 +395,7 @@ export async function handle(d: DB, m: InMsg) {
       case 'approve': return approve(d, who, m.phone, s);
       case 'ask':
       case 'chat':
+        if (s.ownWait) return ownStart(d, who, m.phone, s, text, s.ownWait.when || undefined, s.ownWait.chans || []);
         if (s.menuFix && s.last) return fixGraphic(d, who, m.phone, s, s.menuFix === 'image' ? 'image' : 'text', text);
         if (s.menuSched && s.last) return say(d, m.phone, 'מתי לפרסם? כתבו "מיידי", או תאריך ושעה, למשל: מחר ב-18:00.', who);
         if (it.action === 'ask') return say(d, m.phone, it.reply || 'מה הפרטים? נושא, תאריך ומקום.', who);
