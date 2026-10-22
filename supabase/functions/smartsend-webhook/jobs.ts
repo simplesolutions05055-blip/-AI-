@@ -193,7 +193,7 @@ async function finishGraphic(d: DB, j: Job, token: string, org: string) {
     try { await sendImage(j.phone, data.url, org); } catch (e) { await sendText(j.phone, 'הגרפיקה מוכנה: ' + data.url); }
     if (data.caption) await sendText(j.phone, data.caption + ((data.tags || []).length ? '\n' + (data.tags as string[]).slice(0, 5).join(' ') : ''));
     await sendText(j.phone, MENU);
-    await remember(d, j.phone, { last: { ui: id, kind: 'graphic', job: j.id, title: ui.t }, menu: true, menuFix: null, menuSched: null });
+    await remember(d, j.phone, { last: { ui: id, kind: 'graphic', job: j.id, title: ui.t }, menu: true, menuKind: null, menuFix: null, menuSched: null, await: null, awaitIdea: null });
   }
 }
 async function finishVideo(d: DB, j: Job, token: string) {

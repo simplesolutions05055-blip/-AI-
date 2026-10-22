@@ -148,7 +148,7 @@ async function ownStart(d: DB, who: Who, phone: string, s: Record<string, any>, 
     media: { kind: f.v ? 'video' : 'graphic', layout: 'own', url: f.url, design: f.url, thumb: f.v ? '' : f.url, image: f.v ? '' : f.url, ready: true, uploaded: true, fmt: f.v ? '9:16' : '1:1', ar: f.v ? '9/16' : '1/1' },
   };
   await saveItem(who.token, ui);
-  const ns = await remember(d, phone, { last: { ui: id, kind: 'own', title: ui.t, brief, v: !!f.v, url: f.url }, media: null, menu: true, menuKind: 'own', menuFix: null, menuSched: null });
+  const ns = await remember(d, phone, { last: { ui: id, kind: 'own', title: ui.t, brief, v: !!f.v, url: f.url }, media: null, menu: true, menuKind: 'own', menuFix: null, menuSched: null, await: null, awaitIdea: null });
   await say(d, phone, c.body + (c.tags.length ? '\n' + c.tags.join(' ') : ''), who);
   if (when === 'now') return publishNow(d, who, phone, ns);
   if (when) return schedule(d, who, phone, ns, when, chans || []);
@@ -367,7 +367,7 @@ export async function handle(d: DB, m: InMsg) {
       }
       case 'change': {
         const ch = it.change || text;
-        if (s.await) {
+        if (s.await && !(s.menu && s.last)) {
           const { data: job } = await d.from('v2_jobs').select('id,input').eq('id', s.await.job).maybeSingle();
           if (job) { await d.from('v2_jobs').update({ state: 'run', step: 'brief', input: { ...job.input, change: ch }, pend: {}, tries: 0, next_at: new Date().toISOString() }).eq('id', job.id); kick(); }
           await remember(d, m.phone, { await: null });
