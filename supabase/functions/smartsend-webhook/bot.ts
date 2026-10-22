@@ -294,6 +294,16 @@ export async function handle(d: DB, m: InMsg) {
 
   // quick answers that need no AI
   const t = text.replace(/[.!]+$/, '').trim();
+  // the menu after a graphic: a number (typed or spoken) is enough
+  const menuNo = /^(1|אחד|אחת|1\.|תמונה|את התמונה)$/.test(t) ? 1 : /^(2|שתיים|שניים|2\.|טקסט|את הטקסט)$/.test(t) ? 2 : /^(3|שלוש|שלושה|3\.|לתזמן|תזמון)$/.test(t) ? 3 : /^(4|ארבע|ארבעה|4\.|חדש|ליצור חדש)$/.test(t) ? 4 : 0;
+  // material the user just sent comes before an older brief that waits for a yes
+  if (s.mediaMenu && menuNo && menuNo <= 3) {
+    if (menuNo === 1) return ownStart(d, who, m.phone, s, '');
+    await remember(d, m.phone, { mediaMenu: null });
+    return say(d, m.phone, menuNo === 2 ? 'מה לכתוב בגרפיקה? נושא, תאריך, שעה ומקום אם יש.' : 'מה הסרטון צריך להגיד? נושא ופרטים, ואכין בריף לאישור.', who);
+  }
+  // the line about the video the user sent: straight to the post text, no interpretation needed
+  if (s.ownWait && !menuNo) { const w = s.ownWait; return ownStart(d, who, m.phone, s, text, w.when || undefined, w.chans || []); }
   if (s.await && t === '1') {
     const { data: job } = await d.from('v2_jobs').select('id,state').eq('id', s.await.job).maybeSingle();
     if (job && job.state === 'await') { await d.from('v2_jobs').update({ state: 'run', step: 'media', pend: {}, tries: 0, next_at: new Date().toISOString() }).eq('id', job.id); kick(); }
@@ -308,15 +318,6 @@ export async function handle(d: DB, m: InMsg) {
   }
   if (/^(מאשר|מאשרת|אישור|אשר)$/.test(t) && (s.approve ?? []).length) return approve(d, who, m.phone, s);
   if (/^(עזרה|תפריט|help|\?)$/i.test(t)) return say(d, m.phone, HELP, who);
-  // the menu after a graphic: a number (typed or spoken) is enough
-  const menuNo = /^(1|אחד|אחת|1\.|תמונה|את התמונה)$/.test(t) ? 1 : /^(2|שתיים|שניים|2\.|טקסט|את הטקסט)$/.test(t) ? 2 : /^(3|שלוש|שלושה|3\.|לתזמן|תזמון)$/.test(t) ? 3 : /^(4|ארבע|ארבעה|4\.|חדש|ליצור חדש)$/.test(t) ? 4 : 0;
-  if (s.mediaMenu && menuNo && menuNo <= 3) {
-    if (menuNo === 1) return ownStart(d, who, m.phone, s, '');
-    await remember(d, m.phone, { mediaMenu: null });
-    return say(d, m.phone, menuNo === 2 ? 'מה לכתוב בגרפיקה? נושא, תאריך, שעה ומקום אם יש.' : 'מה הסרטון צריך להגיד? נושא ופרטים, ואכין בריף לאישור.', who);
-  }
-  // the line about the video the user sent: straight to the post text, no interpretation needed
-  if (s.ownWait && !menuNo) { const w = s.ownWait; return ownStart(d, who, m.phone, s, text, w.when || undefined, w.chans || []); }
   if (s.menu && s.last && s.menuKind === 'own' && menuNo && menuNo <= 3) {
     if (menuNo === 1) { await remember(d, m.phone, { menuFix: 'text', menuSched: null }); return say(d, m.phone, 'מה לתקן בטקסט? כתבו או הקליטו, למשל: "קצר יותר", "להוסיף טלפון", "פחות רשמי".', who); }
     if (menuNo === 2) {
