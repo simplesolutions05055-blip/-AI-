@@ -98,7 +98,7 @@ async function run(d: DB) {
     if (c.ok && alerted[k]) { alerted[k] = false; back.push(k); }
   }
   const history = [...((prev.history ?? []) as unknown[]).slice(-287), { at: now, ok: Object.values(res).every((c) => c.ok), ms: res.api?.ms ?? null }];
-  await d.from('admin_state').upsert({ id: 'monitor', data: { at: now, res, bad, alerted, history }, updated_at: now });
+  await d.from('admin_state').upsert({ id: 'monitor', data: { ...(st?.data ?? {}), at: now, res, bad, alerted, history }, updated_at: now });
   let mailed = false;
   if (down.length || back.length) {
     const to = await recipients(d);
