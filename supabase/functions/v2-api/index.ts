@@ -954,9 +954,20 @@ Deno.serve(async (req) => {
     if (action === 'login.use') return json(req, await loginLinkUse(d, p));
     if (action === 'sign.load') return json(req, await signLoad(d, p));
     if (action === 'sign.submit') return json(req, await signSubmit(d, p, req));
+    // a monitor's probe: the function answers and the database answers, nothing else
+    if (action === 'health') {
+      const t0 = Date.now();
+      const { error } = await d.from('v2_secrets').select('k', { head: true, count: 'exact' }).limit(1);
+      return json(req, { ok: !error, db_ms: Date.now() - t0, at: new Date().toISOString() }, error ? 503 : 200);
+    }
     const token = req.headers.get('x-primeos-token')?.trim() ?? '';
     const s = token ? await resolve(d, token) : null;
     if (!s) return json(req, { error: 'invalid_token' }, 401);
+    // management actions are written to the audit log: who, what, on whom, from where
+    if (/^(admin\.(?!load$|env$|state\.save$)|members\.(create|remove|relink|update|send)|ch\.(connect|disconnect)|state\.save$|logout$)/.test(action)) {
+      const target = String(p.id ?? p.org_id ?? p.email ?? p.ch ?? '').slice(0, 200) || null;
+      d.from('v2_audit').insert({ org_id: s.orgId ?? p.org_id ?? null, actor_kind: s.kind, actor_id: s.kind === 'admin' ? (s.adminId ?? null) : (s.memberId ?? null), action, target, ip: req.headers.get('cf-connecting-ip') ?? req.headers.get('x-forwarded-for') ?? null, ua: (req.headers.get('user-agent') ?? '').slice(0, 200) }).then(() => {}, () => {});
+    }
 
     if (action === 'whoami') return json(req, { kind: s.kind, session: !!s.session });
     if (action === 'logout') return json(req, await logout(d, token, s.kind));
