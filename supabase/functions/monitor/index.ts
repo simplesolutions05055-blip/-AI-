@@ -205,36 +205,22 @@ async function tenantTest(d: DB) {
 // mixed writes and reads through the API. Reports p50 / p95 / error rate, so a slowdown is seen before a client sees it.
 async function loadTest(d: DB, n: number, c: number) {
   const tag = 'qa-load-' + crypto.randomUUID().slice(0, 8);
-  let org = '';
-  const lat: number[] = []; let errors = 0; let total = 0; const why: Record<string, number> = {};
+  let org = ''; let res: any = { error: 'not_run' };
   try {
     const { data: o, error } = await d.from('organizations').insert({ name: tag, slug: tag, plan: 'basic', org_type: 'municipality', status: 'inactive', settings: {} }).select('id').single();
     if (error) throw error; org = o.id;
     const { data: m } = await d.from('org_members').insert({ org_id: org, name: 'qa load', role: 'owner', view: 'ext', perms: { direct: true } }).select('id').single();
     const token = 'qa_' + crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
     await d.from('api_tokens').insert({ token, org_id: org, member_id: m.id, kind: 'internal' });
-    const t0 = Date.now();
-    const worker = async (w: number) => {
-      for (let i = 0; i < n && Date.now() - t0 < 100000; i++) {
-        const id = 1999900000 + w * 1000 + i;
-        const s = Date.now();
-        try {
-          const r = i % 3 === 0 ? await call(token, 'items.upsert', { items: [{ id, t: 'load ' + id, ty: 'graphic', s: 'draft', d: '', o: 'qa', u: '', pub: '', ch: [], th: '', body: 'x'.repeat(300), tags: [] }] })
-            : i % 3 === 1 ? await call(token, 'items.get', { ids: [id - 1] })
-            : await call(token, 'members.list', {});
-          if (r.status !== 200) { errors++; const k = r.status + ' ' + String(r.body?.error ?? '').slice(0, 40); why[k] = (why[k] ?? 0) + 1; }
-        } catch (e) { errors++; const k = 'throw ' + (e instanceof Error ? e.message : String(e)).slice(0, 60); why[k] = (why[k] ?? 0) + 1; }
-        lat.push(Date.now() - s); total++;
-      }
-    };
-    await Promise.all(Array.from({ length: c }, (_, w) => worker(w)));
-  } catch (e) { errors++; console.error('load', e instanceof Error ? e.message : e); }
+    const { data: sec } = await d.from('v2_secrets').select('v').eq('k', 'tick').maybeSingle();
+    // the calls themselves are fired from Vercel (Node): an edge function is limited in how many it may send
+    const r = await timed(290000, (signal) => fetch(APP + '/api/loadtest', { method: 'POST', signal, headers: { 'content-type': 'application/json', 'x-tick': sec?.v ?? '' }, body: JSON.stringify({ token, n, c }) }));
+    res = await r.json().catch(() => ({ error: 'bad_response', status: r.status }));
+  } catch (e) { res = { error: e instanceof Error ? e.message : String(e) }; console.error('load', res.error); }
   finally {
     if (org) { await d.from('content_items').delete().eq('org_id', org); await d.from('api_tokens').delete().eq('org_id', org); await d.from('org_members').delete().eq('org_id', org); await d.from('org_state').delete().eq('org_id', org); await d.from('organizations').delete().eq('id', org); }
   }
-  lat.sort((a, b) => a - b);
-  const q = (p: number) => lat.length ? lat[Math.min(lat.length - 1, Math.floor(lat.length * p))] : 0;
-  const res = { at: new Date().toISOString(), callers: c, calls: total, errors, errRate: total ? +(errors / total).toFixed(4) : 1, p50: q(0.5), p95: q(0.95), max: lat[lat.length - 1] ?? 0, why, rps: total ? +(total / Math.max(1, (lat.reduce((a, b) => a + b, 0) / c) / 1000)).toFixed(1) : 0 };
+  res.at = new Date().toISOString();
   const { data: st } = await d.from('admin_state').select('data').eq('id', 'monitor').maybeSingle();
   await d.from('admin_state').upsert({ id: 'monitor', data: { ...(st?.data ?? {}), load: res }, updated_at: res.at });
   return res;
@@ -255,9 +241,10 @@ Deno.serve(async (req) => {
   const { data: sec } = await d.from('v2_secrets').select('v').eq('k', 'tick').maybeSingle();
   if (!(await same(given, sec?.v ?? ''))) return json({ error: 'forbidden' }, 403);
   try {
+    if (url.searchParams.get('auth')) return json({ ok: true });
     if (url.searchParams.get('backup')) return json(await backup(d));
     if (url.searchParams.get('tenant')) return json(await tenantTest(d));
-    if (url.searchParams.get('load')) return json(await loadTest(d, Math.min(60, +(url.searchParams.get('n') ?? 20) || 20), Math.min(60, +(url.searchParams.get('c') ?? 20) || 20)));
+    if (url.searchParams.get('load')) return json(await loadTest(d, Math.min(100, +(url.searchParams.get('n') ?? 20) || 20), Math.min(80, +(url.searchParams.get('c') ?? 20) || 20)));
     return json(await run(d));
   } catch (e) { console.error('monitor', e instanceof Error ? e.message : e); return json({ error: 'monitor_failed' }, 500); }
 });

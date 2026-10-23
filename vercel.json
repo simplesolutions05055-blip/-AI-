@@ -28,6 +28,10 @@
       "maxDuration": 300,
       "memory": 2048,
       "includeFiles": "node_modules/ffmpeg-static/ffmpeg"
+    },
+    "api/loadtest.ts": {
+      "maxDuration": 300,
+      "memory": 1024
     }
   },
   "regions": [
