@@ -981,6 +981,11 @@ Deno.serve(async (req) => {
       if (action === 'live.load') return json(req, await liveLoad(d, s.orgId, s.memberId, typeof p.since === 'string' ? p.since : ''));
       if (action === 'items.upsert') return json(req, await itemsUpsert(d, s.orgId, p.items ?? []));
       if (action === 'items.remove') return json(req, await itemsRemove(d, s.orgId, p.ids ?? []));
+      if (action === 'items.get') {
+        const ids = (Array.isArray(p.ids) ? p.ids : []).map(Number).filter(Number.isFinite).slice(0, 50);
+        const { data } = ids.length ? await d.from('content_items').select('ui_id,meta').eq('org_id', s.orgId).in('ui_id', ids) : { data: [] };
+        return json(req, { items: (data ?? []).map((r: any) => r.meta?.ui).filter(Boolean) });
+      }
       if (action === 'state.save') {
         // the whole organisation state is written by organisation users only; a department user patches its own slice
         const { data: me } = s.memberId ? await d.from('org_members').select('role').eq('id', s.memberId).maybeSingle() : { data: null };

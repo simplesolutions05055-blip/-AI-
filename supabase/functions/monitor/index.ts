@@ -141,6 +141,66 @@ async function backup(d: DB) {
   return { day, tables: out };
 }
 
+// the isolation test: two throwaway organisations, the same item id written by each through the API, and each
+// one must see only its own. Runs in production with temporary rows that are removed at the end.
+const API = `${SUPA}/functions/v1/v2-api`;
+async function call(token: string, action: string, payload: unknown) {
+  const r = await fetch(API, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token }, body: JSON.stringify({ action, payload }) });
+  return { status: r.status, body: await r.json().catch(() => ({})) };
+}
+async function tenantTest(d: DB) {
+  const tag = 'qa-tenant-' + crypto.randomUUID().slice(0, 8);
+  const made: { org: string; member: string; token: string }[] = [];
+  const fails: string[] = [];
+  try {
+    for (const side of ['A', 'B']) {
+      const { data: org, error } = await d.from('organizations').insert({ name: `${tag}-${side}`, slug: `${tag}-${side}`.toLowerCase(), plan: 'basic', org_type: 'municipality', status: 'inactive', settings: {} }).select('id').single();
+      if (error) throw error;
+      const { data: m, error: e2 } = await d.from('org_members').insert({ org_id: org.id, name: 'qa ' + side, role: 'owner', view: 'ext', perms: { direct: true } }).select('id').single();
+      if (e2) throw e2;
+      const token = 'qa_' + crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+      const { error: e3 } = await d.from('api_tokens').insert({ token, org_id: org.id, member_id: m.id, kind: 'internal' });
+      if (e3) throw e3;
+      made.push({ org: org.id, member: m.id, token });
+    }
+    const [A, B] = made;
+    const id = 1999990000 + Math.floor(Math.random() * 9000);
+    const ui = (t: string) => ({ id, t, ty: 'graphic', s: 'draft', d: '', o: 'qa', u: '', pub: '', ch: [], th: '', body: '', tags: [] });
+    const a1 = await call(A.token, 'items.upsert', { items: [ui('A')] });
+    const b1 = await call(B.token, 'items.upsert', { items: [ui('B')] });
+    if (a1.status !== 200 || b1.status !== 200) fails.push('upsert ' + a1.status + '/' + b1.status);
+    const ga = await call(A.token, 'items.get', { ids: [id] });
+    const gb = await call(B.token, 'items.get', { ids: [id] });
+    if (ga.body.items?.[0]?.t !== 'A') fails.push('A reads ' + JSON.stringify(ga.body.items?.[0]?.t));
+    if (gb.body.items?.[0]?.t !== 'B') fails.push('B reads ' + JSON.stringify(gb.body.items?.[0]?.t));
+    await call(A.token, 'items.remove', { ids: [id] });
+    const gb2 = await call(B.token, 'items.get', { ids: [id] });
+    if (gb2.body.items?.[0]?.t !== 'B') fails.push('A removal touched B');
+    const ma = await call(A.token, 'members.list', {});
+    if ((ma.body.members ?? []).some((x: any) => x.id === B.member)) fails.push('A lists B member');
+    const { data: rowsB } = await d.from('content_items').select('id').eq('org_id', B.org);
+    const { data: rowsA } = await d.from('content_items').select('id').eq('org_id', A.org);
+    if ((rowsA ?? []).length !== 0 || (rowsB ?? []).length !== 1) fails.push(`rows A=${(rowsA ?? []).length} B=${(rowsB ?? []).length}`);
+    // a session-only action must refuse a server token
+    const ll = await call(A.token, 'live.load', {});
+    if (ll.status !== 401) fails.push('live.load with internal token: ' + ll.status);
+  } catch (e) { fails.push('setup ' + (e instanceof Error ? e.message : String(e))); }
+  finally {
+    for (const m of made) {
+      await d.from('content_items').delete().eq('org_id', m.org);
+      await d.from('api_tokens').delete().eq('org_id', m.org);
+      await d.from('org_members').delete().eq('org_id', m.org);
+      await d.from('org_state').delete().eq('org_id', m.org);
+      await d.from('organizations').delete().eq('id', m.org);
+    }
+  }
+  const now = new Date().toISOString();
+  const { data: st } = await d.from('admin_state').select('data').eq('id', 'monitor').maybeSingle();
+  await d.from('admin_state').upsert({ id: 'monitor', data: { ...(st?.data ?? {}), tenant: { at: now, ok: !fails.length, fails } }, updated_at: now });
+  if (fails.length) await mail(await recipients(d), 'PrimeOS: בדיקת ההפרדה בין לקוחות נכשלה', `<div dir="rtl">${esc(fails.join(' | '))}</div>`);
+  return { ok: !fails.length, fails };
+}
+
 Deno.serve(async (req) => {
   const d = db();
   const url = new URL(req.url);
@@ -157,6 +217,7 @@ Deno.serve(async (req) => {
   if (!(await same(given, sec?.v ?? ''))) return json({ error: 'forbidden' }, 403);
   try {
     if (url.searchParams.get('backup')) return json(await backup(d));
+    if (url.searchParams.get('tenant')) return json(await tenantTest(d));
     return json(await run(d));
   } catch (e) { console.error('monitor', e instanceof Error ? e.message : e); return json({ error: 'monitor_failed' }, 500); }
 });
