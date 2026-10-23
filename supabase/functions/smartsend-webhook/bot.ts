@@ -1,4 +1,5 @@
 // The PrimeOS WhatsApp bot: one number for every client. Only phones of system users are served.
+import { fetchRetry } from './retry.ts';
 import { CH_HE, DB, Who, api, callFn, env, fmtIL, heWhen, itemOf, newUiId, nowIL, phoneKey, saveItem, toIntl, whoIs } from './common.ts';
 import { DRY, InMsg, download, sendText } from './wa.ts';
 import { remember, sessionOf } from './session.ts';
@@ -11,7 +12,16 @@ async function logMsg(d: DB, row: Record<string, unknown>) {
   return !error;
 }
 async function say(d: DB, phone: string, text: string, who?: Who | null) {
-  try { await sendText(phone, text); }
+  try {
+    try { await sendText(phone, text); }
+    catch (e1) {
+      // Meta answers "(#131000) Something went wrong" or a 5xx for a moment: one more try after a short wait
+      const m1 = e1 instanceof Error ? e1.message : String(e1);
+      if (!/131000|smartsend_5\d\d|timeout|fetch/i.test(m1)) throw e1;
+      await new Promise((r) => setTimeout(r, 2500));
+      await sendText(phone, text);
+    }
+  }
   catch (e) {
     // a failed send is kept as a row, so the reason is visible in the data without the function logs
     const why = e instanceof Error ? e.message : String(e);
@@ -31,7 +41,7 @@ async function transcribe(bytes: Uint8Array, type: string) {
     fd.append('file', new Blob([bytes as unknown as BlobPart], { type: type || 'audio/ogg' }), 'voice.' + (/mpeg|mp3/.test(type) ? 'mp3' : /mp4|m4a/.test(type) ? 'm4a' : 'ogg'));
     fd.append('model', model);
     fd.append('language', 'he');
-    const r = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: fd });
+    const r = await fetchRetry('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: fd });
     if (r.ok) return String((await r.json()).text ?? '').trim();
   }
   return '';
@@ -74,7 +84,7 @@ async function understand(who: Who, s: Record<string, any>, text: string, usage:
     s.menuFix && s.last ? `המשתמש מתאר מה לתקן ב${s.menuFix === 'image' ? 'תמונה' : 'טקסט'} של הגרפיקה האחרונה: החזר change עם target ${s.menuFix}.` : '',
   ].filter(Boolean).join('\n');
   for (const model of ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5']) {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await fetchRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model, max_tokens: 900, system: SYS, messages: [{ role: 'user', content: `${ctx}\n\nההודעה:\n${text}` }] }),
     });
@@ -263,14 +273,18 @@ export async function handle(d: DB, m: InMsg) {
   if (!s.hello) await remember(d, m.phone, { hello: true }, { org_id: who.orgId, member_id: who.memberId });
   let text = m.body.trim();
 
-  // photos, clips and voice notes
+  // photos, clips and voice notes (a voice note that already came with its transcription is text)
+  if (m.mediaUrl && m.voice && text) m.mediaUrl = null;
   if (m.mediaUrl) {
     try {
       const f = await download(m.mediaUrl);
       if (m.voice || /^audio\//.test(f.type)) {
-        const t = await transcribe(f.bytes, f.type);
-        if (!t) return say(d, m.phone, 'לא הצלחתי להבין את ההקלטה. אפשר לכתוב בטקסט?', who);
-        text = (text ? text + '\n' : '') + t;
+        // the provider often delivers the transcription as the message text; then the recording itself is not needed
+        if (!text) {
+          const t = await transcribe(f.bytes, f.type);
+          if (!t) { console.error('transcribe_empty', f.type, f.bytes.length); return say(d, m.phone, 'לא הצלחתי להבין את ההקלטה. אפשר לכתוב בטקסט, או להקליט שוב?', who); }
+          text = t;
+        }
       } else {
         const vid = /^video\//.test(f.type) || /video/.test(m.mediaType ?? '');
         const ext = vid ? 'mp4' : /png/.test(f.type) ? 'png' : /webp/.test(f.type) ? 'webp' : 'jpg';
@@ -288,7 +302,7 @@ export async function handle(d: DB, m: InMsg) {
           return;
         }
       }
-    } catch (e) { console.error('media', e instanceof Error ? e.message : e); if (!text) return say(d, m.phone, 'לא הצלחתי לקבל את הקובץ. נסו לשלוח שוב.', who); }
+    } catch (e) { console.error('media', m.mediaType, e instanceof Error ? e.message : e); if (!text) return say(d, m.phone, 'לא הצלחתי לקבל את הקובץ. נסו לשלוח שוב.', who); }
   }
   if (!text) return;
 

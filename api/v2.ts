@@ -10,7 +10,7 @@ const SUPA_ANON =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
   'sb_publishable_uwGM_HAjV28gchyFZHqZGg_9LjXwIJ-';
 
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 60 };
 
 export default {
   async fetch(request: Request): Promise<Response> {

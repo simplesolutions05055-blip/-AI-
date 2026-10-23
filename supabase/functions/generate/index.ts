@@ -2,6 +2,7 @@
 // POST { mode, ...input }   header x-primeos-token
 // modes: post | alt | revise | assistant | doc | deck | graphic | video | doc2 | deck2 | brand | site | series
 //        vcaps | vbrief | vvoice | vmusic | vstock | vsample | vapprove (video director and media, see video.ts)
+import { fetchRetry } from './retry.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import JSZip from 'https://esm.sh/jszip@3.10.1';
 import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES } from './video.ts';
@@ -47,7 +48,7 @@ async function claude(key: string, system: string, user: string, maxTokens = 150
   const order = goodModel ? [goodModel, ...MODELS.filter((m) => m !== goodModel)] : MODELS;
   let last = '';
   for (const model of order) {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetchRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: extra.length ? [...extra, { type: 'text', text: user }] : user }] }),
@@ -69,7 +70,7 @@ async function claudeObj(key: string, system: string, user: string, maxTokens = 
   const order = goodModel ? [goodModel, ...MODELS.filter((m) => m !== goodModel)] : MODELS;
   let last = '';
   for (const model of order) {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetchRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
@@ -200,7 +201,7 @@ async function claudeWeb(key: string, system: string, user: string, host: string
   for (const model of MODELS.slice(0, 3)) {
     const messages: any[] = [{ role: 'user', content: user }];
     for (let turn = 0; turn < 4; turn++) {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const res = await fetchRetry('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'web-fetch-2025-09-10' },
         body: JSON.stringify({ model, max_tokens: maxTokens, system, tools, messages }),

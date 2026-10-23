@@ -21,7 +21,8 @@ export async function readInbound(raw: unknown): Promise<InMsg | null> {
   const body = first(tv(p.last_message), p.text, p.caption, p.media_caption, p.message, p.body, rm.body, rm.caption, rm.text, md.caption) ?? '';
   const att = first(p.media_url, p.file_url, p.mediaUrl, p.downloadUrl, md.url, md.downloadUrl, rm.mediaUrl, rm.downloadUrl);
   const voiceUrl = first(p.voice_url);
-  const mediaUrl = type === 'text' ? null : type === 'audio' ? (voiceUrl ?? att) : isMedia ? att : att ?? (body ? null : voiceUrl);
+  // a text message never carries media, even when the provider repeats the last media_url / voice_url it saw
+  const mediaUrl = type === 'text' ? null : type === 'audio' || type === 'voice' || type === 'ptt' ? (voiceUrl ?? att) : isMedia ? att : (body ? null : (att ?? voiceUrl));
   const mediaType = mediaUrl ? first(p.message_type, p.media_type, p.mimeType, md.mimeType, rm.mimeType) : null;
   const sender = first(p.phone, p.senderId) ?? '';
   const phone = sender.replace(/^whatsapp:/i, '').replace(/@c\.us$/i, '').replace(/\D/g, '');
@@ -29,7 +30,7 @@ export async function readInbound(raw: unknown): Promise<InMsg | null> {
   const time = String(p.currentDateTime ?? p.time ?? '');
   const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${sender}\n${time}\n${body}\n${mediaUrl ?? ''}`)));
   const id = 'wa-' + Array.from(dig.slice(0, 16)).map((b) => b.toString(16).padStart(2, '0')).join('');
-  return { id, phone, body, mediaUrl, mediaType, voice: !!mediaUrl && (type === 'audio' || mediaUrl === voiceUrl) };
+  return { id, phone, body, mediaUrl, mediaType, voice: !!mediaUrl && (type === 'audio' || type === 'voice' || type === 'ptt' || mediaUrl === voiceUrl || /\.(m4a|ogg|opus|mp3|aac)(\?|$)/i.test(mediaUrl)) };
 }
 
 async function post(path: string, payload: unknown) {

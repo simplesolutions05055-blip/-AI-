@@ -7,18 +7,21 @@ import { remember } from './session.ts';
 
 type Job = Record<string, any>;
 // replies of a job: real WhatsApp, or collected on the job in test mode; a failed send never fails the job
-let CUR_JOB: Job | null = null;
-async function sendText(phone: string, text: string) {
+async function sendText(d: DB, j: Job, phone: string, text: string) {
   // every bot answer is kept in the conversation log (the WhatsApp requests screen shows it)
-  if (CUR_JOB) await db0!.from('v2_wa_msgs').insert({ id: 'out-' + crypto.randomUUID(), phone, org_id: CUR_JOB.org_id, member_id: CUR_JOB.member_id, dir: 'out', body: String(text).slice(0, 2000) }).then(() => {}, () => {});
-  if (CUR_JOB?.input?.dry) { const m = [...(CUR_JOB.data?.msgs ?? []), text]; CUR_JOB.data = { ...(CUR_JOB.data ?? {}), msgs: m }; await db0!.from('v2_jobs').update({ data: CUR_JOB.data }).eq('id', CUR_JOB.id); return; }
-  try { await waText(phone, text); } catch (e) { console.error('wa send', e instanceof Error ? e.message : e); }
+  await d.from('v2_wa_msgs').insert({ id: 'out-' + crypto.randomUUID(), phone, org_id: j.org_id, member_id: j.member_id, dir: 'out', body: String(text).slice(0, 2000) }).then(() => {}, () => {});
+  if (j.input?.dry) { const m = [...(j.data?.msgs ?? []), text]; j.data = { ...(j.data ?? {}), msgs: m }; await d.from('v2_jobs').update({ data: j.data }).eq('id', j.id); return; }
+  try { await waText(phone, text); }
+  catch (e1) {
+    // a momentary provider error ("(#131000) Something went wrong", 5xx): one more try
+    await sleep(2500);
+    try { await waText(phone, text); } catch (e) { console.error('wa send', e instanceof Error ? e.message : e, e1 instanceof Error ? e1.message : ''); }
+  }
 }
-async function sendImage(phone: string, url: string, org: string) {
-  if (CUR_JOB?.input?.dry) return sendText(phone, '[image] ' + url);
+async function sendImage(d: DB, j: Job, phone: string, url: string, org: string) {
+  if (j.input?.dry) return sendText(d, j, phone, '[image] ' + url);
   await waImage(phone, url, org);
 }
-let db0: DB | null = null;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function tokenOf(d: DB, memberId: string) {
@@ -40,7 +43,6 @@ const later = (s: number) => new Date(Date.now() + s * 1000).toISOString();
 
 // ---------------- one step forward ----------------
 async function advance(d: DB, j: Job) {
-  CUR_JOB = j; db0 = d;
   const token = await tokenOf(d, j.member_id);
   const pend: Record<string, number> = j.pend ?? {};
   const ids = Object.values(pend).map(Number).filter(Boolean);
@@ -190,9 +192,9 @@ async function finishGraphic(d: DB, j: Job, token: string, org: string) {
   await upd(d, j, { state: 'done', step: 'done', ui_id: id, result: { url: data.url }, pend: {} });
   if (j.phone) {
     // three messages, in order: the image, the post text, then the menu
-    try { await sendImage(j.phone, data.url, org); } catch (e) { await sendText(j.phone, 'הגרפיקה מוכנה: ' + data.url); }
-    if (data.caption) await sendText(j.phone, data.caption + ((data.tags || []).length ? '\n' + (data.tags as string[]).slice(0, 5).join(' ') : ''));
-    await sendText(j.phone, MENU);
+    try { await sendImage(d, j, j.phone, data.url, org); } catch (e) { await sendText(d, j, j.phone, 'הגרפיקה מוכנה: ' + data.url); }
+    if (data.caption) await sendText(d, j, j.phone, data.caption + ((data.tags || []).length ? '\n' + (data.tags as string[]).slice(0, 5).join(' ') : ''));
+    await sendText(d, j, j.phone, MENU);
     await remember(d, j.phone, { last: { ui: id, kind: 'graphic', job: j.id, title: ui.t }, menu: true, menuKind: null, menuFix: null, menuSched: null, await: null, awaitIdea: null });
   }
 }
@@ -210,7 +212,7 @@ async function finishVideo(d: DB, j: Job, token: string) {
   await saveItem(token, ui);
   await upd(d, j, { state: 'done', step: 'done', ui_id: id, result: { url: data.url }, pend: {} });
   if (j.phone) {
-    await sendText(j.phone, 'הסרטון מוכן:\n' + data.url + (b.caption ? '\n\n' + b.caption : '') + '\n\nלתזמן? כתבו מתי ובאילו רשתות.\nלשינוי, כתבו מה לתקן.');
+    await sendText(d, j, j.phone, 'הסרטון מוכן:\n' + data.url + (b.caption ? '\n\n' + b.caption : '') + '\n\nלתזמן? כתבו מתי ובאילו רשתות.\nלשינוי, כתבו מה לתקן.');
     await remember(d, j.phone, { last: { ui: id, kind: 'video', job: j.id, title: ui.t } });
   }
 }
@@ -230,45 +232,51 @@ async function notifyBrief(d: DB, j: Job, b: any) {
     '1 - ליצור את הסרטון (כ-6 דקות)',
     '2 - לשנות משהו (כתבו מה)',
   ].filter((l, i, a) => l !== '' || (i > 0 && a[i - 1] !== ''));
-  await sendText(j.phone, lines.join('\n'));
+  await sendText(d, j, j.phone, lines.join('\n'));
   await remember(d, j.phone, { await: { job: j.id }, awaitIdea: x.idea || '' });
 }
 async function fail(d: DB, j: Job, why: string) {
   await upd(d, j, { state: 'error', error: why.slice(0, 300), pend: {}, lock_until: new Date().toISOString() });
-  if (j.phone) await sendText(j.phone, (j.kind === 'video' ? 'יצירת הסרטון' : 'יצירת הגרפיקה') + ' לא הושלמה. אפשר לנסות שוב: כתבו "נסה שוב".').catch(() => {});
+  if (j.phone) await sendText(d, j, j.phone, (j.kind === 'video' ? 'יצירת הסרטון' : 'יצירת הגרפיקה') + ' לא הושלמה. אפשר לנסות שוב: כתבו "נסה שוב".').catch(() => {});
   if (j.phone) await remember(d, j.phone, { retry: { job: j.id } }).catch(() => {});
 }
 
 // ---------------- the tick ----------------
 export async function tick(d: DB, budgetMs = 50000) {
   const t0 = Date.now();
-  let n = 0;
+  let n = 0, spawned = false;
+  const BATCH = 24, PAR = 6;
   while (Date.now() - t0 < budgetMs) {
     const nowIso = new Date().toISOString();
-    const { data: jobs } = await d.from('v2_jobs').select('*').eq('state', 'run').lte('next_at', nowIso).lte('lock_until', nowIso).order('next_at').limit(6);
+    const { data: jobs } = await d.from('v2_jobs').select('*').eq('state', 'run').lte('next_at', nowIso).lte('lock_until', nowIso).order('next_at').limit(BATCH);
     if (!jobs || !jobs.length) {
       // nothing left to run at all: stop early instead of idling out the budget
       const { count } = await d.from('v2_jobs').select('id', { count: 'exact', head: true }).eq('state', 'run');
       if (!count) break;
       await sleep(3000); continue;
     }
-    // one job at a time: each step only sends requests or reads answers, so this stays quick
-    for (const j of jobs as Job[]) {
-      const { data: got } = await d.from('v2_jobs').update({ lock_until: new Date(Date.now() + 120000).toISOString() }).eq('id', j.id).lte('lock_until', nowIso).select('id');
-      if (!got || !got.length) continue;
-      n++;
-      try { await advance(d, j); } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error('job', j.id, j.step, msg);
-        if ((j.tries ?? 0) < 2) await upd(d, j, { tries: (j.tries ?? 0) + 1, pend: {}, next_at: later(10), lock_until: new Date().toISOString() });
-        else await fail(d, j, msg);
+    // a full batch means a queue: one more worker joins (each job is locked, so two workers never touch the same one)
+    if (jobs.length === BATCH && !spawned) { spawned = true; kick(); }
+    // each step only sends requests or reads answers, so a few run side by side
+    const queue = [...(jobs as Job[])];
+    const worker = async () => {
+      while (queue.length) {
+        const j = queue.shift()!;
+        const { data: got } = await d.from('v2_jobs').update({ lock_until: new Date(Date.now() + 120000).toISOString() }).eq('id', j.id).lte('lock_until', nowIso).select('id');
+        if (!got || !got.length) continue;
+        n++;
+        try { await advance(d, j); } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error('job', j.id, j.step, msg);
+          if ((j.tries ?? 0) < 2) await upd(d, j, { tries: (j.tries ?? 0) + 1, pend: {}, next_at: later(10), lock_until: new Date().toISOString() });
+          else await fail(d, j, msg);
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(PAR, queue.length) }, worker));
   }
   return n;
 }
-
-// a new job wakes the runner right away instead of waiting for the next cron minute
 export function kick() {
   const s = Deno.env.get('SMARTSEND_WEBHOOK_SECRET') ?? '';
   return fetch(FN('smartsend-webhook') + '?tick=1', { method: 'POST', headers: { 'content-type': 'application/json', 'x-tick': s }, body: '{}' }).then(() => {}, () => {});

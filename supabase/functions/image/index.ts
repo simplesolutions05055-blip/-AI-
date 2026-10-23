@@ -3,6 +3,7 @@
 // action 'design': the image model designs the complete graphic (brand palette, Hebrew text, logo/photos as references), Claude proofreads the Hebrew.
 // action 'fixtext': edits an existing design to correct only the flagged Hebrew.
 // POST { action:'check' } | { action:'models' } | { action:'tplscan', url } | design + template:{url,desc,slots} | { action:'design', texts, brief, colors, refs, logo, size, note?, n? } | { action:'fixtext', url, fixes, issues, want, size } | { brief, title?, dept?, size?, prompt? }
+import { fetchRetry } from './retry.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { designDirective, qaPrompt, QA_SYS, QA_REDO, styleOf, kitDirective, KIT_SCAN, STYLES, EVENT_EN } from './design.ts';
 import type { BrandKit } from './design.ts';
@@ -61,7 +62,7 @@ const qKey = (q: string) => (q === 'low' ? 'img_low' : q === 'medium' ? 'img_med
 async function claude(key: string, system: string, user: string | unknown[]) {
   let last = '';
   for (const model of CLAUDE_MODELS) {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await fetchRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model, max_tokens: 1200, system, messages: [{ role: 'user', content: user }] }),
@@ -144,9 +145,9 @@ async function openaiImage(okey: string, prompt: string, size: string, quality: 
         const type = b.headers.get('content-type') || 'image/png';
         fd.append('image[]', new Blob([await b.arrayBuffer()], { type }), `ref${i}.${type.includes('jpeg') ? 'jpg' : type.split('/')[1] || 'png'}`);
       }
-      r = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { authorization: `Bearer ${okey}` }, body: fd });
+      r = await fetchRetry('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { authorization: `Bearer ${okey}` }, body: fd });
     } else {
-      r = await fetch('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` }, body: JSON.stringify({ model, prompt, size, quality, n, output_format: 'jpeg', output_compression: 90 }) });
+      r = await fetchRetry('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` }, body: JSON.stringify({ model, prompt, size, quality, n, output_format: 'jpeg', output_compression: 90 }) });
     }
     if (r.ok) { const data = (await r.json()).data ?? []; logUse({ kind: 'openai', model, [qKey(quality)]: data.length }); return { b64: data[0]?.b64_json ?? '', all: data.map((x: any) => x.b64_json).filter(Boolean) as string[], model }; }
     last = model + ': ' + (await r.text());
@@ -384,7 +385,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
     const size = SIZES[p.size] ?? SIZES.square;
     let b64 = '', used = '', last = '';
     for (const model of await modelsFor(okey, p.model)) {
-      const r = await fetch('https://api.openai.com/v1/images/generations', {
+      const r = await fetchRetry('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${okey}` },
         body: JSON.stringify({ model, prompt, size, quality: p.quality ?? 'high', n: 1, ...(cutout ? { output_format: 'png', background: 'transparent' } : { output_format: 'jpeg', output_compression: 90 }) }),

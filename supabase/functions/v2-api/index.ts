@@ -68,22 +68,32 @@ async function membersOf(d: DB, orgId: string, withLinks: boolean) {
   return (ms ?? []).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone ?? null, role: m.role, dept: m.dept, view: m.view, perms: m.perms ?? {}, token: null }));
 }
 
-async function liveLoad(d: DB, orgId: string, memberId: string | null) {
+async function liveLoad(d: DB, orgId: string, memberId: string | null, since = '') {
   try { await Promise.race([pubPoll(d, orgId), new Promise((r) => setTimeout(r, 4000))]); } catch (_) { /* never blocks loading */ }
-  const [org, me, its, st] = await Promise.all([
+  // a repeat load (the app polls every half minute) sends `since`: only what changed comes back, plus the ids that still exist
+  const inc = /^\d{4}-\d{2}-\d{2}T/.test(since);
+  const [org, me, its, st, ids] = await Promise.all([
     d.from('organizations').select('id,name,plan,org_type,status,settings').eq('id', orgId).single(),
     memberId ? d.from('org_members').select('id,name,email,role,dept,view,perms').eq('id', memberId).maybeSingle() : Promise.resolve({ data: null }),
-    d.from('content_items').select('id,meta,updated_at').eq('org_id', orgId).not('ui_id', 'is', null),
+    inc ? d.from('content_items').select('id,meta,updated_at').eq('org_id', orgId).not('ui_id', 'is', null).gte('updated_at', since)
+        : d.from('content_items').select('id,meta,updated_at').eq('org_id', orgId).not('ui_id', 'is', null),
     d.from('org_state').select('data,updated_at').eq('org_id', orgId).maybeSingle(),
+    inc ? d.from('content_items').select('ui_id').eq('org_id', orgId).not('ui_id', 'is', null) : Promise.resolve({ data: null }),
   ]);
   if (!org.data) throw new Error('org_not_found');
+  const stateAt = st.data?.updated_at ?? null;
+  let maxAt = since;
+  for (const r of its.data ?? []) if (r.updated_at && r.updated_at > maxAt) maxAt = r.updated_at;
   return {
     org: org.data,
     me: me.data,
     demo: orgId === DEMO_ORG,
     items: (its.data ?? []).map((r: any) => ({ dbid: r.id, ui: r.meta?.ui })).filter((r: any) => r.ui),
-    state: st.data?.data ?? null,
-    stateAt: st.data?.updated_at ?? null,
+    ids: inc ? (ids.data ?? []).map((r: any) => r.ui_id) : undefined,
+    // the state travels only when it changed since the last load
+    state: inc && stateAt && stateAt <= since ? undefined : (st.data?.data ?? null),
+    stateAt,
+    at: maxAt || new Date(Date.now() - 60000).toISOString(),
     members: await membersOf(d, orgId, isManager(me.data)),
   };
 }
@@ -955,7 +965,7 @@ Deno.serve(async (req) => {
     if (action === 'upload.sign') return json(req, await uploadSign(d, s, p));
 
     if (s.kind === 'client') {
-      if (action === 'live.load') return json(req, await liveLoad(d, s.orgId, s.memberId));
+      if (action === 'live.load') return json(req, await liveLoad(d, s.orgId, s.memberId, typeof p.since === 'string' ? p.since : ''));
       if (action === 'items.upsert') return json(req, await itemsUpsert(d, s.orgId, p.items ?? []));
       if (action === 'items.remove') return json(req, await itemsRemove(d, s.orgId, p.ids ?? []));
       if (action === 'state.save') {

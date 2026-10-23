@@ -5,9 +5,11 @@
  */
 (function () {
   'use strict';
-  const API = '/api/v2';
   // long generations (documents, decks) go straight to the edge function: no 60s proxy limit
   const LIVE_HOST = /(^|\.)primeos\.co\.il$|\.vercel\.app$/.test(location.hostname);
+  // the API too: straight to the edge function on the live host (no proxy hop, no 30s cap); the same-origin proxy stays as a fallback
+  const API_PROXY = '/api/v2';
+  const API = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/v2-api' : API_PROXY;
   const GEN = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/generate' : '/api/generate';
   const L = (window.PrimeLive = { token: null, kind: null, org: null, me: null, admin: null, demo: false, ready: false });
 
@@ -16,18 +18,30 @@
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), timeoutMs || 30000);
     try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-primeos-token': L.token || '' },
-        body: JSON.stringify(body),
-        signal: ctl.signal,
-      });
+      let r;
+      try {
+        r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': L.token || '' }, body: JSON.stringify(body), signal: ctl.signal });
+      } catch (e) {
+        // the direct route is blocked (network, extension, DNS): the same-origin proxy carries the call
+        if (url !== API || ctl.signal.aborted) throw e;
+        r = await fetch(API_PROXY, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': L.token || '' }, body: JSON.stringify(body), signal: ctl.signal });
+      }
       const j = await r.json().catch(() => ({ error: 'bad_response' }));
+      if (r.status === 401 && (j.error === 'invalid_token' || j.error === 'session_required') && L.token && url === API) sessionLost();
       if (!r.ok || j.error) throw Object.assign(new Error(j.error || 'http_' + r.status), { status: r.status });
       return j;
     } finally {
       clearTimeout(t);
     }
+  }
+  // the session ended (expired, logged out elsewhere): every loop stops at once and the login screen comes up, no more calls with a dead token
+  function sessionLost() {
+    if (L.dead) return;
+    L.dead = true; L.ready = false;
+    if (typeof SY !== 'undefined') SY.on = false;
+    ls.del(L.kind === 'admin' || isAdminPath() ? SLOT.admin : SLOT.client);
+    L.token = null;
+    try { renderAuth('פג תוקף הכניסה. הזינו את כתובת הדוא״ל וקבלו קוד כניסה.'); } catch (e) { location.reload(); }
   }
   const call = (action, payload) => post(API, { action, payload: payload || {} });
   const gen = (payload) => {
@@ -186,7 +200,7 @@
     if (L.kind === 'client') { REQS.forEach((r) => SY.inbox.add('r:' + r.id)); MEETINGS.forEach((m) => SY.inbox.add('m:' + m.id)); }
   }
   async function flush() {
-    if (!SY.on || SY.busy) return;
+    if (!SY.on || SY.busy || L.dead) return;
     SY.busy = true;
     try {
       if (L.kind === 'client') {
@@ -237,19 +251,29 @@
     document.addEventListener('click', () => setTimeout(flush, 250), true);
     document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
     window.addEventListener('beforeunload', (e) => { if (SY.fail) { e.preventDefault(); e.returnValue = ''; } });
-    if (L.kind === 'client') setInterval(pull, 25000);
+    if (L.kind === 'client') {
+      setInterval(pull, 25000);
+      // back to the tab: the library is refreshed at once, not up to 25 seconds later
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(pull, 300); });
+      window.addEventListener('online', () => setTimeout(pull, 500));
+    }
   }
 
   /* other users' changes come in quietly */
   const QUIET = ['wizard', 'docWiz', 'deckWiz', 'vidWiz', 'bulk', 'bulkGen', 'bulkReview', 'evWiz', 'onboard'];
   async function pull() {
-    if (!SY.on || SY.busy || document.hidden) return;
+    if (!SY.on || SY.busy || document.hidden || L.dead) return;
     let d;
-    try { d = await call('live.load'); } catch (e) { return; }
+    const sentSince = SY.since || null;
+    try { d = await call('live.load', sentSince ? { since: sentSince } : {}); } catch (e) { return; }
     if (SY.busy) return;
+    if (d.at) SY.since = d.at;
+    // removals are judged only against a full list of ids (an incremental answer without one never deletes)
+    const canDelete = Array.isArray(d.ids) || !sentSince;
     let changed = false;
     const local = new Map(items.map((i) => [i.id, i]));
-    const seen = new Set();
+    // an incremental answer lists only what changed; `ids` says what still exists on the server
+    const seen = new Set(Array.isArray(d.ids) ? d.ids : []);
     for (const r of d.items || []) {
       const ui = r.ui;
       seen.add(ui.id);
@@ -259,12 +283,13 @@
       if (!l) { if (synced === undefined) { items.unshift(ui); SY.items.set(ui.id, sj); changed = true; } }
       else if (JSON.stringify(l) === synced && sj !== synced) { replaceObj(l, ui); SY.items.set(ui.id, sj); changed = true; }
     }
-    for (const [id, sj] of [...SY.items]) {
+    for (const [id, sj] of canDelete ? [...SY.items] : []) {
       if (seen.has(id)) continue;
       const l = local.get(id);
       if (l && JSON.stringify(l) === sj) { items.splice(items.indexOf(l), 1); SY.items.delete(id); changed = true; }
     }
-    if (d.state && !d.state.fresh) {
+    if (d.state && !d.state.fresh && SY.stateAt !== d.stateAt) {
+      SY.stateAt = d.stateAt;
       const sj = JSON.stringify(Object.assign(clientState(), d.state));
       if (L.me && L.me.role === 'member') { const mp = JSON.stringify(L.memberPatch()); hydrateClient(d.state); if (mp === SY.mstate) SY.mstate = JSON.stringify(L.memberPatch()); changed = true; }
       else if (JSON.stringify(clientState()) === SY.state && sj !== SY.state) { hydrateClient(d.state); SY.state = JSON.stringify(clientState()); changed = true; }
@@ -449,6 +474,7 @@
   }
   async function bootClient() {
     const d = await call('live.load');
+    SY.since = d.at || null; SY.stateAt = d.stateAt || null;
     L.kind = 'client';
     L.org = d.org;
     L.me = d.me;

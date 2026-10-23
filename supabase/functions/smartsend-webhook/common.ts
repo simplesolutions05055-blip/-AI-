@@ -30,12 +30,13 @@ export interface Who {
 export async function whoIs(d: DB, phone: string): Promise<Who | null> {
   const key = phoneKey(phone);
   if (!key) return null;
-  const { data: mems } = await d.from('org_members').select('id,org_id,name,phone,role,dept,view,perms,created_at').not('phone', 'is', null);
-  let m = (mems ?? []).find((x: any) => phoneKey(x.phone) === key);
+  // the phone is matched on an indexed, normalised column (never a scan of every member)
+  const { data: mems } = await d.from('org_members').select('id,org_id,name,phone,role,dept,view,perms,created_at').eq('phone_key', key).order('created_at').limit(5);
+  let m = (mems ?? [])[0];
   if (!m) {
     // the account manager's phone from the client card
-    const { data: orgs } = await d.from('organizations').select('id,contact_phone').not('contact_phone', 'is', null);
-    const o = (orgs ?? []).find((x: any) => phoneKey(x.contact_phone) === key);
+    const { data: orgs } = await d.from('organizations').select('id,contact_phone').eq('contact_phone_key', key).limit(1);
+    const o = (orgs ?? [])[0];
     if (o) {
       const { data: ms } = await d.from('org_members').select('id,org_id,name,phone,role,dept,view,perms,created_at').eq('org_id', o.id).in('role', ['owner', 'admin']).order('created_at').limit(1);
       m = (ms ?? [])[0];

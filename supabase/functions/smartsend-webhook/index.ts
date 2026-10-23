@@ -52,6 +52,8 @@ Deno.serve(async (req) => {
   if (!(await same(bearer, secret)) && !(await same(url.searchParams.get('secret') ?? '', secret)) && !(await same(url.searchParams.get('k') ?? '', inKey?.v ?? ''))) return new Response('Forbidden', { status: 403 });
   let raw: unknown;
   try { raw = await req.json(); } catch { return ok({ ok: false, error: 'bad_json' }); }
+  // the raw payload is kept for three days, so a parsing problem can be seen as the provider sent it
+  d.from('v2_wa_raw').insert({ body: raw as Record<string, unknown> }).then(() => {}, () => {});
   const msg = await readInbound(raw);
   if (!msg) return ok({ ok: true, ignored: true });
   // answer the provider at once, the work continues in the background
