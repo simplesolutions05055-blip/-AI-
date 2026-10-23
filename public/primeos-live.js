@@ -1832,7 +1832,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (f.size > (isClip(f.name) ? MAXB_VIDEO : MAXB)) throw new Error('too_big');
     const s = await call('upload.sign', { name: f.name });
     const r = await fetch(s.upload, { method: 'PUT', headers: { 'content-type': f.type || 'application/octet-stream', 'x-upsert': 'true' }, body: f });
-    if (!r.ok) throw new Error(r.status === 413 ? 'too_big_server' : 'upload_failed');
+    if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(r.status === 413 || /EntityTooLarge|too large/i.test(t) ? 'too_big_server' : 'upload_failed'); }
     let out = { url: s.url, name: f.name, ext: s.ext, type: f.type, size: f.size };
     // phone clips (HEVC .mov/.mp4) and HEIC photos: re-encoded on the server into what the video engine plays
     if (isClip(f.name) || isRawPhoto(f.name)) {
