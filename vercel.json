@@ -29,5 +29,8 @@
       "memory": 2048,
       "includeFiles": "node_modules/ffmpeg-static/ffmpeg"
     }
-  }
+  },
+  "regions": [
+    "fra1"
+  ]
 }

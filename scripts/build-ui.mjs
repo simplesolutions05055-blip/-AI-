@@ -23,6 +23,8 @@ const boot = /\n(renderAuth|enterAdmin)\(\);\n<\/script>\s*<\/body>/;
 must(boot.test(h), 'boot call');
 h = h.replace(boot, '\n</script>\n<script src="/primeos-live.js?v=__V__"></script>\n<script>PrimeLive.boot();</script>\n</body>');
 h = h.replace('__V__', Date.now().toString(36));
+// Core Web Vitals of real visitors (Vercel Speed Insights); the script is a no-op until the feature is switched on in the project
+h = h.replace('</body>', '<script defer src="/_vercel/speed-insights/script.js"></script>\n</body>');
 
 writeFileSync(new URL('../index.html', import.meta.url), h);
 console.log('build-ui: index.html written (' + (h.length / 1024).toFixed(0) + ' KB)');
