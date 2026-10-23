@@ -206,7 +206,7 @@ async function tenantTest(d: DB) {
 async function loadTest(d: DB, n: number, c: number) {
   const tag = 'qa-load-' + crypto.randomUUID().slice(0, 8);
   let org = '';
-  const lat: number[] = []; let errors = 0; let total = 0;
+  const lat: number[] = []; let errors = 0; let total = 0; const why: Record<string, number> = {};
   try {
     const { data: o, error } = await d.from('organizations').insert({ name: tag, slug: tag, plan: 'basic', org_type: 'municipality', status: 'inactive', settings: {} }).select('id').single();
     if (error) throw error; org = o.id;
@@ -222,8 +222,8 @@ async function loadTest(d: DB, n: number, c: number) {
           const r = i % 3 === 0 ? await call(token, 'items.upsert', { items: [{ id, t: 'load ' + id, ty: 'graphic', s: 'draft', d: '', o: 'qa', u: '', pub: '', ch: [], th: '', body: 'x'.repeat(300), tags: [] }] })
             : i % 3 === 1 ? await call(token, 'items.get', { ids: [id - 1] })
             : await call(token, 'members.list', {});
-          if (r.status !== 200) errors++;
-        } catch { errors++; }
+          if (r.status !== 200) { errors++; const k = r.status + ' ' + String(r.body?.error ?? '').slice(0, 40); why[k] = (why[k] ?? 0) + 1; }
+        } catch (e) { errors++; const k = 'throw ' + (e instanceof Error ? e.message : String(e)).slice(0, 60); why[k] = (why[k] ?? 0) + 1; }
         lat.push(Date.now() - s); total++;
       }
     };
@@ -234,7 +234,7 @@ async function loadTest(d: DB, n: number, c: number) {
   }
   lat.sort((a, b) => a - b);
   const q = (p: number) => lat.length ? lat[Math.min(lat.length - 1, Math.floor(lat.length * p))] : 0;
-  const res = { at: new Date().toISOString(), callers: c, calls: total, errors, errRate: total ? +(errors / total).toFixed(4) : 1, p50: q(0.5), p95: q(0.95), max: lat[lat.length - 1] ?? 0, rps: total ? +(total / Math.max(1, (lat.reduce((a, b) => a + b, 0) / c) / 1000)).toFixed(1) : 0 };
+  const res = { at: new Date().toISOString(), callers: c, calls: total, errors, errRate: total ? +(errors / total).toFixed(4) : 1, p50: q(0.5), p95: q(0.95), max: lat[lat.length - 1] ?? 0, why, rps: total ? +(total / Math.max(1, (lat.reduce((a, b) => a + b, 0) / c) / 1000)).toFixed(1) : 0 };
   const { data: st } = await d.from('admin_state').select('data').eq('id', 'monitor').maybeSingle();
   await d.from('admin_state').upsert({ id: 'monitor', data: { ...(st?.data ?? {}), load: res }, updated_at: res.at });
   return res;
