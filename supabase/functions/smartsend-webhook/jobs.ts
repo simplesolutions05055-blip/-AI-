@@ -265,7 +265,11 @@ export async function tick(d: DB, budgetMs = 50000) {
         const { data: got } = await d.from('v2_jobs').update({ lock_until: new Date(Date.now() + 120000).toISOString() }).eq('id', j.id).lte('lock_until', nowIso).select('id');
         if (!got || !got.length) continue;
         n++;
-        try { await advance(d, j); } catch (e) {
+        try {
+          await advance(d, j);
+          // the step is over: the lock goes, so the next tick (cron or another worker) continues the job as soon as next_at allows
+          await d.from('v2_jobs').update({ lock_until: new Date().toISOString() }).eq('id', j.id).eq('state', 'run');
+        } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           console.error('job', j.id, j.step, msg);
           if ((j.tries ?? 0) < 2) await upd(d, j, { tries: (j.tries ?? 0) + 1, pend: {}, next_at: later(10), lock_until: new Date().toISOString() });
