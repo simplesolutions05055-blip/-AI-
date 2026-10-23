@@ -23,6 +23,11 @@
       "maxDuration": 300,
       "memory": 1024,
       "includeFiles": "api/_video/**"
+    },
+    "api/convert.ts": {
+      "maxDuration": 300,
+      "memory": 2048,
+      "includeFiles": "node_modules/ffmpeg-static/ffmpeg"
     }
   }
 }

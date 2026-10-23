@@ -1825,12 +1825,24 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       i.click();
     });
   }
+  const MAXB_VIDEO = 300 * 1024 * 1024;
+  const isClip = (n) => /\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/i.test(n || '');
+  const isRawPhoto = (n) => /\.(heic|heif|avif|tiff?|bmp)$/i.test(n || '');
   async function uploadFile(f) {
-    if (f.size > MAXB) throw new Error('too_big');
+    if (f.size > (isClip(f.name) ? MAXB_VIDEO : MAXB)) throw new Error('too_big');
     const s = await call('upload.sign', { name: f.name });
     const r = await fetch(s.upload, { method: 'PUT', headers: { 'content-type': f.type || 'application/octet-stream', 'x-upsert': 'true' }, body: f });
-    if (!r.ok) throw new Error('upload_failed');
-    return { url: s.url, name: f.name, ext: s.ext, type: f.type, size: f.size };
+    if (!r.ok) throw new Error(r.status === 413 ? 'too_big_server' : 'upload_failed');
+    let out = { url: s.url, name: f.name, ext: s.ext, type: f.type, size: f.size };
+    // phone clips (HEVC .mov/.mp4) and HEIC photos: re-encoded on the server into what the video engine plays
+    if (isClip(f.name) || isRawPhoto(f.name)) {
+      toast(isClip(f.name) ? 'מתאים את הסרטון למערכת...' : 'מתאים את התמונה...', f.name);
+      try {
+        const c = await post('/api/convert', { url: s.url, name: f.name }, 290000);
+        if (c && c.url) out = Object.assign(out, { url: c.url, name: c.name || f.name, ext: (c.name || f.name).split('.').pop().toLowerCase(), converted: !!c.converted });
+      } catch (e) { console.warn('convert', e && e.message); if (isRawPhoto(f.name)) throw new Error('photo_format'); }
+    }
+    return out;
   }
   async function uploadPicked(accept, multiple) {
     const fs = await pickFiles(accept, multiple);
@@ -1839,7 +1851,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const out = [];
     for (const f of fs) {
       try { out.push(await uploadFile(f)); }
-      catch (e) { toast('ההעלאה נכשלה', f.name + (e.message === 'too_big' ? ' גדול מ-50MB.' : e.message === 'file_type_not_allowed' ? ': סוג קובץ שלא נתמך.' : '. נסו שוב.'), 'err'); }
+      catch (e) { toast('ההעלאה נכשלה', f.name + (e.message === 'too_big' ? (isClip(f.name) ? ' גדול מ-300MB.' : ' גדול מ-50MB.') : e.message === 'too_big_server' ? ' גדול ממגבלת האחסון.' : e.message === 'file_type_not_allowed' ? ': סוג קובץ שלא נתמך.' : e.message === 'photo_format' ? ': לא הצלחתי להמיר את התמונה. שמרו אותה כ-JPG ונסו שוב.' : '. נסו שוב.'), 'err'); }
     }
     return out;
   }
