@@ -832,7 +832,7 @@ async function loginCode(d: DB, p: Record<string, any>) {
     const { count } = await d.from('v2_login_codes').select('id', { count: 'exact', head: true }).eq('email', email).eq('purpose', 'code').gte('created_at', new Date(Date.now() - 3600000).toISOString());
     if ((count ?? 0) >= 6) return { ok: true };
     const t = kind === 'admin' ? await adminTarget(d, email) : await clientTarget(d, email);
-    if (!t) return { ok: true };
+    if (!t) { console.log('login.code unknown address', email); return { ok: true }; }
     const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
     const ids = kind === 'admin' ? { admin_id: (t as any).adminId } : { org_id: (t as any).orgId, member_id: (t as any).memberId };
     const { error } = await d.from('v2_login_codes').insert({ email, kind, purpose: 'code', code_hash: await sha(email + ':' + code), ...ids, expires_at: new Date(Date.now() + 10 * 60000).toISOString() });
@@ -845,7 +845,9 @@ async function loginCode(d: DB, p: Record<string, any>) {
       const { data: o } = await d.from('organizations').select('name').eq('id', (t as any).orgId).maybeSingle();
       name = m?.name || ''; org = o?.name || '';
     }
-    await sendMail(email, `קוד הכניסה שלך ל-PrimeOS: ${code}`, codeHtml({ name, org, code, link }));
+    const mid = await sendMail(email, `קוד הכניסה שלך ל-PrimeOS: ${code}`, codeHtml({ name, org, code, link }));
+    // the provider's message id next to the address: a delivery question can be traced in Resend
+    console.log('login.code sent', email, mid);
   } catch (e) { console.error('login.code', e instanceof Error ? e.message : e); }
   return { ok: true };
 }
