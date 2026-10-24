@@ -99,7 +99,7 @@ export const QA_PASS = 80;
 export const QA_REDO = 70;
 export const QA_SYS = `You are an independent senior design reviewer for official municipal social-media graphics in Hebrew. You have not seen how this graphic was made. Judge only what is in the image against the brief and the rules. Be concrete and short. Answer with JSON only.
 Calibration: 85-100 = publish as is; 80-84 = publish, minor notes; 70-79 = acceptable, a resident would not notice a problem; below 70 only for a real problem a resident would notice: unreadable or wrong text, a missing required line, clutter that hides the message, off-brand colours, a dated or unprofessional look. A band that is a bit large, a margin a little under 72px, or one extra icon are notes, not failures. The ten rubric parts must add up to the score.`;
-export function qaPrompt(o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string>; kit?: boolean; note?: string }) {
+export function qaPrompt(o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string>; kit?: boolean; note?: string; mixed?: boolean }) {
   const r = paletteRoles((o.colors ?? []) as string[], o.roles ?? {});
   const st = STYLES[styleOf(o.style)];
   return `Brief (Hebrew): ${o.brief}
@@ -107,7 +107,7 @@ Intended style: ${styleOf(o.style)} - ${st.en}
 Texts that must appear exactly: ${o.texts.map((t) => `"${t}"`).join(' ; ')}
 Brand roles: base ${r.base}, secondary ${r.secondary}, accent ${r.accent}, light ${r.light}.
 Rules: ${graphicRulesEn('square')}
-${o.kit ? KIT_QA_EN + '\n' : ''}${o.note ? `CHANGE REQUEST from the user (Hebrew): "${o.note}". The graphic must visibly apply this request. If it was not applied, score at most 40 and say so first in "redo" and in "issues".\n` : ''}
+${o.kit ? (o.mixed ? MIXED_QA_EN : KIT_QA_EN) + '\n' : ''}${o.note ? `CHANGE REQUEST from the user (Hebrew): "${o.note}". The graphic must visibly apply this request. If it was not applied, score at most 40 and say so first in "redo" and in "issues".\n` : ''}
 Score each part (max in brackets): ${QA_PARTS.map(([k, he, max]) => `${k} (${max}) ${he}`).join(', ')}.
 Return JSON: {"score":0-100,"parts":{"mobile":0,"hierarchy":0,"composition":0,"imagery":0,"brand":0,"access":0,"originality":0},"issues":["short Hebrew sentence per problem, most important first, max 5"],"redo":"English art-direction note for a second attempt, max 60 words, empty if score >= ${QA_PASS}","stop":false,"stopWhy":""${o.kit ? ',"skeleton":{"logo":true,"tag":true,"headline":true,"sub":true,"motif":true,"details":true,"cta":true,"photo":true}' : ''}}
 stop=true (regardless of score) when: a fact appears that is not in the brief or texts (date, time, place, number), a minor is the identifiable main subject in a sensitive topic, text is unreadable, or a public symbol/flag with emblem is used. Then stopWhy is one Hebrew sentence.`;
@@ -215,24 +215,90 @@ MOTIF: the logo's own shape repeated as large decorative elements cutting two co
 EMERGENCY VARIANT (service notices, hazards, outages): identical skeleton; the tag, key word and button turn red (#E0202A), a warning triangle or siren icon joins the tag, and the button may become a white bar "emergency phone" row. Photo of crews at work, calm, no damage or injuries.
 UNIFORMITY: a festival and an outage from the same organisation must look like two posts of one series - same logo position, same template, same motif, same icon style, same button.`;
 
-export function kitDirective(kit: BrandKit, o: { colors?: unknown[]; roles?: Record<string, string>; emergency?: boolean; fmt?: 'square' | 'portrait' | 'landscape'; photos?: number; style?: string; palette?: string; font?: unknown }) {
+/* ---------------- flexible skeleton (variety 'mixed'): the brand constants stay, the composition moves ---------------- */
+export type Variety = 'mixed' | 'uniform';
+export const varietyOf = (v: unknown): Variety => (v === 'uniform' ? 'uniform' : 'mixed');
+export type CompositionId = 'panel' | 'fullbleed' | 'bands' | 'poster' | 'photofirst' | 'card';
+export const COMPOSITIONS: Record<CompositionId, { he: string; when: string; en: string }> = {
+  panel: { he: 'פאנל בהיר + תמונה בצד', when: 'עדכונים, הודעות שירות, מידע', en: KIT_TEMPLATES.panel.en },
+  fullbleed: { he: 'תמונה מלאה, טקסט על שמיים', when: 'אווירה, קהילה, חגים', en: KIT_TEMPLATES.fullbleed.en },
+  bands: { he: 'כותרת על פסי צבע מוטים', when: 'קריאה לפעולה, הרשמה, קמפיין', en: KIT_TEMPLATES.bands.en },
+  poster: { he: 'פוסטר-כותרת', when: 'אירועים, ברכות, מסר אחד גדול', en: 'POSTER HEADLINE: one huge headline is the whole picture, 180-260px on 1080, set on a flat ground in a brand colour or on a quiet duotone photo; the logo small in its position, the other lines compact in one tight block at the bottom; large empty space is part of the design. No panel, no pills row, one motif shape only.' },
+  photofirst: { he: 'תמונה דומיננטית + בלוק טקסט', when: 'אירועים, תמונות שצורפו, סיפור', en: 'PHOTO FIRST: the photograph takes 60-70% of the canvas (top or one side, hard clean edge), the remaining 30-40% is a solid panel in a brand colour holding the whole text block in white or light type; the logo sits inside the panel; the button sits on the panel edge as a filled pill.' },
+  card: { he: 'כרטיסיה ממורכזת', when: 'שעות, פרטים, מכרזים, מידע מסודר', en: 'CENTERED CARD: a rounded white card centred on a ground in a brand colour (flat or with the motif as a faint field); the logo at the top of the card, headline, then the details stacked as clean rows with icons, the button at the bottom of the card; a small photo may sit as a rounded square at a card corner or above it, never behind the text.' },
+};
+const COMP_W: Record<string, Partial<Record<CompositionId, number>>> = {
+  event: { photofirst: 4, poster: 4, fullbleed: 2, bands: 1 },
+  update: { panel: 4, card: 4, bands: 2 },
+  greeting: { poster: 4, fullbleed: 3, photofirst: 2 },
+  tip: { card: 3, poster: 3, panel: 2, bands: 1 },
+  tender: { card: 4, panel: 3, bands: 1 },
+  course: { bands: 3, photofirst: 3, panel: 2, card: 1 },
+  story: { photofirst: 4, fullbleed: 3, panel: 1 },
+  other: { panel: 2, fullbleed: 2, bands: 2, poster: 2, photofirst: 2, card: 2 },
+};
+export function contentKindOf(style: string, brief: string): string {
+  const b = brief || '';
+  if (style === 'service') return 'emergency';
+  if (/ברכ|חג שמח|שנה טובה|מועדים|פסח|ראש השנה|חנוכה|פורים|סוכות|יום העצמאות/.test(b)) return 'greeting';
+  if (/מכרז|הצעות מחיר|קול קורא|דרושים/.test(b)) return 'tender';
+  if (/טיפ|איך ל|כדאי לדעת|חיסכון|מדריך/.test(b)) return 'tip';
+  if (/קורס|סדנה|הרצאה|חוג|הרשמה/.test(b)) return 'course';
+  if (/פסטיבל|אירוע|הופעה|מופע|יריד|חגיגה|פתיחת|טקס|מסיבה|הקרנה|ריצה|צעדה/.test(b)) return 'event';
+  if (/שעות|שינוי|עדכון|סגור|פתוח|הודעה|תזכורת|לתשומת|מועד/.test(b)) return 'update';
+  if (style === 'documentary' || style === 'editorial') return 'story';
+  if (style === 'marketing' || style === 'light') return 'event';
+  return 'other';
+}
+// a small deterministic generator so one call's variants share a composition while calls differ
+const seeded = (seed: number) => { let x = (seed >>> 0) || 1; return () => { x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; }; };
+export function pickComposition(style: string, brief: string, seed: number, own: BrandKit['template'] = 'panel'): { id: CompositionId; kind: string } {
+  const kind = contentKindOf(style, brief);
+  if (kind === 'emergency') return { id: own, kind };
+  const w = COMP_W[kind] ?? COMP_W.other;
+  const rnd = seeded(seed);
+  const total = Object.values(w).reduce((a, b) => a + (b ?? 0), 0);
+  let t = rnd() * total;
+  for (const [id, n] of Object.entries(w) as [CompositionId, number][]) { t -= n; if (t <= 0) return { id, kind }; }
+  return { id: own, kind };
+}
+export const ACCENTS = [
+  'a bold diagonal split between the photo and the ground',
+  'one very large number or date as a graphic element behind the headline',
+  'an outlined (hollow) treatment for one headline word, the rest solid',
+  'a duotone photo in two logo colours',
+  'a field of small repeated motif shapes as a quiet pattern on the ground',
+  'generous whitespace: the text block uses only the upper third, the rest breathes',
+  'a thick colour frame around the canvas in a logo colour',
+  'the headline set vertically along one edge as a decorative echo (the readable headline stays horizontal)',
+];
+export const accentFor = (seed: number) => ACCENTS[Math.abs(seed) % ACCENTS.length];
+export const MIXED_EN = (comp: { he: string; en: string }, accent: string) => `BRAND CONSTANTS (mandatory, never change): the attached logo large and unchanged at the logo position, no other emblem; only the logo colours (+ red for emergencies); the hot colour for the key word and the button; the icon style given; the motif shapes from the logo in at least one place; Hebrew texts exactly as given, in the typefaces given; a photoreal photo of Israeli residents or municipal staff when a photo is part of the composition.
+COMPOSITION FOR THIS POST - ${comp.en}
+ACCENT IDEA (use it if it serves the message): ${accent}.
+ELEMENTS: logo, headline (the key word in the hot colour), sub line, details with icons when given, one filled button in the hot colour when a call to action is given. Scale, order and placement follow the composition, not a fixed list.
+SAME FAMILY, NOT THE SAME POST: keep the brand constants, vary composition, scale and imagery with the message. A festival may be loud and photo-led, an update calm and tidy.`;
+export const MIXED_QA_EN = `BRAND CHECK: this organisation keeps its brand constants but varies the composition from post to post. Report in "skeleton" which constants are present: logo (the real one, not an invented crest), only logo colours, the hot colour on the key word / button, readable Hebrew, motif shape. A missing constant costs 6-10 points; an invented crest or logo instead of the real one is a stop. Do NOT penalise a layout that differs from a template; reward a composition that fits the message.`;
+
+export function kitDirective(kit: BrandKit, o: { colors?: unknown[]; roles?: Record<string, string>; emergency?: boolean; fmt?: 'square' | 'portrait' | 'landscape'; photos?: number; style?: string; palette?: string; font?: unknown; variety?: Variety; composition?: CompositionId; accent?: string }) {
   const r = paletteRoles((o.colors ?? []) as string[], o.roles ?? {});
   const tpl = KIT_TEMPLATES[kit.template] ?? KIT_TEMPLATES.panel;
   const hot = /^#[0-9a-f]{6}$/i.test(kit.hot || '') ? kit.hot : r.accent;
   const hotText = contrast(hot, '#FFFFFF') >= 3 ? '#FFFFFF' : r.base;
   const hotOnLight = contrast(hot, r.light) >= 3;
+  const mixed = o.variety === 'mixed' && !o.emergency;
+  const comp = mixed ? COMPOSITIONS[o.composition ?? 'panel'] : null;
   return `BRAND KIT (derived from this organisation's logo - follow exactly):
 LOGO COLOURS - ${kit.colorsEn}. Base (type, dark elements): ${r.base}. Hot colour (key word, button, tag): ${hot}; text ON the hot colour is ${hotText}. ${hotOnLight ? '' : `The hot colour is too light for text on the light ground: the key word gets a filled hot band behind ${r.base} text instead of hot-coloured letters. `}Light ground: ${r.light}.
 MOTIF - ${kit.motif?.en ?? 'soft rounded shapes'} (shape: ${kit.motif?.shape ?? 'other'}).
 LOGO POSITION - ${kit.logoPos ?? 'top-center'} of the text side.
-TEMPLATE - ${tpl.en}
-HEADLINE - ${kit.headline === 'bands' ? 'white text on skewed filled bands, one band per line, the key line on the hot colour' : 'coloured text on the light ground: base colour, with the key word(s) in the hot colour (2-3 logo colours by line at most)'}.
+${mixed ? '' : `TEMPLATE - ${tpl.en}\n`}HEADLINE - ${kit.headline === 'bands' ? 'white text on skewed filled bands, one band per line, the key line on the hot colour' : 'coloured text on the light ground: base colour, with the key word(s) in the hot colour (2-3 logo colours by line at most)'}.
 ICONS - ${KIT_ICONS[kit.icons] ?? KIT_ICONS['line-circle']}.
 ${o.emergency ? 'THIS IS AN EMERGENCY / SERVICE NOTICE: apply the emergency variant.' : 'Regular post: warm, optimistic, premium-app feel.'}
 ${o.photos ? `Use the ${o.photos} attached photo(s) as the photo of the skeleton, embedding the branding treatment only if natural.` : 'No photo attached: create the photo as described in the skeleton.'}
 ${o.style && !o.emergency ? `ART DIRECTION of the style "${styleOf(o.style)}" - ${STYLES[styleOf(o.style)].en}\nPALETTE MODE - ${PALETTE_MODES[(o.palette && PALETTE_MODES[o.palette as PaletteMode] ? o.palette : STYLES[styleOf(o.style)].palette) as PaletteMode].en}\nWithin the brand kit, follow this art direction for mood, imagery and typography.` : ''}
 ${typographyEn(o.style ?? 'official', o.font)}
-${SKELETON_EN}
+${mixed && comp ? MIXED_EN(comp, o.accent ?? accentFor(0)) : SKELETON_EN}
 ${graphicRulesEn(o.fmt ?? 'square')}`;
 }
 export const KIT_QA_EN = `SKELETON CHECK: this organisation uses a fixed skeleton. Report in "skeleton" which parts are present: logo (the real logo, not an invented crest), tag pill, headline with a hot-colour key word, sub line, motif rule/shapes from the logo, details or icon row, filled CTA button with arrow, photo with embedded branding. Each missing part is an issue and costs 6-10 points; an invented crest or logo instead of the real one is a stop.`;

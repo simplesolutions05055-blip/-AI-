@@ -755,7 +755,7 @@ async function adminLoad(d: DB, adminId: string) {
       contact: o.contact_name ?? null, mail: o.contact_email ?? null, phone: o.contact_phone ?? null, items: items[o.id] ?? 0,
       main_dept: o.settings?.main_dept ?? null, role: o.settings?.role ?? null, agr: o.settings?.agr ?? null,
       use: usage[o.id]?.use ?? null, useM: usage[o.id]?.useM ?? null,
-      quotas: o.quotas ?? {}, addons: o.addons ?? {}, billing_day: o.billing_day ?? 1, unlimited: !!o.quota_unlimited, quota: quotaOf[o.id] ?? null,
+      quotas: o.quotas ?? {}, addons: o.addons ?? {}, billing_day: o.billing_day ?? 1, unlimited: !!o.quota_unlimited, quota: quotaOf[o.id] ?? null, variety: o.settings?.variety === 'uniform' ? 'uniform' : 'mixed',
       members: (mems ?? []).filter((m: any) => m.org_id === o.id).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone, role: m.role, dept: m.dept, view: m.view, token: mtokOf[m.id] ? 'live' : null, use: usage[o.id]?.members?.[m.id] ?? null })),
     })),
   };
@@ -918,7 +918,11 @@ async function adminOrgUpdate(d: DB, p: Record<string, any>) {
   if (typeof p.contact === 'string') row.contact_name = p.contact.slice(0, 120);
   if (typeof p.mail === 'string') row.contact_email = p.mail.slice(0, 200);
   if (typeof p.phone === 'string') row.contact_phone = p.phone.slice(0, 40);
-  if (p.settings && typeof p.settings === 'object') row.settings = { ...(org.settings ?? {}), ...p.settings, agr: { ...(org.settings?.agr ?? {}), ...(p.settings.agr ?? {}) } };
+  if (p.settings && typeof p.settings === 'object') {
+    const st = { ...p.settings };
+    if (st.variety !== undefined) st.variety = st.variety === 'uniform' ? 'uniform' : 'mixed';
+    row.settings = { ...(org.settings ?? {}), ...st, agr: { ...(org.settings?.agr ?? {}), ...(p.settings.agr ?? {}) } };
+  }
   const { error } = await d.from('organizations').update(row).eq('id', id);
   if (error) throw error;
   return { ok: true };

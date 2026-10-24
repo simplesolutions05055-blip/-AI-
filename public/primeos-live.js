@@ -5201,7 +5201,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         if (!o) return;
         o.plan = r.plan === 'basic' ? 'solo' : 'appr';
         PLAN_OF[o.id] = o.plan;
-        o.quotas = r.quotas || {}; o.addons = r.addons || {}; o.billing_day = r.billing_day || 1; o.unlimited = !!r.unlimited; o.quota = r.quota || null;
+        o.quotas = r.quotas || {}; o.addons = r.addons || {}; o.billing_day = r.billing_day || 1; o.unlimited = !!r.unlimited; o.quota = r.quota || null; o.variety = r.variety === 'uniform' ? 'uniform' : 'mixed';
         const lim = (o.quota && o.quota.limit) || o.quotas;
         const used = (o.quota && o.quota.used) || {};
         if (lim.members !== undefined) o.uLim = o.plan === 'solo' ? 1 : Math.max(1, +lim.members || 1);
@@ -5252,7 +5252,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           const pq = planQuota(S.pendPlan || o.plan), q = o.quotas || {};
           const fld = (k) => '<div class="field"><label>' + QT[k] + (k === 'vsec' ? '' : ' בחודש') + ' <span class="hint">מסלול: ' + (pq[k] !== undefined ? pq[k] : '-') + '</span></label><input type="text" id="eoQ-' + k + '" dir="ltr" style="text-align:right" value="' + (q[k] !== undefined ? q[k] : (pq[k] || 0)) + '"></div>';
           const extra = ['gfx', 'doc', 'slides', 'vsec', 'profiles'].map(fld).join('') +
-            '<div class="field"><label>יום החיוב <span class="hint">1 עד 28 · המכסה מתאפסת ביום הזה</span></label><input type="text" id="eoBD" dir="ltr" style="text-align:right" value="' + (o.billing_day || 1) + '"></div>';
+            '<div class="field"><label>יום החיוב <span class="hint">1 עד 28 · המכסה מתאפסת ביום הזה</span></label><input type="text" id="eoBD" dir="ltr" style="text-align:right" value="' + (o.billing_day || 1) + '"></div>' +
+            '<div class="field"><label>סגנון גרפיקות <span class="hint">גיוון: הקומפוזיציה משתנה לפי המסר, המיתוג קבוע · אחיד: שלד קבוע לכל הפוסטים</span></label><div class="seg"><button class="' + (o.variety !== 'uniform' ? 'on' : '') + '" data-act="aoVar:mixed">גיוון</button><button class="' + (o.variety === 'uniform' ? 'on' : '') + '" data-act="aoVar:uniform">אחיד</button></div></div>';
           h = h.replace(/(<div class="field"><label>איש קשר<\/label>)/, extra + '$1');
           const sw = addonDefs().map((p) => '<div class="checkline addon"><span>' + esc(p.name) + ' <span class="t-sub">' + esc(addText(p)) + ' · ' + nis(p.price) + ' + מע״מ לחודש</span></span><button class="sw ' + (o.addons && o.addons[p.id] ? 'on' : '') + '" data-act="aoAddon:' + p.id + '" role="switch" aria-checked="' + !!(o.addons && o.addons[p.id]) + '" aria-label="' + esc(p.name) + '"></button></div>').join('');
           const unl = '<div class="checkline" style="margin-top:10px"><button class="sw ' + (o.unlimited ? 'on' : '') + '" data-act="aoUnl" role="switch" aria-checked="' + !!o.unlimited + '" aria-label="ללא הגבלה"></button><span><b>ללא הגבלה</b><br><span class="t-sub">לארגון בדיקה או להסכם מיוחד. המכסות למעלה לא נאכפות.</span></span></div>';
@@ -5262,6 +5263,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       };
     }
     ACT.aoAddon = (k) => { const o = orgById(S.orgId); if (!o) return; o.addons = o.addons || {}; o.addons[k] = !o.addons[k]; o._addonsDirty = true; const b = $('[data-act="aoAddon:' + k + '"]'); if (b) { b.classList.toggle('on', !!o.addons[k]); b.setAttribute('aria-checked', String(!!o.addons[k])); } };
+    ACT.aoVar = (k) => { const o = orgById(S.orgId); if (!o) return; o.variety = k === 'uniform' ? 'uniform' : 'mixed'; o._varDirty = true; $$('[data-act^="aoVar:"]').forEach((b) => b.classList.toggle('on', b.dataset.act === 'aoVar:' + o.variety)); };
     ACT.aoUnl = () => { const o = orgById(S.orgId); if (!o) return; o.unlimited = !o.unlimited; o._addonsDirty = true; const b = $('[data-act="aoUnl"]'); if (b) { b.classList.toggle('on', !!o.unlimited); b.setAttribute('aria-checked', String(!!o.unlimited)); } };
     const _aSave = ACT.aSaveOrg;
     ACT.aSaveOrg = (id) => {
@@ -5280,6 +5282,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       _aSave(id);
       const payload = { org_id: o.live.id, quotas, addons: o.addons || {}, unlimited: !!o.unlimited, billing_day: bd };
       if (o.plan !== prevPlan) payload.plan = o.plan === 'solo' ? 'basic' : 'extended';
+      if (o._varDirty) { call('admin.org.update', { org_id: o.live.id, settings: { variety: o.variety || 'mixed' } }).then(() => { o._varDirty = false; }).catch(() => toast('סגנון הגרפיקות לא נשמר', 'נסו שוב בעוד רגע.', 'err')); }
       call('admin.quota.set', payload).then((r) => {
         if (r && r.quota) { o.quota = r.quota; o.addons = r.quota.addons || o.addons; o.unlimited = !!r.quota.unlimited; o.billing_day = (r.quota.period && r.quota.period.day) || bd; const lim = r.quota.limit || {}; if (o.plan !== 'solo') { o.uLim = Math.max(1, +lim.members || o.uLim); o.dLim = +lim.depts || 0; } o.add = Object.keys(o.addons).filter((k) => o.addons[k]); }
         o.quotas = Object.assign({}, o.quotas, quotas);
