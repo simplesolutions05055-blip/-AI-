@@ -49,7 +49,8 @@ async function advance(d: DB, j: Job) {
   let res: Record<string, any> = {};
   if (ids.length) {
     const got = await httpResults(d, ids);
-    if (ids.some((id) => !got.has(id))) { await upd(d, j, { next_at: later(4), lock_until: new Date().toISOString() }); return; }
+    // graphics are polled a little faster than videos: their answers arrive within a minute or two
+    if (ids.some((id) => !got.has(id))) { await upd(d, j, { next_at: later(j.kind === 'graphic' ? 2 : 4), lock_until: new Date().toISOString() }); return; }
     for (const [k, id] of Object.entries(pend)) res[k] = got.get(Number(id));
   }
   const data = j.data ?? {};
@@ -65,11 +66,13 @@ async function advance(d: DB, j: Job) {
   if (j.kind === 'graphic') {
     const org = await orgName(d, j.org_id);
     if (j.step === 'texts') {
-      if (!ids.length) { const id = await httpLater(d, FN('generate'), token, { mode: 'graphic', org, dept: inp.dept || '', title: inp.title || '', brief: inp.brief || '', ...(data.style ? { keepStyle: true, style: data.style, palette: data.palette || '' } : {}) }); return upd(d, j, { pend: { t: id }, next_at: later(6) }); }
+      if (!ids.length) { const id = await httpLater(d, FN('generate'), token, { mode: 'graphic', org, dept: inp.dept || '', title: inp.title || '', brief: inp.brief || '', ...(data.style ? { keepStyle: true, style: data.style, palette: data.palette || '' } : {}) }); return upd(d, j, { pend: { t: id }, next_at: later(4) }); }
       if (!ok(res.t)) return retry('texts');
       const x = res.t.json;
       data.texts = { kicker: x.kicker || '', headline: x.headline || inp.title || '', sub: x.sub || '', details: x.details || [], cta: x.cta || '', icons: Array.isArray(x.icons) ? x.icons.slice(0, 4) : [], keyword: x.keyword || '' };
       data.caption = x.caption || ''; data.tags = x.tags || []; data.style = x.style || 'official'; data.palette = x.palette || '';
+      // the person hears that the texts are in and the design has started (once per job; a text fix keeps quiet)
+      if (j.src === 'wa' && j.phone && !data.told && !inp.note && !data.prevUrl) { data.told = true; sendText(d, j, j.phone, 'הטקסטים מוכנים, מעצב את הגרפיקה...').catch(() => {}); }
       return go('design');
     }
     if (j.step === 'design') {
@@ -79,14 +82,14 @@ async function advance(d: DB, j: Job) {
         // the same call the app makes: brand kit from the logo, palette roles, style, keyword and icons. One image, so the answer comes faster.
         const kit = await kitOf(d, j.org_id, token, b, org);
         const id = await httpLater(d, FN('image'), token, { action: 'design', org, dept: inp.dept || '', size: 'square', brief: (inp.title || '') + '\n' + (inp.brief || ''), colors: b.colors, roles: b.roles, style: data.style || 'official', palette: data.palette || '', kit: kit || undefined, texts: data.texts, refs: [...(b.logo ? [b.logo] : []), ...(inp.photos || [])].slice(0, 4), logo: !!b.logo, note: inp.note || '', base: inp.note && data.prevUrl ? data.prevUrl : undefined, font: b.font || undefined, quality: 'high', n: inp.note ? 2 : 1 }, 170000);
-        await upd(d, j, { data, lock_until: later(120) }); return upd(d, j, { pend: { g: id }, next_at: later(20) });
+        await upd(d, j, { data, lock_until: later(120) }); return upd(d, j, { pend: { g: id }, next_at: later(15) });
       }
       if (!ok(res.g)) return retry('design');
       data.url = res.g.json.url; data.check = res.g.json.check || { ok: true }; data.want = res.g.json.want || [];
       return go(data.check && !data.check.ok && (data.check.issues || []).length ? 'fix' : 'done');
     }
     if (j.step === 'fix') {
-      if (!ids.length) { const id = await httpLater(d, FN('image'), token, { action: 'fixtext', url: data.url, issues: data.check.issues, fixes: data.check.fixes || [], want: data.want, size: 'square' }, 170000); return upd(d, j, { pend: { f: id }, next_at: later(15) }); }
+      if (!ids.length) { const id = await httpLater(d, FN('image'), token, { action: 'fixtext', url: data.url, issues: data.check.issues, fixes: data.check.fixes || [], want: data.want, size: 'square' }, 170000); return upd(d, j, { pend: { f: id }, next_at: later(8) }); }
       if (ok(res.f) && res.f.json.url) data.url = res.f.json.url;
       return go('done');
     }

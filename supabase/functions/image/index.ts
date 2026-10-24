@@ -325,6 +325,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
   if (p.action === 'design') {
     const ckey = Deno.env.get('ANTHROPIC_API_KEY');
     if (!ckey) return json(req, { error: 'claude_not_configured' }, 503);
+    const t0 = Date.now();
     try {
       const tx = p.texts ?? {};
       // a template that carries its own organisation line keeps it; the org name is not added again
@@ -389,15 +390,23 @@ fixed=true for texts that belong to the template itself and must stay (organisat
         if (up.error) throw up.error;
         return json(req, { ok: true, edited: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check: checks[bi], want: wantList, prompt: instr, model: gen.model, size, style, qa: qas[bi], kit: !!kit });
       }
-      // one round: generate candidates, proofread the Hebrew of each, score the cleanest with the independent reviewer
+      // one round: generate candidates, then proofread AND review every candidate at the same time (one wait instead of two);
+      // the winner: fewest Hebrew text errors first, then the higher review score
+      const timing: Record<string, number> = { claude_prompt: Date.now() - t0 };
       const round = async (pr: string) => {
+        const tg = Date.now();
         const gen = await openaiImage(okey, pr, size, p.quality ?? 'high', refs, Math.max(1, Math.min(3, +p.n || 2)), undefined, p.model);
         if (!gen.b64) throw new Error('openai_empty');
-        const checks = await Promise.all(gen.all.map((x) => proofImage(ckey, x, wantTxt)));
-        let best = 0;
-        checks.forEach((c, i) => { if (issuesOf(c) < issuesOf(checks[best])) best = i; });
-        const qa = p.qa === false ? null : await qaReview(ckey, gen.all[best], { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles, kit: !!kit, note: p.note ? String(p.note).slice(0, 300) : undefined, mixed });
-        return { b64: gen.all[best], check: checks[best], model: gen.model, qa, prompt: pr };
+        timing.image = (timing.image ?? 0) + Date.now() - tg;
+        const tr = Date.now();
+        const [checks, qas] = await Promise.all([
+          Promise.all(gen.all.map((x) => proofImage(ckey, x, wantTxt))),
+          p.qa === false ? Promise.resolve(gen.all.map(() => null)) : Promise.all(gen.all.map((x) => qaReview(ckey, x, { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles, kit: !!kit, note: p.note ? String(p.note).slice(0, 300) : undefined, mixed }))),
+        ]);
+        timing.review = (timing.review ?? 0) + Date.now() - tr;
+        const order = gen.all.map((_, i) => i).sort((i, j) => issuesOf(checks[i]) - issuesOf(checks[j]) || (qas[j]?.score ?? 0) - (qas[i]?.score ?? 0));
+        const best = order[0];
+        return { b64: gen.all[best], check: checks[best], model: gen.model, qa: qas[best], prompt: pr };
       };
       // a weak result (missing / misspelled Hebrew, or a low review score) gets one more attempt with the reviewer's note (the edge
       // runtime allows 150s per call, two rounds fit); the best attempt wins: fewest text errors first, then the higher score
@@ -406,7 +415,9 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       for (let k = 0; k < 1 && p.redo !== false && weak(tries[tries.length - 1]); k++) {
         const last = tries[tries.length - 1];
         const note = [issuesOf(last.check) ? 'The previous attempt had Hebrew text errors: ' + (last.check.issues ?? []).join('; ') + '. Every text line must appear, spelled exactly.' : '', last.qa?.redo ? 'REVIEWER NOTE (must be applied): ' + last.qa.redo : ''].filter(Boolean).join('\n');
+        const td = Date.now();
         try { tries.push(await round(prompt + '\n' + note)); } catch (_) { break; }
+        timing.redo = Date.now() - td;
       }
       const r1 = tries.sort((a, b) => issuesOf(a.check) - issuesOf(b.check) || (b.qa?.score ?? 0) - (a.qa?.score ?? 0))[0];
       const { b64, check, model } = r1; prompt = r1.prompt; const qa = r1.qa ? { ...r1.qa, tries: tries.length } : null;
@@ -414,7 +425,8 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-${tpl ? 't' : kit ? 'k' : 'd'}-${crypto.randomUUID().slice(0, 8)}.jpg`;
       const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
       if (up.error) throw up.error;
-      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: wantList, prompt, model, size, style, qa, kit: !!kit, variety, composition: comp ? { id: comp.id, he: COMPOSITIONS[comp.id].he, kind: comp.kind } : undefined });
+      timing.total = Date.now() - t0;
+      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: wantList, prompt, model, size, style, qa, kit: !!kit, variety, composition: comp ? { id: comp.id, he: COMPOSITIONS[comp.id].he, kind: comp.kind } : undefined, timing });
     } catch (e) {
       return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
     }
