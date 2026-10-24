@@ -5474,6 +5474,145 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     wrapWiz('wizard', wizKind); wrapWiz('docWiz', 'doc'); wrapWiz('deckWiz', 'slides'); wrapWiz('vidWiz', 'vsec');
   })();
 
+  /* ---------------- incidents: what the monitor found, one "fix" per kind, and the security-event log ----------------
+     Only the console (admin_users). Same parts as the rest of the console: request cards, row lists, stat tiles. */
+  (function () {
+    const KN = { site: 'האתר', api: 'השרת ובסיס הנתונים', jobs: 'עבודות שנכשלו', stuck: 'עבודות תקועות', wa: 'שליחות WhatsApp', storage: 'אחסון', backup: 'גיבוי', tenant: 'הפרדה בין לקוחות', security: 'אבטחה' };
+    const SEV = { crit: ['s-rejected', 'קריטי'], high: ['s-fix', 'גבוה'], mid: ['s-pending', 'בינוני'], sec: ['s-scheduled', 'אבטחה'], ok: ['s-approved', 'תקין'] };
+    const STT = { open: ['s-rejected', 'פתוחה'], fixed: ['s-approved', 'תוקנה'], resolved: ['s-approved', 'טופלה'], muted: ['s-archived', 'מושתקת'] };
+    const SEC_T = { unauthorized: 'גישה לא מורשית', leak: 'דליפת מידע', integrity: 'אובדן או שינוי מידע', blocked: 'ניסיון פריצה שנחסם', other: 'אחר' };
+    const SEC_A = { none: 'אף אחד', one: 'לקוח אחד', some: 'כמה לקוחות', all: 'כל הלקוחות' };
+    const INC = { open: [], history: [], health: null, at: 0, busy: {}, tab: 'open', kind: '', loading: false };
+    const sevBadge = (s) => { const x = SEV[s] || SEV.mid; return '<span class="badge ' + x[0] + '">' + x[1] + '</span>'; };
+    const stBadge = (s) => { const x = STT[s] || STT.open; return '<span class="badge ' + x[0] + '">' + x[1] + '</span>'; };
+    const dt = (iso) => { if (!iso) return ''; const t = new Date(iso); return t.getDate() + '.' + (t.getMonth() + 1) + ' ' + String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0'); };
+    const ago = (iso) => { if (!iso) return 'עדיין לא'; const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? 'עכשיו' : m < 60 ? 'לפני ' + m + ' דק׳' : m < 1440 ? 'לפני ' + Math.round(m / 60) + ' שע׳' : 'לפני ' + Math.round(m / 1440) + ' ימים'; };
+    const dur = (a, b) => { if (!a || !b) return '-'; const m = Math.round((new Date(b) - new Date(a)) / 60000); return m < 60 ? m + ' דק׳' : m < 1440 ? Math.round(m / 60) + ' שע׳' : Math.round(m / 1440) + ' ימים'; };
+    const lastLog = (i) => { const l = (i.fix_log || []).slice(-1)[0]; return l ? l.text : '-'; };
+    const mb = (n) => (n == null ? '-' : (n / 1048576).toFixed(0) + 'MB');
+
+    async function load(quiet) {
+      if (INC.loading) return;
+      INC.loading = true; if (!quiet) render();
+      try { const r = await call('admin.incidents.load', {}); INC.open = r.open || []; INC.history = r.history || []; INC.health = r.health || null; INC.at = Date.now(); }
+      catch (e) { toast('לא הצלחתי לטעון את התקלות', 'נסו שוב בעוד רגע.', 'err'); }
+      INC.loading = false; if (S.route === 'a_incidents') render(); buildNav();
+    }
+
+    SCREENS.a_incidents = {
+      nav: { t: 'תקלות', i: 'alert', count: () => INC.open.length },
+      render() {
+        const h = INC.health || {}, res = h.res || {};
+        const month = Date.now() - 30 * 86400000;
+        const all = [...INC.open, ...INC.history];
+        const crit = INC.open.filter((i) => i.severity === 'crit').length, high = INC.open.filter((i) => i.severity === 'high').length, mid = INC.open.length - crit - high;
+        const auto = INC.history.filter((i) => i.state === 'fixed' && new Date(i.opened_at).getTime() > month).length;
+        const hist = h.history || []; const up = hist.length ? Math.round(hist.filter((x) => x.ok).length / hist.length * 1000) / 10 : null;
+        const checks = Object.keys(res).length;
+        const list = INC.tab === 'open' ? INC.open : INC.tab === 'done' ? INC.history : all;
+        const shown = list.filter((i) => !INC.kind || i.kind === INC.kind);
+        const strip = [
+          ...Object.entries(res).map(([k, c]) => ({ k, ok: !!c.ok, s: (c.ms ? c.ms + 'ms' : '') + (c.note ? (c.ms ? ' · ' : '') + c.note : '') })),
+          { k: 'backup', ok: !!h.backup && !Object.values(h.backup.tables || {}).some((n) => n < 0), s: h.backup ? 'אחרון: ' + dt(h.backup.at) : 'עדיין לא רץ' },
+          { k: 'tenant', ok: !h.tenant || !!h.tenant.ok, s: h.tenant ? (h.tenant.ok ? 'בדיקה יומית: תקין' : 'נכשלה ' + dt(h.tenant.at)) : 'עדיין לא רץ' },
+          { k: 'storage', ok: true, s: 'קבצים: ' + mb(h.storage_bytes) },
+        ];
+        return pageHead({ title: 'תקלות', actions: '<button class="btn" data-act="incSec">' + ic('shield', 16) + ' דיווח אירוע אבטחה</button><button class="btn btn-primary" data-act="incRun"' + (INC.busy.run ? ' disabled' : '') + '>' + ic('refresh', 16) + (INC.busy.run ? ' בודק...' : ' הרץ בדיקה עכשיו') + '</button>' }) +
+          '<p class="t-sub" style="margin:-8px 0 16px">מה המוניטור מצא, מה נעשה ומה דורש טיפול. כל אירוע נשמר 30 יום ומשמש גם כיומן אירועי אבטחה.</p>' +
+          '<div class="grid g-4" style="margin-bottom:16px">' +
+            stat({ l: 'תקלות פתוחות', n: INC.open.length, s: crit + ' קריטיות · ' + high + ' גבוהות · ' + mid + ' בינוניות', i: 'alert', nav: 'a_incidents', f: INC.open.length ? 'rejected' : 'approved' }) +
+            stat({ l: 'תוקנו אוטומטית, 30 יום', n: auto, s: 'מתוך ' + INC.history.length + ' תקלות שנסגרו', i: 'refresh', nav: 'a_incidents', f: 'pending' }) +
+            stat({ l: 'זמינות 24 שעות', n: up == null ? '-' : up + '%', s: hist.length + ' בדיקות', i: 'pulse', nav: 'a_incidents', f: 'published' }) +
+            stat({ l: 'בדיקה אחרונה', n: ago(h.at), s: 'כל 5 דקות · ' + checks + ' בדיקות', i: 'clock', nav: 'a_incidents', f: 'draft' }) +
+          '</div>' +
+          '<div class="card" style="margin-bottom:16px"><div class="card-head">' + ic('pulse', 18) + '<h3>מצב המערכת עכשיו</h3><span class="chip" style="margin-inline-start:auto">' + (INC.loading ? 'טוען...' : 'עודכן ' + ago(h.at)) + '</span></div>' +
+            '<div class="row-list">' + strip.map((x) => '<div class="rowi"><span class="ic-box ' + (x.ok ? 'ok' : 'bad') + '">' + ic(x.ok ? 'checkc' : 'alert', 17) + '</span><span class="grow"><span class="nm">' + esc(KN[x.k] || x.k) + '</span><br><span class="mt">' + esc(x.s || (x.ok ? 'תקין' : 'לא עונה')) + '</span></span>' + (x.ok ? '<span class="badge s-approved">תקין</span>' : '<span class="badge s-rejected">תקלה</span>') + '</div>').join('') + '</div></div>' +
+          '<div class="filters"><div class="seg">' + [['open', 'פתוחות (' + INC.open.length + ')'], ['done', 'טופלו'], ['all', 'הכל, 30 יום']].map((t) => '<button class="' + (INC.tab === t[0] ? 'on' : '') + '" data-act="incTab:' + t[0] + '">' + t[1] + '</button>').join('') + '</div>' +
+            '<select id="incKind"><option value="">כל הרכיבים</option>' + Object.entries(KN).map(([k, v]) => '<option value="' + k + '"' + (INC.kind === k ? ' selected' : '') + '>' + v + '</option>').join('') + '</select></div>' +
+          (INC.tab === 'open' ? (shown.length ? '<div class="req-list">' + shown.map(card).join('') + '</div>' : emptyState({ i: 'checkc', t: 'אין תקלות פתוחות', d: 'המוניטור בודק כל 5 דקות. תקלה חדשה תופיע כאן ותישלח גם במייל.' })) : table(shown)) +
+          '<div class="note" style="margin-top:16px">' + ic('lock', 15) + '<span>רק משתמשי admin_users רואים את המסך. כל "תקן" נרשם ביומן הניהול עם מי לחץ ומתי.</span></div>';
+      },
+      mount() { const s = $('#incKind'); if (s) s.onchange = () => { INC.kind = s.value; render(); }; if (!INC.at || Date.now() - INC.at > 60000) load(true); },
+    };
+    function card(i) {
+      const d = i.detail || {}, log = i.fix_log || [], b = INC.busy[i.id];
+      const sec = i.kind === 'security';
+      return '<div class="card req-card" id="inc' + i.id + '"><div class="rq-top"><span class="ic-box ' + (i.severity === 'crit' ? 'bad' : i.severity === 'sec' ? 'info' : 'warn') + '" style="width:44px;height:44px;border-radius:12px;display:grid;place-items:center">' + ic(sec ? 'shield' : 'alert', 20) + '</span><div class="grow"><b class="rq-org">' + esc(i.title) + '</b><div class="oh-meta">' + sevBadge(i.severity) + stBadge(i.state) + '<span class="chip">' + esc(KN[i.kind] || i.kind) + '</span><span class="chip">#' + i.id + '</span></div></div><span class="t-sub">התחיל ' + dt(i.opened_at) + ' · ' + ago(i.opened_at) + '</span></div>' +
+        '<div class="rq-grid">' + (sec
+          ? '<div><span class="t-sub">סוג</span><b>' + esc(SEC_T[d.type] || d.type || '-') + '</b></div><div><span class="t-sub">לקוחות שנפגעו</span><b>' + esc(SEC_A[d.affected] || d.affected || '-') + '</b></div><div><span class="t-sub">אירוע חמור</span><b>' + (d.severe ? 'כן, דיווח לרשות' : 'לא') + '</b></div><div><span class="t-sub">הודעה ללקוח עד</span><b>' + dt(d.clock24h) + '</b></div>'
+          : '<div><span class="t-sub">מה נבדק</span><b>' + esc(d.checked || '-') + '</b></div><div><span class="t-sub">ממצא</span><b>' + esc(d.note || '-') + '</b></div><div><span class="t-sub">סיבה משוערת</span><b>' + esc(d.cause || '-') + '</b></div><div><span class="t-sub">מה "תקן" יעשה</span><b>' + esc(d.fix || 'אין תיקון אוטומטי') + '</b></div>') + '</div>' +
+        (sec && d.note ? '<div class="rq-note">' + ic('note', 14) + ' ' + esc(d.note) + '</div>' : '') +
+        (log.length ? '<div class="row-list">' + log.map((l) => '<div class="rowi"><span class="ic-box ' + (l.ok ? 'ok' : 'bad') + '">' + ic(l.ok ? 'check' : 'x', 15) + '</span><span class="grow"><span class="nm">' + esc(l.text) + '</span><br><span class="mt">' + dt(l.at) + ' · ' + esc(l.by || '') + '</span></span></div>').join('') + '</div>' : '') +
+        '<div class="rq-acts">' + (i.state === 'open' || i.state === 'muted'
+          ? (sec ? '' : '<button class="btn btn-primary" data-act="incFix:' + i.id + '"' + (b ? ' disabled' : '') + '>' + ic('refresh', 16) + (b ? ' מתקן...' : ' תקן') + '</button>') +
+            '<button class="btn" data-act="incClaude:' + i.id + '">' + ic('bot', 16) + ' פתח בקלוד</button>' +
+            '<button class="btn btn-ghost" data-act="incResolve:' + i.id + '">' + ic('check', 15) + ' סמן טופל</button>' +
+            (i.state === 'open' ? '<button class="btn btn-ghost" data-act="incMute:' + i.id + '">' + ic('pause', 15) + ' השתק 24 שעות</button>' : '')
+          : '<button class="btn btn-ghost" data-act="incClaude:' + i.id + '">' + ic('bot', 16) + ' פתח בקלוד</button><button class="btn btn-ghost" data-act="incReopen:' + i.id + '">' + ic('undo', 15) + ' פתיחה מחדש</button>') + '</div></div>';
+    }
+    function table(list) {
+      return '<div class="card"><div class="card-head">' + ic('hist', 18) + '<h3>היסטוריה, 30 יום</h3></div><div class="tbl-wrap flat"><table class="responsive"><thead><tr><th>#</th><th>תאריך</th><th>רכיב</th><th>תקלה</th><th>חומרה</th><th>מצב</th><th>איך נפתר</th><th>משך</th><th>מי</th></tr></thead><tbody>' +
+        (list.length ? list.map((i) => '<tr data-act="incOpen:' + i.id + '"><td data-l="#">' + i.id + '</td><td data-l="תאריך">' + dt(i.opened_at) + '</td><td data-l="רכיב">' + esc(KN[i.kind] || i.kind) + '</td><td data-l="תקלה"><b>' + esc(i.title) + '</b></td><td data-l="חומרה">' + sevBadge(i.severity) + '</td><td data-l="מצב">' + stBadge(i.state) + '</td><td data-l="איך נפתר">' + esc(lastLog(i)) + '</td><td data-l="משך">' + dur(i.opened_at, i.closed_at) + '</td><td data-l="מי">' + esc(i.closed_by || '-') + '</td></tr>').join('') : '<tr><td colspan="9" class="t-sub">אין תקלות בתקופה.</td></tr>') + '</tbody></table></div></div>';
+    }
+    const findInc = (id) => [...INC.open, ...INC.history].find((i) => String(i.id) === String(id));
+    ACT.incTab = (t) => { INC.tab = t; render(); };
+    ACT.incOpen = (id) => { const i = findInc(id); if (!i) return; INC.tab = i.state === 'open' ? 'open' : 'all'; render(); setTimeout(() => { const el = $('#inc' + id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 80); };
+    ACT.incRun = async () => {
+      INC.busy.run = true; render();
+      try { const r = await post(API, { action: 'admin.monitor.run', payload: {} }, 120000); const d = (r.result && r.result.down) || [], ok = r.result && r.result.ok; toast(ok ? 'הבדיקה עברה' : 'הבדיקה מצאה תקלה', ok ? 'כל הרכיבים עונים.' : (d.length ? d.map((k) => KN[k] || k).join(', ') : 'הפרטים במסך.')); }
+      catch (e) { toast('הבדיקה לא רצה', 'נסו שוב בעוד רגע.', 'err'); }
+      INC.busy.run = false; await load(true);
+    };
+    ACT.incFix = async (id) => {
+      const i = findInc(id); if (!i || INC.busy[id]) return;
+      INC.busy[id] = true; render();
+      try {
+        const r = await post(API, { action: 'admin.incident.fix', payload: { id: +id } }, 295000);
+        toast(r.fixed ? 'התקלה תוקנה ונסגרה' : 'התיקון רץ, התקלה עדיין פתוחה', (r.log || []).map((l) => l.text).join(' · ').slice(0, 160), r.fixed ? undefined : 'err');
+      } catch (e) { toast('התיקון לא רץ', 'נסו שוב, או פתחו בקלוד.', 'err'); }
+      delete INC.busy[id]; await load(true);
+    };
+    ACT.incResolve = (id) => { const i = findInc(id); if (!i) return;
+      confirmModal({ title: 'לסמן כטופל?', body: esc(i.title) + '. התקלה תעבור להיסטוריה ותירשם מי סגר אותה.', ok: 'סמן טופל', tone: 'ok', icon: 'checkc', extra: '<div class="field" style="margin-top:12px"><textarea id="incNote" rows="2" placeholder="מה נעשה (לא חובה)"></textarea></div>',
+        onOk: async () => { const note = ($('#incNote') && $('#incNote').value.trim()) || ''; try { await call('admin.incident.set', { id: +id, op: 'resolve', note }); toast('סומן כטופל', i.title); } catch (e) { toast('לא נשמר', 'נסו שוב.', 'err'); } load(true); } });
+    };
+    ACT.incMute = async (id) => { const i = findInc(id); if (!i) return; try { await call('admin.incident.set', { id: +id, op: 'mute', hours: 24 }); toast('הושתק ל-24 שעות', i.title); } catch (e) { toast('לא נשמר', 'נסו שוב.', 'err'); } load(true); };
+    ACT.incReopen = async (id) => { try { await call('admin.incident.set', { id: +id, op: 'reopen' }); toast('נפתח מחדש', ''); } catch (e) { toast('לא נשמר', 'נסו שוב.', 'err'); } load(true); };
+    const claudeMsg = (i) => {
+      const d = i.detail || {}, log = (i.fix_log || []).slice(-5);
+      return 'תקלה #' + i.id + ' ב-PrimeOS, ' + (SEV[i.severity] || SEV.mid)[1] + '.\nרכיב: ' + (KN[i.kind] || i.kind) + '. התחיל ' + dt(i.opened_at) + '.\n' +
+        (i.kind === 'security' ? 'סוג: ' + (SEC_T[d.type] || d.type || '') + '. לקוחות שנפגעו: ' + (SEC_A[d.affected] || d.affected || '') + '. אירוע חמור: ' + (d.severe ? 'כן' : 'לא') + '.\nפירוט: ' + (d.note || '') : 'מה נבדק: ' + (d.checked || '') + '\nממצא: ' + (d.note || '') + '\nסיבה משוערת: ' + (d.cause || '')) +
+        (log.length ? '\nמה כבר נעשה:\n' + log.map((l) => '- ' + dt(l.at) + ' ' + (l.ok ? '✔' : '✖') + ' ' + l.text).join('\n') : '') +
+        '\nמה אני צריך: אבחון והצעת תיקון. הקוד ב-GitHub simplesolutions05055-blip/-AI-, לוגים ב-Supabase Edge Functions.';
+    };
+    ACT.incClaude = (id) => { const i = findInc(id); if (!i) return; const m = claudeMsg(i);
+      openModal('<div class="mb"><div class="m-ic warn">' + ic('bot', 20) + '</div><h3>פתיחה בקלוד</h3><p>ההודעה מוכנה עם פרטי התקלה. להעתיק ולהדביק בשיחה, או לפתוח שיחה חדשה עם ההודעה.</p><div class="field" style="margin-top:12px"><textarea id="incMsg" rows="9" readonly>' + esc(m) + '</textarea></div></div>' +
+        '<div class="modal-foot"><button class="btn btn-primary" data-act="incCopy">' + ic('copy', 15) + ' העתק הודעה</button><a class="btn" href="https://claude.ai/new?q=' + encodeURIComponent(m) + '" target="_blank" rel="noopener">' + ic('link', 15) + ' פתח בקלוד</a><button class="btn" data-act="closeModal">סגור</button></div>');
+    };
+    ACT.incCopy = () => { const t = $('#incMsg'); if (!t) return; const done = () => toast('ההודעה הועתקה', 'להדביק בשיחה עם קלוד.'); try { navigator.clipboard.writeText(t.value).then(done, () => { t.select(); document.execCommand && document.execCommand('copy'); done(); }); } catch (e) { t.select(); done(); } };
+    ACT.incSec = () => {
+      openModal('<div class="mb"><div class="m-ic bad">' + ic('shield', 20) + '</div><h3>דיווח אירוע אבטחה</h3><p>לתיעוד לפי תקנות אבטחת מידע. השעון של 24 השעות להודעה ללקוח מתחיל מרגע השמירה.</p>' +
+        '<div class="form-grid" style="margin-top:14px"><div class="field full"><label for="secT">מה קרה, במשפט</label><input type="text" id="secT" maxlength="160"></div>' +
+        '<div class="field"><label for="secK">סוג</label><select id="secK">' + Object.entries(SEC_T).map(([k, v]) => '<option value="' + k + '">' + v + '</option>').join('') + '</select></div>' +
+        '<div class="field"><label for="secA">לקוחות שנפגעו</label><select id="secA">' + Object.entries(SEC_A).map(([k, v]) => '<option value="' + k + '">' + v + '</option>').join('') + '</select></div>' +
+        '<div class="field full"><label for="secD">מה התגלה, איך, מה נעשה עד עכשיו</label><textarea id="secD" rows="4"></textarea></div>' +
+        '<div class="field full"><label style="display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" id="secS"> אירוע חמור (נדרש דיווח לרשות להגנת הפרטיות)</label></div></div></div>' +
+        '<div class="modal-foot"><button class="btn btn-quiet-bad" data-act="incSecSave">שמור אירוע</button><button class="btn" data-act="closeModal">ביטול</button></div>');
+      $('#modalBox').classList.add('wide');
+    };
+    ACT.incSecSave = async () => {
+      const title = ($('#secT').value || '').trim(); if (!title) { toast('חסר תיאור', 'כתבו במשפט מה קרה.', 'err'); return; }
+      try { await call('admin.incident.create', { title, type: $('#secK').value, affected: $('#secA').value, detail: ($('#secD').value || '').trim(), severe: $('#secS').checked }); closeModal(); toast('האירוע נרשם', 'השעון של 24 השעות להודעה ללקוח התחיל.'); INC.tab = 'open'; load(true); }
+      catch (e) { toast('לא נשמר', 'נסו שוב.', 'err'); }
+    };
+    // the console menu: after the support meetings, before the money screens
+    const i = ADMIN_NAV.indexOf('a_meet');
+    if (!ADMIN_NAV.includes('a_incidents')) ADMIN_NAV.splice(i >= 0 ? i + 1 : ADMIN_NAV.length, 0, 'a_incidents');
+    // the nav badge needs the open count from the first admin load
+    const _bn = buildNav;
+    buildNav = function () { _bn.apply(this, arguments); if (S.mode === 'admin' && !INC.at && !INC.loading) load(true); };
+  })();
+
   /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */
   (function () {
     const KEY = 'pos_a11y';
