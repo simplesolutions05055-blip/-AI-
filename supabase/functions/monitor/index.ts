@@ -22,19 +22,22 @@ async function timed<T>(ms: number, f: (signal: AbortSignal) => Promise<T>): Pro
   try { return await f(c.signal); } finally { clearTimeout(t); }
 }
 
-type Check = { ok: boolean; ms?: number; note?: string };
+type Check = { ok: boolean; warn?: boolean; ms?: number; note?: string };
+// plan limits the usage checks are measured against (Pro plan: 100GB storage; Micro compute: 8GB disk)
+const STORAGE_LIMIT_GB = 100, DISK_LIMIT_GB = 8;
+const mb = (b: number) => (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + 'MB';
 // what the console says about each check: the words for the incident card and what "fix" would do
-const SEV: Record<string, string> = { site: 'crit', api: 'crit', wa: 'crit', jobs: 'high', stuck: 'mid', storage: 'high', backup: 'mid', tenant: 'crit' };
-const CHK: Record<string, string> = { site: 'הדף הראשי לא ענה או לא החזיר את האפליקציה ב-2 בדיקות רצופות', api: 'פעולת health של v2-api נכשלה או שבסיס הנתונים איטי ב-2 בדיקות רצופות', jobs: '5 עבודות יצירה או יותר נכשלו בשעה האחרונה', stuck: '3 עבודות או יותר בסטטוס ריצה בלי התקדמות מעל 10 דקות', wa: '5 שליחות WhatsApp או יותר נכשלו בשעה האחרונה', storage: 'רשימת ה-buckets של האחסון לא נענתה', backup: 'הגיבוי השבועי נכשל', tenant: 'בדיקת ההפרדה בין לקוחות נכשלה' };
-const CAUSE: Record<string, string> = { site: 'תקלה ב-Vercel או פריסה שנכשלה', api: 'פונקציה שנפלה, או עומס על בסיס הנתונים', jobs: 'ספק AI לא זמין, או שינוי בקוד שגרם לשגיאות', stuck: 'ריצה שנקטעה באמצע והשאירה נעילות', wa: 'SmartSend לא זמין, או מספר שנחסם', storage: 'תקלה ב-Supabase Storage', backup: 'הפונקציה נכשלה באמצע או bucket הגיבוי לא נגיש', tenant: 'שינוי בקוד שפגע בבידוד; לטפל מיד' };
-const FIX: Record<string, string> = { site: 'בדיקה חוזרת של האתר וה-API', api: 'בדיקה חוזרת של ה-API ובסיס הנתונים', jobs: 'החזרת העבודות שנכשלו בשעה האחרונה לתור עם ניסיון חוזר', stuck: 'שחרור הנעילות והרצת התור', wa: 'הרצת התור ובדיקה חוזרת של שליחות', storage: 'בדיקה חוזרת של האחסון', backup: 'הרצת הגיבוי מחדש', tenant: 'הרצת בדיקת ההפרדה מחדש' };
+const SEV: Record<string, string> = { site: 'crit', api: 'crit', wa: 'crit', jobs: 'high', stuck: 'mid', storage: 'high', backup: 'mid', tenant: 'crit', storage_use: 'high', db_size: 'high', credits: 'high' };
+const CHK: Record<string, string> = { site: 'הדף הראשי לא ענה או לא החזיר את האפליקציה ב-2 בדיקות רצופות', api: 'פעולת health של v2-api נכשלה או שבסיס הנתונים איטי ב-2 בדיקות רצופות', jobs: '5 עבודות יצירה או יותר נכשלו בשעה האחרונה', stuck: '3 עבודות או יותר בסטטוס ריצה בלי התקדמות מעל 10 דקות', wa: '5 שליחות WhatsApp או יותר נכשלו בשעה האחרונה', storage: 'רשימת ה-buckets של האחסון לא נענתה', backup: 'הגיבוי השבועי נכשל', tenant: 'בדיקת ההפרדה בין לקוחות נכשלה', storage_use: 'האחסון עבר 95% ממכסת התוכנית (100GB)', db_size: 'בסיס הנתונים עבר 95% מהדיסק (8GB)', credits: 'שימוש ה-AI היום גדול פי 3 מהממוצע היומי של השבוע' };
+const CAUSE: Record<string, string> = { site: 'תקלה ב-Vercel או פריסה שנכשלה', api: 'פונקציה שנפלה, או עומס על בסיס הנתונים', jobs: 'ספק AI לא זמין, או שינוי בקוד שגרם לשגיאות', stuck: 'ריצה שנקטעה באמצע והשאירה נעילות', wa: 'SmartSend לא זמין, או מספר שנחסם', storage: 'תקלה ב-Supabase Storage', backup: 'הפונקציה נכשלה באמצע או bucket הגיבוי לא נגיש', tenant: 'שינוי בקוד שפגע בבידוד; לטפל מיד', storage_use: 'קבצי גלם וסרטונים שלא נמחקו, או לקוח גדול חדש', db_size: 'טבלאות לוג שגדלות (v2_wa_raw, v2_usage, v2_audit) או גיבויים', credits: 'לולאה שחוזרת על עצמה, או לקוח שמריץ המון יצירות' };
+const FIX: Record<string, string> = { site: 'בדיקה חוזרת של האתר וה-API', api: 'בדיקה חוזרת של ה-API ובסיס הנתונים', jobs: 'החזרת העבודות שנכשלו בשעה האחרונה לתור עם ניסיון חוזר', stuck: 'שחרור הנעילות והרצת התור', wa: 'הרצת התור ובדיקה חוזרת של שליחות', storage: 'בדיקה חוזרת של האחסון', backup: 'הרצת הגיבוי מחדש', tenant: 'הרצת בדיקת ההפרדה מחדש', storage_use: 'אין תיקון אוטומטי: להגדיל את מכסת האחסון ב-Supabase או למחוק קבצי גלם ישנים', db_size: 'אין תיקון אוטומטי: להגדיל דיסק ב-Supabase או לנקות טבלאות לוג', credits: 'אין תיקון אוטומטי: לבדוק בהוצאות ושימוש איזה לקוח ואיזה משתמש' };
 // one open incident per kind; a repeat only adds the latest note
 async function incident(d: DB, kind: string, note: string) {
   const { data: open } = await d.from('v2_incidents').select('id,detail').eq('kind', kind).eq('state', 'open').limit(1);
   if ((open ?? []).length) { await d.from('v2_incidents').update({ detail: { ...(open![0].detail ?? {}), note } }).eq('id', open![0].id); return; }
   await d.from('v2_incidents').insert({ kind, severity: SEV[kind] ?? 'mid', title: HE[kind] ?? kind, detail: { checked: CHK[kind] ?? '', note, cause: CAUSE[kind] ?? '', fix: FIX[kind] ?? '' } });
 }
-const HE: Record<string, string> = { site: 'האתר app.primeos.co.il', api: 'השרת (v2-api) ובסיס הנתונים', jobs: 'עבודות יצירה שנכשלו', stuck: 'עבודות יצירה תקועות', wa: 'שליחות WhatsApp שנכשלו', storage: 'אחסון הקבצים', backup: 'הגיבוי השבועי', tenant: 'ההפרדה בין לקוחות' };
+const HE: Record<string, string> = { site: 'האתר app.primeos.co.il', api: 'השרת (v2-api) ובסיס הנתונים', jobs: 'עבודות יצירה שנכשלו', stuck: 'עבודות יצירה תקועות', wa: 'שליחות WhatsApp שנכשלו', storage: 'אחסון הקבצים', backup: 'הגיבוי השבועי', tenant: 'ההפרדה בין לקוחות', storage_use: 'מכסת האחסון', db_size: 'גודל בסיס הנתונים', credits: 'שימוש AI חריג' };
 
 async function checks(d: DB): Promise<Record<string, Check>> {
   const out: Record<string, Check> = {};
@@ -74,6 +77,35 @@ async function checks(d: DB): Promise<Record<string, Check>> {
     const r = await timed(10000, (signal) => fetch(`${SUPA}/storage/v1/bucket`, { signal, headers: { apikey: env('SUPABASE_SERVICE_ROLE_KEY'), authorization: 'Bearer ' + env('SUPABASE_SERVICE_ROLE_KEY') } }));
     out.storage = { ok: r.ok, ms: Date.now() - t0, note: r.ok ? undefined : 'http_' + r.status };
   } catch (e) { out.storage = { ok: false, note: e instanceof Error ? e.message : String(e) }; }
+  // 7. storage against the plan quota: a warning at 80%, an incident at 95%
+  try {
+    const { data: b, error } = await d.rpc('v2_storage_bytes'); if (error) throw error;
+    const pct = (Number(b ?? 0) / (STORAGE_LIMIT_GB * 1073741824)) * 100;
+    out.storage_use = { ok: pct < 95, warn: pct >= 80 && pct < 95, note: `${mb(Number(b ?? 0))} / ${STORAGE_LIMIT_GB}GB · ${pct.toFixed(pct < 1 ? 2 : 0)}%` + (pct >= 80 && pct < 95 ? ' · אזהרה' : '') };
+  } catch (e) { out.storage_use = { ok: true, note: 'לא נמדד: ' + (e instanceof Error ? e.message : String(e)) }; }
+  // 8. database size against the disk
+  try {
+    const { data: b, error } = await d.rpc('v2_db_bytes'); if (error) throw error;
+    const pct = (Number(b ?? 0) / (DISK_LIMIT_GB * 1073741824)) * 100;
+    out.db_size = { ok: pct < 95, warn: pct >= 80 && pct < 95, note: `${mb(Number(b ?? 0))} / ${DISK_LIMIT_GB}GB · ${pct.toFixed(pct < 1 ? 2 : 0)}%` + (pct >= 80 && pct < 95 ? ' · אזהרה' : '') };
+  } catch (e) { out.db_size = { ok: true, note: 'לא נמדד: ' + (e instanceof Error ? e.message : String(e)) }; }
+  // 9. AI spend runaway: today's usage units against the 7-day daily average (provider balances have no API; disk IO and
+  //    compute need the management API and are read in the Supabase dashboard)
+  try {
+    const since = new Date(Date.now() - 8 * 86400000).toISOString();
+    const { data: rows } = await d.from('v2_usage').select('cin,cout,img_low,img_med,img_high,tts_chars,music_sec,stock,render_sec,created_at').gte('created_at', since);
+    // rough USD units: Sonnet $2/$10 per M tokens, images 0.02/0.05/0.2, TTS 0.17/1k chars, music 0.15/min, stock 0.01, render 0.03/min
+    const usd = (r: any) => (r.cin ?? 0) * 2e-6 + (r.cout ?? 0) * 1e-5 + (r.img_low ?? 0) * 0.02 + (r.img_med ?? 0) * 0.05 + (r.img_high ?? 0) * 0.2 + (r.tts_chars ?? 0) * 0.00017 + (r.music_sec ?? 0) * 0.0025 + (r.stock ?? 0) * 0.01 + (r.render_sec ?? 0) * 0.0005;
+    const day = (t: string) => t.slice(0, 10);
+    const today = day(new Date().toISOString());
+    const byDay: Record<string, number> = {};
+    for (const r of rows ?? []) byDay[day(r.created_at)] = (byDay[day(r.created_at)] ?? 0) + usd(r);
+    const past = Object.entries(byDay).filter(([k]) => k !== today).map(([, v]) => v);
+    const avg = past.length ? past.reduce((a, b) => a + b, 0) / 7 : 0;
+    const cur = byDay[today] ?? 0;
+    const runaway = cur > 20 && avg > 0 && cur > 3 * avg;
+    out.credits = { ok: !runaway, warn: !runaway && cur > 20 && avg > 0 && cur > 2 * avg, note: `היום $${cur.toFixed(2)} · ממוצע יומי $${avg.toFixed(2)}` + (!runaway && cur > 2 * avg && cur > 20 ? ' · אזהרה' : '') };
+  } catch (e) { out.credits = { ok: true, note: 'לא נמדד: ' + (e instanceof Error ? e.message : String(e)) }; }
   return out;
 }
 
@@ -275,7 +307,7 @@ Deno.serve(async (req) => {
     const s = (st?.data ?? {}) as any;
     const ok = s.res ? Object.values(s.res as Record<string, Check>).every((c) => c.ok) : false;
     const fresh = s.at ? Date.now() - new Date(s.at).getTime() < 15 * 60000 : false;
-    return json({ ok: ok && fresh, at: s.at ?? null, checks: Object.fromEntries(Object.entries((s.res ?? {}) as Record<string, Check>).map(([k, c]) => [k, { ok: c.ok, ms: c.ms ?? null }])), backup: s.backup?.day ?? null }, ok && fresh ? 200 : 503);
+    return json({ ok: ok && fresh, at: s.at ?? null, checks: Object.fromEntries(Object.entries((s.res ?? {}) as Record<string, Check>).map(([k, c]) => [k, { ok: c.ok, warn: !!c.warn, ms: c.ms ?? null }])), backup: s.backup?.day ?? null }, ok && fresh ? 200 : 503);
   }
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
   const given = req.headers.get('x-tick') ?? '';
