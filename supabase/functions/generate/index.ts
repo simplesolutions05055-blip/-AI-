@@ -105,11 +105,19 @@ async function claudeObj(key: string, system: string, user: string, maxTokens = 
 
 // uploaded files become Claude context: images and PDFs natively, Word / PowerPoint / text as extracted text
 const xmlText = (x: string) => x.replace(/<\/a:p>|<\/w:p>/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/\n{3,}/g, '\n\n').trim();
+// a private document (`pv:doc/<org>/<file>`) is opened only for its own organisation, through a short signed link
+async function pvUrl(u: string): Promise<string> {
+  if (!u.startsWith('pv:doc/')) return u;
+  const path = u.slice(3);
+  if (!CUR.org || path.split('/')[1] !== CUR.org) return '';
+  const r = await db().storage.from('v2-private').createSignedUrl(path, 600);
+  return r.error ? '' : String(r.data?.signedUrl ?? '');
+}
 async function fileBlocks(files: any[]): Promise<unknown[]> {
   const out: unknown[] = [];
   for (const f of (files ?? []).slice(0, 6)) {
-    const url = String(f?.url ?? '');
-    if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(url)) continue;
+    const url = await pvUrl(String(f?.url ?? ''));
+    if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/(public|sign)\//.test(url)) continue;
     const ext = (String(f.name ?? url).split('.').pop() ?? '').toLowerCase();
     const name = String(f.name ?? 'קובץ');
     try {

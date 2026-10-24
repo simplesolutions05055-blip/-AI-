@@ -611,10 +611,10 @@ async function adminOrgDelete(d: DB, p: Record<string, any>) {
   const { error } = await d.from('organizations').delete().eq('id', id);
   if (error) throw error;
   // the organisation's files
-  for (const prefix of ['ai/' + id, 'up/' + id, 'out/' + id]) {
-    const { data: files } = await d.storage.from('v2-content').list(prefix, { limit: 1000 });
+  for (const [bucket, prefix] of [['v2-content', 'ai/' + id], ['v2-content', 'up/' + id], ['v2-content', 'out/' + id], ['v2-content', 'vid/' + id], ['v2-private', 'doc/' + id]]) {
+    const { data: files } = await d.storage.from(bucket).list(prefix, { limit: 1000 });
     const names = (files ?? []).map((f: any) => prefix + '/' + f.name);
-    if (names.length) await d.storage.from('v2-content').remove(names);
+    if (names.length) await d.storage.from(bucket).remove(names);
   }
   return { ok: true, removed: dbids.length };
 }
@@ -925,13 +925,37 @@ function loginHtml(p: { name: string; org: string; login: string }) {
 
 // files people upload (brand assets, photos, videos, documents): signed direct upload to storage
 const EXT_OK = /^(png|jpe?g|webp|gif|svg|heic|mp4|mov|webm|m4v|pdf|docx?|pptx?|xlsx?|txt|csv|key)$/;
+// kind 'doc': an internal document (brand guide, work plan, source file for a doc or deck). It goes to the private
+// bucket and is referred to as `pv:doc/<org>/<file>`; the app and the generator exchange that for a one-hour signed link.
+const DOC_EXT = /^(pdf|docx?|pptx?|xlsx?|txt|csv)$/;
 async function uploadSign(d: any, s: any, p: Record<string, any>) {
   const ext = String(p.name ?? '').split('.').pop()!.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (!EXT_OK.test(ext)) throw new Error('file_type_not_allowed');
-  const path = `up/${s.orgId ?? 'admin'}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  const org = s.orgId ?? 'admin';
+  if (p.kind === 'doc' && DOC_EXT.test(ext)) {
+    const path = `doc/${org}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+    const r = await d.storage.from('v2-private').createSignedUploadUrl(path);
+    if (r.error) throw r.error;
+    return { ok: true, upload: r.data.signedUrl, url: 'pv:' + path, path, ext, private: true };
+  }
+  const path = `up/${org}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
   const r = await d.storage.from('v2-content').createSignedUploadUrl(path);
   if (r.error) throw r.error;
   return { ok: true, upload: r.data.signedUrl, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, path, ext };
+}
+
+// private documents: signed links for one hour, only for the caller's own organisation (an admin may open any)
+async function fileSign(d: any, s: any, p: Record<string, any>) {
+  const urls: Record<string, string> = {};
+  const list = (Array.isArray(p.urls) ? p.urls : []).map(String).filter((u) => u.startsWith('pv:doc/')).slice(0, 40);
+  for (const u of list) {
+    const path = u.slice(3);
+    const owner = path.split('/')[1] ?? '';
+    if (s.kind !== 'admin' && owner !== s.orgId) continue;
+    const r = await d.storage.from('v2-private').createSignedUrl(path, 3600);
+    if (!r.error && r.data?.signedUrl) urls[u] = r.data.signedUrl;
+  }
+  return { ok: true, urls };
 }
 
 Deno.serve(async (req) => {
@@ -976,6 +1000,7 @@ Deno.serve(async (req) => {
     // the admin console has no server-side users: every admin call needs a browser session
     if (s.kind === 'admin' && !s.session) return json(req, { error: 'session_required' }, 401);
     if (action === 'upload.sign') return json(req, await uploadSign(d, s, p));
+    if (action === 'file.sign') return json(req, await fileSign(d, s, p));
 
     if (s.kind === 'client') {
       if (action === 'live.load') return json(req, await liveLoad(d, s.orgId, s.memberId, typeof p.since === 'string' ? p.since : ''));

@@ -1828,9 +1828,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   const MAXB_VIDEO = 300 * 1024 * 1024;
   const isClip = (n) => /\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/i.test(n || '');
   const isRawPhoto = (n) => /\.(heic|heif|avif|tiff?|bmp)$/i.test(n || '');
-  async function uploadFile(f) {
+  // kind 'doc': an internal document (brand guide, work plan, source file) is kept in the private bucket; the
+  // server hands back `pv:` instead of a public link, and openPv() exchanges it for a one-hour signed link on demand
+  async function uploadFile(f, kind) {
     if (f.size > (isClip(f.name) ? MAXB_VIDEO : MAXB)) throw new Error('too_big');
-    const s = await call('upload.sign', { name: f.name });
+    const s = await call('upload.sign', { name: f.name, kind: kind || undefined });
     const r = await fetch(s.upload, { method: 'PUT', headers: { 'content-type': f.type || 'application/octet-stream', 'x-upsert': 'true' }, body: f });
     if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(r.status === 413 || /EntityTooLarge|too large/i.test(t) ? 'too_big_server' : 'upload_failed'); }
     let out = { url: s.url, name: f.name, ext: s.ext, type: f.type, size: f.size };
@@ -1844,13 +1846,19 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     }
     return out;
   }
-  async function uploadPicked(accept, multiple) {
+  const isPv = (u) => typeof u === 'string' && u.startsWith('pv:');
+  async function openPv(u) {
+    try { const r = await call('file.sign', { urls: [u] }); const su = r && r.urls && r.urls[u]; if (!su) throw new Error('no_link'); window.open(su, '_blank', 'noopener'); }
+    catch (e) { toast('לא ניתן לפתוח את הקובץ', 'נסו שוב בעוד רגע.', 'err'); }
+  }
+  ACT.openPv = (u) => openPv(u);
+  async function uploadPicked(accept, multiple, kind) {
     const fs = await pickFiles(accept, multiple);
     if (!fs.length) return [];
     toast('מעלה ' + (fs.length > 1 ? fs.length + ' קבצים' : 'את הקובץ') + '...', fs.map((f) => f.name).join(', '));
     const out = [];
     for (const f of fs) {
-      try { out.push(await uploadFile(f)); }
+      try { out.push(await uploadFile(f, kind)); }
       catch (e) { toast('ההעלאה נכשלה', f.name + (e.message === 'too_big' ? (isClip(f.name) ? ' גדול מ-300MB.' : ' גדול מ-50MB.') : e.message === 'too_big_server' ? ' גדול ממגבלת האחסון.' : e.message === 'file_type_not_allowed' ? ': סוג קובץ שלא נתמך.' : e.message === 'photo_format' ? ': לא הצלחתי להמיר את התמונה. שמרו אותה כ-JPG ונסו שוב.' : '. נסו שוב.'), 'err'); }
     }
     return out;
@@ -1873,7 +1881,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     _brandMount && _brandMount.call(this);
     const b = S.brandEdit ? S.brandDraft : BRAND;
     $$('.logo-card').forEach((c, i) => { const l = b.logos[i]; if (l && l.url) { const box = c.querySelector('.lc-img'); if (box) { box.classList.add('has-logo'); box.innerHTML = '<img src="' + esc(l.url) + '" alt="' + esc(l.n) + '">'; } } });
-    if (!S.brandEdit && (S.tab.brand || 'logos') === 'docs') $$('table tbody tr').forEach((tr, i) => { const d = b.docs[i]; const btn = tr.querySelector('[data-act^="toastInfo"]'); if (d && d.url && btn) { const a = document.createElement('a'); a.className = 'btn btn-sm'; a.href = d.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'צפייה'; btn.replaceWith(a); } });
+    if (!S.brandEdit && (S.tab.brand || 'logos') === 'docs') $$('table tbody tr').forEach((tr, i) => { const d = b.docs[i]; const btn = tr.querySelector('[data-act^="toastInfo"]'); if (d && d.url && btn) { if (isPv(d.url)) { const b2 = document.createElement('button'); b2.className = 'btn btn-sm'; b2.textContent = 'צפייה'; b2.addEventListener('click', () => openPv(d.url)); btn.replaceWith(b2); } else { const a = document.createElement('a'); a.className = 'btn btn-sm'; a.href = d.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'צפייה'; btn.replaceWith(a); } } });
   };
   ACT.bAddLogo = async () => {
     const [f] = await uploadPicked('image/png,image/svg+xml,image/jpeg,image/webp');
@@ -1904,7 +1912,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     } catch (e) { aiFail(e); }
   }
   ACT.bAddDoc = async () => {
-    const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,.xlsx,image/*', true);
+    const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,.xlsx,image/*', true, 'doc');
     if (!fs.length) return;
     if (!S.brandEdit) ACT.brandEdit();
     const by = curUser().n, dt = new Date().toLocaleDateString('he-IL');
@@ -1915,7 +1923,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   const DQ = {};
   ACT.docqAdd = async () => {
     const q = DOCQ[S.docq.step];
-    const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,.xlsx,image/*', true);
+    const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,.xlsx,image/*', true, 'doc');
     if (!fs.length) return;
     fs.forEach((f) => { S.docq.files[q.k].push(f.name); DQ[f.name] = f; });
     $('#modalBox').innerHTML = docqHtml();
@@ -1950,7 +1958,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     // create wizard: material for the AI (photos are used in the design, documents are read by Claude)
     if (S.route === 'wizard' && S.wiz && S.wiz.step === 0) {
       collectWiz();
-      const fs = await uploadPicked('image/*,video/*,.pdf,.docx,.pptx,.txt,.csv', true);
+      const fs = await uploadPicked('image/*,video/*,.pdf,.docx,.pptx,.txt,.csv', true, 'doc');
       if (!fs.length || !S.wiz) return;
       S.wiz.brief.files = [...(S.wiz.brief.files || []), ...fs];
       render();
@@ -2006,7 +2014,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   /* ---- documents and decks from an uploaded file: Claude reads it ---- */
   ACT.dwFile = async () => {
     dwCollect();
-    const [f] = await uploadPicked('.pdf,.docx,.txt,.pptx');
+    const [f] = await uploadPicked('.pdf,.docx,.txt,.pptx', false, 'doc');
     if (!f || !S.dw) return;
     S.dw.file = { k: extOf(f.name), n: f.name, url: f.url };
     render();
@@ -2014,7 +2022,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   };
   ACT.dkFile = async () => {
     dkCollect();
-    const [f] = await uploadPicked('.pptx,.pdf,.docx');
+    const [f] = await uploadPicked('.pptx,.pdf,.docx', false, 'doc');
     if (!f || !S.dk) return;
     S.dk.file = { k: extOf(f.name), n: f.name, sub: '', url: f.url };
     render();
@@ -2716,7 +2724,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     return h.replace(/<div class="up-row">[\s\S]*?<\/button><\/div>(?=<textarea id="bBrief")/, up).replace(/<div class="file-chip">[\s\S]*?<\/button><\/div>(?=<textarea id="bBrief")/, up)
       .replace('<span>טקסט + גרפיקה לכל תוכן</span>', '<span>טקסט ב-Claude, גרפיקה ב-ChatGPT</span>');
   };
-  ACT.bUpload = async () => { const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,image/*', true); if (!fs.length) return; S.bulk.files = [...(S.bulk.files || []), ...fs]; render(); };
+  ACT.bUpload = async () => { const fs = await uploadPicked('.pdf,.docx,.pptx,.txt,.csv,image/*', true, 'doc'); if (!fs.length) return; S.bulk.files = [...(S.bulk.files || []), ...fs]; render(); };
   ACT.bFileX2 = (i) => { (S.bulk.files || []).splice(+i, 1); render(); };
   // generation: texts first (Claude, in batches), then the graphics fill in one by one
   const GQ = { list: [], run: 0, max: 2 };
