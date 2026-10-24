@@ -14,13 +14,19 @@ const UP_PREFIX = `${SUPA_URL}/storage/v1/object/upload/sign/v2-content/`;
 const PUB_PREFIX = `${SUPA_URL}/storage/v1/object/public/v2-content/`;
 const json = (b: unknown, s = 200) => Response.json(b, { status: s, headers: { 'cache-control': 'no-store' } });
 
-async function whoami(token: string) {
+async function api(token: string, action: string, payload: unknown = {}) {
   const r = await fetch(`${SUPA_URL}/functions/v1/v2-api`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', apikey: SUPA_ANON, authorization: `Bearer ${SUPA_ANON}`, 'x-primeos-token': token },
-    body: JSON.stringify({ action: 'whoami' }),
+    body: JSON.stringify({ action, payload }),
   });
-  return r.ok ? ((await r.json()) as { kind: string }).kind : null;
+  return r.ok ? await r.json() : null;
+}
+async function whoami(token: string) { const j = (await api(token, 'whoami')) as { kind: string } | null; return j?.kind ?? null; }
+// the video seconds of the subscription: taken once per output slot (a restart of the same slot is free)
+async function quotaTake(token: string, kind: string, qty: number, ref: string) {
+  if (kind === 'admin') return null;
+  return (await api(token, 'quota.take', { kind: 'vsec', qty, src: 'web', ref })) as { ok?: boolean; error?: string; used?: number; limit?: number; left?: number; reset?: string } | null;
 }
 
 // media the sandbox may fetch: our storage and the stock/AI providers the director uses
@@ -76,10 +82,13 @@ export function cleanPlan(p: any) {
 const okUpload = (u: unknown): u is string => typeof u === 'string' && u.startsWith(UP_PREFIX) && u.length < 2000;
 const okUrl = (u: unknown): u is string => typeof u === 'string' && u.startsWith(PUB_PREFIX) && u.length < 600 && !/[\s'"]/.test(u);
 
-async function start(body: any) {
+async function start(body: any, token: string, kind: string) {
   if (!okUpload(body.upload) || !okUrl(body.url)) return json({ error: 'bad_target' }, 400);
   let plan;
   try { plan = cleanPlan(body.plan); } catch { return json({ error: 'bad_plan' }, 400); }
+  const secs = Math.ceil(plan.scenes.reduce((a: number, s: any) => a + s.dur, 0) + (plan.outro?.dur ?? 0));
+  const q = await quotaTake(token, kind, secs, 'video:' + body.url.slice(PUB_PREFIX.length).slice(0, 100));
+  if (q && q.ok === false) return json({ error: 'quota', kind: 'vsec', used: q.used, limit: q.limit, left: q.left, reset: q.reset }, 402);
   const sandbox = await createSandbox({ resources: { vcpus: 8 } });
   try {
     // the library creates the bundle's sub folders but not the bundle root itself
@@ -134,11 +143,12 @@ export default {
   async fetch(req: Request): Promise<Response> {
     if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
     const token = req.headers.get('x-primeos-token')?.trim() ?? '';
-    if (!token || !(await whoami(token))) return json({ error: 'invalid_token' }, 401);
+    const kind = token ? await whoami(token) : null;
+    if (!kind) return json({ error: 'invalid_token' }, 401);
     let body: any;
     try { body = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
     try {
-      if (body.action === 'start') return await start(body);
+      if (body.action === 'start') return await start(body, token, kind);
       if (body.action === 'status') return await status(body);
       return json({ error: 'unknown_action' }, 400);
     } catch (e: any) {

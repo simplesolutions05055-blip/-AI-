@@ -72,13 +72,15 @@ async function liveLoad(d: DB, orgId: string, memberId: string | null, since = '
   try { await Promise.race([pubPoll(d, orgId), new Promise((r) => setTimeout(r, 4000))]); } catch (_) { /* never blocks loading */ }
   // a repeat load (the app polls every half minute) sends `since`: only what changed comes back, plus the ids that still exist
   const inc = /^\d{4}-\d{2}-\d{2}T/.test(since);
-  const [org, me, its, st, ids] = await Promise.all([
+  const [org, me, its, st, ids, quota, plans] = await Promise.all([
     d.from('organizations').select('id,name,plan,org_type,status,settings').eq('id', orgId).single(),
     memberId ? d.from('org_members').select('id,name,email,role,dept,view,perms').eq('id', memberId).maybeSingle() : Promise.resolve({ data: null }),
     inc ? d.from('content_items').select('id,meta,updated_at').eq('org_id', orgId).not('ui_id', 'is', null).gte('updated_at', since)
         : d.from('content_items').select('id,meta,updated_at').eq('org_id', orgId).not('ui_id', 'is', null),
     d.from('org_state').select('data,updated_at').eq('org_id', orgId).maybeSingle(),
     inc ? d.from('content_items').select('ui_id').eq('org_id', orgId).not('ui_id', 'is', null) : Promise.resolve({ data: null }),
+    d.rpc('v2_quota', { org: orgId }),
+    inc ? Promise.resolve([]) : planDefs(d),
   ]);
   if (!org.data) throw new Error('org_not_found');
   const stateAt = st.data?.updated_at ?? null;
@@ -95,6 +97,9 @@ async function liveLoad(d: DB, orgId: string, memberId: string | null, since = '
     stateAt,
     at: maxAt || new Date(Date.now() - 60000).toISOString(),
     members: await membersOf(d, orgId, isManager(me.data)),
+    // the subscription: limits, what this month used, add-on offers
+    quota: quota.data && !quota.data.error ? quota.data : null,
+    plans: inc ? undefined : plans,
   };
 }
 
@@ -548,13 +553,73 @@ async function inboxAdd(d: DB, orgId: string, p: { reqs?: any[]; meetings?: any[
 }
 
 // ---------------- admin ----------------
+// subscription plans and add-ons (name, monthly price before VAT, quantities); edited by the admin console
+async function planDefs(d: DB) {
+  const { data } = await d.from('v2_plan_defs').select('id,kind,name,price,quotas,sort').order('sort');
+  return data ?? [];
+}
+// the quota state of several organisations: limits, what this subscription month used, when it resets
+async function quotaStates(d: DB, ids: string[]) {
+  const out: Record<string, any> = {};
+  await Promise.all(ids.map(async (id) => { const { data } = await d.rpc('v2_quota', { org: id }); if (data && !data.error) out[id] = data; }));
+  return out;
+}
+const QKEYS = ['gfx', 'doc', 'slides', 'vsec', 'profiles', 'depts', 'members'];
+const cleanQuotas = (q: any) => Object.fromEntries(QKEYS.filter((k) => q && q[k] !== undefined && q[k] !== null && q[k] !== '').map((k) => [k, Math.max(0, Math.min(1000000, Math.round(+q[k] || 0)))]));
+// an admin changes a client's quotas, add-ons, billing day or the unlimited flag
+async function adminQuotaSet(d: DB, p: Record<string, any>) {
+  const id = String(p.org_id ?? '');
+  if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('bad_org');
+  const { data: o } = await d.from('organizations').select('quotas,addons').eq('id', id).maybeSingle();
+  if (!o) throw new Error('not_found');
+  const up: Record<string, unknown> = {};
+  if (p.quotas && typeof p.quotas === 'object') up.quotas = { ...(o.quotas ?? {}), ...cleanQuotas(p.quotas) };
+  if (p.addons && typeof p.addons === 'object') { const defs = await planDefs(d); up.addons = Object.fromEntries(defs.filter((x: any) => x.kind === 'addon').map((x: any) => [x.id, !!p.addons[x.id]])); }
+  if (typeof p.unlimited === 'boolean') up.quota_unlimited = p.unlimited;
+  if (p.billing_day !== undefined) up.billing_day = Math.max(1, Math.min(28, Math.round(+p.billing_day || 1)));
+  if (p.plan === 'basic' || p.plan === 'extended') {
+    up.plan = p.plan;
+    // a plan change without explicit quotas takes the quotas of the new plan
+    if (!up.quotas) { const defs = await planDefs(d); const pl = defs.find((x: any) => x.id === p.plan); if (pl) up.quotas = pl.quotas; }
+  }
+  if (!Object.keys(up).length) throw new Error('nothing_to_update');
+  const { error } = await d.from('organizations').update(up).eq('id', id);
+  if (error) throw error;
+  const { data: q } = await d.rpc('v2_quota', { org: id });
+  return { ok: true, quota: q };
+}
+// an admin edits the price or quantities of a plan or add-on
+async function adminPlanSave(d: DB, p: Record<string, any>) {
+  const id = String(p.id ?? '');
+  const { data: cur } = await d.from('v2_plan_defs').select('id').eq('id', id).maybeSingle();
+  if (!cur) throw new Error('not_found');
+  const up: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (typeof p.name === 'string' && p.name.trim()) up.name = p.name.trim().slice(0, 60);
+  if (p.price !== undefined) up.price = Math.max(0, Math.round(+p.price || 0));
+  if (p.quotas && typeof p.quotas === 'object') up.quotas = cleanQuotas(p.quotas);
+  const { error } = await d.from('v2_plan_defs').update(up).eq('id', id);
+  if (error) throw error;
+  return { ok: true, plans: await planDefs(d) };
+}
+// an output that counts against the quota: refused when the subscription month is used up
+const QUOTA_KIND = /^(gfx|doc|slides|vsec)$/;
+async function quotaTake(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const kind = String(p.kind ?? '');
+  if (!QUOTA_KIND.test(kind)) throw new Error('bad_kind');
+  const qty = Math.max(1, Math.min(100000, Math.round(+p.qty || 1)));
+  const { data, error } = await d.rpc('v2_quota_take', { org: orgId, kind, qty, member: memberId, src: String(p.src ?? 'web').slice(0, 16), ref: p.ref ? String(p.ref).slice(0, 120) : null });
+  if (error) throw error;
+  return data;
+}
+
 async function adminLoad(d: DB, adminId: string) {
   const [a, st, orgs] = await Promise.all([
     d.from('admin_users').select('id,name,email').eq('id', adminId).maybeSingle(),
     adminState(d),
-    d.from('organizations').select('id,name,plan,status,settings,created_at,contact_name,contact_email,contact_phone').order('created_at'),
+    d.from('organizations').select('id,name,plan,status,settings,created_at,contact_name,contact_email,contact_phone,quotas,addons,billing_day,quota_unlimited').order('created_at'),
   ]);
   const ids = (orgs.data ?? []).map((o: any) => o.id);
+  const [quotaOf, plans] = await Promise.all([quotaStates(d, ids), planDefs(d)]);
   const { data: toks } = ids.length ? await d.from('api_tokens').select('org_id,token').in('org_id', ids) : { data: [] };
   const tokOf: Record<string, string> = {};
   for (const t of toks ?? []) if (!tokOf[t.org_id]) tokOf[t.org_id] = t.token;
@@ -581,6 +646,7 @@ async function adminLoad(d: DB, adminId: string) {
   }
   return {
     admin: a.data,
+    plans,
     state: st?.data ?? null,
     stateAt: st?.updated_at ?? null,
     realOrgs: (orgs.data ?? []).map((o: any) => ({
@@ -588,6 +654,7 @@ async function adminLoad(d: DB, adminId: string) {
       contact: o.contact_name ?? null, mail: o.contact_email ?? null, phone: o.contact_phone ?? null, items: items[o.id] ?? 0,
       main_dept: o.settings?.main_dept ?? null, role: o.settings?.role ?? null, agr: o.settings?.agr ?? null,
       use: usage[o.id]?.use ?? null, useM: usage[o.id]?.useM ?? null,
+      quotas: o.quotas ?? {}, addons: o.addons ?? {}, billing_day: o.billing_day ?? 1, unlimited: !!o.quota_unlimited, quota: quotaOf[o.id] ?? null,
       members: (mems ?? []).filter((m: any) => m.org_id === o.id).map((m: any) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone, role: m.role, dept: m.dept, view: m.view, token: mtokOf[m.id] ? 'live' : null, use: usage[o.id]?.members?.[m.id] ?? null })),
     })),
   };
@@ -1030,6 +1097,8 @@ Deno.serve(async (req) => {
         if (!isManager(me)) return json(req, { error: 'forbidden' }, 403);
         return json(req, { link: await inviteLinkFor(d, s.orgId, String(p.id ?? '')) });
       }
+      if (action === 'quota.state') { const { data } = await d.rpc('v2_quota', { org: s.orgId }); return json(req, { ok: true, quota: data }); }
+      if (action === 'quota.take') return json(req, await quotaTake(d, s.orgId, s.memberId, p));
       if (action === 'job.create') return json(req, await jobCreate(d, s.orgId, s.memberId, p));
       if (action === 'job.get') return json(req, await jobGet(d, s.orgId, String(p.id ?? '')));
       if (action === 'job.retry') return json(req, await jobRetry(d, s.orgId, String(p.id ?? '')));
@@ -1049,6 +1118,8 @@ Deno.serve(async (req) => {
       if (action === 'admin.org.delete') return json(req, await adminOrgDelete(d, p));
       if (action === 'admin.invite.send') return json(req, await adminInviteSend(d, p));
       if (action === 'admin.org.update') return json(req, await adminOrgUpdate(d, p));
+      if (action === 'admin.quota.set') return json(req, await adminQuotaSet(d, p));
+      if (action === 'admin.plan.save') return json(req, await adminPlanSave(d, p));
       // the admin opens a client's system (a short session), or copies a first-entry link for the client
       if (action === 'admin.enter' || action === 'admin.invite.link') {
         const orgId = String(p.org_id ?? '');

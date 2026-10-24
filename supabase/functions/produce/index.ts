@@ -28,6 +28,19 @@ Deno.serve(async (req) => {
   let p: any;
   try { p = await req.json(); } catch { return json(req, { error: 'bad_json' }, 400); }
   const jobs: any[] = (p.jobs ?? []).slice(0, 12);
+  // the subscription quota: a graphic, a document, the slides of a deck. `ref` is the content item, so a re-render
+  // of the same item (a fix) is free; a new item counts. Full quota = refused before anything renders.
+  if (t?.org_id) {
+    for (const j of jobs) {
+      const kind = j.kind === 'graphic' ? 'gfx' : j.kind === 'doc' ? 'doc' : j.kind === 'deck' ? 'slides' : '';
+      if (!kind) continue;
+      const qty = kind === 'slides' ? Math.max(1, Array.isArray(j.data?.slides) ? j.data.slides.length : 1) : 1;
+      const ref = j.ref ? String(j.ref).slice(0, 120) : null;
+      const { data: q, error } = await d.rpc('v2_quota_take', { org: t.org_id, kind, qty, member: p.member ?? null, src: p.src === 'wa' ? 'wa' : 'web', ref });
+      if (error) console.error('quota', error.message);
+      else if (q && q.ok === false) return json(req, { error: 'quota', kind: q.kind, used: q.used, limit: q.limit, left: q.left, reset: q.reset }, 402);
+    }
+  }
   const batch = `${Date.now()}-${crypto.randomUUID().slice(0, 6)}`;
   const urls: Record<string, Record<string, string>> = {};
   try {

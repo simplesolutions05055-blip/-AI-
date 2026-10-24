@@ -159,6 +159,7 @@ async function advance(d: DB, j: Job) {
         const id = await httpLater(d, APP + '/api/video', token, { action: 'start', plan: data.plan, upload: slot.upload, url: slot.url }, 295000);
         return upd(d, j, { pend: { s: id }, next_at: later(60) });
       }
+      if (res.s && res.s.json && res.s.json.error === 'quota') return fail(d, j, 'quota:' + JSON.stringify({ used: res.s.json.used, limit: res.s.json.limit, reset: res.s.json.reset }));
       if (!ok(res.s) || !res.s.json.sandboxId) return retry('render_start');
       data.sb = { sandboxId: res.s.json.sandboxId, cmdId: res.s.json.cmdId };
       return go('status', { next_at: later(15) });
@@ -237,6 +238,13 @@ async function notifyBrief(d: DB, j: Job, b: any) {
 }
 async function fail(d: DB, j: Job, why: string) {
   await upd(d, j, { state: 'error', error: why.slice(0, 300), pend: {}, lock_until: new Date().toISOString() });
+  if (why.startsWith('quota:')) {
+    // the subscription month is used up: no retry, the person is told when it opens again
+    let q: any = {}; try { q = JSON.parse(why.slice(6)); } catch { /* plain */ }
+    const t = q.reset ? new Date(q.reset) : null;
+    if (j.phone) await sendText(d, j, j.phone, `מכסת שניות הווידאו של החודש נוצלה (${q.used ?? ''} מתוך ${q.limit ?? ''}). יצירת סרטון חדש אפשרית מ-${t ? t.getDate() + '.' + (t.getMonth() + 1) : 'החודש הבא'}. בינתיים אפשר לשלוח לי סרטון מוכן ואני אכתוב לו פוסט ואתזמן.`).catch(() => {});
+    return;
+  }
   if (j.phone) await sendText(d, j, j.phone, (j.kind === 'video' ? 'יצירת הסרטון' : 'יצירת הגרפיקה') + ' לא הושלמה. אפשר לנסות שוב: כתבו "נסה שוב".').catch(() => {});
   if (j.phone) await remember(d, j.phone, { retry: { job: j.id } }).catch(() => {});
 }

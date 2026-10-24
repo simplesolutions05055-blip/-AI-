@@ -28,7 +28,7 @@
       }
       const j = await r.json().catch(() => ({ error: 'bad_response' }));
       if (r.status === 401 && (j.error === 'invalid_token' || j.error === 'session_required') && L.token && url === API) sessionLost();
-      if (!r.ok || j.error) throw Object.assign(new Error(j.error || 'http_' + r.status), { status: r.status });
+      if (!r.ok || j.error) throw Object.assign(new Error(j.error || 'http_' + r.status), { status: r.status, detail: j });
       return j;
     } finally {
       clearTimeout(t);
@@ -1196,6 +1196,9 @@ function printRoles(colors = [], roles = {}) {
     return out;
   }
   async function produce(jobs, dept) {
+    // the subscription quota counts one output per wizard: re-renders of the same draft (fixes) are free
+    const w = S.wiz || S.dw || S.dk;
+    if (w) { w._ref = w._ref || 'wiz:' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); jobs.forEach((j) => { j.ref = j.ref || w._ref; }); }
     // the render service derives the colour roles itself (dark base, accent, light ground) from the brand list
     return fx('produce', { brand: brandFor(dept), jobs }, 150000);
   }

@@ -101,6 +101,21 @@ async function understand(who: Who, s: Record<string, any>, text: string, usage:
 
 const HELP = 'אפשר לבקש כאן:\n• גרפיקה - למשל "גרפיקה לפסטיבל הסתיו, 28.10 ב-19:00 בפארק המרכזי"\n• סרטון - למשל "סרטון הזמנה לטקס יום הזיכרון" (אפשר לצרף תמונות)\n• תזמון - "לפרסם מחר ב-18:00 בפייסבוק ובאינסטגרם"\n• "מה מתוזמן השבוע?"';
 
+// the subscription quota: a graphic is taken when the job is created; a video is checked here and taken when it renders
+const QUOTA_MSG: Record<string, string> = { gfx: 'גרפיקות', vsec: 'שניות וידאו', doc: 'מסמכים', slides: 'שקופיות' };
+const heDate = (iso: string) => { const t = new Date(iso); return t.getDate() + '.' + (t.getMonth() + 1); };
+async function quotaCheck(d: DB, who: Who, kind: 'gfx' | 'vsec', qty: number, take: boolean, ref?: string): Promise<string | null> {
+  if (take) {
+    const { data: q } = await d.rpc('v2_quota_take', { org: who.orgId, kind, qty, member: who.memberId, src: 'wa', ref: ref ?? null });
+    if (q && q.ok === false) return `מכסת ה${QUOTA_MSG[kind]} של החודש נוצלה (${q.used} מתוך ${q.limit}). יצירה חדשה אפשרית מ-${heDate(q.reset)}. בינתיים אפשר לשלוח לי תוכן מוכן ואני אכתוב לו פוסט ואתזמן.`;
+    return null;
+  }
+  const { data: q } = await d.rpc('v2_quota', { org: who.orgId });
+  if (!q || q.error || q.unlimited) return null;
+  const used = q.used?.[kind] ?? 0, lim = q.limit?.[kind] ?? 0;
+  if (used + qty > lim) return `מכסת ה${QUOTA_MSG[kind]} של החודש נוצלה (${used} מתוך ${lim}). יצירה חדשה אפשרית מ-${heDate(q.period.to)}. בינתיים אפשר לשלוח לי תוכן מוכן ואני אכתוב לו פוסט ואתזמן.`;
+  return null;
+}
 async function newJob(d: DB, who: Who, phone: string, kind: string, step: string, input: Record<string, unknown>, ui?: number, seed?: Record<string, unknown>) {
   const since = new Date(Date.now() - 86400000).toISOString();
   const { count } = await d.from('v2_jobs').select('id', { count: 'exact', head: true }).eq('phone', phone).gte('created_at', since);
@@ -369,12 +384,16 @@ export async function handle(d: DB, m: InMsg) {
       case 'graphic': {
         if (s.ownWait) return ownStart(d, who, m.phone, s, text, s.ownWait.when || undefined, s.ownWait.chans || []);
         if (s.menuFix && s.last) return fixGraphic(d, who, m.phone, s, s.menuFix === 'image' ? 'image' : 'text', text);
+        const full = await quotaCheck(d, who, 'gfx', 1, true);
+        if (full) return say(d, m.phone, full, who);
         await newJob(d, who, m.phone, 'graphic', 'texts', { title: it.title || '', brief: it.brief || text, photos: photos.filter((x: any) => !x.v).map((x: any) => x.url), dept: who.dept });
         await remember(d, m.phone, { media: null, menu: null, menuKind: null, menuFix: null, menuSched: null, mediaMenu: null, ownWait: null });
         return say(d, m.phone, 'מעצבים את הגרפיקה. אשלח אותה כאן תוך דקה-שתיים.', who);
       }
       case 'video': {
         const dur = Math.max(10, Math.min(60, Math.round(+it.dur || 25)));
+        const fullV = await quotaCheck(d, who, 'vsec', dur, false);
+        if (fullV) return say(d, m.phone, fullV, who);
         await newJob(d, who, m.phone, 'video', 'brief', { title: it.title || '', desc: it.brief || text, goal: it.kind || 'marketing', dur, imgs: photos.map((x: any) => ({ url: x.url, v: !!x.v, name: x.name })), dept: who.dept });
         await remember(d, m.phone, { media: null, menu: null, menuKind: null, menuFix: null, menuSched: null, mediaMenu: null, ownWait: null });
         return say(d, m.phone, 'בונה בריף לסרטון. אשלח אותו לאישור תוך כדקה.', who);
