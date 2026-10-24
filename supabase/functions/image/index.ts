@@ -362,6 +362,11 @@ fixed=true for texts that belong to the template itself and must stay (organisat
           { type: 'text', text: `The attached image is the template (it will be reference image 1 for the image model).\nStructural description: ${tpl.desc ?? ''}\nText areas of the template:\n${slots || '(read them from the image)'}\nNew message brief (Hebrew): ${p.brief ?? ''}\nNew texts to place (exactly):\n${lines}\n${refs.length > 1 ? `More reference images after the template: ${p.logo ? 'the logo, then ' : ''}${refs.length - 1 - (p.logo ? 1 : 0)} photo(s).` : ''}\n${p.note ? 'Change request from the user: ' + p.note : ''}` },
         ])).trim()
         : (await claude(ckey, DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nBrand palette: ${colors}\nDESIGN DIRECTIVE:\n${directive}\nTexts to place (exactly):\n${lines}\n${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the logo; ' : ''}${refs.length - (p.logo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim();
+      // a rare empty answer from the designer (a refusal or a blank turn): one more try, in the uniform voice when the mixed one came back empty
+      if (!prompt && kit) {
+        prompt = (await claude(ckey, KIT_DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\n${directive}\nTexts to place (exactly):\n${lines}\n${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the organisation logo; ' : ''}${nPhotos - (evLogo ? 1 : 0)} photo(s).` : 'No reference images.'}`)).trim();
+      }
+      if (!prompt) throw new Error('designer_empty');
       const size = SIZES[p.size] ?? SIZES.square;
       const fixedTx = tpl ? ((tpl.slots ?? []) as any[]).filter((x) => x.fixed && x.text).map((x) => `"${x.text}"`) : [];
       const wantTxt = lines.replace(/^[a-z0-9 ]+: /gim, '') + (fixedTx.length ? '\n' + fixedTx.join('\n') : '');
