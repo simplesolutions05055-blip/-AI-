@@ -29,6 +29,25 @@ export const STYLES: Record<string, Style> = {
     en: 'EDITORIAL PREMIUM: magazine composition, one excellent photograph, a large elegant headline with tight leading, a small kicker and a thin rule, very few elements. Deep base colour or clean white, one accent. Feels like a cover.' },
 };
 export const STYLE_IDS = Object.keys(STYLES);
+
+/* ---------------- Hebrew fonts the image model knows (never Frank Ruhl Libre) ---------------- */
+export const FONTS = ['Heebo', 'Assistant', 'Rubik', 'Secular One', 'Alef', 'Karantina', 'Suez One', 'Miriam Libre'];
+export const FONT_HE: Record<string, string> = { Heebo: 'Heebo (נקי, רשמי)', Assistant: 'Assistant (קל, קריא)', Rubik: 'Rubik (עגול, ידידותי)', 'Secular One': 'Secular One (כותרות בולטות)', Alef: 'Alef (הומני, דוקומנטרי)', Karantina: 'Karantina (צר, פוסטרי)', 'Suez One': 'Suez One (כבד, יוקרתי)', 'Miriam Libre': 'Miriam Libre (קלאסי)' };
+// heading / body pairing per style; a brand may pin one font for everything
+export const STYLE_FONTS: Record<string, [string, string]> = {
+  documentary: ['Alef', 'Heebo'], official: ['Heebo', 'Heebo'], comic: ['Karantina', 'Rubik'], satire: ['Karantina', 'Heebo'], marketing: ['Secular One', 'Assistant'],
+  info: ['Assistant', 'Assistant'], representative: ['Suez One', 'Assistant'], light: ['Rubik', 'Assistant'], service: ['Heebo', 'Heebo'], editorial: ['Suez One', 'Heebo'],
+};
+export const fontOf = (f: unknown): string => (typeof f === 'string' && FONTS.includes(f) ? f : '');
+export function fontsFor(style: string, brandFont?: unknown): [string, string] {
+  const f = fontOf(brandFont);
+  if (f) return [f, f];
+  return STYLE_FONTS[styleOf(style)] ?? ['Heebo', 'Heebo'];
+}
+export function typographyEn(style: string, brandFont?: unknown) {
+  const [h, b] = fontsFor(style, brandFont);
+  return `TYPOGRAPHY - headline in the Hebrew typeface "${h}" (heavy weight), all other text in "${b}" (regular / medium). Name these typefaces in the prompt. No other typeface.`;
+}
 export const styleOf = (id: unknown): string => (typeof id === 'string' && STYLES[id] ? id : 'official');
 
 export const PALETTE_MODES: Record<PaletteMode, { he: string; en: string }> = {
@@ -51,7 +70,7 @@ MOBILE FIRST: the piece must read at phone size. If small text would not read on
 }
 
 /* ---------------- the design directive for one graphic ---------------- */
-export function designDirective(o: { style?: string; palette?: string; colors?: unknown[]; roles?: Record<string, string>; fmt?: 'square' | 'portrait' | 'landscape'; photos?: number; logo?: boolean }) {
+export function designDirective(o: { style?: string; palette?: string; colors?: unknown[]; roles?: Record<string, string>; fmt?: 'square' | 'portrait' | 'landscape'; photos?: number; logo?: boolean; font?: unknown }) {
   const st = STYLES[styleOf(o.style)];
   const mode = (o.palette && PALETTE_MODES[o.palette as PaletteMode] ? o.palette : st.palette) as PaletteMode;
   const r = paletteRoles((o.colors ?? []) as string[], o.roles ?? {});
@@ -63,6 +82,7 @@ export function designDirective(o: { style?: string; palette?: string; colors?: 
 PALETTE MODE - ${PALETTE_MODES[mode].en}
 BRAND ROLES - base (type, bands, deep ground): ${r.base}; secondary: ${r.secondary}; accent (one highlight only): ${r.accent}; light ground: ${r.light}.${r.accentOnLight ? '' : ' The accent is too light for type on a light ground: use it for a shape, a band or an icon, never for body text.'}
 IMAGERY - ${photoLine}
+${typographyEn(styleOf(o.style), o.font)}
 ${graphicRulesEn(o.fmt ?? 'square')}`;
 }
 
@@ -79,7 +99,7 @@ export const QA_PASS = 80;
 export const QA_REDO = 70;
 export const QA_SYS = `You are an independent senior design reviewer for official municipal social-media graphics in Hebrew. You have not seen how this graphic was made. Judge only what is in the image against the brief and the rules. Be concrete and short. Answer with JSON only.
 Calibration: 85-100 = publish as is; 80-84 = publish, minor notes; 70-79 = acceptable, a resident would not notice a problem; below 70 only for a real problem a resident would notice: unreadable or wrong text, a missing required line, clutter that hides the message, off-brand colours, a dated or unprofessional look. A band that is a bit large, a margin a little under 72px, or one extra icon are notes, not failures. The ten rubric parts must add up to the score.`;
-export function qaPrompt(o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string>; kit?: boolean }) {
+export function qaPrompt(o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string>; kit?: boolean; note?: string }) {
   const r = paletteRoles((o.colors ?? []) as string[], o.roles ?? {});
   const st = STYLES[styleOf(o.style)];
   return `Brief (Hebrew): ${o.brief}
@@ -87,7 +107,7 @@ Intended style: ${styleOf(o.style)} - ${st.en}
 Texts that must appear exactly: ${o.texts.map((t) => `"${t}"`).join(' ; ')}
 Brand roles: base ${r.base}, secondary ${r.secondary}, accent ${r.accent}, light ${r.light}.
 Rules: ${graphicRulesEn('square')}
-${o.kit ? KIT_QA_EN + '\n' : ''}
+${o.kit ? KIT_QA_EN + '\n' : ''}${o.note ? `CHANGE REQUEST from the user (Hebrew): "${o.note}". The graphic must visibly apply this request. If it was not applied, score at most 40 and say so first in "redo" and in "issues".\n` : ''}
 Score each part (max in brackets): ${QA_PARTS.map(([k, he, max]) => `${k} (${max}) ${he}`).join(', ')}.
 Return JSON: {"score":0-100,"parts":{"mobile":0,"hierarchy":0,"composition":0,"imagery":0,"brand":0,"access":0,"originality":0},"issues":["short Hebrew sentence per problem, most important first, max 5"],"redo":"English art-direction note for a second attempt, max 60 words, empty if score >= ${QA_PASS}","stop":false,"stopWhy":""${o.kit ? ',"skeleton":{"logo":true,"tag":true,"headline":true,"sub":true,"motif":true,"details":true,"cta":true,"photo":true}' : ''}}
 stop=true (regardless of score) when: a fact appears that is not in the brief or texts (date, time, place, number), a minor is the identifiable main subject in a sensitive topic, text is unreadable, or a public symbol/flag with emblem is used. Then stopWhy is one Hebrew sentence.`;
@@ -185,7 +205,7 @@ Rules: template 'bands' only for a bold multi-colour logo with sharp or angular 
 export const SKELETON_EN = `FIXED SKELETON (every element, in this order, top to bottom on the text side; nothing else):
 1. LOGO: the attached logo, large (10-14% of the canvas height), unchanged, at the logo position given. No other emblem, crest or invented logo anywhere.
 2. TAG: a small filled pill with a tiny icon (megaphone / info) and the tag text, white text on a logo colour.
-3. HEADLINE: 1-3 lines, heavy black Hebrew sans-serif, 110-160px on 1080, tight leading. Headline treatment as given. The key word(s) in the hot colour.
+3. HEADLINE: 1-3 lines in the headline typeface given (heavy weight), 110-160px on 1080, tight leading. Headline treatment as given. The key word(s) in the hot colour.
 4. SUB LINE: one line, 36-44px, regular weight, dark base colour.
 5. MOTIF RULE: a short decorative rule or arc under the headline block, drawn from the motif in the logo colours.
 6. DETAILS: date / time / place as pills or rows with a calendar / clock / pin icon, 28-34px; and, when icon items are given, a row of 3-4 icons with 2-4 word labels in the icon style given (a white bar with thin dividers is fine).
@@ -195,7 +215,7 @@ MOTIF: the logo's own shape repeated as large decorative elements cutting two co
 EMERGENCY VARIANT (service notices, hazards, outages): identical skeleton; the tag, key word and button turn red (#E0202A), a warning triangle or siren icon joins the tag, and the button may become a white bar "emergency phone" row. Photo of crews at work, calm, no damage or injuries.
 UNIFORMITY: a festival and an outage from the same organisation must look like two posts of one series - same logo position, same template, same motif, same icon style, same button.`;
 
-export function kitDirective(kit: BrandKit, o: { colors?: unknown[]; roles?: Record<string, string>; emergency?: boolean; fmt?: 'square' | 'portrait' | 'landscape'; photos?: number }) {
+export function kitDirective(kit: BrandKit, o: { colors?: unknown[]; roles?: Record<string, string>; emergency?: boolean; fmt?: 'square' | 'portrait' | 'landscape'; photos?: number; style?: string; palette?: string; font?: unknown }) {
   const r = paletteRoles((o.colors ?? []) as string[], o.roles ?? {});
   const tpl = KIT_TEMPLATES[kit.template] ?? KIT_TEMPLATES.panel;
   const hot = /^#[0-9a-f]{6}$/i.test(kit.hot || '') ? kit.hot : r.accent;
@@ -210,6 +230,8 @@ HEADLINE - ${kit.headline === 'bands' ? 'white text on skewed filled bands, one 
 ICONS - ${KIT_ICONS[kit.icons] ?? KIT_ICONS['line-circle']}.
 ${o.emergency ? 'THIS IS AN EMERGENCY / SERVICE NOTICE: apply the emergency variant.' : 'Regular post: warm, optimistic, premium-app feel.'}
 ${o.photos ? `Use the ${o.photos} attached photo(s) as the photo of the skeleton, embedding the branding treatment only if natural.` : 'No photo attached: create the photo as described in the skeleton.'}
+${o.style && !o.emergency ? `ART DIRECTION of the style "${styleOf(o.style)}" - ${STYLES[styleOf(o.style)].en}\nPALETTE MODE - ${PALETTE_MODES[(o.palette && PALETTE_MODES[o.palette as PaletteMode] ? o.palette : STYLES[styleOf(o.style)].palette) as PaletteMode].en}\nWithin the brand kit, follow this art direction for mood, imagery and typography.` : ''}
+${typographyEn(o.style ?? 'official', o.font)}
 ${SKELETON_EN}
 ${graphicRulesEn(o.fmt ?? 'square')}`;
 }

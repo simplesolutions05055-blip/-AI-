@@ -91,7 +91,8 @@ export async function brandOf(d: DB, orgId: string) {
   const l = logos.find((x) => x.url && !/הפוך|לבן/.test(x.n ?? '')) ?? logos.find((x) => x.url);
   const roles: Record<string, string> = B.roles && typeof B.roles === 'object' ? B.roles : {};
   const kit = B.kit && typeof B.kit === 'object' && l && B.kit.logo === String(l.url) ? B.kit : null;
-  return { colors, roles, logo: l ? String(l.url) : '', kit };
+  const font = typeof B.font === 'string' && B.font !== 'auto' ? B.font : '';
+  return { colors, roles, logo: l ? String(l.url) : '', kit, font };
 }
 // The brand kit (graphic language read from the logo), as the app computes it. Cached per org and logo, so the bot pays the scan once.
 export async function kitOf(d: DB, orgId: string, token: string, b: { logo: string; colors: string[]; kit?: any }, org = '') {

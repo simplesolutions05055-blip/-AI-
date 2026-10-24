@@ -65,7 +65,7 @@ async function advance(d: DB, j: Job) {
   if (j.kind === 'graphic') {
     const org = await orgName(d, j.org_id);
     if (j.step === 'texts') {
-      if (!ids.length) { const id = await httpLater(d, FN('generate'), token, { mode: 'graphic', org, dept: inp.dept || '', title: inp.title || '', brief: inp.brief || '' }); return upd(d, j, { pend: { t: id }, next_at: later(6) }); }
+      if (!ids.length) { const id = await httpLater(d, FN('generate'), token, { mode: 'graphic', org, dept: inp.dept || '', title: inp.title || '', brief: inp.brief || '', ...(data.style ? { keepStyle: true, style: data.style, palette: data.palette || '' } : {}) }); return upd(d, j, { pend: { t: id }, next_at: later(6) }); }
       if (!ok(res.t)) return retry('texts');
       const x = res.t.json;
       data.texts = { kicker: x.kicker || '', headline: x.headline || inp.title || '', sub: x.sub || '', details: x.details || [], cta: x.cta || '', icons: Array.isArray(x.icons) ? x.icons.slice(0, 4) : [], keyword: x.keyword || '' };
@@ -78,7 +78,7 @@ async function advance(d: DB, j: Job) {
         data.logo = b.logo;
         // the same call the app makes: brand kit from the logo, palette roles, style, keyword and icons. One image, so the answer comes faster.
         const kit = await kitOf(d, j.org_id, token, b, org);
-        const id = await httpLater(d, FN('image'), token, { action: 'design', org, dept: inp.dept || '', size: 'square', brief: (inp.title || '') + '\n' + (inp.brief || ''), colors: b.colors, roles: b.roles, style: data.style || 'official', palette: data.palette || '', kit: kit || undefined, texts: data.texts, refs: [...(b.logo ? [b.logo] : []), ...(inp.photos || [])].slice(0, 4), logo: !!b.logo, note: inp.note || '', quality: 'high', n: 1 }, 170000);
+        const id = await httpLater(d, FN('image'), token, { action: 'design', org, dept: inp.dept || '', size: 'square', brief: (inp.title || '') + '\n' + (inp.brief || ''), colors: b.colors, roles: b.roles, style: data.style || 'official', palette: data.palette || '', kit: kit || undefined, texts: data.texts, refs: [...(b.logo ? [b.logo] : []), ...(inp.photos || [])].slice(0, 4), logo: !!b.logo, note: inp.note || '', base: inp.note && data.prevUrl ? data.prevUrl : undefined, font: b.font || undefined, quality: 'high', n: inp.note ? 2 : 1 }, 170000);
         await upd(d, j, { data, lock_until: later(120) }); return upd(d, j, { pend: { g: id }, next_at: later(20) });
       }
       if (!ok(res.g)) return retry('design');

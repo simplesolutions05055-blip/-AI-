@@ -137,10 +137,12 @@ async function fixGraphic(d: DB, who: Who, phone: string, s: Record<string, any>
   await remember(d, phone, { menu: null, menuFix: null, menuSched: null });
   if (target === 'image') {
     const keep = prev.data ?? {};
-    await newJob(d, who, phone, 'graphic', 'design', { ...prev.input, note: ch }, s.last.ui, { texts: keep.texts, caption: keep.caption, tags: keep.tags, style: keep.style, palette: keep.palette });
+    await newJob(d, who, phone, 'graphic', 'design', { ...prev.input, note: ch }, s.last.ui, { texts: keep.texts, caption: keep.caption, tags: keep.tags, style: keep.style, palette: keep.palette, prevUrl: keep.url });
     return say(d, phone, 'מתקן את התמונה. אשלח גרסה חדשה תוך כדקה.', who);
   }
-  await newJob(d, who, phone, 'graphic', 'texts', { ...prev.input, brief: (prev.input.brief || '') + '\nבקשת שינוי בטקסט: ' + ch, note: '' }, s.last.ui);
+  // a text fix keeps the look: the previous style and palette are kept, and the new texts are placed on the existing graphic
+  const keepT = prev.data ?? {};
+  await newJob(d, who, phone, 'graphic', 'texts', { ...prev.input, brief: (prev.input.brief || '') + '\nבקשת שינוי בטקסט: ' + ch, note: 'שינוי טקסט בלבד: ' + ch }, s.last.ui, { style: keepT.style, palette: keepT.palette, prevUrl: keepT.url });
   return say(d, phone, 'מתקן את הטקסט ומעדכן את הגרפיקה. אשלח גרסה חדשה תוך דקה-שתיים.', who);
 }
 

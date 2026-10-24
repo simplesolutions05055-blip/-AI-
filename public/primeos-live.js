@@ -2057,10 +2057,12 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           action: 'design', org: aiCtx().org, dept: w.brief.dept, size, brief: (w.brief.title || '') + '\n' + (w.brief.free || ''),
           colors: brandFor(w.brief.dept).colors, roles: brandFor(w.brief.dept).roles, style: w.design.style || 'official', palette: w.design.palette || '', kit: kit || undefined, texts: { kicker: w.design.kicker, headline: w.t, sub: w.design.sub, details: w.design.details, cta: w.design.cta, icons: w.design.icons || [], keyword: w.design.keyword || '' },
           refs: [...(logo && !tpl ? [logo] : []), ...photos].slice(0, tpl ? 3 : 4), logo: !!logo && !tpl, note: opts.note || '', quality: 'high', n: 2,
+          // a small change request edits the current design instead of designing again
+          base: opts.note && !opts.fresh && m.design ? m.design : undefined, font: BRAND.font && BRAND.font !== 'auto' ? BRAND.font : undefined,
           template: tpl ? { url: tpl.url, desc: tpl.desc || '', slots: tpl.slots || [] } : undefined,
         }, 150000);
         if (S.wiz !== w || m.job !== job) return;
-        url = r.url; check = r.check || { ok: true }; want = r.want || []; m.model = r.model || ''; m.qa = r.qa || null; m.style = r.style || w.design.style;
+        url = r.url; check = r.check || { ok: true }; want = r.want || []; m.model = r.model || ''; m.qa = r.qa || null; m.style = r.style || w.design.style; m.edited = !!r.edited;
       }
       // a fix round can break another line: keep the version with the fewest text errors
       const nIss = (c) => (c && !c.ok ? (c.issues || []).length || 1 : 0);
@@ -2124,22 +2126,26 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     }
     return h;
   };
-  ACT.gNew = () => { const w = S.wiz; if (!isGfx(w) || !w.media || w.media.busy) return; collectWiz(); gfxRun(w, { note: 'קומפוזיציה ועיצוב שונים לגמרי מהגרסה הקודמת' }); };
+  ACT.gNew = () => { const w = S.wiz; if (!isGfx(w) || !w.media || w.media.busy) return; collectWiz(); gfxRun(w, { note: 'קומפוזיציה ועיצוב שונים לגמרי מהגרסה הקודמת', fresh: true }); };
   ACT.gFix = () => { const w = S.wiz; if (!isGfx(w) || !w.media || w.media.busy) return; gfxRun(w, { fixOnly: true }); };
   // edit requests on an AI design: Claude updates the texts, ChatGPT redesigns with the request
   const _wAiD = ACT.wAi, _wAiQD = ACT.wAiQ;
+  // a request about words goes through Claude first (the texts change); a request about the look leaves the texts alone
+  const TEXT_WORDS = /כותרת|טקסט|מיל[הים]|כתוב|תאריך|שעה|שם |מספר|טלפון|נוסח|משפט|"|״|'|כותר/;
   async function aiDesignEdit(w, q) {
     const m = w.media;
     m.busy = 'ה-AI מעדכן...';
     render();
     try {
-      const cur = { headline: w.t, kicker: w.design.kicker, sub: w.design.sub, details: w.design.details, cta: w.design.cta };
-      const r = await gen({ mode: 'revise', content: cur, instruction: q + '\nאם הבקשה נוגעת רק לעיצוב או לתמונה, החזר את הטקסטים בלי שינוי.' });
-      if (S.wiz !== w) return;
-      const c = r.content || {};
-      if (c.headline) w.t = c.headline;
-      ['kicker', 'sub', 'cta'].forEach((k) => { if (typeof c[k] === 'string') w.design[k] = c[k]; });
-      if (Array.isArray(c.details)) w.design.details = c.details;
+      if (TEXT_WORDS.test(q)) {
+        const cur = { headline: w.t, kicker: w.design.kicker, sub: w.design.sub, details: w.design.details, cta: w.design.cta };
+        const r = await gen({ mode: 'revise', content: cur, instruction: q + '\nאם הבקשה נוגעת רק לעיצוב או לתמונה, החזר את הטקסטים בלי שינוי.' });
+        if (S.wiz !== w) return;
+        const c = r.content || {};
+        if (c.headline) w.t = c.headline;
+        ['kicker', 'sub', 'cta'].forEach((k) => { if (typeof c[k] === 'string') w.design[k] = c[k]; });
+        if (Array.isArray(c.details)) w.design.details = c.details;
+      }
       m.busy = '';
       gfxRun(w, { note: q });
     } catch (e) { m.busy = ''; render(); aiFail(e); }
@@ -2521,6 +2527,24 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .cc .thumb.tpl-img{background:repeating-conic-gradient(#EEF1F6 0 25%,#fff 0 50%) 50%/16px 16px!important;padding:8px;height:230px;display:flex;align-items:center;justify-content:center}.cc .thumb.tpl-img::before,.cc .thumb.tpl-img::after{display:none!important}.cc .thumb.tpl-img img{height:100%;width:auto;max-width:100%;object-fit:contain;display:block;border-radius:6px;box-shadow:0 2px 10px rgba(14,30,60,.15)}
 .tpl-empty{grid-column:1/-1}`;
   // brand screen, templates tab: only the add button and the organisation's own templates
+  /* ---- brand: the typeface used on AI graphics (by style, or one fixed family for the organisation) ---- */
+  const GFX_FONTS = ['Heebo', 'Assistant', 'Rubik', 'Secular One', 'Alef', 'Karantina', 'Suez One', 'Miriam Libre'];
+  const GFX_FONT_HE = { Heebo: 'Heebo (נקי, רשמי)', Assistant: 'Assistant (קל, קריא)', Rubik: 'Rubik (עגול, ידידותי)', 'Secular One': 'Secular One (כותרות בולטות)', Alef: 'Alef (הומני, דוקומנטרי)', Karantina: 'Karantina (צר, פוסטרי)', 'Suez One': 'Suez One (כבד, יוקרתי)', 'Miriam Libre': 'Miriam Libre (קלאסי)' };
+  const _brandRF = SCREENS.brand.render;
+  SCREENS.brand.render = function () {
+    let h = _brandRF.apply(this, arguments);
+    if ((S.tab.brand || 'logos') !== 'colors') return h;
+    const b = S.brandEdit ? S.brandDraft : BRAND;
+    const cur = b.font && GFX_FONTS.includes(b.font) ? b.font : 'auto';
+    const field = S.brandEdit
+      ? '<div class="field"><label>פונט לגרפיקות AI</label><select data-bk="font"><option value="auto"' + (cur === 'auto' ? ' selected' : '') + '>לפי סגנון הגרפיקה (מומלץ)</option>' + GFX_FONTS.map((f) => '<option value="' + f + '"' + (f === cur ? ' selected' : '') + '>' + esc(GFX_FONT_HE[f]) + '</option>').join('') + '</select></div>'
+      : '<div style="font-size:15px;margin-top:6px">פונט לגרפיקות AI: ' + (cur === 'auto' ? 'לפי סגנון הגרפיקה' : esc(GFX_FONT_HE[cur])) + '</div>';
+    // the field joins the existing fonts card, right after the body font
+    const i = h.indexOf('data-bk="fonts.b"');
+    if (i < 0) { const j = h.indexOf('גוף טקסט לפרסומים'); if (j < 0) return h; const k = h.indexOf('</div>', j); return h.slice(0, k + 6) + field + h.slice(k + 6); }
+    const k = h.indexOf('</select></div>', i);
+    return k < 0 ? h : h.slice(0, k + 15) + field + h.slice(k + 15);
+  };
   const _brandRT = SCREENS.brand.render;
   SCREENS.brand.render = function () {
     stripBuiltIn();

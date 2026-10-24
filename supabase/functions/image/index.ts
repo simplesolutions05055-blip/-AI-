@@ -91,7 +91,7 @@ Design freedom: invent the composition, typographic hierarchy, shapes, illustrat
 Hard rules:
 - State-grade, dignified, clean, high-end Israeli municipal design. Generous margins, strong hierarchy, nothing cluttered.
 - Follow the STYLE, PALETTE MODE, BRAND ROLES and numeric rules given in the design directive exactly; they override any general habit. Name the colours by hex in the prompt. Do not flood the canvas with the brand colours.
-- Hebrew text is written right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in a clean bold Hebrew sans-serif. Never add any other words, letters, numbers, fake text or English.
+- Hebrew text is written right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in the Hebrew typefaces named in the TYPOGRAPHY line of the directive. Never add any other words, letters, numbers, fake text or English.
 - Include every text line given, all of them, and only them (a missing line is a failure). Headline largest; kicker small above it; details as clean rows with simple line icons; organisation name small.
 - If reference images are attached: image 1 may be the organisation logo - place it small and unchanged; other images are real photos to feature prominently and respectfully.
 - People only when it serves the message: real, diverse Israeli residents, modest, natural. No flags with emblems, no political symbols, no alarming scenes.
@@ -103,7 +103,7 @@ Write ONE prompt in English for an image model that will render the COMPLETE fin
 Hard rules:
 - Describe the canvas top to bottom following the BRAND KIT and the FIXED SKELETON exactly: template, logo position, tag, headline treatment, sub line, motif rule, details / icon row, button, photo, motif shapes in the corners. Name every colour by hex. Nothing outside the skeleton.
 - The photo: describe the scene concretely (place, light, people, action, mood) and the embedded branding item in the logo colours. Describe the illustrated object when the message has one.
-- Hebrew text is written right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in a heavy bold Hebrew sans-serif. Never add any other words, letters, numbers, fake text or English. The icon labels are Hebrew strings too.
+- Hebrew text is written right-to-left. Quote every Hebrew string EXACTLY as given, in double quotes, and say it must be spelled letter by letter exactly as written, in the Hebrew typefaces named in the TYPOGRAPHY line of the brand kit. Never add any other words, letters, numbers, fake text or English. The icon labels are Hebrew strings too.
 - Include every text line given, all of them, and only them (a missing line is a failure). Say which word(s) of the headline take the hot colour.
 - Reference image 1 is the logo: place it large and unchanged at the logo position; never redraw it, never add another emblem. Other attached images are real photos to use as the photo.
 - People: real, diverse Israeli residents or municipal staff, modest, natural, warm. No flags with emblems, no political symbols, no alarming scenes, no minors in sensitive topics.
@@ -128,6 +128,16 @@ Hard rules:
 - The subject faces slightly toward the centre of a page (it will sit on the LEFT of Hebrew text), looking natural, not posed for an ad.
 - Brand colours may appear in a garment or accessory only.
 Return only the prompt, max 90 words.`;
+
+// a small change to a finished graphic: the image model edits the existing picture, nothing else moves
+const EDITOR = `You write ONE short instruction in English for an image-editing model. Reference image 1 is a FINISHED official brand graphic in Hebrew; the user asks for one small change.
+Hard rules:
+- Describe ONLY the requested change, concretely (which element, what changes, to what). Everything else stays pixel-identical: layout, composition, colours, logo, photo, typefaces, every text line and its spelling, margins, canvas size.
+- If the change touches a Hebrew text, quote the full new text EXACTLY in double quotes and say it must be spelled letter by letter exactly as written, in the same typeface, size and colour as before.
+- Start with: "Edit this finished graphic. Keep everything exactly as it is except:".
+Return only the instruction, max 90 words.`;
+// a request that asks for a new composition is not an edit
+const bigNote = (n: string) => n.length >= 160 || /שונה לגמרי|אחר לגמרי|קומפוזיציה|מחדש|חדש לגמרי|עיצוב אחר|משהו אחר|תעצב מחדש|סגנון אחר/.test(n);
 
 const TEMPLATE_SCAN = `You analyse an organisation's graphic design template so it can be reproduced exactly with different texts and imagery. Answer with JSON only.`;
 
@@ -169,7 +179,7 @@ async function proofImage(ckey: string, b64: string, want: string) {
 }
 const issuesOf = (c: any) => (c && !c.ok ? (c.issues ?? []).length || 1 : 0);
 // independent reviewer: score 0-100 by the PrimeOS rubric, a redo note, and a hard stop for facts / minors / unreadable text
-async function qaReview(ckey: string, b64: string, o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string>; kit?: boolean }) {
+async function qaReview(ckey: string, b64: string, o: { brief: string; texts: string[]; style: string; colors?: unknown[]; roles?: Record<string, string>; kit?: boolean; note?: string }) {
   try {
     const raw = await claude(ckey, QA_SYS, [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
@@ -322,8 +332,8 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const nPhotos = refs.length - (p.logo && !tpl ? 1 : 0) - (tpl ? 1 : 0);
       const evLogo = !!p.eventLogo;
       const directive = (kit
-        ? kitDirective(kit, { colors: p.colors, roles: p.roles, emergency: style === 'service', fmt: fmtId, photos: nPhotos - (evLogo ? 1 : 0) })
-        : designDirective({ style, palette: p.palette, colors: p.colors, roles: p.roles, fmt: fmtId, photos: nPhotos - (evLogo ? 1 : 0), logo: !!p.logo })) + (p.event ? '\n' + EVENT_EN : '');
+        ? kitDirective(kit, { colors: p.colors, roles: p.roles, emergency: style === 'service', fmt: fmtId, photos: nPhotos - (evLogo ? 1 : 0), style, palette: p.palette, font: p.font })
+        : designDirective({ style, palette: p.palette, colors: p.colors, roles: p.roles, fmt: fmtId, photos: nPhotos - (evLogo ? 1 : 0), logo: !!p.logo, font: p.font })) + (p.event ? '\n' + EVENT_EN : '');
       const iconsTx = kit ? ((tx.icons ?? []) as any[]).slice(0, 4).map((d: any) => typeof d === 'string' ? d : `${d?.icon ?? ''} "${d?.label ?? ''}"`).filter(Boolean).join(', ') : '';
       let prompt = kit
         ? (await claude(ckey, KIT_DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nMood of the style "${style}": ${STYLES[style]?.he ?? ''} (energy ${STYLES[style]?.energy ?? 'mid'}).\n${directive}\nTexts to place (exactly):\n${lines}\n${tx.keyword ? `Key word(s) of the headline in the hot colour: "${tx.keyword}"\n` : ''}${tx.cta ? '' : 'No call to action on this graphic: omit the button (skeleton item 7) entirely, leave that space empty.\n'}${iconsTx ? `Icon row (icon name then Hebrew label): ${iconsTx}\n` : 'No icon row for this message.\n'}${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the organisation logo; ' : ''}${evLogo ? `image ${p.logo ? 2 : 1} is the EVENT logo (place it large near the headline, unchanged); ` : ''}${nPhotos - (evLogo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim()
@@ -337,6 +347,24 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const fixedTx = tpl ? ((tpl.slots ?? []) as any[]).filter((x) => x.fixed && x.text).map((x) => `"${x.text}"`) : [];
       const wantTxt = lines.replace(/^[a-z0-9 ]+: /gim, '') + (fixedTx.length ? '\n' + fixedTx.join('\n') : '');
       const wantList = [...lines.split('\n').map((l) => l.replace(/^[a-z0-9 ]+: "|"$/gi, '')), ...fixedTx.map((x) => x.slice(1, -1))];
+      // a small change to an existing graphic is an EDIT of that image, not a new design
+      const base = typeof p.base === 'string' && okUrl(p.base) ? p.base : '';
+      const note = String(p.note ?? '').trim();
+      if (base && note && !bigNote(note) && !tpl) {
+        const instr = (await claude(ckey, EDITOR, `Requested change (Hebrew): ${note}\nThe texts currently on the graphic (for reference): \n${lines}\nFormat: ${fmt}.${refs.length ? ' After the graphic, the attached images are the logo and/or photos the graphic already uses.' : ''}`)).trim();
+        const eRefs = [base, ...refs].slice(0, 4);
+        const gen = await openaiImage(okey, instr, size, p.quality ?? 'high', eRefs, Math.max(2, Math.min(3, +p.n || 2)), undefined, p.model);
+        if (!gen.b64) throw new Error('openai_empty');
+        const checks = await Promise.all(gen.all.map((x) => proofImage(ckey, x, wantTxt)));
+        const qas = p.qa === false ? gen.all.map(() => null) : await Promise.all(gen.all.map((x) => qaReview(ckey, x, { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles, kit: !!kit, note })));
+        const order = gen.all.map((_, i) => i).sort((i, j) => issuesOf(checks[i]) - issuesOf(checks[j]) || (qas[j]?.score ?? 0) - (qas[i]?.score ?? 0));
+        const bi = order[0];
+        const bytes = Uint8Array.from(atob(gen.all[bi]), (c) => c.charCodeAt(0));
+        const path = `ai/${t?.org_id ?? 'admin'}/${Date.now()}-e-${crypto.randomUUID().slice(0, 8)}.jpg`;
+        const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
+        if (up.error) throw up.error;
+        return json(req, { ok: true, edited: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check: checks[bi], want: wantList, prompt: instr, model: gen.model, size, style, qa: qas[bi], kit: !!kit });
+      }
       // one round: generate candidates, proofread the Hebrew of each, score the cleanest with the independent reviewer
       const round = async (pr: string) => {
         const gen = await openaiImage(okey, pr, size, p.quality ?? 'high', refs, Math.max(1, Math.min(3, +p.n || 2)), undefined, p.model);
@@ -344,7 +372,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
         const checks = await Promise.all(gen.all.map((x) => proofImage(ckey, x, wantTxt)));
         let best = 0;
         checks.forEach((c, i) => { if (issuesOf(c) < issuesOf(checks[best])) best = i; });
-        const qa = p.qa === false ? null : await qaReview(ckey, gen.all[best], { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles, kit: !!kit });
+        const qa = p.qa === false ? null : await qaReview(ckey, gen.all[best], { brief: String(p.brief ?? ''), texts: wantList, style, colors: p.colors, roles: p.roles, kit: !!kit, note: p.note ? String(p.note).slice(0, 300) : undefined });
         return { b64: gen.all[best], check: checks[best], model: gen.model, qa, prompt: pr };
       };
       // a weak result (missing / misspelled Hebrew, or a low review score) gets one more attempt with the reviewer's note (the edge
