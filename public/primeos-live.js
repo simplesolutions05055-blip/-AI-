@@ -5141,6 +5141,339 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     ACT.draftX = (k) => { const d = store(); delete d[k]; render(); flush(); toast('הטיוטה נמחקה', ''); };
   })();
 
+  /* ---------------- subscription plans, quotas and add-ons (approved spec 24.10.2026) ----------------
+     Limits come from the server (organizations.quotas + active add-ons); outputs are counted server-side.
+     Here: the console edits them per client, the client sees them, and a full quota is explained, not hidden. */
+  (function () {
+    const QK = ['gfx', 'doc', 'slides', 'vsec'];
+    // the usage columns count slides and video seconds now, so their labels say so
+    if (typeof USE_T !== 'undefined') USE_T.forEach((t) => { if (t[0] === 'decks') t[1] = 'שקופיות'; if (t[0] === 'vids') t[1] = 'שניות וידאו'; });
+    const QT = { gfx: 'גרפיקות', doc: 'מסמכים', slides: 'שקופיות', vsec: 'שניות וידאו', profiles: 'פרופילים מחוברים', depts: 'מחלקות', members: 'משתמשים' };
+    const ADD_K = { pack: 'הגדלת חבילה', video: 'הגדלת חבילת סרטונים' };
+    const nis = (n) => Math.round(+n || 0).toLocaleString('en-US') + ' ₪';
+    const dateOf = (iso) => { if (!iso) return ''; const t = new Date(iso); return t.getDate() + '.' + (t.getMonth() + 1) + '.' + t.getFullYear(); };
+    // plan and add-on definitions from the server (v2_plan_defs); kept in one place for both sides
+    L.plans = L.plans || [];
+    const planDef = (id) => L.plans.find((p) => p.id === id) || null;
+    const addonDefs = () => L.plans.filter((p) => p.kind === 'addon');
+    const addText = (p) => Object.entries(p.quotas || {}).filter(([k, v]) => +v > 0 && QT[k]).map(([k, v]) => '+' + (+v).toLocaleString('en-US') + ' ' + QT[k]).join(', ');
+    function applyPlans(plans) {
+      if (!Array.isArray(plans) || !plans.length) return;
+      L.plans = plans;
+      const ext = planDef('extended'), bas = planDef('basic');
+      if (ext && +ext.price > 0 && PLANS.appr) PLANS.appr.cost = +ext.price;
+      if (bas && +bas.price > 0 && PLANS.solo) PLANS.solo.cost = +bas.price;
+      if (typeof PACKS !== 'undefined') replaceAll(PACKS, addonDefs().map((p) => ({ k: p.id, n: p.name, q: addText(p), price: +p.price || 0 })));
+    }
+    // the base quota of the plan, for the grey "מסלול: 400" hints
+    const planQuota = (plan) => { const p = planDef(plan === 'solo' ? 'basic' : 'extended'); return (p && p.quotas) || {}; };
+
+    /* ---- admin: real quotas on every organisation ---- */
+    const _liveAdmin = liveAdmin;
+    liveAdmin = function (real) {
+      _liveAdmin(real);
+      real.forEach((r) => {
+        const o = ORGS.find((x) => x.live && x.live.id === r.id);
+        if (!o) return;
+        o.plan = r.plan === 'basic' ? 'solo' : 'appr';
+        PLAN_OF[o.id] = o.plan;
+        o.quotas = r.quotas || {}; o.addons = r.addons || {}; o.billing_day = r.billing_day || 1; o.unlimited = !!r.unlimited; o.quota = r.quota || null;
+        const lim = (o.quota && o.quota.limit) || o.quotas;
+        const used = (o.quota && o.quota.used) || {};
+        if (lim.members !== undefined) o.uLim = o.plan === 'solo' ? 1 : Math.max(1, +lim.members || 1);
+        if (lim.depts !== undefined) o.dLim = o.plan === 'solo' ? 0 : +lim.depts || 0;
+        o.gfx = +used.gfx || 0; o.docs = +used.doc || 0; o.decks = +used.slides || 0; o.vids = +used.vsec || 0;
+        o.add = Object.keys(o.addons).filter((k) => o.addons[k]);
+      });
+    };
+    // the saved console blob restores PLANS / PACKS: the server's definitions win after that
+    const _hydrateAdmin = hydrateAdmin;
+    hydrateAdmin = function (st) { _hydrateAdmin(st); applyPlans(L.plans); };
+    // every API answer passes here: plans and the quota state are picked up, a full quota gets its own words
+    const _post0 = post;
+    post = async function (url, body, ms) {
+      const action = body && body.action;
+      try {
+        const r = await _post0(url, body, ms);
+        if (action === 'admin.load' && r && r.plans) applyPlans(r.plans);
+        if (action === 'live.load' && r) { if (r.plans) applyPlans(r.plans); if (r.quota) L.quota = r.quota; }
+        if (body && body.action === 'start' && /\/api\/video$/.test(String(url))) refreshQuota();
+        return r;
+      } catch (e) {
+        if (e && e.message === 'quota' && e.detail && body && body.action === 'start' && /\/api\/video$/.test(String(url))) quotaToast(e);
+        throw e;
+      }
+    };
+
+    const limOf = (o) => (o.quota && o.quota.limit) || Object.assign({}, planQuota(o.plan), o.quotas || {});
+    const usedOf = (o) => (o.quota && o.quota.used) || {};
+    const resetOf = (o) => (o.quota && o.quota.period && o.quota.period.to) || '';
+    const quotaBars = (o) => {
+      const lim = limOf(o), used = usedOf(o);
+      return [['gfx', ''], ['doc', 'cy'], ['slides', ''], ['vsec', 'cy']].map(([k, c]) => '<div><div class="q-row"><b>' + QT[k] + '</b><span>' + (+used[k] || 0) + ' / ' + (o.unlimited ? '∞' : (+lim[k] || 0)) + '</span></div>' + uBar(+used[k] || 0, o.unlimited ? Math.max(1, +used[k] || 1) : Math.max(1, +lim[k] || 1), c + ' lg') + '</div>').join('') +
+        '<div class="t-sub">' + (o.unlimited ? 'ללא הגבלה' : 'מתאפס ב־' + dateOf(resetOf(o))) + (o.add && o.add.length ? ' · ' + o.add.map((k) => ADD_K[k] || k).join(', ') : '') + '</div>';
+    };
+
+    /* a_org: overview bars and the account tab fields */
+    if (SCREENS.a_org) {
+      const _aor = SCREENS.a_org.render;
+      SCREENS.a_org.render = function () {
+        let h = _aor.apply(this, arguments);
+        const o = orgById(S.orgId); if (!o || !o.live) return h;
+        const tab = S.tab.aorg || 'over';
+        if (tab === 'over') {
+          h = h.replace(/(<h3>מכסות ושימוש החודש<\/h3><\/div><div class="card-pad quota">)[\s\S]*?(<div class="use-chips">)/, '$1' + quotaBars(o) + '$2');
+          h = h.replace(/(<div class="use-chips">)<span class="chip">[\s\S]*?סרטונים <b>\d+<\/b><\/span>/, '$1');
+        } else if (tab === 'account') {
+          const pq = planQuota(S.pendPlan || o.plan), q = o.quotas || {};
+          const fld = (k) => '<div class="field"><label>' + QT[k] + (k === 'vsec' ? '' : ' בחודש') + ' <span class="hint">מסלול: ' + (pq[k] !== undefined ? pq[k] : '-') + '</span></label><input type="text" id="eoQ-' + k + '" dir="ltr" style="text-align:right" value="' + (q[k] !== undefined ? q[k] : (pq[k] || 0)) + '"></div>';
+          const extra = ['gfx', 'doc', 'slides', 'vsec', 'profiles'].map(fld).join('') +
+            '<div class="field"><label>יום החיוב <span class="hint">1 עד 28 · המכסה מתאפסת ביום הזה</span></label><input type="text" id="eoBD" dir="ltr" style="text-align:right" value="' + (o.billing_day || 1) + '"></div>';
+          h = h.replace(/(<div class="field"><label>איש קשר<\/label>)/, extra + '$1');
+          const sw = addonDefs().map((p) => '<div class="checkline addon"><span>' + esc(p.name) + ' <span class="t-sub">' + esc(addText(p)) + ' · ' + nis(p.price) + ' + מע״מ לחודש</span></span><button class="sw ' + (o.addons && o.addons[p.id] ? 'on' : '') + '" data-act="aoAddon:' + p.id + '" role="switch" aria-checked="' + !!(o.addons && o.addons[p.id]) + '" aria-label="' + esc(p.name) + '"></button></div>').join('');
+          const unl = '<div class="checkline" style="margin-top:10px"><button class="sw ' + (o.unlimited ? 'on' : '') + '" data-act="aoUnl" role="switch" aria-checked="' + !!o.unlimited + '" aria-label="ללא הגבלה"></button><span><b>ללא הגבלה</b><br><span class="t-sub">לארגון בדיקה או להסכם מיוחד. המכסות למעלה לא נאכפות.</span></span></div>';
+          h = h.replace('</div><div style="margin-top:20px;display:flex;gap:10px"><button class="btn btn-primary" data-act="aSaveOrg:', '</div><div class="field" style="margin-top:18px"><label>הגדלות חבילה</label><div class="addon-row">' + sw + '</div></div>' + unl + '<div style="margin-top:20px;display:flex;gap:10px"><button class="btn btn-primary" data-act="aSaveOrg:');
+        }
+        return h;
+      };
+    }
+    ACT.aoAddon = (k) => { const o = orgById(S.orgId); if (!o) return; o.addons = o.addons || {}; o.addons[k] = !o.addons[k]; o._addonsDirty = true; const b = $('[data-act="aoAddon:' + k + '"]'); if (b) { b.classList.toggle('on', !!o.addons[k]); b.setAttribute('aria-checked', String(!!o.addons[k])); } };
+    ACT.aoUnl = () => { const o = orgById(S.orgId); if (!o) return; o.unlimited = !o.unlimited; o._addonsDirty = true; const b = $('[data-act="aoUnl"]'); if (b) { b.classList.toggle('on', !!o.unlimited); b.setAttribute('aria-checked', String(!!o.unlimited)); } };
+    const _aSave = ACT.aSaveOrg;
+    ACT.aSaveOrg = (id) => {
+      const o = orgById(id);
+      if (!o || !o.live || L.kind !== 'admin') return _aSave(id);
+      const v = (k) => { const e = $('#' + k); return e ? e.value.trim() : null; };
+      const n = (x, d) => { const r = parseInt(String(x == null ? '' : x).replace(/[^\d]/g, ''), 10); return isNaN(r) ? d : r; };
+      const prevPlan = o.plan;
+      const quotas = {};
+      ['gfx', 'doc', 'slides', 'vsec', 'profiles'].forEach((k) => { const x = v('eoQ-' + k); if (x !== null) quotas[k] = n(x, (o.quotas || {})[k] || 0); });
+      const ul = v('eoUL'), dl = v('eoDL');
+      const planNow = S.pendPlan || o.plan;
+      quotas.members = planNow === 'solo' ? 1 : Math.max(1, n(ul, o.uLim || 5));
+      quotas.depts = planNow === 'solo' ? 0 : Math.max(0, n(dl, o.dLim || 5));
+      const bd = Math.max(1, Math.min(28, n(v('eoBD'), o.billing_day || 1)));
+      _aSave(id);
+      const payload = { org_id: o.live.id, quotas, addons: o.addons || {}, unlimited: !!o.unlimited, billing_day: bd };
+      if (o.plan !== prevPlan) payload.plan = o.plan === 'solo' ? 'basic' : 'extended';
+      call('admin.quota.set', payload).then((r) => {
+        if (r && r.quota) { o.quota = r.quota; o.addons = r.quota.addons || o.addons; o.unlimited = !!r.quota.unlimited; o.billing_day = (r.quota.period && r.quota.period.day) || bd; const lim = r.quota.limit || {}; if (o.plan !== 'solo') { o.uLim = Math.max(1, +lim.members || o.uLim); o.dLim = +lim.depts || 0; } o.add = Object.keys(o.addons).filter((k) => o.addons[k]); }
+        o.quotas = Object.assign({}, o.quotas, quotas);
+        o._addonsDirty = false;
+        if (S.route === 'a_org') render();
+        flush();
+      }).catch(() => toast('המכסות לא נשמרו בשרת', 'נסו שוב בעוד רגע.', 'err'));
+    };
+    // the plan change on the account tab also updates the grey plan hints
+    const _aPlan = ACT.aPlan;
+    ACT.aPlan = (k) => { _aPlan(k); const o = orgById(S.orgId); if (!o || !o.live) return; const pq = planQuota(k); ['gfx', 'doc', 'slides', 'vsec', 'profiles'].forEach((q) => { const e = $('#eoQ-' + q); if (e) { e.value = pq[q] !== undefined ? pq[q] : 0; const hint = e.closest('.field') && e.closest('.field').querySelector('.hint'); if (hint) hint.textContent = 'מסלול: ' + (pq[q] !== undefined ? pq[q] : '-'); } }); };
+
+    /* a_new: the quota box becomes editable, the add-on switches are the real ones */
+    const _nwNew = nwNew;
+    nwNew = function () { const w = _nwNew(); w.quotas = Object.assign({}, planQuota('appr')); w.addons = { pack: false, video: false }; return w; };
+    const _nwPlan = ACT.nwPlan;
+    ACT.nwPlan = (p) => { _nwPlan(p); const w = S.nw; if (!w) return; w.quotas = Object.assign({}, planQuota(p)); w.uLim = w.plan === 'appr' ? (w.quotas.members || 5) : 1; w.dLim = w.plan === 'appr' ? (w.quotas.depts || 5) : 0; render(); };
+    if (SCREENS.a_new) {
+      const _anr = SCREENS.a_new.render;
+      SCREENS.a_new.render = function () {
+        let h = _anr.apply(this, arguments);
+        const w = S.nw; if (!w || L.kind !== 'admin') return h;
+        const cur = NW_STEPS[w.plan][w.step][0];
+        if (cur !== 'ch') return h;
+        w.quotas = w.quotas || Object.assign({}, planQuota(w.plan));
+        const box = '<div class="form-grid" style="margin-top:14px;max-width:720px">' + ['gfx', 'doc', 'slides', 'vsec', 'profiles'].map((k) => '<div class="field"><label>' + QT[k] + (k === 'vsec' ? '' : ' בחודש') + ' <span class="hint">מסלול: ' + (planQuota(w.plan)[k] !== undefined ? planQuota(w.plan)[k] : '-') + '</span></label><input type="text" dir="ltr" style="text-align:right" data-nwq="' + k + '" value="' + (w.quotas[k] !== undefined ? w.quotas[k] : 0) + '"></div>').join('') + '</div>';
+        h = h.replace(/<div class="quota-box">[\s\S]*?<\/div><\/div>/, box);
+        const sw = '<div class="field" style="margin-top:14px"><label>הגדלות חבילה</label><div class="addon-row">' + addonDefs().map((p) => '<div class="checkline addon"><span>' + esc(p.name) + ' <span class="t-sub">' + esc(addText(p)) + ' · ' + nis(p.price) + ' + מע״מ לחודש</span></span><button class="sw ' + (w.addons[p.id] ? 'on' : '') + '" data-act="nwAdd:' + p.id + '" role="switch" aria-checked="' + !!w.addons[p.id] + '" aria-label="' + esc(p.name) + '"></button></div>').join('') + '</div>';
+        h = h.replace(/<div class="field" style="margin-top:14px"><label>תוספות<\/label>[\s\S]*?<\/div><\/div>/, sw);
+        return h;
+      };
+      const _anm = SCREENS.a_new.mount;
+      SCREENS.a_new.mount = function () { _anm && _anm.apply(this, arguments); const w = S.nw; if (!w) return; $$('[data-nwq]').forEach((el) => el.addEventListener('input', () => { w.quotas[el.dataset.nwq] = Math.max(0, parseInt(el.value, 10) || 0); })); };
+    }
+    // after admin.org.create the server is told the typed quotas and the add-ons
+    const _nwNext2 = ACT.nwNext;
+    ACT.nwNext = () => {
+      const w0 = S.nw;
+      const cur = w0 && NW_STEPS[w0.plan][w0.step][0];
+      const snap = w0 && cur === 'done' ? { quotas: Object.assign({}, w0.quotas || {}), addons: Object.assign({}, w0.addons || {}), uLim: w0.uLim, dLim: w0.dLim, plan: w0.plan } : null;
+      const before = ORGS.length;
+      _nwNext2();
+      if (!snap || ORGS.length <= before || L.kind !== 'admin') return;
+      const o = ORGS[ORGS.length - 1];
+      o.quotas = snap.quotas; o.addons = snap.addons; o.add = Object.keys(snap.addons).filter((k) => snap.addons[k]);
+      const quotas = Object.assign({}, snap.quotas, { members: snap.plan === 'solo' ? 1 : Math.max(1, +snap.uLim || 5), depts: snap.plan === 'solo' ? 0 : Math.max(0, +snap.dLim || 0) });
+      const send = () => {
+        if (!o.live || !o.live.id) { setTimeout(send, 800); return; }
+        call('admin.quota.set', { org_id: o.live.id, quotas, addons: snap.addons }).then((r) => { if (r && r.quota) { o.quota = r.quota; o.unlimited = !!r.quota.unlimited; } if (S.route === 'a_org') render(); }).catch(() => {});
+      };
+      setTimeout(send, 1200);
+    };
+
+    /* a_reqs: add-on requests from clients are approved by switching the add-on on */
+    if (SCREENS.a_reqs) {
+      const _arr = SCREENS.a_reqs.render;
+      SCREENS.a_reqs.render = function () {
+        let h = _arr.apply(this, arguments);
+        REQS.filter((r) => ADD_K[r.type]).forEach((r) => {
+          const def = planDef(r.type);
+          const grid = '<div class="rq-grid"><div><span class="t-sub">סוג הבקשה</span><b>' + ADD_K[r.type] + '</b></div><div><span class="t-sub">מוסיף</span><b>' + esc(def ? addText(def) : '') + '</b></div><div><span class="t-sub">מחיר לחודש</span><b class="pos">' + (def ? nis(def.price) + ' + מע״מ' : '-') + '</b></div><div><span class="t-sub">נוצל החודש</span><b>' + esc(r.note2 || '') + '</b></div></div>';
+          // replace the users/depts grid of this card: find the card by its approve button
+          const i = h.indexOf('data-act="reqOk:' + r.id + '"'); if (i < 0) return;
+          const cardStart = h.lastIndexOf('<div class="card req-card">', i);
+          const gs = h.indexOf('<div class="rq-grid">', cardStart), ge = h.indexOf('</div></div>', gs) + 12;
+          if (gs > cardStart && ge > gs) h = h.slice(0, gs) + grid + h.slice(ge);
+        });
+        return h;
+      };
+    }
+    const _reqOk = ACT.reqOk;
+    ACT.reqOk = (id) => {
+      const r = REQS.find((x) => x.id === id);
+      if (!r || !ADD_K[r.type]) return _reqOk(id);
+      const o = orgById(r.org), def = planDef(r.type);
+      if (!o || !o.live) return _reqOk(id);
+      confirmModal({ title: 'לאשר את ' + ADD_K[r.type] + '?', body: esc(o.n) + ': ' + (def ? addText(def) + ' · ' + nis(def.price) + ' + מע״מ לחודש' : '') + '. המכסה גדלה מיד והתוספת נרשמת ברכישות.', ok: 'אישור', tone: 'ok', icon: 'checkc',
+        onOk: () => {
+          const addons = Object.assign({}, o.addons || {}); addons[r.type] = true;
+          call('admin.quota.set', { org_id: o.live.id, addons }).then((res) => {
+            r.st = 'approved'; o.addons = addons; o.add = Object.keys(addons).filter((k) => addons[k]); if (res && res.quota) o.quota = res.quota;
+            PURCH.unshift({ id: Date.now(), org: o.id, date: new Date().toISOString().slice(0, 10), type: 'user', plan: o.plan, note: ADD_K[r.type] + (def ? ': ' + addText(def) : ''), cost: def ? +def.price : 0, price: def ? +def.price : null });
+            toast('המנוי הורחב', o.n + ' · ' + ADD_K[r.type] + ' פעילה.'); render(); flush();
+          }).catch(() => toast('האישור לא נשמר', 'נסו שוב בעוד רגע.', 'err'));
+        } });
+    };
+
+    /* a_settings money tab + revenue: the real plan prices and add-ons */
+    const _moneySave = ACT.moneySave;
+    ACT.moneySave = () => {
+      const v = (id) => { const e = $('#' + id); return e ? e.value.trim() : null; };
+      const n = (x, d) => { const r = parseFloat(String(x == null ? '' : x).replace(/[^\d.]/g, '')); return isNaN(r) ? d : r; };
+      const before = { appr: PLANS.appr && PLANS.appr.cost, solo: PLANS.solo && PLANS.solo.cost, packs: (typeof PACKS !== 'undefined' ? PACKS : []).map((p) => ({ k: p.k, n: p.n, price: p.price })) };
+      _moneySave();
+      if (L.kind !== 'admin') return;
+      const jobs = [];
+      if (PLANS.appr && PLANS.appr.cost !== before.appr) jobs.push({ id: 'extended', price: PLANS.appr.cost });
+      if (PLANS.solo && PLANS.solo.cost !== before.solo) jobs.push({ id: 'basic', price: PLANS.solo.cost });
+      (typeof PACKS !== 'undefined' ? PACKS : []).forEach((p) => { const b = before.packs.find((x) => x.k === p.k); if (!planDef(p.k)) return; if (!b || b.n !== p.n || b.price !== p.price) jobs.push({ id: p.k, name: p.n, price: p.price == null ? 0 : p.price }); });
+      Promise.all(jobs.map((j) => call('admin.plan.save', j))).then((rs) => { const last = rs[rs.length - 1]; if (last && last.plans) applyPlans(last.plans); }).catch(() => toast('המחירים לא נשמרו בשרת', 'נסו שוב בעוד רגע.', 'err'));
+    };
+    if (SCREENS.a_settings) {
+      const _asr = SCREENS.a_settings.render;
+      SCREENS.a_settings.render = function () {
+        let h = _asr.apply(this, arguments);
+        if (S.asTab !== 'money') return h;
+        h = h.replace(/<div class="note">[^<]*<span>המחירים ייקבעו אחרי בדיקת עלויות היצירה[\s\S]*?<\/span><\/div>/, '<div class="note">' + ic('help', 14) + '<span>הכמויות של כל הגדלה נקבעות במסלולים (שדה הכמויות כאן הוא לתצוגה אצל הלקוח). המחיר לחודש, לפני מע״מ.</span></div>');
+        return h;
+      };
+    }
+    if (SCREENS.a_revenue) {
+      const _arv = SCREENS.a_revenue.render;
+      SCREENS.a_revenue.render = function () {
+        let h = _arv.apply(this, arguments);
+        const sum = ORGS.filter((o) => o.st !== 'paused' && o.st !== 'trial').reduce((s, o) => s + (o.add || []).reduce((a, k) => { const d = planDef(k); return a + (d ? +d.price : 0); }, 0), 0);
+        const cnt = ORGS.reduce((s, o) => s + (o.add || []).length, 0);
+        h = h.replace(/(<b>חבילות הרחבה<\/b><span class="t-sub">)[\s\S]*?(<\/span><\/span><b class="ps-sum">)[^<]*(<\/b>)/, '$1' + addonDefs().map((p) => esc(p.name) + ' · ' + nis(p.price)).join(' · ') + (cnt ? ' · ' + cnt + ' פעילות' : '') + '$2' + usd(sum) + '$3');
+        return h;
+      };
+    }
+    // dashboard: the graphics column against each client's own quota
+    if (SCREENS.a_dash) {
+      const _adr = SCREENS.a_dash.render;
+      SCREENS.a_dash.render = function () {
+        let h = _adr.apply(this, arguments);
+        ORGS.forEach((o) => {
+          if (!o.live) return;
+          const lim = limOf(o).gfx || QUOTA.gfx;
+          const re = new RegExp('(<tr data-act="aOrg:' + o.id + '">[\\s\\S]*?<td data-l="גרפיקות"><div class="uwrap">)[\\s\\S]*?(<\\/div><\\/td>)');
+          h = h.replace(re, '$1' + uBar(o.gfx, o.unlimited ? Math.max(1, o.gfx) : Math.max(1, lim)) + '<span>' + o.gfx + '/' + (o.unlimited ? '∞' : lim) + '</span>$2');
+        });
+        return h;
+      };
+    }
+
+    /* ---- client: the plan card, add-on requests, limits and the full-quota message ---- */
+    const Q = () => (L.kind === 'client' && L.quota) || null;
+    const refreshQuota = (() => { let t = 0; return () => { clearTimeout(t); t = setTimeout(() => call('quota.state').then((r) => { if (r && r.quota) { L.quota = r.quota; if (S.route === 'settings') render(); } }).catch(() => {}), 1500); }; })();
+    L.refreshQuota = refreshQuota;
+    const kindOfErr = (e) => e && e.message === 'quota' && e.detail && e.detail.kind;
+    function quotaToast(e) {
+      const d = e.detail || {}; const k = d.kind || 'gfx';
+      quotaAt = Date.now();
+      _toast('מכסת ה' + QT[k] + ' של החודש נוצלה', (d.used != null ? d.used + ' מתוך ' + d.limit + '. ' : '') + 'מתאפס ב־' + dateOf(d.reset) + '. אפשר לבקש הגדלת חבילה בהגדרות ← מסלול.', 'err');
+      refreshQuota();
+    }
+    // the generic "ה-AI לא הצליח" that follows a quota refusal is dropped: the quota message already said why
+    let quotaAt = 0;
+    const _toast = toast;
+    toast = function (t) { if (t === 'ה-AI לא הצליח להשלים' && Date.now() - quotaAt < 3000) return; return _toast.apply(this, arguments); };
+    const _produce = produce;
+    produce = async function (jobs, dept) {
+      try { const r = await _produce(jobs, dept); refreshQuota(); return r; }
+      catch (e) { if (kindOfErr(e)) { quotaToast(e); quotaAt = Date.now(); } throw e; }
+    };
+
+    // the plan card in the client's settings
+    const _planBox = planBox;
+    planBox = function () {
+      const q = Q(); if (!q) return _planBox();
+      const o = myOrg(); const lim = q.limit || {}, used = q.used || {};
+      const meter = (k) => '<div><span class="t-sub">' + QT[k] + '</span><b>' + (+used[k] || 0) + ' / ' + (q.unlimited ? '∞' : (+lim[k] || 0)) + '</b></div>';
+      const cnt = L.members ? L.members.length : users.length;
+      const addRows = addonDefs().map((p) => '<div class="rowi"><span class="ic-box ' + (q.addons && q.addons[p.id] ? 'ok' : 'info') + '">' + ic('limit', 17) + '</span><span class="grow"><span class="nm">' + esc(p.name) + (q.addons && q.addons[p.id] ? ' <span class="chip">פעילה</span>' : '') + '</span><br><span class="mt">' + esc(addText(p)) + ' · ' + nis(p.price) + ' + מע״מ לחודש</span></span>' + (q.addons && q.addons[p.id] ? '' : (myReq(p.id) ? '<span class="chip warn-chip">' + ic('clock', 13) + ' ממתינה לאישור</span>' : '<button class="btn btn-sm" data-act="limitAdd:' + p.id + '">בקשת הגדלה</button>')) + '</div>').join('');
+      return '<div class="card card-pad plan-box" style="max-width:820px;margin-top:16px"><div><span class="t-sub">המנוי שלכם</span><b>' + PLANS[o.plan].t + '</b></div>' +
+        (o.plan === 'appr' ? '<div><span class="t-sub">משתמשים</span><b>' + cnt + ' / ' + (+lim.members || o.uLim) + '</b></div><div><span class="t-sub">מחלקות</span><b>' + DEPTS.length + ' / ' + (+lim.depts || 0) + '</b></div>' : '<div><span class="t-sub">משתמשים</span><b>1 / 1</b></div>') +
+        QK.map(meter).join('') +
+        '<div><span class="t-sub">' + (q.unlimited ? 'מכסות' : 'מתאפס') + '</span><b>' + (q.unlimited ? 'ללא הגבלה' : dateOf(q.period && q.period.to)) + '</b></div>' +
+        '<button class="btn btn-sm" data-act="agrView:' + o.id + '">' + ic('doc', 15) + ' צפייה בהסכם המנוי</button></div>' +
+        '<div class="card" style="max-width:820px;margin-top:16px"><div class="card-head">' + ic('limit', 18) + '<h3>הגדלות חבילה</h3></div><div class="row-list">' + addRows + '</div></div>';
+    };
+    // request an add-on: same request path as users/depts (inbox to the console)
+    ACT.limitAdd = (k) => {
+      const def = planDef(k); if (!def) return;
+      if (myReq(k)) { openModal('<div class="mb"><div class="m-ic warn">' + ic('clock', 20) + '</div><h3>הבקשה כבר נשלחה</h3><p>בקשת ' + ADD_K[k] + ' מחכה לאישור מנהל המערכת של PrimeOS.</p></div><div class="modal-foot"><button class="btn btn-primary" data-act="closeModal">הבנתי</button></div>'); return; }
+      const q = Q() || {}; const used = q.used || {}, lim = q.limit || {};
+      openModal('<div class="mb"><div class="m-ic info">' + ic('limit', 20) + '</div><h3>' + ADD_K[k] + '</h3>' +
+        '<p>' + esc(addText(def)) + ' · <b>' + nis(def.price) + ' + מע״מ לחודש</b>, עד שמבטלים. הבקשה תגיע למנהל המערכת של PrimeOS לאישור, והמכסה גדלה מיד עם האישור.</p>' +
+        '<div class="lim-meter"><div class="lm-bar"><span style="width:' + Math.min(100, Math.round((+used.gfx || 0) / Math.max(1, +lim.gfx || 1) * 100)) + '%"></span></div><span><b>' + (+used.gfx || 0) + '</b> מתוך ' + (+lim.gfx || 0) + ' גרפיקות החודש</span></div>' +
+        '<div class="form-grid" style="margin-top:14px"><div class="field full"><label for="rqNote">הערה למנהל המערכת <span class="hint">לא חובה</span></label><textarea id="rqNote" rows="2"></textarea></div></div></div>' +
+        '<div class="modal-foot"><button class="btn btn-primary" data-act="sendReq:' + k + '">' + ic('send', 16) + ' שליחת בקשה</button><button class="btn" data-act="closeModal">ביטול</button></div>');
+    };
+    const _sendReq = ACT.sendReq;
+    ACT.sendReq = (type) => {
+      if (!ADD_K[type]) return _sendReq(type);
+      const o = myOrg(); const q = Q() || {}; const used = q.used || {}, lim = q.limit || {};
+      REQS.unshift({ id: 'r' + (REQS.length + 1) + Date.now() % 1000, org: o.id, type, cur: +used.gfx || 0, lim: +lim.gfx || 0, add: 1, note: ($('#rqNote') && $('#rqNote').value.trim()) || '', note2: QK.map((k) => QT[k] + ' ' + (+used[k] || 0) + '/' + (+lim[k] || 0)).join(' · '), who: MAIN_APPR.n, ph: MAIN_APPR.ph, mail: MAIN_APPR.mail, date: new Date().toISOString().slice(0, 10), time: new Date().toTimeString().slice(0, 5), st: 'new' });
+      closeModal(); toast('הבקשה נשלחה', 'מנהל המערכת של PrimeOS קיבל התראה עם פרטי המנוי ופרטי הקשר שלכם.'); render();
+    };
+    // limits that the console set for this client: departments and users
+    const _deptNew = ACT.deptNew;
+    ACT.deptNew = () => {
+      const q = Q();
+      if (q && !q.unlimited && DEPTS.length >= (+(q.limit || {}).depts || 0)) { const o = myOrg(); o.dLim = +(q.limit || {}).depts || 0; limitModal('depts'); return; }
+      return _deptNew();
+    };
+    const _inviteQ = ACT.inviteUser;
+    ACT.inviteUser = () => {
+      const q = Q();
+      if (q && !q.unlimited && L.members && L.members.length >= (+(q.limit || {}).members || 1) && L.org && L.org.plan !== 'basic') { const o = myOrg(); o.uLim = +(q.limit || {}).members || 1; limitModal('users'); return; }
+      return _inviteQ();
+    };
+    // the client's own org object carries the live limits, so the existing meters show the right numbers
+    const _myOrg = myOrg;
+    myOrg = function () { const o = _myOrg(); const q = Q(); if (o && q && q.limit) { if (q.limit.members !== undefined) o.uLim = L.org && L.org.plan === 'basic' ? 1 : Math.max(1, +q.limit.members || 1); if (q.limit.depts !== undefined) o.dLim = L.org && L.org.plan === 'basic' ? 0 : +q.limit.depts || 0; o.plan = L.org && L.org.plan === 'basic' ? 'solo' : 'appr'; } return o; };
+    // the create wizard: a one-line notice from 85% of the monthly quota
+    const wizKind = () => { const t = S.wiz && S.wiz.type; return t === 'doc' ? 'doc' : t === 'deck' ? 'slides' : t === 'video' ? 'vsec' : 'gfx'; };
+    const notice = (k) => {
+      const q = Q(); if (!q || q.unlimited) return '';
+      const used = +(q.used || {})[k] || 0, lim = +(q.limit || {})[k] || 0; if (!lim) return '';
+      if (used >= lim) return '<div class="note ai-warn">' + ic('limit', 15) + '<span>מכסת ה' + QT[k] + ' של החודש נוצלה (' + used + ' מתוך ' + lim + '). מתאפס ב־' + dateOf(q.period && q.period.to) + '. אפשר לבקש הגדלת חבילה בהגדרות ← מסלול.</span></div>';
+      if (used / lim >= 0.85) return '<div class="note ai-warn">' + ic('limit', 15) + '<span>נשארו ' + (lim - used) + ' ' + QT[k] + ' החודש.</span></div>';
+      return '';
+    };
+    const wrapWiz = (name, k) => { if (!SCREENS[name]) return; const _r = SCREENS[name].render; SCREENS[name].render = function () { const h = _r.apply(this, arguments); if (typeof h !== 'string') return h; const n = notice(typeof k === 'function' ? k() : k); if (!n) return h; const i = h.indexOf('<div class="card'); return i > 0 ? h.slice(0, i) + n + h.slice(i) : h + n; }; };
+    wrapWiz('wizard', wizKind); wrapWiz('docWiz', 'doc'); wrapWiz('deckWiz', 'slides'); wrapWiz('vidWiz', 'vsec');
+  })();
+
   /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */
   (function () {
     const KEY = 'pos_a11y';
