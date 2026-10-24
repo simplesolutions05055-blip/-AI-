@@ -184,6 +184,25 @@ async function tenantTest(d: DB) {
     // a session-only action must refuse a server token
     const ll = await call(A.token, 'live.load', {});
     if (ll.status !== 401) fails.push('live.load with internal token: ' + ll.status);
+    // a private document of A: A opens it through a signed link, B gets nothing, and the public address is closed
+    const us = await call(A.token, 'upload.sign', { name: 'qa.txt', kind: 'doc' });
+    if (us.status !== 200 || !String(us.body.url ?? '').startsWith('pv:doc/' + A.org + '/')) fails.push('private upload.sign ' + us.status + ' ' + JSON.stringify(us.body.url));
+    else {
+      const put = await fetch(us.body.upload, { method: 'PUT', headers: { 'content-type': 'text/plain' }, body: 'qa ' + tag });
+      if (!put.ok) fails.push('private put ' + put.status);
+      const sa = await call(A.token, 'file.sign', { urls: [us.body.url] });
+      const link = sa.body?.urls?.[us.body.url];
+      if (!link) fails.push('A cannot sign own doc');
+      else {
+        const got = await fetch(link).then((r) => r.ok ? r.text() : 'http ' + r.status).catch((e) => 'err ' + e.message);
+        if (got !== 'qa ' + tag) fails.push('signed link read: ' + got.slice(0, 40));
+      }
+      const sb = await call(B.token, 'file.sign', { urls: [us.body.url] });
+      if (sb.body?.urls?.[us.body.url]) fails.push('B signed A doc');
+      const pub = await fetch(`${SUPA}/storage/v1/object/public/v2-private/${us.body.path}`).then((r) => r.status).catch(() => 0);
+      if (pub === 200) fails.push('private doc readable without a signature');
+      await d.storage.from('v2-private').remove([us.body.path]);
+    }
   } catch (e) { fails.push('setup ' + (e instanceof Error ? e.message : String(e))); }
   finally {
     for (const m of made) {
