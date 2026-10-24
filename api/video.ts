@@ -99,7 +99,7 @@ async function start(body: any, token: string, kind: string) {
     const cfg = {
       serveUrl: '/vercel/sandbox/remotion-bundle', compositionId: 'Prime', inputProps: { plan }, outputLocation: OUT, codec: 'h264',
       crf: 18, imageFormat: null, pixelFormat: null, envVariables: {}, frameRange: null, everyNthFrame: 1, proResProfile: null, chromiumOptions: {},
-      scale: 1, preferLossless: false, enforceAudioTrack: true, disallowParallelEncoding: false, disableSharedMemoryCapture: false, concurrency: null,
+      scale: 1, preferLossless: false, enforceAudioTrack: true, disallowParallelEncoding: false, disableSharedMemoryCapture: false, concurrency: 8, // every core of the sandbox renders frames (the library's default is half); same frames, same quality
       metadata: null, licenseKey: null, videoBitrate: null, audioBitrate: '192k', encodingMaxRate: null, encodingBufferSize: null, muted: false,
       numberOfGifLoops: null, x264Preset: 'medium', gopSize: null, colorSpace: 'default', jpegQuality: 92, audioCodec: null, logLevel: 'info',
       timeoutInMilliseconds: 120000, forSeamlessAacConcatenation: false, separateAudioTo: null, hardwareAcceleration: 'disable',
