@@ -5501,6 +5501,105 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     wrapWiz('wizard', wizKind); wrapWiz('docWiz', 'doc'); wrapWiz('deckWiz', 'slides'); wrapWiz('vidWiz', 'vsec');
   })();
 
+  /* ---------------- connected profiles: the subscription allows so many social accounts ----------------
+     The server counts the organisation's connected accounts (ch.list -> profiles {used, limit}) and refuses a new
+     connection past the limit; accounts beyond it are connected but not published to. Here: the meter on the
+     channels screen, the request for more (50 ₪ a profile, a month), and the console's approval of that request. */
+  (function () {
+    const PROFILE_PRICE = 50, DEPT_PRICE = 300;
+    const K = { users: 'משתמשים', depts: 'מחלקות', profiles: 'פרופילים מחוברים' };
+    const QKEY = { users: 'members', depts: 'depts', profiles: 'profiles' };
+    const PF = () => (L.pub && L.pub.profiles) || null;
+    const pfFull = () => { const p = PF(); return !!(p && p.limit != null && !p.unlimited && p.used >= p.limit); };
+    // ch.list carries the count; a quota refusal from ch.connect opens the request instead of a generic error
+    const _post1 = post;
+    post = async function (url, body, ms) {
+      const action = body && body.action;
+      try {
+        const r = await _post1(url, body, ms);
+        if (action === 'ch.list' && r && r.profiles) { L.pub = L.pub || {}; L.pub.profiles = r.profiles; }
+        return r;
+      } catch (e) {
+        if (action === 'ch.connect' && e && e.message === 'quota' && e.detail && e.detail.kind === 'profiles') { L.pub = L.pub || {}; L.pub.profiles = { used: e.detail.used, limit: e.detail.limit }; setTimeout(() => profilesModal(), 50); e.handled = true; }
+        throw e;
+      }
+    };
+    function profilesModal() {
+      const p = PF() || { used: 0, limit: 0 }, pend = typeof myReq === 'function' && myReq('profiles');
+      if (pend) { openModal('<div class="mb"><div class="m-ic warn">' + ic('clock', 20) + '</div><h3>הבקשה כבר נשלחה</h3><p>בקשה להרחבת כמות הפרופילים המחוברים נשלחה ב־' + fmtDM(pend.date) + ' ומחכה לאישור מנהל המערכת של PrimeOS.</p></div><div class="modal-foot"><button class="btn btn-primary" data-act="closeModal">הבנתי</button></div>'); return; }
+      openModal('<div class="mb"><div class="m-ic bad">' + ic('limit', 20) + '</div><h3>חריגה מכמות הפרופילים במנוי</h3>' +
+        '<p>המנוי שלכם כולל <b>' + p.limit + ' פרופילים מחוברים</b>, וכולם כבר בשימוש. כל פרופיל נוסף: <b>' + PROFILE_PRICE + ' ₪ + מע״מ לחודש</b>. הבקשה תגיע למנהל המערכת של PrimeOS לאישור, והחיבור ייפתח מיד עם האישור.</p>' +
+        '<div class="lim-meter"><div class="lm-bar"><span style="width:100%"></span></div><span><b>' + p.used + '</b> מתוך ' + p.limit + ' בשימוש</span></div>' +
+        '<div class="form-grid" style="margin-top:14px"><div class="field"><label for="rqAdd">כמה פרופילים להוסיף</label><select id="rqAdd">' + [1, 2, 3, 5].map((n) => '<option>' + n + '</option>').join('') + '</select></div>' +
+        '<div class="field full"><label for="rqNote">הערה למנהל המערכת <span class="hint">לא חובה</span></label><textarea id="rqNote" rows="2" placeholder="לדוגמה: חיבור עמוד הפייסבוק של מחלקת התרבות"></textarea></div></div></div>' +
+        '<div class="modal-foot"><button class="btn btn-primary" data-act="sendReq:profiles">' + ic('send', 16) + ' שליחת בקשה</button><button class="btn" data-act="closeModal">ביטול</button></div>');
+    }
+    const _sendReq = ACT.sendReq;
+    ACT.sendReq = (type) => {
+      if (type !== 'profiles') return _sendReq(type);
+      const o = myOrg(), p = PF() || { used: 0, limit: 0 };
+      REQS.unshift({ id: 'r' + (REQS.length + 1) + Date.now() % 1000, org: o.id, type, cur: p.used, lim: p.limit, add: +($('#rqAdd') ? $('#rqAdd').value : 1), note: ($('#rqNote') && $('#rqNote').value.trim()) || '', who: MAIN_APPR.n, ph: MAIN_APPR.ph, mail: MAIN_APPR.mail, date: new Date().toISOString().slice(0, 10), time: new Date().toTimeString().slice(0, 5), st: 'new' });
+      closeModal(); toast('הבקשה נשלחה', 'מנהל המערכת של PrimeOS קיבל התראה עם פרטי המנוי ופרטי הקשר שלכם.'); render();
+    };
+    // a full quota: the connect buttons open the request instead of the provider window
+    const _chGo = ACT.chGo;
+    ACT.chGo = function (k) {
+      if (L.pub && L.pub.on !== false && pfFull()) { const after = () => profilesModal(); if ($('#modal').classList.contains('hidden')) after(); else { closeModal(); setTimeout(after, 230); } return; }
+      return _chGo.apply(this, arguments);
+    };
+    if (SCREENS.channels) {
+      const _cr = SCREENS.channels.render;
+      SCREENS.channels.render = function () {
+        let h = _cr.apply(this, arguments);
+        const p = PF(); if (!p || L.pub.on === false) return h;
+        const lim = p.unlimited || p.limit == null ? '∞' : p.limit, pct = p.unlimited || !p.limit ? 0 : Math.min(100, Math.round(p.used / p.limit * 100));
+        const meter = '<div class="lim-meter" style="margin:0 0 14px"><div class="lm-bar"><span style="width:' + pct + '%"></span></div><span><b>' + p.used + '</b> מתוך ' + lim + ' פרופילים מחוברים במנוי' + (pfFull() ? ' · <button class="btn btn-sm" data-act="profilesMore">בקשת הרחבה</button>' : '') + '</span></div>';
+        h = h.replace('<div class="ch-list">', meter + '<div class="ch-list">');
+        // an account beyond the quota is connected but not published to
+        (L.pub.acc || []).filter((a) => a.over && a.name).forEach((a) => {
+          const i = h.indexOf('<span class="t-sub">' + esc(a.name) + '</span>'); if (i < 0) return;
+          const j = h.indexOf('<i></i>מחובר</span>', i); if (j < 0 || j - i > 400) return;
+          h = h.slice(0, j) + '<i></i>מעבר למכסה</span>' + h.slice(j + '<i></i>מחובר</span>'.length);
+        });
+        return h;
+      };
+    }
+    ACT.profilesMore = () => profilesModal();
+    // the console: the request card and its approval raise the client's quota on the server
+    if (SCREENS.a_reqs) {
+      const _ar = SCREENS.a_reqs.render;
+      SCREENS.a_reqs.render = function () {
+        let h = _ar.apply(this, arguments);
+        REQS.filter((r) => r.type === 'profiles').forEach((r) => {
+          const grid = '<div class="rq-grid"><div><span class="t-sub">סוג הבקשה</span><b>הרחבת פרופילים מחוברים</b></div><div><span class="t-sub">מצב נוכחי</span><b>' + r.cur + ' מתוך ' + r.lim + '</b></div><div><span class="t-sub">מבוקש</span><b class="pos">' + r.add + ' · ' + nis(r.add * PROFILE_PRICE) + ' + מע״מ לחודש</b></div><div><span class="t-sub">אחרי אישור</span><b>' + (r.lim + r.add) + '</b></div></div>';
+          const i = h.indexOf('data-act="reqOk:' + r.id + '"'); if (i < 0) return;
+          const cardStart = h.lastIndexOf('<div class="card req-card">', i);
+          const gs = h.indexOf('<div class="rq-grid">', cardStart), ge = h.indexOf('</div></div>', gs) + 12;
+          if (gs > cardStart && ge > gs) h = h.slice(0, gs) + grid + h.slice(ge);
+        });
+        return h;
+      };
+    }
+    const _reqOk = ACT.reqOk;
+    ACT.reqOk = (id) => {
+      const r = REQS.find((x) => x.id === id);
+      if (!r || !K[r.type]) return _reqOk(id);
+      const o = orgById(r.org);
+      if (!o || !o.live) return _reqOk(id);
+      const key = QKEY[r.type], cur = +((o.quotas || {})[key] || r.lim || 0), next = cur + r.add;
+      const price = r.type === 'profiles' ? r.add * PROFILE_PRICE : r.type === 'depts' ? r.add * DEPT_PRICE : 0;
+      confirmModal({ title: 'לאשר את ההרחבה?', body: esc(o.n) + ': מכסת ה' + K[r.type] + ' תעלה מ־' + cur + ' ל־' + next + (price ? ' · ' + nis(price) + ' + מע״מ לחודש' : '') + '. המכסה גדלה מיד והשינוי נרשם ברכישות.', ok: 'אישור', tone: 'ok', icon: 'checkc',
+        onOk: () => {
+          const quotas = {}; quotas[key] = next;
+          call('admin.quota.set', { org_id: o.live.id, quotas }).then((res) => {
+            r.st = 'approved'; o.quotas = Object.assign({}, o.quotas || {}, quotas); if (res && res.quota) { o.quota = res.quota; if (key === 'members') o.uLim = next; if (key === 'depts') o.dLim = next; }
+            PURCH.unshift({ id: Date.now(), org: o.id, date: new Date().toISOString().slice(0, 10), type: 'user', plan: o.plan, note: 'הרחבה: עוד ' + r.add + ' ' + K[r.type], cost: price, price: price || null });
+            toast('המנוי הורחב', o.n + ' · ' + K[r.type] + ': ' + next + '.'); render(); flush();
+          }).catch(() => toast('האישור לא נשמר', 'נסו שוב בעוד רגע.', 'err'));
+        } });
+    };
+  })();
+
   /* ---------------- incidents: what the monitor found, one "fix" per kind, and the security-event log ----------------
      Only the console (admin_users). Same parts as the rest of the console: request cards, row lists, stat tiles. */
   (function () {

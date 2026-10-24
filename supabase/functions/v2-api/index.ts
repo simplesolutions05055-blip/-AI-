@@ -303,17 +303,37 @@ async function ensureHook(d: DB, pv: Provider) {
   await d.from('admin_state').upsert({ id: 'pub', data: { provider: pv.name, secret, hook, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
   return secret;
 }
+// the connected-profiles quota: every social account connected under any of the organisation's provider profiles
+// counts once; the accounts beyond the limit (the newest, by provider order) are `over` and never published to
+async function orgProfiles(d: DB, pv: Provider, orgId: string) {
+  const { data: profs } = await d.from('v2_pub_profiles').select('profile_id').eq('org_id', orgId).eq('provider', pv.name);
+  const seen = new Set<string>(); const all: { id: string; ch: string }[] = [];
+  for (const pr of profs ?? []) {
+    try { for (const a of await pv.accounts(pr.profile_id)) if (!seen.has(a.id)) { seen.add(a.id); all.push({ id: a.id, ch: a.ch }); } }
+    catch (e) { console.error('profiles', e instanceof Error ? e.message : e); }
+  }
+  const { data: q } = await d.rpc('v2_quota', { org: orgId });
+  const unlimited = !!q?.unlimited;
+  const limit = unlimited ? null : Math.max(0, Number(q?.limit?.profiles ?? 0));
+  const over = new Set<string>(limit === null ? [] : all.slice(limit).map((a) => a.id));
+  return { used: all.length, limit, unlimited, over };
+}
 async function chList(d: DB, orgId: string, memberId: string | null) {
   const pv = provider();
   if (!pv) return { configured: false, accounts: [] };
   const pid = await pubProfile(d, pv, orgId, await scopeOf(d, memberId), false);
-  return { configured: true, provider: pv.name, accounts: pid ? await pv.accounts(pid) : [] };
+  const pf = await orgProfiles(d, pv, orgId);
+  const accounts = pid ? (await pv.accounts(pid)).map((a) => ({ ...a, over: pf.over.has(a.id) })) : [];
+  return { configured: true, provider: pv.name, accounts, profiles: { used: pf.used, limit: pf.limit, unlimited: pf.unlimited } };
 }
 async function chConnect(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
   const pv = provider();
   if (!pv) throw new Error('publishing_not_configured');
   const ch = String(p.ch ?? '') as ChKey;
   if (!CH_KEYS.includes(ch)) throw new Error('bad_channel');
+  // the subscription allows so many connected profiles; a full quota is answered, not hidden
+  const pf = await orgProfiles(d, pv, orgId);
+  if (pf.limit !== null && pf.used >= pf.limit) return { error: 'quota', kind: 'profiles', used: pf.used, limit: pf.limit };
   try { await ensureHook(d, pv); } catch (e) { console.error('hook', e instanceof Error ? e.message : e); }
   const pid = await pubProfile(d, pv, orgId, await scopeOf(d, memberId), true);
   if (ch === 'tg') {
@@ -389,6 +409,9 @@ async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; p
   let profs: any[] | null = null, mems: any[] | null = null;
   const accCache = new Map<string, Awaited<ReturnType<Provider['accounts']>>>();
   const accOf = async (pid: string) => { if (!accCache.has(pid)) accCache.set(pid, await pv.accounts(pid)); return accCache.get(pid)!; };
+  // accounts beyond the profiles quota are connected but not published to
+  let overSet: Set<string> | null = null;
+  const overOf = async () => { if (!overSet) overSet = (await orgProfiles(d, pv, orgId)).over; return overSet; };
   for (const { ui, prev } of moved) {
     const rec = recOf.get(ui.id);
     const out = (ui.s === 'scheduled' || ui.s === 'published') && (ui.ty === 'graphic' || ui.ty === 'video') && Array.isArray(ui.ch) && ui.ch.length > 0;
@@ -420,8 +443,10 @@ async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; p
     const deptMem = new Set(mems!.filter((m: any) => m.view === 'dept' && ui.d && m.dept === ui.d).map((m: any) => m.id));
     const order = [...profs!.filter((x: any) => x.member_id && deptMem.has(x.member_id)), ...profs!.filter((x: any) => !x.member_id)];
     let pick: { pid: string; targets: { ch: ChKey; accountId: string }[] } | null = null;
+    const over = await overOf();
+    let overHit = false;
     for (const pr of order) {
-      const acc = (await accOf(pr.profile_id)).filter((a) => a.active);
+      const acc = (await accOf(pr.profile_id)).filter((a) => a.active && (over.has(a.id) ? (overHit = true, false) : true));
       const targets = (ui.ch as string[]).map((c) => acc.find((a) => a.ch === c)).filter(Boolean).map((a) => ({ ch: a!.ch, accountId: a!.id }));
       if (targets.length) { pick = { pid: pr.profile_id, targets }; break; }
     }
@@ -442,7 +467,7 @@ async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; p
     const base = { org_id: orgId, ui_id: ui.id, provider: pv.name, sig, updated_at: new Date().toISOString() };
     const missing = (ui.ch as string[]).filter((c) => !pick || ![...pick.targets.map((t) => t.ch), ...skipped].includes(c as ChKey));
     if (!pick || !pick.targets.length) {
-      const why = !pick ? 'הערוצים שנבחרו לא מחוברים' : 'הרשתות שנבחרו דורשות תמונה או סרטון';
+      const why = !pick ? (overHit ? 'הפרופיל שנבחר מעבר למכסת הפרופילים של המנוי. אפשר לבקש הרחבה בהגדרות ← מסלול.' : 'הערוצים שנבחרו לא מחוברים') : 'הרשתות שנבחרו דורשות תמונה או סרטון';
       const { data: r2 } = await d.from('v2_pub_posts').upsert({ ...base, post_id: null, status: 'failed', targets: [], error: why }, { onConflict: 'org_id,ui_id' }).select('*').single();
       await pubApply(d, r2, 'failed', [], why);
       continue;
