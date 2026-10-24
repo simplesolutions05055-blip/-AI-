@@ -5156,7 +5156,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     L.plans = L.plans || [];
     const planDef = (id) => L.plans.find((p) => p.id === id) || null;
     const addonDefs = () => L.plans.filter((p) => p.kind === 'addon');
-    const addText = (p) => Object.entries(p.quotas || {}).filter(([k, v]) => +v > 0 && QT[k]).map(([k, v]) => '+' + (+v).toLocaleString('en-US') + ' ' + QT[k]).join(', ');
+    const addText = (p) => QK.filter((k) => +((p.quotas || {})[k] || 0) > 0).map((k) => '+' + (+p.quotas[k]).toLocaleString('en-US') + ' ' + QT[k]).join(', ');
     function applyPlans(plans) {
       if (!Array.isArray(plans) || !plans.length) return;
       L.plans = plans;
