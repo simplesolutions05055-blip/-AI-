@@ -23,7 +23,18 @@ async function timed<T>(ms: number, f: (signal: AbortSignal) => Promise<T>): Pro
 }
 
 type Check = { ok: boolean; ms?: number; note?: string };
-const HE: Record<string, string> = { site: 'האתר app.primeos.co.il', api: 'השרת (v2-api) ובסיס הנתונים', jobs: 'עבודות יצירה שנכשלו', stuck: 'עבודות יצירה תקועות', wa: 'שליחות WhatsApp שנכשלו', storage: 'אחסון הקבצים' };
+// what the console says about each check: the words for the incident card and what "fix" would do
+const SEV: Record<string, string> = { site: 'crit', api: 'crit', wa: 'crit', jobs: 'high', stuck: 'mid', storage: 'high', backup: 'mid', tenant: 'crit' };
+const CHK: Record<string, string> = { site: 'הדף הראשי לא ענה או לא החזיר את האפליקציה ב-2 בדיקות רצופות', api: 'פעולת health של v2-api נכשלה או שבסיס הנתונים איטי ב-2 בדיקות רצופות', jobs: '5 עבודות יצירה או יותר נכשלו בשעה האחרונה', stuck: '3 עבודות או יותר בסטטוס ריצה בלי התקדמות מעל 10 דקות', wa: '5 שליחות WhatsApp או יותר נכשלו בשעה האחרונה', storage: 'רשימת ה-buckets של האחסון לא נענתה', backup: 'הגיבוי השבועי נכשל', tenant: 'בדיקת ההפרדה בין לקוחות נכשלה' };
+const CAUSE: Record<string, string> = { site: 'תקלה ב-Vercel או פריסה שנכשלה', api: 'פונקציה שנפלה, או עומס על בסיס הנתונים', jobs: 'ספק AI לא זמין, או שינוי בקוד שגרם לשגיאות', stuck: 'ריצה שנקטעה באמצע והשאירה נעילות', wa: 'SmartSend לא זמין, או מספר שנחסם', storage: 'תקלה ב-Supabase Storage', backup: 'הפונקציה נכשלה באמצע או bucket הגיבוי לא נגיש', tenant: 'שינוי בקוד שפגע בבידוד; לטפל מיד' };
+const FIX: Record<string, string> = { site: 'בדיקה חוזרת של האתר וה-API', api: 'בדיקה חוזרת של ה-API ובסיס הנתונים', jobs: 'החזרת העבודות שנכשלו בשעה האחרונה לתור עם ניסיון חוזר', stuck: 'שחרור הנעילות והרצת התור', wa: 'הרצת התור ובדיקה חוזרת של שליחות', storage: 'בדיקה חוזרת של האחסון', backup: 'הרצת הגיבוי מחדש', tenant: 'הרצת בדיקת ההפרדה מחדש' };
+// one open incident per kind; a repeat only adds the latest note
+async function incident(d: DB, kind: string, note: string) {
+  const { data: open } = await d.from('v2_incidents').select('id,detail').eq('kind', kind).eq('state', 'open').limit(1);
+  if ((open ?? []).length) { await d.from('v2_incidents').update({ detail: { ...(open![0].detail ?? {}), note } }).eq('id', open![0].id); return; }
+  await d.from('v2_incidents').insert({ kind, severity: SEV[kind] ?? 'mid', title: HE[kind] ?? kind, detail: { checked: CHK[kind] ?? '', note, cause: CAUSE[kind] ?? '', fix: FIX[kind] ?? '' } });
+}
+const HE: Record<string, string> = { site: 'האתר app.primeos.co.il', api: 'השרת (v2-api) ובסיס הנתונים', jobs: 'עבודות יצירה שנכשלו', stuck: 'עבודות יצירה תקועות', wa: 'שליחות WhatsApp שנכשלו', storage: 'אחסון הקבצים', backup: 'הגיבוי השבועי', tenant: 'ההפרדה בין לקוחות' };
 
 async function checks(d: DB): Promise<Record<string, Check>> {
   const out: Record<string, Check> = {};
@@ -99,6 +110,14 @@ async function run(d: DB) {
   }
   const history = [...((prev.history ?? []) as unknown[]).slice(-287), { at: now, ok: Object.values(res).every((c) => c.ok), ms: res.api?.ms ?? null }];
   await d.from('admin_state').upsert({ id: 'monitor', data: { ...(st?.data ?? {}), at: now, res, bad, alerted, history }, updated_at: now });
+  // the incidents screen of the console: a down check opens an incident, a good round closes what is still open
+  for (const k of down) {
+    const { data: open } = await d.from('v2_incidents').select('id').eq('kind', k).eq('state', 'open').limit(1);
+    if (!(open ?? []).length) await d.from('v2_incidents').insert({ kind: k, severity: SEV[k] ?? 'mid', title: HE[k] ?? k, detail: { checked: CHK[k] ?? '', note: res[k]?.note ?? '', cause: CAUSE[k] ?? '', fix: FIX[k] ?? '' } });
+  }
+  for (const k of back) {
+    await d.from('v2_incidents').update({ state: 'fixed', closed_at: now, closed_by: 'מערכת', fix_log: [{ at: now, by: 'מערכת', ok: true, text: 'חזר לפעול מעצמו' }] }).eq('kind', k).eq('state', 'open');
+  }
   let mailed = false;
   if (down.length || back.length) {
     const to = await recipients(d);
@@ -137,6 +156,8 @@ async function backup(d: DB) {
   const now = new Date().toISOString();
   const { data: st } = await d.from('admin_state').select('data').eq('id', 'monitor').maybeSingle();
   await d.from('admin_state').upsert({ id: 'monitor', data: { ...(st?.data ?? {}), backup: { at: now, day, tables: out } }, updated_at: now });
+  if (Object.values(out).some((n) => n < 0)) await incident(d, 'backup', 'טבלאות שנכשלו: ' + Object.entries(out).filter(([, n]) => n < 0).map(([t]) => t).join(', '));
+  else await d.from('v2_incidents').update({ state: 'fixed', closed_at: now, closed_by: 'מערכת', fix_log: [{ at: now, by: 'מערכת', ok: true, text: 'הגיבוי הושלם' }] }).eq('kind', 'backup').eq('state', 'open');
   if (Object.values(out).some((n) => n < 0)) await mail(await recipients(d), 'PrimeOS: הגיבוי השבועי לא הושלם', `<div dir="rtl">טבלאות שנכשלו: ${esc(Object.entries(out).filter(([, n]) => n < 0).map(([t]) => t).join(', '))}</div>`);
   return { day, tables: out };
 }
@@ -216,7 +237,8 @@ async function tenantTest(d: DB) {
   const now = new Date().toISOString();
   const { data: st } = await d.from('admin_state').select('data').eq('id', 'monitor').maybeSingle();
   await d.from('admin_state').upsert({ id: 'monitor', data: { ...(st?.data ?? {}), tenant: { at: now, ok: !fails.length, fails } }, updated_at: now });
-  if (fails.length) await mail(await recipients(d), 'PrimeOS: בדיקת ההפרדה בין לקוחות נכשלה', `<div dir="rtl">${esc(fails.join(' | '))}</div>`);
+  if (fails.length) { await incident(d, 'tenant', fails.join(' | ')); await mail(await recipients(d), 'PrimeOS: בדיקת ההפרדה בין לקוחות נכשלה', `<div dir="rtl">${esc(fails.join(' | '))}</div>`); }
+  else await d.from('v2_incidents').update({ state: 'fixed', closed_at: now, closed_by: 'מערכת', fix_log: [{ at: now, by: 'מערכת', ok: true, text: 'הבדיקה עברה' }] }).eq('kind', 'tenant').eq('state', 'open');
   return { ok: !fails.length, fails };
 }
 

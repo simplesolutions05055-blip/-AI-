@@ -612,6 +612,107 @@ async function quotaTake(d: DB, orgId: string, memberId: string | null, p: Recor
   return data;
 }
 
+/* ---------------- incidents: what the monitor found, what "fix" does, and the security-event log ---------------- */
+const MON = `${Deno.env.get('SUPABASE_URL')}/functions/v1/monitor`;
+async function monitorCall(d: DB, q: string, ms = 120000) {
+  const { data: sec } = await d.from('v2_secrets').select('v').eq('k', 'tick').maybeSingle();
+  const c = new AbortController(); const t = setTimeout(() => c.abort(), ms);
+  try {
+    const r = await fetch(MON + '?' + q, { method: 'POST', signal: c.signal, headers: { 'content-type': 'application/json', 'x-tick': sec?.v ?? '' }, body: '{}' });
+    return await r.json().catch(() => ({ error: 'bad_response' }));
+  } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; } finally { clearTimeout(t); }
+}
+const kickRunner = () => fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/smartsend-webhook?tick=1`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-tick': Deno.env.get('SMARTSEND_WEBHOOK_SECRET') ?? '' }, body: '{}' }).catch(() => {});
+async function incidentsLoad(d: DB) {
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const [open, hist, st] = await Promise.all([
+    d.from('v2_incidents').select('*').eq('state', 'open').order('opened_at', { ascending: false }),
+    d.from('v2_incidents').select('*').neq('state', 'open').gte('opened_at', since).order('opened_at', { ascending: false }).limit(200),
+    d.from('admin_state').select('data,updated_at').eq('id', 'monitor').maybeSingle(),
+  ]);
+  const m = (st.data?.data ?? {}) as Record<string, any>;
+  // the health strip: the last round, backup, isolation test, storage use and the AI credit guard rails
+  const { data: sz } = await d.rpc('v2_storage_bytes').then((r: any) => r, () => ({ data: null }));
+  return {
+    ok: true,
+    open: open.data ?? [], history: hist.data ?? [],
+    health: { at: m.at ?? null, res: m.res ?? {}, backup: m.backup ?? null, tenant: m.tenant ?? null, load: m.load ?? null, history: (m.history ?? []).slice(-288), storage_bytes: sz ?? null },
+  };
+}
+// what "fix" does for each kind; returns the log lines and whether the check is clean afterwards
+async function incidentFix(d: DB, adminName: string, p: Record<string, any>) {
+  const id = +p.id; if (!id) throw new Error('bad_id');
+  const { data: inc } = await d.from('v2_incidents').select('*').eq('id', id).maybeSingle();
+  if (!inc) throw new Error('not_found');
+  const log: { at: string; by: string; ok: boolean; text: string }[] = [];
+  const say = (ok: boolean, text: string) => log.push({ at: new Date().toISOString(), by: adminName, ok, text });
+  let clean = false;
+  const k = inc.kind;
+  if (k === 'stuck' || k === 'jobs') {
+    const cut = new Date(Date.now() - 600000).toISOString();
+    const { data: st } = await d.from('v2_jobs').update({ lock_until: new Date().toISOString(), next_at: new Date().toISOString(), pend: {} }).eq('state', 'run').lt('next_at', cut).select('id');
+    say(true, `שחרור נעילות: ${(st ?? []).length} עבודות שוחררו`);
+    if (k === 'jobs') {
+      const hourAgo = new Date(Date.now() - 3600000).toISOString();
+      const { data: er } = await d.from('v2_jobs').update({ state: 'run', error: null, pend: {}, tries: 0, next_at: new Date().toISOString(), lock_until: new Date().toISOString() }).eq('state', 'error').gte('updated_at', hourAgo).not('error', 'like', 'quota:%').select('id');
+      say(true, `עבודות שנכשלו הוחזרו לתור: ${(er ?? []).length}`);
+    }
+    kickRunner(); say(true, 'התור הורץ');
+    await new Promise((r) => setTimeout(r, 4000));
+    const { count } = await d.from('v2_jobs').select('id', { count: 'exact', head: true }).eq('state', 'run').lt('next_at', cut);
+    clean = (count ?? 0) < 3; say(clean, `עבודות תקועות עכשיו: ${count ?? 0}`);
+  } else if (k === 'wa') {
+    kickRunner(); say(true, 'התור הורץ');
+    const r = await monitorCall(d, 'run=1');
+    clean = !!r?.res?.wa?.ok; say(clean, `בדיקה חוזרת: שליחות שנכשלו בשעה האחרונה ${r?.res?.wa?.note ?? '?'}`);
+  } else if (k === 'backup') {
+    const r = await monitorCall(d, 'backup=1', 280000);
+    const bad = Object.entries((r?.tables ?? {}) as Record<string, number>).filter(([, n]) => n < 0).map(([t]) => t);
+    clean = !r?.error && !bad.length; say(clean, clean ? `הגיבוי הורץ: ${Object.keys(r?.tables ?? {}).length} טבלאות` : 'הגיבוי נכשל: ' + (r?.error ?? bad.join(', ')));
+  } else if (k === 'tenant') {
+    const r = await monitorCall(d, 'tenant=1', 280000);
+    clean = !!r?.ok; say(clean, clean ? 'בדיקת ההפרדה עברה' : 'הבדיקה נכשלה: ' + ((r?.fails ?? []) as string[]).join(' | '));
+  } else if (k === 'site' || k === 'api' || k === 'storage') {
+    const r = await monitorCall(d, 'run=1');
+    const c = r?.res?.[k]; clean = !!c?.ok; say(clean, `בדיקה חוזרת: ${clean ? 'תקין' : 'עדיין לא עונה'}${c?.ms ? ' · ' + c.ms + 'ms' : ''}${c?.note ? ' · ' + c.note : ''}`);
+  } else {
+    say(false, 'לתקלה מסוג זה אין תיקון אוטומטי. לטפל ידנית או דרך קלוד.');
+  }
+  const now = new Date().toISOString();
+  const up: Record<string, unknown> = { fix_log: [...(inc.fix_log ?? []), ...log] };
+  if (clean) { up.state = 'fixed'; up.closed_at = now; up.closed_by = adminName; }
+  await d.from('v2_incidents').update(up).eq('id', id);
+  return { ok: true, fixed: clean, log };
+}
+async function incidentSet(d: DB, adminName: string, p: Record<string, any>) {
+  const id = +p.id; if (!id) throw new Error('bad_id');
+  const now = new Date().toISOString();
+  const { data: inc } = await d.from('v2_incidents').select('fix_log').eq('id', id).maybeSingle();
+  if (!inc) throw new Error('not_found');
+  const log = [...(inc.fix_log ?? [])];
+  const up: Record<string, unknown> = {};
+  if (p.op === 'resolve') { log.push({ at: now, by: adminName, ok: true, text: 'סומן כטופל' + (p.note ? ': ' + String(p.note).slice(0, 500) : '') }); up.state = 'resolved'; up.closed_at = now; up.closed_by = adminName; }
+  else if (p.op === 'mute') { const h = Math.max(1, Math.min(168, +p.hours || 24)); log.push({ at: now, by: adminName, ok: true, text: `הושתק ל-${h} שעות` }); up.state = 'muted'; up.mute_until = new Date(Date.now() + h * 3600000).toISOString(); }
+  else if (p.op === 'reopen') { log.push({ at: now, by: adminName, ok: true, text: 'נפתח מחדש' }); up.state = 'open'; up.closed_at = null; up.closed_by = null; up.mute_until = null; }
+  else throw new Error('bad_op');
+  up.fix_log = log;
+  await d.from('v2_incidents').update(up).eq('id', id);
+  return { ok: true };
+}
+// a security event reported by hand (the privacy regulations want every one of them written down)
+async function incidentCreate(d: DB, adminName: string, p: Record<string, any>) {
+  const title = String(p.title ?? '').trim().slice(0, 160); if (!title) throw new Error('bad_title');
+  const sec = !!p.severe;
+  const { data, error } = await d.from('v2_incidents').insert({
+    kind: 'security', severity: 'sec', title,
+    detail: { type: String(p.type ?? 'other').slice(0, 40), affected: String(p.affected ?? 'none').slice(0, 40), note: String(p.detail ?? '').slice(0, 4000), severe: sec, reporter: adminName, clock24h: new Date(Date.now() + 86400000).toISOString() },
+    fix_log: [{ at: new Date().toISOString(), by: adminName, ok: true, text: 'האירוע נרשם' + (sec ? '. אירוע חמור: דיווח לרשות להגנת הפרטיות' : '') }],
+  }).select('id').single();
+  if (error) throw error;
+  return { ok: true, id: data.id };
+}
+
+const adminName = async (d: DB, id: string) => { const { data } = await d.from('admin_users').select('name,email').eq('id', id).maybeSingle(); return String(data?.name || data?.email || 'מנהל'); };
 async function adminLoad(d: DB, adminId: string) {
   const [a, st, orgs] = await Promise.all([
     d.from('admin_users').select('id,name,email').eq('id', adminId).maybeSingle(),
@@ -1119,6 +1220,11 @@ Deno.serve(async (req) => {
       if (action === 'admin.invite.send') return json(req, await adminInviteSend(d, p));
       if (action === 'admin.org.update') return json(req, await adminOrgUpdate(d, p));
       if (action === 'admin.quota.set') return json(req, await adminQuotaSet(d, p));
+      if (action === 'admin.incidents.load') return json(req, await incidentsLoad(d));
+      if (action === 'admin.incident.fix') return json(req, await incidentFix(d, await adminName(d, s.adminId), p));
+      if (action === 'admin.incident.set') return json(req, await incidentSet(d, await adminName(d, s.adminId), p));
+      if (action === 'admin.incident.create') return json(req, await incidentCreate(d, await adminName(d, s.adminId), p));
+      if (action === 'admin.monitor.run') return json(req, { ok: true, result: await monitorCall(d, 'run=1') });
       if (action === 'admin.plan.save') return json(req, await adminPlanSave(d, p));
       // the admin opens a client's system (a short session), or copies a first-entry link for the client
       if (action === 'admin.enter' || action === 'admin.invite.link') {
