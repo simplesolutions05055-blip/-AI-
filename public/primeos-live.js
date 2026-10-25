@@ -2105,9 +2105,16 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (!rep) return _dwDoneP(st);
     // the new item takes the place (and the id) of the one that waited in the library
     const i = items.findIndex((x) => x.id === rep); if (i >= 0) items.splice(i, 1);
-    const keep = S.seq; S.seq = rep - 1;
-    try { _dwDoneP(st); } finally { S.seq = Math.max(keep, S.seq); }
+    _dwDoneP(st);
+    takeOver(items[0], 'doc', rep);
   };
+  // the item the wizard just made takes the id of the one that waited in the library (ids are time-based, so they are swapped after the fact)
+  function takeOver(it, ty, rep) {
+    if (!it || it.ty !== ty || it.id === rep) return;
+    const nid = it.id; it.id = rep; delete it.prod; delete it.wiz; delete it.wz;
+    if (S.itemId === nid) S.itemId = rep;
+    const mb = $('#modal'); if (mb && mb.innerHTML.indexOf(String(nid)) >= 0) mb.innerHTML = mb.innerHTML.split(String(nid)).join(String(rep));
+  }
 
   /* ---------- presentation: own photos, then the server ---------- */
   const pickerHtml = (w) => {
@@ -2200,8 +2207,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const w = S.dk; const rep = w && w.replaces;
     if (!rep) return _dkDoneP(st);
     const i = items.findIndex((x) => x.id === rep); if (i >= 0) items.splice(i, 1);
-    const keep = S.seq; S.seq = rep - 1;
-    try { _dkDoneP(st); } finally { S.seq = Math.max(keep, S.seq); }
+    _dkDoneP(st);
+    takeOver(items[0], 'deck', rep);
   };
 
   /* ---------- the bell: real notifications of the organisation ---------- */
