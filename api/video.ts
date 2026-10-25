@@ -170,23 +170,31 @@ async function prep(body: any) {
 async function prepStatus(body: any) {
   const { sandboxId, cmdId } = body;
   if (typeof sandboxId !== 'string' || typeof cmdId !== 'string' || !okUrl(body.summaryUrl)) return json({ error: 'bad_request' }, 400);
-  const sb = await Sandbox.get({ sandboxId });
+  // the summary in storage is the sign the run finished (the last thing the script writes)
+  const done = async () => { const r = await fetch(body.summaryUrl + '?t=' + Date.now(), { cache: 'no-store' }).catch(() => null); return r && r.ok ? await r.json().catch(() => null) : null; };
+  let sb: Awaited<ReturnType<typeof Sandbox.get>> | null = null;
+  try { sb = await Sandbox.get({ sandboxId }); } catch { /* stopped or expired */ }
+  if (!sb) { const s = await done(); return json(s ? { stage: 'done', summary: s } : { stage: 'error', message: 'sandbox_gone' }); }
   const cmd = await sb.getCommand(cmdId);
-  if (cmd.exitCode == null) {
+  // a detached command reports its exit only through wait(): a short wait tells finished from running
+  let fin: { exitCode: number; stderr: () => Promise<string> } | null = null;
+  try { fin = await cmd.wait({ signal: AbortSignal.timeout(2500) }); } catch { fin = null; }
+  if (!fin) {
+    const s = await done();
+    if (s) { await sb.stop().catch(() => {}); return json({ stage: 'done', summary: s }); }
     // the script leaves a short progress line in a file
     const pr = await sb.runCommand({ cmd: 'cat', args: ['progress.txt'] }).catch(() => null);
     const line = pr && pr.exitCode === 0 ? (await pr.stdout()).trim().slice(0, 120) : '';
     return json({ stage: 'prep', progress: line });
   }
-  if (cmd.exitCode !== 0) {
-    const err = (await cmd.stderr().catch(() => '')).slice(-600);
+  if (fin.exitCode !== 0) {
+    const err = (await fin.stderr().catch(() => '')).slice(-600);
     await sb.stop().catch(() => {});
     return json({ stage: 'error', message: 'prep_failed', detail: err });
   }
   await sb.stop().catch(() => {});
-  const r = await fetch(body.summaryUrl + '?t=' + Date.now(), { cache: 'no-store' });
-  if (!r.ok) return json({ stage: 'error', message: 'summary_missing' });
-  return json({ stage: 'done', summary: await r.json() });
+  const s = await done();
+  return json(s ? { stage: 'done', summary: s } : { stage: 'error', message: 'summary_missing' });
 }
 
 export default {

@@ -4741,7 +4741,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const veNew = () => ({ step: 0, clips: [], message: '', goal: null, aud: '', cta: '', must: '', avoid: '', notes: '', duration: 30, format: '9:16', pace: 'mid', pack: '', packSet: false, voiceId: 'auto', toggles: { captions: true, music: true, voice: false, origAudio: true, broll: true, texts: true, outro: true, keepOrder: false }, job: null, res: null, scan: null });
     const mmss = (s) => { s = Math.max(0, Math.round(+s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
     css.textContent += `
-.ve-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}.ve-grid>*{min-width:0}
+.ve-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}.ve-grid>*{min-width:0}.ve-grid>.field.full{grid-column:1/-1}.ve-grid .seg{flex-wrap:wrap;max-width:100%}
 .ve-raw .raw{position:relative;overflow:hidden;background-size:cover;background-position:center}
 .ve-raw .raw .ve-dur{position:absolute;bottom:5px;right:6px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px}
 .ve-raw .raw .ve-st{position:absolute;inset:0;display:grid;place-items:center;background:rgba(10,44,81,.62);color:#fff;font-size:11.5px;font-weight:700;text-align:center;padding:6px;line-height:1.3}
@@ -4849,9 +4849,19 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     function veBusy(e) {
       const s = e.scan || {};
       const at = Math.max(0, VE_STAGES.findIndex((x) => x[0] === (s.step === 'prepwait' ? 'prep' : s.step)));
-      return '<div class="card gen-mini">' + thinkBox() + '<div class="vp-bar"><i style="width:' + Math.round((s.progress || 0.04) * 100) + '%"></i></div><ul class="vp-list">' +
-        VE_STAGES.map((x, i) => '<li class="' + (i < at ? 'done' : i === at ? 'on' : '') + '">' + ic(i < at ? 'check' : 'clock', 15, 2.2) + x[1] + '</li>').join('') + '</ul>' +
-        '<span class="t-sub" style="margin-top:12px">' + esc(veNote(s.note)) + 'כמה דקות. המסך מתעדכן לבד.</span></div>';
+      return '<div class="card gen-mini" id="veBusy">' + thinkBox() + veBusyIn(s, at) + '</div>';
+    }
+    const veBusyIn = (s, at) => '<div class="vp-bar"><i style="width:' + Math.round((s.progress || 0.04) * 100) + '%"></i></div><ul class="vp-list">' +
+      VE_STAGES.map((x, i) => '<li class="' + (i < at ? 'done' : i === at ? 'on' : '') + '">' + ic(i < at ? 'check' : 'clock', 15, 2.2) + x[1] + '</li>').join('') + '</ul>' +
+      '<span class="t-sub" style="margin-top:12px">' + esc(veNote(s.note)) + 'כמה דקות. המסך מתעדכן לבד.</span>';
+    // the progress changes in place: a full repaint would restart the screen's entrance animation every few seconds
+    function vePaintBusy(e) {
+      const box = $('#veBusy'); if (!box) return false;
+      const s = e.scan || {}; const at = Math.max(0, VE_STAGES.findIndex((x) => x[0] === (s.step === 'prepwait' ? 'prep' : s.step)));
+      const tmp = document.createElement('div'); tmp.innerHTML = veBusyIn(s, at);
+      box.querySelectorAll('.vp-bar,.vp-list,.t-sub').forEach((x) => x.remove());
+      while (tmp.firstChild) box.appendChild(tmp.firstChild);
+      return true;
     }
     const veNote = (n) => { const m = /clip (\d+)\/(\d+)/.exec(String(n || '')); return m ? 'סרטון ' + m[1] + ' מתוך ' + m[2] + ' · ' : ''; };
     // the thumbnail nearest to a second of a clip
@@ -5006,7 +5016,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         }
         if (r.state === 'error' || r.state === 'missing') { e.step = e.res ? 2 : 0; e.scan = null; render(); toast('הניתוח לא הושלם', 'נסו שוב בעוד רגע. אם זה חוזר, נסו סרטונים קצרים יותר.', 'err'); return; }
         e.scan = { step: r.step, progress: r.progress || 0, note: r.note || '' };
-        if (S.route === 'vidWiz') { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); if (!typing) render(); }
+        if (S.route === 'vidWiz' && !vePaintBusy(e)) { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); if (!typing) render(); }
       }
       e.step = e.res ? 2 : 0; render(); toast('הניתוח לוקח יותר מהרגיל', 'נסו שוב בעוד כמה דקות.', 'err');
     }
@@ -5018,7 +5028,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!ok.length) { toast('לא הועלו סרטונים', 'העלו לפחות סרטון אחד.', 'err'); return; }
       if (!e.message.trim()) { toast('חסר המסר', 'כתבו במשפט אחד מה הסרטון צריך להגיד. לפי זה נבחרים הקטעים.', 'err'); return; }
       if (!e.goal) { toast('לא נבחרה מטרה', 'בחרו מטרת סרטון.', 'err'); return; }
-      if (!v.name) v.name = e.message.slice(0, 60);
+      // a short working title from the message (cut at a word); the studio lets the person rename it
+      if (!v.name) { const m = e.message.trim(); v.name = m.length <= 34 ? m : m.slice(0, 34).replace(/\s+\S*$/, ''); }
       v.goal = e.goal; v.desc = e.message; v.fmt = e.format; v.dur = e.duration; v.voice = !!e.toggles.voice; v.music = !!e.toggles.music; v.voiceId = e.voiceId;
       veRun(v);
     };
@@ -5060,7 +5071,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         }
         pr.pct = Math.max(pr.pct, r.progress || 0);
         if (r.step === 'start' || r.step === 'status') { pr.on = ['render']; pr.done = ['vis', 'voice', 'music']; pr.rp = Math.max(0, Math.min(1, ((r.progress || 0.42) - 0.42) / 0.56)); }
-        if (S.vd === v && S.route === 'vidWiz') render();
+        if (S.vd === v && S.route === 'vidWiz') { const box = $('#view .gen-mini'); if (box) { const tmp = document.createElement('div'); tmp.innerHTML = prodView(v); const n = tmp.firstChild; box.querySelectorAll('.vp-bar,.vp-list').forEach((x) => x.remove()); n.querySelectorAll('.vp-bar,.vp-list').forEach((x) => box.appendChild(x)); } else render(); }
       };
     };
     // the studio of an edited video: a change request goes back to the edit plan (the analysis is reused)
