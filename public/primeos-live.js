@@ -1859,10 +1859,20 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     PROD.watch[it.id] = true;
     const job = it.prod.job;
     const emit = (r) => { const f = PROD.on[it.id]; if (f) { try { f(r); } catch (e) { console.error('prod listener', e); } } };
+    const finish = (ui) => {
+      delete PROD.st[it.id];
+      const f = PROD.on[it.id];
+      delete PROD.on[it.id];
+      if (f) { try { f({ done: true, ui }); } catch (e) { console.error('prod done', e); } }
+      else { toast('התוצר מוכן', '„' + it.t + '” מחכה בספריית התוכן.'); if (!QUIET.includes(S.route)) render(); }
+    };
     try {
       for (let n = 0; n < 400; n++) {
         await new Promise((res) => setTimeout(res, n ? (n < 20 ? 3000 : 6000) : 1800));
-        if (items.indexOf(it) < 0 || !it.prod || it.prod.job !== job) return; // replaced or removed meanwhile
+        if (items.indexOf(it) < 0) return; // removed meanwhile
+        // the library refresh may bring the finished item first: that counts as done
+        if (!it.prod || it.prod.job !== job) { if (!it.prod && it.media && it.media.url) finish(JSON.parse(JSON.stringify(it))); return; }
+        if (it.prod.err) { emit({ err: it.prod.err }); return; }
         if (document.hidden) continue;
         let r;
         try { r = await call('job.get', { id: job }); } catch (e) { continue; }
@@ -1870,11 +1880,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           const ui = r.ui;
           replaceObj(it, ui);
           SY.items.set(it.id, JSON.stringify(ui));
-          delete PROD.st[it.id];
-          const f = PROD.on[it.id];
-          delete PROD.on[it.id];
-          if (f) { try { f({ done: true, ui }); } catch (e) { console.error('prod done', e); } }
-          else { toast('התוצר מוכן', '„' + it.t + '” מחכה בספריית התוכן.'); if (!QUIET.includes(S.route)) render(); }
+          finish(ui);
           return;
         }
         if (r.state === 'error' || r.state === 'missing') {
