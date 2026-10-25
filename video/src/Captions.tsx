@@ -28,7 +28,7 @@ export const Captions: React.FC<{ plan: Plan }> = ({ plan }) => {
   const style = cap.style ?? 'karaoke';
   return (
     <AbsoluteFill dir="rtl" style={{ justifyContent: cap.pos === 'center' ? 'center' : 'flex-end', alignItems: 'center', paddingBottom: cap.pos === 'center' ? 0 : (tall ? 250 : 80) * k, pointerEvents: 'none' }}>
-      <div style={{ transform: `scale(${0.85 + 0.15 * s})`, opacity: Math.min(1, s * 1.4), display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: `${6 * k}px ${16 * k}px`, maxWidth: '86%', padding: style === 'clean' ? `${10 * k}px ${26 * k}px` : 0, background: style === 'clean' ? 'rgba(0,0,0,.55)' : 'transparent', borderRadius: 18 * k }}>
+      <div style={{ transform: `scale(${0.85 + 0.15 * s})`, opacity: Math.min(1, s * 1.4), display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: `${6 * k}px ${(style === 'pop' ? 26 : 16) * k}px`, maxWidth: '86%', padding: style === 'clean' ? `${10 * k}px ${26 * k}px` : 0, background: style === 'clean' ? 'rgba(0,0,0,.55)' : 'transparent', borderRadius: 18 * k }}>
         {g.map((w, i) => {
           const on = t >= w.s && t <= w.e + 0.08;
           const past = t > w.e;
