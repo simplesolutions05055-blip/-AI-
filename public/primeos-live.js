@@ -1993,7 +1993,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (w.cur >= w.slides.length) w.cur = 0;
     const imgBy = {};
     const images = m.images || {};
-    sl.forEach((s, i) => { if (images['s' + i]) imgBy[deckImgKey(d, s, i)] = images['s' + i]; });
+    const own = new Set(m.photos || []);
+    sl.forEach((s, i) => { if (images['s' + i] && !own.has(images['s' + i])) imgBy[deckImgKey(d, s, i)] = images['s' + i]; });
     w.photos = (m.photos || []).map((u) => ({ url: u, name: '' })).concat((w.photos || []).filter((p) => !(m.photos || []).includes(p.url)));
     w.media = { kind: 'deck', ar: '16/9', url: m.url, pptx: m.pptx, slides: m.slides || [], thumb: m.thumb || '', images, imgBy, picks: m.picks || {}, rev: Date.now(), job: (w.media && w.media.job) || 1, busy: '' };
     w.replaces = ui.id; w._ref = 'wiz:' + ui.id;
@@ -2150,7 +2151,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (!w || !m || m.busy || !w.deck) return;
     m.picks = m.picks || {};
     const p = (w.photos || [])[+i];
-    if (+i < 0 || !p) delete m.picks[w.cur]; else m.picks[w.cur] = p.url;
+    if (+i < 0 || !p) { delete m.picks[w.cur]; if (m.imgBy && w.deck.slides[w.cur]) delete m.imgBy[deckImgKey(w.deck, w.deck.slides[w.cur], w.cur)]; } else m.picks[w.cur] = p.url;
     const s = w.slides[w.cur]; if (s) { s.ver++; s.fixes.push({ k: 'visual', t: p ? 'תמונה שהעליתם' : 'תמונת AI', v: s.ver }); }
     deckRun(w);
   };
