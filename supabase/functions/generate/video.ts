@@ -400,7 +400,7 @@ export async function isolateVoice(d: any, org: string, audioUrl: string) {
   const r0 = await fetch(audioUrl);
   if (!r0.ok) throw new Error('audio_fetch_failed');
   const fd = new FormData();
-  fd.append('audio', await r0.blob(), 'audio.mp3');
+  fd.append('audio', await r0.blob(), /\.m4a(\?|$)/i.test(audioUrl) ? 'audio.m4a' : 'audio.mp3');
   const r = await fetch('https://api.elevenlabs.io/v1/audio-isolation', { method: 'POST', headers: { 'xi-api-key': key }, body: fd });
   if (!r.ok) throw new Error('isolate_failed_' + r.status);
   const bytes = new Uint8Array(await r.arrayBuffer());
@@ -410,7 +410,7 @@ export async function isolateVoice(d: any, org: string, audioUrl: string) {
 // ---- understanding the footage ----
 export const SCAN_JSON_HE = `החזר JSON בלבד:
 {"clips":[{"i":0,"summary":"מה יש בסרטון במשפט-שניים","setting":"איפה מצולם","kind":"event|interview|tour|performance|speech|broll|other","people":"none|few|crowd","quality":{"shaky":false,"dark":false,"noisy":false},"speech":"סיכום מה נאמר, או ריק","segments":[{"s":0,"e":4.5,"desc":"מה רואים ומה קורה","score":4,"speech":false,"faces":"none|far|close","motion":"static|calm|busy","tags":["מילת מפתח"]}]}]}
-כללים: segments של 2-8 שניות שמכסים את הסרטון, לפי מה שקורה (שינוי תמונה, פעולה, משפט). score 1-5: כמה הרגע חזק וראוי לסרטון קצר לרשתות (5 = רגע שיא ברור, 1 = חסר עניין או פגום). faces close = פנים של אדם ברור מקרוב. בעברית, קצר, עובדות בלבד.`;
+כללים: segments של 2-8 שניות שמכסים את הסרטון, לפי מה שקורה (שינוי תמונה, פעולה, משפט). score 1-5: כמה הרגע חזק וראוי לסרטון קצר לרשתות (5 = רגע שיא ברור, 1 = חסר עניין או פגום). faces close = פנים של אדם ברור מקרוב. בעברית בלבד, בלי מונחים באנגלית (לא B-roll, לא close-up), קצר, עובדות בלבד.`;
 export const SCAN_SYS = 'אתה עורך וידאו שמנתח חומרי גלם לפני עריכה. אתה מתאר מה באמת יש בכל קטע, בלי להמציא, ומדרג רגעים לפי כמה הם חזקים לסרטון קצר לרשתות החברתיות.';
 const GEMINI_MODELS = () => [...new Set([env('GEMINI_MODEL') || 'gemini-3.5-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'])];
 // upload one proxy to the Gemini File API and wait until it is processed
@@ -538,5 +538,6 @@ ${tg.voice ? `קולות זמינים (id | שם | מין | אופי):\n${vlist}
 - סכום dur + הסיום = ${dur} בערך. ${P.cut}.
 - "פנים מקרוב" של ילדים נכנסים רק אם המשתמש ביקש במפורש.
 - רק פרטים מהבריף ומהחומר. אסור להמציא שמות, תאריכים או מספרים. מקף רגיל בלבד.
-- קריאות בלי ניקוד בטקסט על המסך ובקריינות.`;
+- קריאות בלי ניקוד בטקסט על המסך ובקריינות.
+- כל השדות בעברית בלבד (חוץ מ-musicPrompt ו-ai/stock), בלי מונחים באנגלית: לא BPM, לא B-roll. קצב מוזיקה במילים (מהיר, בינוני, רגוע).`;
 }

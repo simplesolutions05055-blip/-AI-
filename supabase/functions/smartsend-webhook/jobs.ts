@@ -130,7 +130,7 @@ async function advance(d: DB, j: Job) {
         if (eclips.length && inp.clean !== false) {
           const need = new Set<number>();
           scenes.forEach((s) => { const m = /^clip:(\d+):/.exec(String(s.visual?.src ?? '')); if (m && s.clipAudio) need.add(+m[1]); });
-          for (const i of need) { const c = eclips.find((x) => +x.i === i); if (c && c.audio) p['iso' + i] = await httpLater(d, FN('generate'), token, { mode: 'visolate', audio: c.audio }, 170000); }
+          for (const i of need) { const c = eclips.find((x) => +x.i === i); if (c && (c.clean || c.audio)) p['iso' + i] = await httpLater(d, FN('generate'), token, { mode: 'visolate', audio: c.clean || c.audio }, 170000); }
         }
         if (!Object.keys(p).length) p.none = await httpLater(d, FN('generate'), token, { mode: 'vcaps' }, 30000);
         return upd(d, j, { pend: p, next_at: later(20) });
@@ -149,7 +149,9 @@ async function advance(d: DB, j: Job) {
           const c = (inp.clips || []).find((x: any) => +x.i === +m![1]);
           if (c && c.url) {
             const iso = res['iso' + c.i];
-            return { ...base, kind: 'video', src: c.url, trimStart: Math.max(0, +m[2] || 0), motion: 'static', tint: s.clipAudio ? 0 : base.tint, audio: !!s.clipAudio, vol: 1, speed: s.speed && +s.speed !== 1 ? +s.speed : undefined, audioSrc: s.clipAudio && ok(iso) && iso.json.src ? iso.json.src : undefined };
+            // the clean sound: the isolation service when it answered, otherwise the filtered copy made in the preparation
+            const cleanSrc = inp.clean === false ? undefined : ok(iso) && iso.json.src ? iso.json.src : c.clean || undefined;
+            return { ...base, kind: 'video', src: c.url, trimStart: Math.max(0, +m[2] || 0), motion: 'static', tint: s.clipAudio ? 0 : base.tint, audio: !!s.clipAudio, vol: 1, speed: s.speed && +s.speed !== 1 ? +s.speed : undefined, audioSrc: s.clipAudio ? cleanSrc : undefined };
           }
         }
         if (/^stockv?:/.test(src)) { const k = stockQ.findIndex((x) => x.i === i); const it = stockItems[k]; if (it && it.src) return { ...base, kind: it.v ? 'video' : 'image', src: it.src }; }

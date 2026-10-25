@@ -240,7 +240,7 @@ async function jobCreate(d: DB, orgId: string, memberId: string | null, p: Recor
   if (ui) { input.ui = ui; input.vmeta = p.vmeta && typeof p.vmeta === 'object' ? p.vmeta : undefined; }
   // an edit of the person's footage: the clips (with their transcripts) and the switches travel with the render
   if (Array.isArray(p.clips) && p.clips.length) {
-    input.clips = p.clips.slice(0, 6).filter((c: any) => c && /^https:\/\//.test(String(c.url ?? ''))).map((c: any) => ({ i: +c.i || 0, url: String(c.url).slice(0, 600), name: String(c.name ?? '').slice(0, 120), sec: +c.sec || 0, audio: /^https:\/\//.test(String(c.audio ?? '')) ? String(c.audio) : '', words: (Array.isArray(c.words) ? c.words : []).slice(0, 2000).map((w: any) => ({ w: String(w.w ?? '').slice(0, 40), s: +w.s || 0, e: +w.e || 0 })) }));
+    input.clips = p.clips.slice(0, 6).filter((c: any) => c && /^https:\/\//.test(String(c.url ?? ''))).map((c: any) => ({ i: +c.i || 0, url: String(c.url).slice(0, 600), name: String(c.name ?? '').slice(0, 120), sec: +c.sec || 0, audio: /^https:\/\//.test(String(c.audio ?? '')) ? String(c.audio) : '', clean: /^https:\/\//.test(String(c.clean ?? '')) ? String(c.clean) : '', words: (Array.isArray(c.words) ? c.words : []).slice(0, 2000).map((w: any) => ({ w: String(w.w ?? '').slice(0, 40), s: +w.s || 0, e: +w.e || 0 })) }));
     input.toggles = p.toggles && typeof p.toggles === 'object' ? p.toggles : {};
     input.clean = p.clean !== false;
   }

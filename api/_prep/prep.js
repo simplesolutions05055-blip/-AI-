@@ -61,6 +61,13 @@ for (let i = 0; i < job.clips.length; i++) {
     const au = dir + '/audio.mp3';
     sh(FF, ['-y', '-loglevel', 'error', '-i', src, '-vn', '-ac', '1', '-ar', '22050', '-b:a', '64k', au]);
     if (existsSync(au)) { await put(au, c.out.audio.upload, 'audio/mpeg'); out.files.audio = c.out.audio.url; }
+    // a cleaned copy of the sound for the edit (wind, hum and hiss down, speech band kept, even loudness): used when the
+    // voice-isolation service is not available. Full length, so it stays aligned with the clip's own time.
+    if (c.out.clean) {
+      const cl = dir + '/clean.m4a';
+      sh(FF, ['-y', '-loglevel', 'error', '-i', src, '-vn', '-af', 'highpass=f=85,lowpass=f=11000,afftdn=nr=14:nf=-30:tn=1,loudnorm=I=-16:TP=-1.5:LRA=11', '-ac', '2', '-ar', '48000', '-c:a', 'aac', '-b:a', '160k', cl]);
+      if (existsSync(cl)) { await put(cl, c.out.clean.upload, 'audio/mp4'); out.files.clean = c.out.clean.url; }
+    }
     // the loudness of the sound: how much of the clip is quiet (useful to know what is worth keeping)
     const sil = sh(FF, ['-i', src, '-vn', '-af', 'silencedetect=noise=-35dB:d=0.6', '-f', 'null', '-']).stderr || '';
     const starts = nums(/silence_start: ([\d.]+)/g, sil), ends = nums(/silence_end: ([\d.]+)/g, sil);

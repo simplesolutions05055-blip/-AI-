@@ -244,7 +244,7 @@ export async function advanceWeb(d: DB, j: Job, token: string, f: Flow) {
         const base = `vedit/${j.org_id}/${j.id}`;
         const list = [] as any[];
         for (const c of clips) {
-          const out: Record<string, any> = { proxy: await sign(`${base}/c${c.i}-proxy.mp4`), audio: await sign(`${base}/c${c.i}-audio.mp3`) };
+          const out: Record<string, any> = { proxy: await sign(`${base}/c${c.i}-proxy.mp4`), audio: await sign(`${base}/c${c.i}-audio.mp3`), clean: await sign(`${base}/c${c.i}-clean.m4a`) };
           for (let k = 0; k < 12; k++) out['t' + k] = await sign(`${base}/c${c.i}-t${String(k).padStart(2, '0')}.jpg`);
           list.push({ url: c.url, name: c.name || '', out });
         }
@@ -307,7 +307,7 @@ export async function advanceWeb(d: DB, j: Job, token: string, f: Flow) {
       if (!ok(res.e)) return f.retry('direct');
       data.plan = res.e.json;
       // what the render job needs about every clip
-      data.clips = sc.map((c) => ({ i: c.i, url: c.url, name: c.name, sec: c.sec, w: c.w, h: c.h, audio: c.files?.audio || '', thumbs: c.thumbs ?? [], words: data.transcripts?.[c.i]?.words ?? [] }));
+      data.clips = sc.map((c) => ({ i: c.i, url: c.url, name: c.name, sec: c.sec, w: c.w, h: c.h, audio: c.files?.audio || '', clean: c.files?.clean || '', thumbs: c.thumbs ?? [], words: data.transcripts?.[c.i]?.words ?? [] }));
       return f.upd({ state: 'done', step: 'done', result: { ok: true }, pend: {}, data });
     }
   }

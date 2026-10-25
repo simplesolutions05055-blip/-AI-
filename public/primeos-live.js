@@ -5053,7 +5053,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       v.brief = p; v.mode = 'edit';
       render(); window.scrollTo({ top: 0 });
       const it = prodItem('video', { t: v.name || 'סרטון ערוך', d: v.dept || (S.user && S.user.dept) || '', ch: [...(v.ch || [])], fmts: [e.format], wz: { mode: 'edit', message: e.message } });
-      const clips = (e.res.clips || []).map((c) => ({ i: c.i, url: c.url, name: c.name, sec: c.sec, audio: c.audio || '', words: c.words || [] }));
+      const clips = (e.res.clips || []).map((c) => ({ i: c.i, url: c.url, name: c.name, sec: c.sec, audio: c.audio || '', clean: c.clean || '', words: c.words || [] }));
       try {
         await startProd('video', it, { brief: p, title: v.name, desc: e.message, goal: e.goal, dur: Math.min(90, Math.round((p.scenes || []).reduce((a, s) => a + s.dur, 0) + 4)), imgs: [], dept: v.dept, format: fmtK(e.format), voice: wantVoice, music: wantMusic, clips, toggles: e.toggles, clean: e.toggles.origAudio !== false, vmeta: slimV(v) }, true);
       } catch (er) { v.prod = null; render(); return; }
