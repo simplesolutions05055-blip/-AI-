@@ -5168,6 +5168,30 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     ACT.draftX = (k) => { const d = store(); delete d[k]; render(); flush(); toast('הטיוטה נמחקה', ''); };
   })();
 
+  /* ---------------- console on a phone: client and user lists as compact rows ----------------
+     The mockup turns every table row into a stacked card (one line per column). In the console that makes a client
+     eight lines tall; here the console's tables show one name line and one line of facts, same tokens and type. */
+  (function () {
+    const _render = render;
+    render = function () { try { document.body.dataset.route = S.route || ''; } catch (e) { /* no body */ } return _render.apply(this, arguments); };
+    css.textContent += `
+@media(max-width:760px){
+  body.is-admin .tbl-wrap table.responsive tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:10px 8px}
+  body.is-admin .tbl-wrap table.responsive td{display:inline-flex;align-items:center;gap:4px;padding:0;font-size:12.5px;line-height:1.5;min-width:0}
+  body.is-admin .tbl-wrap table.responsive td:before{width:auto;font-size:11.5px;font-weight:500}
+  body.is-admin .tbl-wrap table.responsive td[data-l="לקוח"],body.is-admin .tbl-wrap table.responsive td[data-l="משתמש"]{flex:1 1 100%;font-size:14px}
+  body.is-admin .tbl-wrap table.responsive td[data-l="לקוח"]:before,body.is-admin .tbl-wrap table.responsive td[data-l="משתמש"]:before{content:none}
+  body.is-admin .tbl-wrap table.responsive td[data-l=""]{margin-inline-start:auto}
+  body.is-admin .tbl-wrap table.responsive td .uwrap{gap:6px}
+  body.is-admin .tbl-wrap table.responsive td .uwrap .ubar,body.is-admin .tbl-wrap table.responsive td .ubar{width:56px}
+  /* the facts that matter on a phone; the rest waits for the client's page */
+  body.is-admin .tbl-wrap table.responsive td[data-l="הסכם"],body.is-admin .tbl-wrap table.responsive td[data-l="לשנה"],body.is-admin .tbl-wrap table.responsive td[data-l="תחילה"],body.is-admin .tbl-wrap table.responsive td[data-l="AI"],body.is-admin .tbl-wrap table.responsive td[data-l="חלק"],body.is-admin .tbl-wrap table.responsive td[data-l="מסמכים"],body.is-admin .tbl-wrap table.responsive td[data-l="שקופיות"],body.is-admin .tbl-wrap table.responsive td[data-l="שניות וידאו"],body.is-admin .tbl-wrap table.responsive td[data-l="מצגות"],body.is-admin .tbl-wrap table.responsive td[data-l="סרטונים"]{display:none}
+  /* users list: the client is a fact under the user's name, not a second title */
+  body.is-admin[data-route="a_users"] .tbl-wrap table.responsive td[data-l="לקוח"]{flex:0 1 auto;font-size:12.5px}
+  body.is-admin[data-route="a_users"] .tbl-wrap table.responsive td[data-l="לקוח"]:before{content:attr(data-l)}
+}`;
+  })();
+
   /* ---------------- subscription plans, quotas and add-ons (approved spec 24.10.2026) ----------------
      Limits come from the server (organizations.quotas + active add-ons); outputs are counted server-side.
      Here: the console edits them per client, the client sees them, and a full quota is explained, not hidden. */
