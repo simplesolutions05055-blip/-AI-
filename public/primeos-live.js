@@ -4304,6 +4304,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       w.sugg = [...new Set([...tags, ...suggestTags(w.t, w.brief.dept)])].slice(0, 7);
       w.tags = tags.slice(0, 4);
       w.media = { kind: 'video', eng: 'v3', url, ready: true, thumb, scenes: (b.scenes || []).map((s) => ({ t: (s.text && s.text.lines || []).join(' '), s: s.say || '' })), cta: (b.outro && b.outro.cta) || '', details: [], images: thumb ? [thumb] : [], fmt: v.fmt, ar: AR[v.fmt] || '9/16' };
+      // the item that waited in the library is the one this studio saves (set before the first paint)
+      if (v.replaces) { w.replaces = v.replaces; w._ref = 'wiz:' + v.replaces; }
       render();
       toast('הסרטון מוכן', 'אפשר לצפות, להוריד ולפרסם.');
     }
@@ -4883,7 +4885,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         const skip = (p.skipped || []).find((x) => +x.i === +c.i);
         const cl = e.clips[c.i] || {};
         const chips = [top >= 4 ? '<span class="chip ok">רגע חזק ' + top + '/5</span>' : '', c.speech ? '<span class="chip ok">דיבור</span>' : '<span class="chip">בלי דיבור</span>',
-          ...Object.keys(Q).filter((k) => c.quality && c.quality[k]).map((k) => '<span class="chip warn">' + Q[k] + '</span>'), skip ? '<span class="chip">לא נבחר</span>' : ''].filter(Boolean).join('');
+          ...Object.keys(Q).filter((k) => c.quality && c.quality[k]).map((k) => '<span class="chip warn">' + Q[k] + '</span>'), c.burned && c.burned !== 'none' ? '<span class="chip">' + (c.burned === 'captions' ? 'כתוביות צרובות' : 'טקסט צרוב') + '</span>' : '', skip ? '<span class="chip">לא נבחר</span>' : ''].filter(Boolean).join('');
         return '<div class="ve-clip"><span class="ve-th" style="background-image:url(\'' + esc((sm.thumbs && sm.thumbs[Math.floor((sm.thumbs.length || 1) / 2)] || {}).url || '') + '\')"></span><div><b>סרטון ' + (c.i + 1) + (cl.name ? ' · ' + esc(cl.name.replace(/\.[a-z0-9]+$/i, '').slice(0, 30)) : '') + ' · ' + mmss(sm.sec || cl.sec) + '</b><span class="t-sub">' + esc(c.summary || '') + (skip && skip.why ? ' ' + esc(skip.why) : '') + '</span><div class="ve-chips">' + chips + '</div></div></div>';
       }).join('');
       let t = 0;
@@ -5031,6 +5033,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       // a short working title from the message (cut at a word); the studio lets the person rename it
       if (!v.name) { const m = e.message.trim(); v.name = m.length <= 34 ? m : m.slice(0, 34).replace(/\s+\S*$/, ''); }
       v.goal = e.goal; v.desc = e.message; v.fmt = e.format; v.dur = e.duration; v.voice = !!e.toggles.voice; v.music = !!e.toggles.music; v.voiceId = e.voiceId;
+      v.style = 'existing'; v.aud = e.aud || ''; v.audQ = v.audQ || [];
       veRun(v);
     };
     ACT.veToForm = () => { S.vd.ed.step = 0; render(); window.scrollTo({ top: 0 }); };
@@ -5075,6 +5078,13 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       };
     };
     // the studio of an edited video: a change request goes back to the edit plan (the analysis is reused)
+    const _aiBoxE = aiBox;
+    aiBox = function (prefix) {
+      const h = _aiBoxE(prefix);
+      const w = S.wiz;
+      if (prefix !== 'w' || !w || !w.vmeta || w.vmeta.mode !== 'edit') return h;
+      return h.replace('placeholder="מה לשנות בסרטון?"', 'placeholder="מה לשנות? לדוגמה: תוריד את הקטע של הבמה"').replace('>לבריף מעודכן<', '>לתוכנית מעודכנת<');
+    };
     const _wAiE = ACT.wAi;
     ACT.wAi = () => {
       const w = S.wiz;

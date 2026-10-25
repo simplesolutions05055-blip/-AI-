@@ -173,7 +173,7 @@ async function advance(d: DB, j: Job) {
         let at = 0;
         sc.forEach((o, i) => {
           const m = /^clip:(\d+):([\d.]+)/.exec(String(scenes[i]?.visual?.src ?? ''));
-          if (m && scenes[i].clipAudio) {
+          if (m && scenes[i].clipAudio && !scenes[i].noCaps) {
             const c = (inp.clips || []).find((x: any) => +x.i === +m![1]);
             const t0 = +m[2] || 0, t1 = t0 + o.dur * (o.visual?.speed || 1);
             for (const w of (c?.words ?? []) as any[]) if (w.s >= t0 - 0.05 && w.e <= t1 + 0.05) capWords.push({ w: w.w, s: +(at + (w.s - t0) / (o.visual?.speed || 1)).toFixed(2), e: +(at + (w.e - t0) / (o.visual?.speed || 1)).toFixed(2) });

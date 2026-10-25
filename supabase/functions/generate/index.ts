@@ -310,7 +310,7 @@ interface Ctx { org: string; dept?: string; tone?: string; good?: string[]; bad?
 
 // the director's answer, as a tool schema (the model fills it field by field, so the plan always arrives whole)
 // the editor's plan: the brief schema plus the clip fields
-const edited = (sch: any) => { const x = JSON.parse(JSON.stringify(sch)); const sc = x.properties.scenes.items.properties; sc.clipAudio = { type: 'boolean' }; sc.speed = { type: 'number' }; sc.why = { type: 'string' }; x.properties.skipped = { type: 'array', items: { type: 'object', properties: { i: { type: 'number' }, why: { type: 'string' } } } }; return x; };
+const edited = (sch: any) => { const x = JSON.parse(JSON.stringify(sch)); const sc = x.properties.scenes.items.properties; sc.clipAudio = { type: 'boolean' }; sc.noCaps = { type: 'boolean' }; sc.speed = { type: 'number' }; sc.why = { type: 'string' }; x.properties.skipped = { type: 'array', items: { type: 'object', properties: { i: { type: 'number' }, why: { type: 'string' } } } }; return x; };
 const BRIEF_SCHEMA = {
   type: 'object',
   properties: {
@@ -637,7 +637,7 @@ ${SCAN_JSON_HE}`, 7000, extra, { type: 'object', additionalProperties: true });
       }
       const list = (Array.isArray(out.clips) ? out.clips : []).map((c: any) => ({
         i: +c.i, summary: String(c.summary ?? '').slice(0, 300), setting: String(c.setting ?? '').slice(0, 120), kind: String(c.kind ?? 'other'), people: String(c.people ?? ''),
-        quality: { shaky: !!c.quality?.shaky, dark: !!c.quality?.dark, noisy: !!c.quality?.noisy }, speech: String(c.speech ?? '').slice(0, 400),
+        quality: { shaky: !!c.quality?.shaky, dark: !!c.quality?.dark, noisy: !!c.quality?.noisy }, burned: ['titles', 'captions'].includes(c.burned) ? c.burned : 'none', speech: String(c.speech ?? '').slice(0, 400),
         segments: (Array.isArray(c.segments) ? c.segments : []).slice(0, 40).map((s: any) => ({ s: Math.max(0, +s.s || 0), e: Math.max(0, +s.e || 0), desc: String(s.desc ?? '').slice(0, 160), score: Math.max(1, Math.min(5, Math.round(+s.score || 3))), speech: !!s.speech, faces: String(s.faces ?? 'none'), motion: String(s.motion ?? ''), tags: (Array.isArray(s.tags) ? s.tags : []).slice(0, 6).map(String) })),
       }));
       return json(req, { ok: true, how, model: out.model ?? '', clips: list });

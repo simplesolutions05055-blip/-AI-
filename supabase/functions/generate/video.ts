@@ -157,6 +157,7 @@ export function sanitizeBrief(j: any, p: Record<string, any>, voices: Voice[]) {
     fx: Array.isArray(s.fx) ? s.fx.slice(0, 3) : [],
     // an edit of the person's footage: the clip keeps its own sound, may run faster or slower
     ...(s.clipAudio ? { clipAudio: true } : {}),
+    ...(s.noCaps ? { noCaps: true } : {}),
     ...(s.speed && +s.speed !== 1 ? { speed: Math.max(0.5, Math.min(2, +s.speed)) } : {}),
     ...(s.why ? { why: String(s.why).slice(0, 200) } : {}),
   }));
@@ -409,8 +410,8 @@ export async function isolateVoice(d: any, org: string, audioUrl: string) {
 
 // ---- understanding the footage ----
 export const SCAN_JSON_HE = `החזר JSON בלבד:
-{"clips":[{"i":0,"summary":"מה יש בסרטון במשפט-שניים","setting":"איפה מצולם","kind":"event|interview|tour|performance|speech|broll|other","people":"none|few|crowd","quality":{"shaky":false,"dark":false,"noisy":false},"speech":"סיכום מה נאמר, או ריק","segments":[{"s":0,"e":4.5,"desc":"מה רואים ומה קורה","score":4,"speech":false,"faces":"none|far|close","motion":"static|calm|busy","tags":["מילת מפתח"]}]}]}
-כללים: segments של 2-8 שניות שמכסים את הסרטון, לפי מה שקורה (שינוי תמונה, פעולה, משפט). score 1-5: כמה הרגע חזק וראוי לסרטון קצר לרשתות (5 = רגע שיא ברור, 1 = חסר עניין או פגום). faces close = פנים של אדם ברור מקרוב. בעברית בלבד, בלי מונחים באנגלית (לא B-roll, לא close-up), קצר, עובדות בלבד.`;
+{"clips":[{"i":0,"summary":"מה יש בסרטון במשפט-שניים","setting":"איפה מצולם","kind":"event|interview|tour|performance|speech|broll|other","people":"none|few|crowd","quality":{"shaky":false,"dark":false,"noisy":false},"burned":"none|titles|captions","speech":"סיכום מה נאמר, או ריק","segments":[{"s":0,"e":4.5,"desc":"מה רואים ומה קורה","score":4,"speech":false,"faces":"none|far|close","motion":"static|calm|busy","tags":["מילת מפתח"]}]}]}
+כללים: segments של 2-8 שניות שמכסים את הסרטון, לפי מה שקורה (שינוי תמונה, פעולה, משפט). score 1-5: כמה הרגע חזק וראוי לסרטון קצר לרשתות (5 = רגע שיא ברור, 1 = חסר עניין או פגום). faces close = פנים של אדם ברור מקרוב. burned: האם יש בסרטון עצמו טקסט צרוב (titles = כותרות או גרפיקה, captions = כתוביות של דיבור, none = צילום נקי). בעברית בלבד, בלי מונחים באנגלית (לא B-roll, לא close-up), קצר, עובדות בלבד.`;
 export const SCAN_SYS = 'אתה עורך וידאו שמנתח חומרי גלם לפני עריכה. אתה מתאר מה באמת יש בכל קטע, בלי להמציא, ומדרג רגעים לפי כמה הם חזקים לסרטון קצר לרשתות החברתיות.';
 const GEMINI_MODELS = () => [...new Set([env('GEMINI_MODEL') || 'gemini-3.5-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'])];
 // upload one proxy to the Gemini File API and wait until it is processed
@@ -490,7 +491,7 @@ export function editorPrompt(p: Record<string, any>, c: ReturnType<typeof caps>,
     const a = an.find((x) => +x.i === +cl.i) ?? {};
     const segs = (a.segments ?? []).map((s: any) => `  [${s.s}-${s.e}] ציון ${s.score}: ${s.desc}${s.speech ? ' (דיבור)' : ''}${s.faces === 'close' ? ' (פנים מקרוב)' : ''}`).join('\n');
     const tr = (cl.transcript ?? []).map((s: any) => `  [${s.s}-${s.e}] "${s.t}"`).join('\n');
-    return `סרטון i=${cl.i} "${cl.name || ''}", ${Math.round(cl.sec)} שניות. ${a.summary || ''} ${a.quality ? Object.entries(a.quality).filter(([, v]) => v).map(([k]) => ({ shaky: 'רעוע', dark: 'חשוך', noisy: 'רועש' })[k] ?? k).join(', ') : ''}\n${segs}${tr ? '\nדיבור בסרטון:\n' + tr : ''}`;
+    return `סרטון i=${cl.i} "${cl.name || ''}", ${Math.round(cl.sec)} שניות. ${a.summary || ''}${a.burned && a.burned !== 'none' ? ' (יש בו ' + (a.burned === 'captions' ? 'כתוביות צרובות' : 'טקסט צרוב') + ')' : ''} ${a.quality ? Object.entries(a.quality).filter(([, v]) => v).map(([k]) => ({ shaky: 'רעוע', dark: 'חשוך', noisy: 'רועש' })[k] ?? k).join(', ') : ''}\n${segs}${tr ? '\nדיבור בסרטון:\n' + tr : ''}`;
   }).join('\n\n');
   const vlist = voices.map((v) => `${v.id} | ${v.n} | ${v.g === 'm' ? 'גבר' : 'אישה'} | ${v.tone}`).join('\n');
   const src: string[] = ['"clip:<i>:<שנייה>" - מקטע מהסרטון i שמתחיל בשנייה הזאת ונמשך dur שניות (בחר התחלה שמתאימה בדיוק למה שרוצים לראות; במקטע עם דיבור, התחלה 0.3 שנייה לפני המילה הראשונה של המשפט וסוף אחרי המילה האחרונה)'];
@@ -523,7 +524,7 @@ ${tg.voice ? `קולות זמינים (id | שם | מין | אופי):\n${vlist}
 
 החזר JSON בלבד במבנה:
 {"brief":{"idea":"הסרטון במשפט אחד","style":"","look":"","pace":"","music":"","voiceWhy":"","delivery":""},"mood":"energetic|emotional|informative|festive|solemn|calm|luxury","voice":"id או ריק","musicPrompt":"English prompt: genre, instruments, exact tempo BPM, energy curve, instrumental","font":{"head":"","body":""},"fx":[],"captions":"karaoke|pop|clean|none",
-"scenes":[{"dur":3,"say":"","visual":{"src":"clip:0:12.4","motion":"static","tint":0},"clipAudio":true,"speed":1,"why":"למה המקטע הזה תומך במסר (משפט)","text":{"style":"headline","lines":["שורה"],"pos":"center"},"transition":{"kind":"whip","dur":0.35},"fx":[]}],
+"scenes":[{"dur":3,"say":"","visual":{"src":"clip:0:12.4","motion":"static","tint":0},"clipAudio":true,"noCaps":false,"speed":1,"why":"למה המקטע הזה תומך במסר (משפט)","text":{"style":"headline","lines":["שורה"],"pos":"center"},"transition":{"kind":"whip","dur":0.35},"fx":[]}],
 "outro":{"cta":"קריאה לפעולה","details":[{"text":"פרט"}]},"caption":"טקסט הפוסט","tags":["#"],"skipped":[{"i":3,"why":"למה הסרטון הזה לא נכנס"}]}
 
 כללי הבחירה (חובה):
@@ -537,6 +538,7 @@ ${tg.voice ? `קולות זמינים (id | שם | מין | אופי):\n${vlist}
 - ${tg.broll === false ? 'רק מקטעים מהסרטונים ו-studio.' : 'תמונות וקטעי אווירה (ai / stock) רק כשחסר חומר למסר, לכל היותר 2 סצנות.'}
 - סכום dur + הסיום = ${dur} בערך. ${P.cut}.
 - "פנים מקרוב" של ילדים נכנסים רק אם המשתמש ביקש במפורש.
+- סרטון שכבר יש בו טקסט או כתוביות צרובים (burned לא none): בלי text על המקטעים שלו, ו-"noCaps": true במקטעים שלו כדי שלא יתווספו כתוביות מעל הכתוביות שלו.
 - רק פרטים מהבריף ומהחומר. אסור להמציא שמות, תאריכים או מספרים. מקף רגיל בלבד.
 - קריאות בלי ניקוד בטקסט על המסך ובקריינות.
 - כל השדות בעברית בלבד (חוץ מ-musicPrompt ו-ai/stock), בלי מונחים באנגלית: לא BPM, לא B-roll. קצב מוזיקה במילים (מהיר, בינוני, רגוע).`;
