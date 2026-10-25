@@ -149,7 +149,8 @@ export function sanitizeBrief(j: any, p: Record<string, any>, voices: Voice[]) {
   const maxDur = Math.max(8, Math.min(15, +p.maxDur || 8));
   const scenes = (Array.isArray(j.scenes) ? j.scenes : []).slice(0, 30).map((s: any) => ({
     dur: Math.max(1.2, Math.min(maxDur, +s.dur || 3)),
-    say: p.voice === false ? '' : cleanSay(String(s.say ?? '').slice(0, 300)),
+    // the clip's own speech and the narration never talk at the same time: the real voice wins
+    say: p.voice === false || s.clipAudio ? '' : cleanSay(String(s.say ?? '').slice(0, 300)),
     visual: { src: String(s.visual?.src ?? 'gradient').slice(0, 400), motion: s.visual?.motion, tint: Math.max(0, Math.min(0.25, +s.visual?.tint || 0.12)) },
     // captions own the bottom of the frame: on-screen text moves to the centre so the two never overlap
     text: s.text && (Array.isArray(s.text.lines) || Array.isArray(s.text.items)) ? { ...s.text, lines: Array.isArray(s.text.lines) ? s.text.lines : [], style: TEXT_STYLES.includes(s.text.style) ? s.text.style : 'headline', pos: captionsOn && (s.text.pos === 'bottom' || s.text.pos === 'lower') ? 'center' : s.text.pos, items: Array.isArray(s.text.items) ? s.text.items.slice(0, 6).map((x: any) => ({ t: String(x?.t ?? '').slice(0, 80), sub: x?.sub ? String(x.sub).slice(0, 80) : undefined })) : undefined } : undefined,
