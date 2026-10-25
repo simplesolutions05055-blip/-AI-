@@ -104,6 +104,16 @@ async function liveLoad(d: DB, orgId: string, memberId: string | null, since = '
 }
 
 // the spokesperson (owner/admin) opens department users and gets each one a login link
+// one e-mail address opens one organisation: the login resolves the address to a member, so the same address in
+// two organisations would send a person into the wrong one. Checked on every org and member creation.
+async function mailTaken(d: DB, email: string | null | undefined, orgId: string | null) {
+  const e = normMail(email);
+  if (!okMail(e)) return false;
+  const { data: mems } = await d.from('org_members').select('org_id,email').ilike('email', e);
+  if ((mems ?? []).some((m: any) => normMail(m.email) === e && m.org_id !== orgId)) return true;
+  const { data: orgs } = await d.from('organizations').select('id,contact_email').ilike('contact_email', e);
+  return (orgs ?? []).some((o: any) => normMail(o.contact_email) === e && o.id !== orgId);
+}
 async function memberCreate(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
   const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
   if (!isManager(me)) throw new Error('forbidden');
@@ -111,6 +121,7 @@ async function memberCreate(d: DB, orgId: string, memberId: string | null, p: Re
   if (!name) throw new Error('missing_name');
   const view = p.view === 'dept' ? 'dept' : 'ext';
   const role = view === 'dept' ? 'member' : 'admin';
+  if (await mailTaken(d, p.email, orgId)) throw new Error('email_in_use_elsewhere');
   const { data: mem, error } = await d.from('org_members').insert({
     org_id: orgId, name, email: p.email ? String(p.email).trim().toLowerCase().slice(0, 200) : null, phone: p.phone ? String(p.phone).slice(0, 40) : null,
     role, dept: view === 'dept' ? String(p.dept ?? '').slice(0, 120) || null : null, view, perms: { direct: view === 'dept' ? !!p.direct : true },
@@ -814,6 +825,9 @@ async function adminOrgDelete(d: DB, p: Record<string, any>) {
 
 async function adminOrgCreate(d: DB, p: Record<string, any>) {
   if (!p.name) throw new Error('missing_name');
+  if (await mailTaken(d, p.mail, null)) throw new Error('email_in_use_elsewhere');
+  // the console's short id must be unique: a repeat gets a fresh one
+  if (p.ui_id) { const { data: dup } = await d.from('organizations').select('id').eq('settings->>ui_id', String(p.ui_id)).limit(1); if ((dup ?? []).length) p.ui_id = 'u' + Date.now().toString(36); }
   const { data: org, error } = await d.from('organizations').insert({
     name: String(p.name).slice(0, 200),
     plan: p.plan === 'basic' ? 'basic' : 'extended',

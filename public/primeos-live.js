@@ -625,9 +625,12 @@
   const ROLE_A = { owner: 'הרשאת מנהל (גישה מלאה)', admin: 'הרשאת מנהל (גישה מלאה)', member: 'מחלקה בארגון' };
   function liveAdmin(real) {
     const keep = ['uLim', 'dLim', 'agr', 'add', 'c', 'type', 'ch', 'xch', 'xu', 'st'];
+    const seen = new Set();
     const list = real.map((r) => {
       const ext = r.plan !== 'basic';
-      const id = r.ui_id ? 'o' + r.ui_id : 'r' + String(r.id).slice(0, 8);
+      let id = r.ui_id ? 'o' + r.ui_id : 'r' + String(r.id).slice(0, 8);
+      if (seen.has(id)) id = 'r' + String(r.id).slice(0, 8); // two clients created with the same short id never share one card
+      seen.add(id);
       const prev = ORGS.find((o) => o.id === id) || {};
       const cd = r.created ? new Date(r.created) : new Date();
       const o = { id, n: r.name, type: r.otype || 'רשות מקומית', st: r.status === 'active' ? 'active' : 'paused', since: String(cd.getMonth() + 1).padStart(2, '0') + '/' + cd.getFullYear(), plan: ext ? 'appr' : 'solo', rev: null,
@@ -829,7 +832,7 @@
           else toast('ההזמנה', (st.mail === 'sent' ? 'מייל נשלח. ' : '') + (st.wa === 'sent' ? 'WhatsApp נשלח.' : ''));
         }
       })
-      .catch(() => toast('הלקוח נשמר', 'יצירת קישור הכניסה נכשלה. נסו שוב מעמוד הלקוח.', 'err'));
+      .catch((e) => toast(e && e.message === 'email_in_use_elsewhere' ? 'הלקוח לא נפתח בשרת' : 'הלקוח נשמר', e && e.message === 'email_in_use_elsewhere' ? 'כתובת הדוא״ל כבר משויכת ללקוח אחר. לכל לקוח צריכה להיות כתובת משלו.' : 'יצירת קישור הכניסה נכשלה. נסו שוב מעמוד הלקוח.', 'err'));
   };
 
   /* ---------------- Claude: shared context ---------------- */
@@ -2981,7 +2984,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           const box = $('#modalBox .mb');
           if (box) box.insertAdjacentHTML('beforeend', '<div class="note" style="margin-top:12px">' + ic(st.mail === 'sent' ? 'checkc' : 'alert', 14) + '<span>' + (st.mail === 'sent' ? 'ההזמנה נשלחה אל ' + esc(email) + '.' : 'שליחת המייל נכשלה. אפשר להעתיק קישור ולשלוח ידנית.') + '</span></div>');
         }).catch(() => {});
-      } catch (e) { done(); toast('הפתיחה נכשלה', e.message === 'forbidden' ? 'אין לך הרשאה לפתוח משתמשים.' : 'נסו שוב בעוד רגע.', 'err'); }
+      } catch (e) { done(); toast('הפתיחה נכשלה', e.message === 'forbidden' ? 'אין לך הרשאה לפתוח משתמשים.' : e.message === 'email_in_use_elsewhere' ? 'כתובת הדוא״ל כבר משויכת לארגון אחר. לכל משתמש צריכה להיות כתובת משלו.' : 'נסו שוב בעוד רגע.', 'err'); }
     };
     function linkModal(m) {
       openModal('<div class="mb"><div class="m-ic ok">' + ic('checkc', 20) + '</div><h3>המשתמש נפתח</h3><p>„' + esc(m.name) + '” · ' + esc(ROLE_T[m.role] || '') + (m.dept ? ' · ' + esc(m.dept) : '') + '</p>' +
