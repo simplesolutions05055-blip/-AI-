@@ -292,7 +292,7 @@ export async function advanceWeb(d: DB, j: Job, token: string, f: Flow) {
         const id = await httpLater(d, FN('generate'), token, { mode: 'vscan', ...ctx, clips: list, brief: [inp.title, inp.message, inp.must].filter(Boolean).join(' | ') }, 170000);
         return f.upd({ pend: { a: id }, next_at: f.later(15) });
       }
-      if (!ok(res.a)) return f.retry('scan');
+      if (!ok(res.a) || !Array.isArray(res.a.json.clips) || !res.a.json.clips.length) return f.retry('scan');
       data.analysis = { how: res.a.json.how, model: res.a.json.model, clips: res.a.json.clips ?? [] };
       return f.go('direct');
     }

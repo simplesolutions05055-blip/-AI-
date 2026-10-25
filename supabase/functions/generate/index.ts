@@ -628,11 +628,19 @@ ${brief}
       }
       if (!out) {
         const { extra, text } = scanClaudeParts(clips);
-        out = await claudeObj(key, SCAN_SYS, `הקשר: הסרטונים צולמו עבור סרטון קצר לרשתות. הבריף: ${brief}
+        // a strict shape: the clips always arrive as a list of objects (a free shape sometimes came back as a string or empty)
+        const SEG = { type: 'object', properties: { s: { type: 'number' }, e: { type: 'number' }, desc: { type: 'string' }, score: { type: 'number' }, speech: { type: 'boolean' }, faces: { type: 'string' }, motion: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } }, required: ['s', 'e', 'desc', 'score'] };
+        const SCAN_SCHEMA = { type: 'object', properties: { clips: { type: 'array', items: { type: 'object', properties: { i: { type: 'number' }, summary: { type: 'string' }, setting: { type: 'string' }, kind: { type: 'string' }, people: { type: 'string' }, quality: { type: 'object', properties: { shaky: { type: 'boolean' }, dark: { type: 'boolean' }, noisy: { type: 'boolean' } } }, burned: { type: 'string', enum: ['none', 'titles', 'captions'] }, speech: { type: 'string' }, segments: { type: 'array', items: SEG } }, required: ['i', 'summary', 'segments'] } } }, required: ['clips'] };
+        const ask = () => claudeObj(key, SCAN_SYS, `הקשר: הסרטונים צולמו עבור סרטון קצר לרשתות. הבריף: ${brief}
 
 ${text}
 
-${SCAN_JSON_HE}`, 7000, extra, { type: 'object', additionalProperties: true });
+${SCAN_JSON_HE}
+חובה: פריט אחד ב-clips לכל אחד מ-${clips.length} הסרטונים (i מ-0 עד ${clips.length - 1}).`, 9000, extra, SCAN_SCHEMA);
+        const norm = (o: any) => { let c = o?.clips; if (typeof c === 'string') { try { c = JSON.parse(c); } catch { c = []; } } return { ...o, clips: Array.isArray(c) ? c : [] }; };
+        out = norm(await ask());
+        if (!out.clips.length) out = norm(await ask()); // one more try before giving up
+        if (!out.clips.length) throw new Error('scan_empty');
         how = 'claude';
       }
       const list = (Array.isArray(out.clips) ? out.clips : []).map((c: any) => ({

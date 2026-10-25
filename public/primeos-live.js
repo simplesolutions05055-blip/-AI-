@@ -5031,7 +5031,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!e.message.trim()) { toast('חסר המסר', 'כתבו במשפט אחד מה הסרטון צריך להגיד. לפי זה נבחרים הקטעים.', 'err'); return; }
       if (!e.goal) { toast('לא נבחרה מטרה', 'בחרו מטרת סרטון.', 'err'); return; }
       // a short working title from the message (cut at a word); the studio lets the person rename it
-      if (!v.name) { const m = e.message.trim(); v.name = m.length <= 34 ? m : m.slice(0, 34).replace(/\s+\S*$/, ''); }
+      if (!v.name) { const m = e.message.trim(); v.name = (m.length <= 34 ? m : m.slice(0, 34).replace(/\s+\S*$/, '')).replace(/[\s:,.;\-]+$/, ''); }
       v.goal = e.goal; v.desc = e.message; v.fmt = e.format; v.dur = e.duration; v.voice = !!e.toggles.voice; v.music = !!e.toggles.music; v.voiceId = e.voiceId;
       v.style = 'existing'; v.aud = e.aud || ''; v.audQ = v.audQ || [];
       veRun(v);

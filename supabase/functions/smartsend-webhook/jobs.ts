@@ -151,7 +151,10 @@ async function advance(d: DB, j: Job) {
             const iso = res['iso' + c.i];
             // the clean sound: the isolation service when it answered, otherwise the filtered copy made in the preparation
             const cleanSrc = inp.clean === false ? undefined : ok(iso) && iso.json.src ? iso.json.src : c.clean || undefined;
-            return { ...base, kind: 'video', src: c.url, trimStart: Math.max(0, +m[2] || 0), motion: 'static', tint: s.clipAudio ? 0 : base.tint, audio: !!s.clipAudio, vol: 1, speed: s.speed && +s.speed !== 1 ? +s.speed : undefined, audioSrc: s.clipAudio ? cleanSrc : undefined };
+            // the cut never runs past the end of its clip (a plan may ask for a start too late)
+            const need = (+s.dur || 3) * (s.speed && +s.speed !== 1 ? +s.speed : 1);
+            const ts = c.sec ? Math.max(0, Math.min(+m[2] || 0, c.sec - need - 0.05)) : Math.max(0, +m[2] || 0);
+            return { ...base, kind: 'video', src: c.url, trimStart: ts, motion: 'static', tint: s.clipAudio ? 0 : base.tint, audio: !!s.clipAudio, vol: 1, speed: s.speed && +s.speed !== 1 ? +s.speed : undefined, audioSrc: s.clipAudio ? cleanSrc : undefined };
           }
         }
         if (/^stockv?:/.test(src)) { const k = stockQ.findIndex((x) => x.i === i); const it = stockItems[k]; if (it && it.src) return { ...base, kind: it.v ? 'video' : 'image', src: it.src }; }
@@ -175,7 +178,7 @@ async function advance(d: DB, j: Job) {
           const m = /^clip:(\d+):([\d.]+)/.exec(String(scenes[i]?.visual?.src ?? ''));
           if (m && scenes[i].clipAudio && !scenes[i].noCaps) {
             const c = (inp.clips || []).find((x: any) => +x.i === +m![1]);
-            const t0 = +m[2] || 0, t1 = t0 + o.dur * (o.visual?.speed || 1);
+            const t0 = +(o.visual?.trimStart ?? m[2]) || 0, t1 = t0 + o.dur * (o.visual?.speed || 1);
             for (const w of (c?.words ?? []) as any[]) if (w.s >= t0 - 0.05 && w.e <= t1 + 0.05) capWords.push({ w: w.w, s: +(at + (w.s - t0) / (o.visual?.speed || 1)).toFixed(2), e: +(at + (w.e - t0) / (o.visual?.speed || 1)).toFixed(2) });
           }
           at += o.dur - (i < sc.length - 1 ? tf(o.transition) : 0);
