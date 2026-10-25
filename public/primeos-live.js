@@ -4375,7 +4375,12 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     };
 
     // ---- saved video keeps its brief so it can be re-edited later ----
-    const slimV = (v) => { const o = {}; ['name', 'desc', 'goal', 'aud', 'audQ', 'fmt', 'ch', 'style', 'clip', 'imgs', 'dur', 'voice', 'music', 'voiceId', 'dept', 'brief', 'kitRef'].forEach((k) => { if (v[k] !== undefined) o[k] = v[k]; }); return JSON.parse(JSON.stringify(o)); };
+    const slimV = (v) => {
+      const o = {}; ['name', 'desc', 'goal', 'aud', 'audQ', 'fmt', 'ch', 'style', 'clip', 'imgs', 'dur', 'voice', 'music', 'voiceId', 'dept', 'brief', 'kitRef', 'mode'].forEach((k) => { if (v[k] !== undefined) o[k] = v[k]; });
+      // an edited video keeps its settings and the analysis job (a change reuses it), not the analysis itself
+      if (v.ed) o.ed = Object.assign({}, v.ed, { res: null, scan: null, clips: (v.ed.clips || []).filter((c) => c.st === 'ok').map((c) => ({ i: c.i, url: c.url, name: c.name, sec: c.sec, st: 'ok' })) });
+      return JSON.parse(JSON.stringify(o));
+    };
     const _wizItemV = wizItem;
     wizItem = function (st) {
       const w = S.wiz;
@@ -4712,6 +4717,364 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       a.vItem = it.id;
       e.st = 'done'; render();
       toast(canDirect() ? 'סרטון הסיכום תוזמן' : 'נשלח לאישור', fmtD(p.date) + ' · ' + p.time + (a.vm.busy ? ' · יצא לפרסום כשהסרטון יהיה מוכן' : ''));
+    };
+    /* =================== video: two paths. "יצירת סרטון AI" (the brief flow above) and "עריכת סרטון קיים" ===================
+       The edit path: up to 6 clips of up to 90 seconds -> the server prepares them (proxy, sound, scenes, thumbnails),
+       transcribes the speech, understands what was filmed and the editor builds a cut plan for the message -> the person
+       approves the plan -> the render runs on the server like every other video (the window may close). */
+    const VE_MAX = 6, VE_SEC = 90;
+    const VE_STEPS = ['סוג הסרטון', 'החומר והבריף', 'תוכנית העריכה', 'הפקה'];
+    const VE_PACKS = [['PULSE', 'אירועים, פסטיבלים, נוער'], ['CINEMA', 'ראווה ותדמית'], ['CLEAN', 'הודעות והנחיות'], ['WARM', 'ברכות וקהילה'], ['SOLEMN', 'זיכרון וטקסים'], ['DATA', 'נתונים וסיכומים'], ['STORY', 'סיפור אישי'], ['ALERT', 'חירום ותקלות']];
+    const vePackFor = (goal, pace) => (goal === 'event' ? 'PULSE' : goal === 'showcase' ? 'CINEMA' : goal === 'official' ? 'CLEAN' : goal === 'greeting' ? 'WARM' : goal === 'memorial' ? 'SOLEMN' : goal === 'marketing' ? (pace === 'calm' ? 'WARM' : 'PULSE') : 'CLEAN');
+    // the switches, in the person's words
+    const VE_TG = [
+      ['captions', 'כתוביות מקור', 'הוספת כתוביות לפי שמע הסרטון. אם יש קריינות, הכתוביות לפי הקריינות'],
+      ['music', 'מוזיקה', 'הוספת מוזיקה לסרטון'],
+      ['voice', 'קריינות', 'הוספת קריינות לפי הבריף'],
+      ['origAudio', 'שמע מקורי מהסרטונים', 'השארת קטע הקול המקורי, כולל הורדת רעשי רקע מיותרים'],
+      ['broll', 'תמונות וקטעי אווירה', 'הוספת תמונות וסרטוני אווירה מבוססי AI'],
+      ['texts', 'טקסטים על המסך', 'טקסט מעוצב עם אפקט לחיזוק המסרים'],
+      ['outro', 'סיום ממותג', 'לוגו ושם הארגון בסוף הסרטון'],
+      ['keepOrder', 'לשמור על סדר הצילום', 'דלוק = שמירה על הסדר לפי הסיפור. כבוי = מיקס קטעים מהאירוע'],
+    ];
+    const VE_STAGES = [['prep', 'מכינים את הסרטונים'], ['stt', 'מתמללים את הדיבור'], ['scan', 'מבינים מה צולם'], ['direct', 'בונים את תוכנית העריכה']];
+    const veNew = () => ({ step: 0, clips: [], message: '', goal: null, aud: '', cta: '', must: '', avoid: '', notes: '', duration: 30, format: '9:16', pace: 'mid', pack: '', packSet: false, voiceId: 'auto', toggles: { captions: true, music: true, voice: false, origAudio: true, broll: true, texts: true, outro: true, keepOrder: false }, job: null, res: null, scan: null });
+    const mmss = (s) => { s = Math.max(0, Math.round(+s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+    css.textContent += `
+.ve-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px}.ve-grid>*{min-width:0}
+.ve-raw .raw{position:relative;overflow:hidden;background-size:cover;background-position:center}
+.ve-raw .raw .ve-dur{position:absolute;bottom:5px;right:6px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px}
+.ve-raw .raw .ve-st{position:absolute;inset:0;display:grid;place-items:center;background:rgba(10,44,81,.62);color:#fff;font-size:11.5px;font-weight:700;text-align:center;padding:6px;line-height:1.3}
+.ve-raw .raw .ve-st.err{background:rgba(155,28,28,.72)}
+.ve-raw .raw video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.ve-clips{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:6px}
+.ve-clip{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line,#E6EAF1);border-radius:14px;padding:10px;min-width:0}
+.ve-clip .ve-th{flex:none;width:72px;height:72px;border-radius:10px;background:#0A2C51 center/cover no-repeat}
+.ve-clip b{display:block;font-size:13.5px}.ve-clip .t-sub{display:block;line-height:1.45}
+.ve-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}.ve-chips .chip{height:22px;font-size:11.5px;padding:0 8px}
+.ve-chips .chip.ok{background:#E3F5EB;color:#0A6C43;border-color:#BFE6CE}.ve-chips .chip.warn{background:#FFF3DD;color:#9A5B00;border-color:#F5DFA8}
+.vb-sc .ve-mini{display:inline-block;width:54px;height:32px;border-radius:6px;background:#0A2C51 center/cover no-repeat;vertical-align:middle;margin-inline-end:6px}
+.ve-why{color:var(--ink-3,#6B7890);font-size:12px}
+@media(max-width:640px){.ve-grid,.ve-clips{grid-template-columns:1fr}.vb-sc th:nth-child(4),.vb-sc td:nth-child(4){display:none}}`;
+
+    /* ---- the choice: two paths ---- */
+    const _rV = SCREENS.vidWiz.render;
+    SCREENS.vidWiz.render = function () {
+      const w = S.vd;
+      if (!w) return _rV.call(this);
+      // a video brief reopened from the library (or a running production) belongs to the AI path
+      if (!w.mode && (w.step > 0 || w.brief || w.prod)) w.mode = 'ai';
+      if (w.mode === 'edit' && w.ed && w.ed.step === 2 && !(w.ed.res && w.ed.res.plan)) w.ed.step = 0;
+      if (!w.mode) {
+        const head = wzHead('video', 'יצירת וידאו', stepsBar(VE_STEPS, 0));
+        return head + '<div class="card brief-card"><div class="field full"><label>מה עושים?</label><div class="plan-pick">' +
+          [['ai', 'יצירת סרטון AI', 'מבריף לסרטון מוכן: תסריט, קריינות, מוזיקה, תמונות וקטעי אווירה, אנימציה. אפשר להוסיף תמונות וקטעים משלכם.'],
+            ['edit', 'עריכת סרטון קיים', 'מעלים עד 6 סרטונים (עד דקה וחצי כל אחד). המערכת מבינה מה צילמתם, חותכת לפי המסר ומוסיפה כתוביות, מוזיקה ומעברים.']]
+            .map((o) => '<button class="tile plan-tile ' + (w.pick === o[0] ? 'on' : '') + '" data-act="vdPick:' + o[0] + '"><span class="rt-head"><span class="rt-radio"></span><span class="tn">' + o[1] + '</span></span><span class="t-sub">' + o[2] + '</span></button>').join('') +
+          '</div></div><div class="brief-foot"><button class="btn btn-primary btn-lg" data-act="vdMode">המשך ' + ic('chevL', 16, 2) + '</button></div></div>';
+      }
+      if (w.mode === 'edit') return veRender(w);
+      let h = _rV.call(this);
+      // the edit of an existing clip has its own path now: the AI path keeps animation and own photos/clips
+      if (w.step === 1) h = h.replace(/<button class="vs[^"]*"[^>]*data-act="vdSty:existing"[\s\S]*?<\/button>/, '');
+      return h;
+    };
+    ACT.vdPick = (k) => { S.vd.pick = k; render(); };
+    ACT.vdMode = () => {
+      const w = S.vd;
+      if (!w.pick) { toast('בחרו מה עושים', 'יצירת סרטון AI, או עריכת סרטון קיים.', 'err'); return; }
+      w.mode = w.pick;
+      if (w.mode === 'edit' && !w.ed) w.ed = veNew();
+      if (w.mode === 'ai' && w.style === 'existing') w.style = null;
+      render(); window.scrollTo({ top: 0 });
+    };
+    const _vdBackM = ACT.vdBack;
+    ACT.vdBack = () => { const w = S.vd; if (w && w.mode === 'ai' && w.step === 0) { w.mode = null; render(); return; } _vdBackM(); };
+    const _vdMountM = SCREENS.vidWiz.mount;
+    SCREENS.vidWiz.mount = function () {
+      _vdMountM && _vdMountM.call(this);
+      const w = S.vd;
+      if (w && w.mode === 'ai' && w.step === 0) {
+        // a way back to the choice from the first form
+        const foot = $('#view .brief-foot');
+        if (foot && !foot.querySelector('[data-act="vdBack"]')) { const b = document.createElement('button'); b.className = 'btn'; b.setAttribute('data-act', 'vdBack'); b.innerHTML = ic('fwd', 16) + ' לבחירת סוג'; foot.prepend(b); }
+      }
+      if (w && w.mode === 'edit') veMount(w);
+    };
+
+    /* ---- the edit path: screens ---- */
+    function veRender(v) {
+      const e = v.ed;
+      const title = e.step === 0 ? 'עריכת סרטון קיים' : esc(v.name || e.message || 'עריכת סרטון קיים');
+      const cur = v.prod ? 3 : e.step === 0 ? 1 : 2;
+      const head = wzHead('video', title, stepsBar(VE_STEPS, cur));
+      if (v.prod) return head + prodView(v);
+      if (e.step === 1) return head + veBusy(e);
+      if (e.step === 2 && e.res && e.res.plan) return head + vePlan(v, e);
+      return head + veForm(v, e);
+    }
+    function veForm(v, e) {
+      const used = e.clips.reduce((a, c) => a + (+c.sec || 0), 0);
+      const tiles = e.clips.map((c, i) => '<span class="raw thumb ' + GV[i % GV.length] + '" data-vi="' + i + '">' +
+        (c.st === 'ok' ? '' : '<span class="ve-st' + (c.st === 'err' ? ' err' : '') + '">' + esc(c.st === 'err' ? (c.why || 'נכשל') : c.st === 'conv' ? 'מתאים...' : 'מעלה...') + '</span>') +
+        (c.sec ? '<span class="ve-dur">' + mmss(c.sec) + '</span>' : '') +
+        '<button class="icon-btn" data-act="veClipX:' + i + '" aria-label="הסרה">' + ic('x', 12) + '</button></span>').join('');
+      const add = e.clips.length < VE_MAX ? '<button class="raw add" data-act="veClip">' + ic('upload', 18) + '<small>סרטון</small></button>' : '';
+      const seg = (id, list, val) => '<div class="seg">' + list.map((o) => '<button class="' + (String(val) === String(o[0]) ? 'on' : '') + '" data-act="' + id + ':' + o[0] + '">' + o[1] + '</button>').join('') + '</div>';
+      const vs = (CAPS && CAPS.voices) || [];
+      const vbtn = (x) => '<button class="tagc ' + (e.voiceId === x.id ? 'on' : '') + '" data-act="veVoice:' + x.id + '" title="' + esc(x.tone) + '">' + (e.voiceId === x.id ? ic('check', 13, 2.4) : '') + esc(x.n) + ' <small>' + esc(x.tone.split(',')[0]) + '</small></button>';
+      const pack = e.pack || vePackFor(e.goal, e.pace);
+      return '<div class="card brief-card">' +
+        '<div class="field full"><label>הסרטונים <span class="hint">עד 6, עד דקה וחצי כל אחד, עד 300MB לקובץ · mp4 / mov / webm</span></label><div class="raw-grid ve-raw">' + tiles + add + '</div>' +
+        '<div class="t-sub">' + (e.clips.length ? e.clips.length + ' הועלו · ' + mmss(used) + ' דקות חומר' : 'עוד לא הועלו סרטונים') + '</div></div>' +
+        '<div class="ve-grid" style="margin-top:18px">' +
+        '<div class="field full"><label for="veMsg">המסר במשפט אחד <span class="hint">חובה · לפי זה נבחרים הקטעים</span></label><input type="text" id="veMsg" value="' + esc(e.message) + '" placeholder="הפסטיבל חוזר בקיץ הבא, ההרשמה לדוכנים נפתחה באתר"></div>' +
+        '<div class="field full"><label>מטרת הסרטון</label><div class="seg big">' + VGOALS.map((g) => '<button class="' + (e.goal === g[0] ? 'on' : '') + '" data-act="veGoal:' + g[0] + '">' + g[1].replace(' וזיכרון', '') + '</button>').join('') + '</div></div>' +
+        '<div class="field"><label for="veAud">קהל יעד</label><input type="text" id="veAud" value="' + esc(e.aud) + '" placeholder="כלל התושבים"></div>' +
+        '<div class="field"><label for="veCta">קריאה לפעולה בסיום</label><input type="text" id="veCta" value="' + esc(e.cta) + '" placeholder="הרשמה באתר העירייה"></div>' +
+        '<div class="field"><label for="veMust">חייב להופיע <span class="hint">מילים, אנשים, רגעים</span></label><textarea id="veMust" rows="2">' + esc(e.must) + '</textarea></div>' +
+        '<div class="field"><label for="veAvoid">לא להכניס</label><textarea id="veAvoid" rows="2">' + esc(e.avoid) + '</textarea></div>' +
+        '<div class="field full"><label for="veNotes">הערות חופשיות למערכת <span class="hint">לא חובה</span></label><textarea id="veNotes" rows="2" placeholder="לדוגמה: קצב מהיר, להתחיל מהזיקוקים, כתוביות גדולות">' + esc(e.notes) + '</textarea></div>' +
+        '<div class="field"><label>אורך יעד <span class="hint">שניות</span></label>' + seg('veDur', [[15, '15'], [30, '30'], [60, '60'], [90, '90']], e.duration) + '</div>' +
+        '<div class="field"><label>פורמט</label>' + seg('veFmt', [['9:16', '9:16'], ['1:1', '1:1'], ['4:5', '4:5'], ['16:9', '16:9']], e.format) + '</div>' +
+        '<div class="field"><label>קצב</label>' + seg('vePace', [['calm', 'רגוע'], ['mid', 'בינוני'], ['fast', 'מהיר']], e.pace) + '</div>' +
+        '<div class="field"><label for="vePack">חבילת עריכה <span class="hint">נבחרת לבד לפי המטרה, אפשר לשנות</span></label><select id="vePack">' + VE_PACKS.map((p) => '<option value="' + p[0] + '"' + (p[0] === pack ? ' selected' : '') + '>' + p[0] + ' · ' + p[1] + '</option>').join('') + '</select></div>' +
+        '</div>' +
+        '<div class="field full" style="margin-top:18px"><label>מה להכניס לסרטון</label><div class="vd-tg">' +
+        VE_TG.map((t) => '<div class="checkline"><span>' + t[1] + '<small>' + t[2] + '</small></span><button class="sw ' + (e.toggles[t[0]] ? 'on' : '') + '" data-act="veTg:' + t[0] + '" role="switch" aria-checked="' + !!e.toggles[t[0]] + '" aria-label="' + t[1] + '"></button></div>').join('') +
+        '</div></div>' +
+        (e.toggles.voice && vs.length ? '<div class="field full"><label>קול הקריין</label><div class="vd-voices"><button class="tagc ' + (e.voiceId === 'auto' ? 'on' : '') + '" data-act="veVoice:auto">' + (e.voiceId === 'auto' ? ic('check', 13, 2.4) : ic('spark', 13, 2)) + 'PrimeOS יבחר</button>' + vs.filter((x) => x.g === 'm').map(vbtn).join('') + vs.filter((x) => x.g === 'f').map(vbtn).join('') + '</div></div>' : '') +
+        '<div class="brief-foot"><button class="btn btn-lg" data-act="veBack">' + ic('fwd', 16) + ' חזרה</button><button class="btn btn-primary btn-lg" data-act="veScan">' + ic('spark', 17) + ' ניתוח החומר ובניית התוכנית</button></div></div>';
+    }
+    function veBusy(e) {
+      const s = e.scan || {};
+      const at = Math.max(0, VE_STAGES.findIndex((x) => x[0] === (s.step === 'prepwait' ? 'prep' : s.step)));
+      return '<div class="card gen-mini">' + thinkBox() + '<div class="vp-bar"><i style="width:' + Math.round((s.progress || 0.04) * 100) + '%"></i></div><ul class="vp-list">' +
+        VE_STAGES.map((x, i) => '<li class="' + (i < at ? 'done' : i === at ? 'on' : '') + '">' + ic(i < at ? 'check' : 'clock', 15, 2.2) + x[1] + '</li>').join('') + '</ul>' +
+        '<span class="t-sub" style="margin-top:12px">' + esc(veNote(s.note)) + 'כמה דקות. המסך מתעדכן לבד.</span></div>';
+    }
+    const veNote = (n) => { const m = /clip (\d+)\/(\d+)/.exec(String(n || '')); return m ? 'סרטון ' + m[1] + ' מתוך ' + m[2] + ' · ' : ''; };
+    // the thumbnail nearest to a second of a clip
+    function veThumb(e, i, t) {
+      const c = ((e.res && e.res.summary) || []).find((x) => +x.i === +i);
+      const th = (c && c.thumbs) || [];
+      if (!th.length) return '';
+      let best = th[0];
+      th.forEach((x) => { if (Math.abs(x.t - t) < Math.abs(best.t - t)) best = x; });
+      return best.url;
+    }
+    const veSrc = (src) => { const m = /^clip:(\d+):([\d.]+)/.exec(String(src || '')); return m ? { i: +m[1], t: +m[2] } : null; };
+    function vePlan(v, e) {
+      const p = e.res.plan, an = (e.res.analysis && e.res.analysis.clips) || [], b = p.brief || {};
+      const Q = { shaky: 'רעוע', dark: 'חשוך', noisy: 'רועש' };
+      const cards = an.map((c) => {
+        const sm = ((e.res.summary || []).find((x) => +x.i === +c.i)) || {};
+        const top = Math.max(0, ...(c.segments || []).map((s) => +s.score || 0));
+        const skip = (p.skipped || []).find((x) => +x.i === +c.i);
+        const cl = e.clips[c.i] || {};
+        const chips = [top >= 4 ? '<span class="chip ok">רגע חזק ' + top + '/5</span>' : '', c.speech ? '<span class="chip ok">דיבור</span>' : '<span class="chip">בלי דיבור</span>',
+          ...Object.keys(Q).filter((k) => c.quality && c.quality[k]).map((k) => '<span class="chip warn">' + Q[k] + '</span>'), skip ? '<span class="chip">לא נבחר</span>' : ''].filter(Boolean).join('');
+        return '<div class="ve-clip"><span class="ve-th" style="background-image:url(\'' + esc((sm.thumbs && sm.thumbs[Math.floor((sm.thumbs.length || 1) / 2)] || {}).url || '') + '\')"></span><div><b>סרטון ' + (c.i + 1) + (cl.name ? ' · ' + esc(cl.name.replace(/\.[a-z0-9]+$/i, '').slice(0, 30)) : '') + ' · ' + mmss(sm.sec || cl.sec) + '</b><span class="t-sub">' + esc(c.summary || '') + (skip && skip.why ? ' ' + esc(skip.why) : '') + '</span><div class="ve-chips">' + chips + '</div></div></div>';
+      }).join('');
+      let t = 0;
+      const TR = TR_HE;
+      const rows = (p.scenes || []).map((s, i) => {
+        const a = t; t += s.dur;
+        const c = veSrc(s.visual && s.visual.src);
+        const src = c ? '<span class="ve-mini" style="background-image:url(\'' + esc(veThumb(e, c.i, c.t)) + '\')"></span>סרטון ' + (c.i + 1) + '<small>' + tsec(c.t) + '-' + tsec(c.t + s.dur * (s.speed || 1)) + (s.speed ? ' · מהירות ' + s.speed : '') + '</small>' : visDesc(s.visual && s.visual.src, v);
+        const tx = s.text && (s.text.lines || []).length ? '<b>' + esc((s.text.lines || []).join(' / ')) + '</b><small>' + (TS_HE[s.text.style] || s.text.style) + '</small>' : '<small>-</small>';
+        const snd = c && s.clipAudio ? 'קול מקורי' + (e.toggles.music ? ', מוזיקה נמוכה' : '') : s.say ? sayView(s.say) : e.toggles.music ? 'מוזיקה' : '-';
+        return '<tr><td>' + (i + 1) + '<small>' + tsec(a) + '-' + tsec(t) + '</small></td><td>' + src + '</td><td>' + tx + (s.why ? '<div class="ve-why">' + esc(s.why) + '</div>' : '') + '</td><td>' + snd + '</td><td>' + (s.transition ? (TR[s.transition.kind] || s.transition.kind) : '-') + '</td></tr>';
+      }).join('');
+      const total = t + (e.toggles.outro && p.outro ? 3.6 : 0);
+      const PH = { PULSE: 'חיתוך על הביט', CINEMA: 'קולנועי', CLEAN: 'נקי ורשמי', WARM: 'חם', SOLEMN: 'מכובד ושקט', DATA: 'נתונים', STORY: 'הדיבור מוביל', ALERT: 'דחוף וברור' };
+      const skipped = (p.skipped || []).filter((x) => x && x.why);
+      return '<div class="card brief-card">' +
+        '<div class="field full"><label>מה זוהה בסרטונים</label><div class="ve-clips">' + cards + '</div></div>' +
+        '<p class="vb-idea" style="margin-top:18px">' + esc(b.idea || '') + '</p>' +
+        '<div class="vb-grid">' +
+        '<div class="vb-cell"><span>חבילת עריכה</span><b>' + esc(p.pack || '') + (PH[p.pack] ? ' · ' + PH[p.pack] : '') + '</b></div>' +
+        '<div class="vb-cell"><span>אורך ופורמט</span><b>' + Math.round(total) + ' שניות · ' + esc(e.format) + '</b></div>' +
+        '<div class="vb-cell"><span>מוזיקה</span><b>' + (e.toggles.music ? esc(b.music || 'לפי החבילה') : 'בלי מוזיקה') + '</b></div>' +
+        '<div class="vb-cell"><span>שמע מקורי</span><b>' + (e.toggles.origAudio ? 'נשמר בקטעי דיבור וקהל' + (true ? ', מנוקה מרעשים' : '') : 'בלי שמע מקורי') + '</b></div>' +
+        '<div class="vb-cell"><span>כתוביות</span><b>' + (p.captions === 'none' || !e.toggles.captions ? 'בלי כתוביות' : ({ karaoke: 'קריוקי', pop: 'פופ', clean: 'נקיות' })[p.captions] || 'כן') + '</b></div>' +
+        '<div class="vb-cell"><span>קריינות</span><b>' + (e.toggles.voice && p.voice ? esc(p.voice.n) + ' (' + (p.voice.g === 'm' ? 'גבר' : 'אישה') + ')' : 'בלי קריינות') + '</b></div>' +
+        '</div>' +
+        '<div class="field full"><label>המקטעים, אחד אחרי השני</label><div class="vb-wrap"><table class="vb-sc"><thead><tr><th>#</th><th>מקור</th><th>טקסט על המסך</th><th>שמע</th><th>מעבר</th></tr></thead><tbody>' + rows +
+        (e.toggles.outro && p.outro ? '<tr><td>סיום<small>' + tsec(t) + '-' + tsec(total) + '</small></td><td>כרטיס לוגו</td><td><b>' + esc(p.outro.cta || '') + '</b></td><td>' + (e.toggles.music ? 'מוזיקה' : '-') + '</td><td></td></tr>' : '') + '</tbody></table></div></div>' +
+        (skipped.length ? '<div class="note">' + ic('info', 15) + '<span>' + skipped.map((x) => 'סרטון ' + (x.i + 1) + ' לא נכנס: ' + esc(x.why)).join('<br>') + '<br>אפשר לבקש למטה ולקבל תוכנית מעודכנת.</span></div>' : '') +
+        '<div class="vb-chg"><input type="text" id="veChg" placeholder="רוצים לשנות משהו בתוכנית? כתבו כאן"><button class="btn" data-act="veChange">' + ic('spark', 15) + ' עדכון התוכנית</button></div>' +
+        '<div class="brief-foot"><button class="btn btn-lg" data-act="veToForm">' + ic('fwd', 16) + ' לחומר ולבריף</button><button class="btn btn-primary btn-lg" data-act="veGo">' + ic('check', 17, 2.4) + ' אישור ויצירת הסרטון</button></div></div>';
+    }
+    function veMount(v) {
+      const e = v.ed;
+      if (e.step !== 0) return;
+      // tiles show the clip itself (a muted first frame) once it is in storage
+      $$('.ve-raw .raw.thumb').forEach((el) => {
+        const c = e.clips[+el.getAttribute('data-vi')];
+        if (!c || !c.url || el.querySelector('video')) return;
+        const vd = document.createElement('video');
+        vd.muted = true; vd.playsInline = true; vd.preload = 'metadata'; vd.src = c.url + '#t=0.5';
+        el.prepend(vd);
+      });
+      const pk = $('#vePack'); if (pk) pk.addEventListener('change', () => { veCollect(); e.pack = pk.value; e.packSet = true; });
+      if (!CAPS) capsLoad().then(() => { if (S.vd === v && S.route === 'vidWiz' && e.toggles.voice) render(); });
+    }
+    function veCollect() {
+      const w = S.vd, e = w && w.ed; if (!e) return;
+      const g = (id) => { const x = $('#' + id); return x ? x.value : null; };
+      [['veMsg', 'message'], ['veAud', 'aud'], ['veCta', 'cta'], ['veMust', 'must'], ['veAvoid', 'avoid'], ['veNotes', 'notes']].forEach(([id, k]) => { const x = g(id); if (x !== null) e[k] = x; });
+      const pk = g('vePack'); if (pk !== null && e.packSet) e.pack = pk;
+    }
+    ACT.veBack = () => { veCollect(); S.vd.mode = null; render(); };
+    ACT.veGoal = (k) => { veCollect(); const e = S.vd.ed; e.goal = k; if (!e.packSet) e.pack = vePackFor(k, e.pace); render(); };
+    ACT.veDur = (k) => { veCollect(); S.vd.ed.duration = +k; render(); };
+    ACT.veFmt = (k) => { veCollect(); S.vd.ed.format = k; render(); };
+    ACT.vePace = (k) => { veCollect(); const e = S.vd.ed; e.pace = k; if (!e.packSet) e.pack = vePackFor(e.goal, k); render(); };
+    ACT.veTg = (k) => { veCollect(); const t = S.vd.ed.toggles; t[k] = !t[k]; render(); };
+    ACT.veVoice = (id) => { veCollect(); S.vd.ed.voiceId = id; render(); };
+    ACT.veClipX = (i) => { veCollect(); S.vd.ed.clips.splice(+i, 1); render(); };
+    // the length of a clip from the file itself, before anything is uploaded (unknown for a format the browser cannot read)
+    const clipSec = (f) => new Promise((res) => {
+      const vd = document.createElement('video'); const u = URL.createObjectURL(f);
+      const end = (s) => { URL.revokeObjectURL(u); res(s); };
+      vd.preload = 'metadata'; vd.onloadedmetadata = () => end(isFinite(vd.duration) ? vd.duration : 0); vd.onerror = () => end(0);
+      setTimeout(() => end(0), 8000); vd.src = u;
+    });
+    ACT.veClip = async () => {
+      veCollect();
+      const v = S.vd, e = v.ed;
+      const fs = await pickFiles('video/*,.mov,.mp4,.webm,.m4v', true);
+      if (!fs.length || S.vd !== v) return;
+      const room = VE_MAX - e.clips.length;
+      if (fs.length > room) toast('עד 6 סרטונים', 'נוספו ' + room + ' הראשונים.', 'err');
+      const add = [];
+      for (const f of fs.slice(0, room)) {
+        if (!isClip(f.name) && !/^video\//.test(f.type || '')) { toast('סוג קובץ שלא נתמך', f.name, 'err'); continue; }
+        if (f.size > MAXB_VIDEO) { toast('הקובץ גדול מדי', f.name + ' גדול מ-300MB.', 'err'); continue; }
+        const sec = await clipSec(f);
+        if (sec > VE_SEC + 2) { toast('הסרטון ארוך מדי', f.name + ' (' + mmss(sec) + '). עד דקה וחצי לסרטון. אפשר לחתוך בטלפון ולהעלות שוב.', 'err'); continue; }
+        const c = { name: f.name, sec: +sec.toFixed(2), st: 'up', url: '', f };
+        e.clips.push(c); add.push(c);
+      }
+      render();
+      // two uploads at a time; each tile shows its own state
+      let at = 0;
+      const worker = async () => {
+        while (at < add.length) {
+          const c = add[at++];
+          try {
+            const t = setTimeout(() => { if (c.st === 'up') { c.st = 'conv'; if (S.vd === v && S.route === 'vidWiz') render(); } }, 6000);
+            const r = await uploadFile(c.f, undefined);
+            clearTimeout(t);
+            c.url = r.url; c.name = r.name || c.name; c.st = 'ok';
+          } catch (er) { c.st = 'err'; c.why = er && er.message === 'too_big_server' ? 'גדול מדי' : 'ההעלאה נכשלה'; }
+          delete c.f;
+          if (S.vd === v && S.route === 'vidWiz') { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); if (!typing) { veCollect(); render(); } }
+        }
+      };
+      await Promise.all([worker(), worker()]);
+    };
+    // the analysis on the server: prepare -> transcribe -> understand -> the editor's plan
+    async function veRun(v, extra) {
+      const e = v.ed;
+      e.step = 1; e.scan = { step: 'prep', progress: 0.04 };
+      render(); window.scrollTo({ top: 0 });
+      let id;
+      try {
+        const input = Object.assign({
+          ctx: aiCtx(), title: v.name || e.message.slice(0, 60), message: e.message, goal: e.goal, aud: e.aud, cta: e.cta, must: e.must, avoid: e.avoid, notes: e.notes,
+          duration: e.duration, format: fmtK(e.format), pace: e.pace, pack: e.pack || vePackFor(e.goal, e.pace), voiceId: e.voiceId, toggles: e.toggles,
+          clips: e.clips.filter((c) => c.st === 'ok').map((c) => ({ url: c.url, name: c.name, sec: c.sec })),
+        }, extra || {});
+        id = (await call('job.start', { kind: 'vscan', input })).id;
+      } catch (er) { e.step = extra && extra.from ? 2 : 0; render(); aiFail(er); return; }
+      e.job = id;
+      for (let n = 0; n < 240; n++) {
+        await new Promise((r) => setTimeout(r, n ? 3000 : 2000));
+        if (S.vd !== v || e.job !== id) return;
+        if (document.hidden) continue;
+        let r;
+        try { r = await call('job.get', { id }); } catch (er) { continue; }
+        if (r.state === 'done' && r.edit) {
+          e.res = r.edit; e.step = 2; e.scan = null;
+          // the clips now carry what the render needs (sound, transcript words)
+          (r.edit.clips || []).forEach((c) => { const x = e.clips.filter((y) => y.st === 'ok')[c.i]; if (x) Object.assign(x, { i: c.i, audio: c.audio, w: c.w, h: c.h }); });
+          if (S.route === 'vidWiz') { render(); window.scrollTo({ top: 0 }); }
+          toast('תוכנית העריכה מוכנה', 'בדקו את המקטעים ואשרו.');
+          return;
+        }
+        if (r.state === 'error' || r.state === 'missing') { e.step = e.res ? 2 : 0; e.scan = null; render(); toast('הניתוח לא הושלם', 'נסו שוב בעוד רגע. אם זה חוזר, נסו סרטונים קצרים יותר.', 'err'); return; }
+        e.scan = { step: r.step, progress: r.progress || 0, note: r.note || '' };
+        if (S.route === 'vidWiz') { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); if (!typing) render(); }
+      }
+      e.step = e.res ? 2 : 0; render(); toast('הניתוח לוקח יותר מהרגיל', 'נסו שוב בעוד כמה דקות.', 'err');
+    }
+    ACT.veScan = () => {
+      veCollect();
+      const v = S.vd, e = v.ed;
+      const ok = e.clips.filter((c) => c.st === 'ok');
+      if (e.clips.some((c) => c.st === 'up' || c.st === 'conv')) { toast('הסרטונים עוד עולים', 'עוד רגע, ואז אפשר להמשיך.', 'err'); return; }
+      if (!ok.length) { toast('לא הועלו סרטונים', 'העלו לפחות סרטון אחד.', 'err'); return; }
+      if (!e.message.trim()) { toast('חסר המסר', 'כתבו במשפט אחד מה הסרטון צריך להגיד. לפי זה נבחרים הקטעים.', 'err'); return; }
+      if (!e.goal) { toast('לא נבחרה מטרה', 'בחרו מטרת סרטון.', 'err'); return; }
+      if (!v.name) v.name = e.message.slice(0, 60);
+      v.goal = e.goal; v.desc = e.message; v.fmt = e.format; v.dur = e.duration; v.voice = !!e.toggles.voice; v.music = !!e.toggles.music; v.voiceId = e.voiceId;
+      veRun(v);
+    };
+    ACT.veToForm = () => { S.vd.ed.step = 0; render(); window.scrollTo({ top: 0 }); };
+    ACT.veChange = () => {
+      const v = S.vd, e = v.ed;
+      const el = $('#veChg'); const q = (el && el.value || '').trim();
+      if (!q) { toast('מה לשנות?', 'לדוגמה: תכניס את הדוכנים, או פתיחה עם ראש העיר.', 'err'); return; }
+      if (!e.job) return;
+      veRun(v, { from: e.job, change: q });
+    };
+    // approval: the plan goes to the render job like every server video; the item waits in the library
+    ACT.veGo = async () => {
+      const v = S.vd, e = v.ed, p = e.res && e.res.plan;
+      if (!p || v.prod) return;
+      const wantVoice = !!(e.toggles.voice && p.voice && ttsOn() && (p.scenes || []).some((s) => s.say));
+      const wantMusic = !!(e.toggles.music && musicOn() && p.musicPrompt);
+      const pr = (v.prod = { on: ['vis'], done: [], pct: 0.04, skip: [], srv: true });
+      if (!wantVoice) pr.skip.push('voice'); if (!wantMusic) pr.skip.push('music');
+      if (wantVoice) pr.on.push('voice'); if (wantMusic) pr.on.push('music');
+      v.brief = p; v.mode = 'edit';
+      render(); window.scrollTo({ top: 0 });
+      const it = prodItem('video', { t: v.name || 'סרטון ערוך', d: v.dept || (S.user && S.user.dept) || '', ch: [...(v.ch || [])], fmts: [e.format], wz: { mode: 'edit', message: e.message } });
+      const clips = (e.res.clips || []).map((c) => ({ i: c.i, url: c.url, name: c.name, sec: c.sec, audio: c.audio || '', words: c.words || [] }));
+      try {
+        await startProd('video', it, { brief: p, title: v.name, desc: e.message, goal: e.goal, dur: Math.min(90, Math.round((p.scenes || []).reduce((a, s) => a + s.dur, 0) + 4)), imgs: [], dept: v.dept, format: fmtK(e.format), voice: wantVoice, music: wantMusic, clips, toggles: e.toggles, clean: e.toggles.origAudio !== false, vmeta: slimV(v) }, true);
+      } catch (er) { v.prod = null; render(); return; }
+      v.replaces = it.id;
+      PROD.on[it.id] = (r) => {
+        if (S.vd !== v) { delete PROD.on[it.id]; return; }
+        if (r.err) { v.prod = null; render(); toast('יצירת הסרטון לא הושלמה', 'התוכנית נשמרה. נסו שוב בעוד רגע.', 'err'); return; }
+        if (r.done) {
+          const m = r.ui.media || {};
+          pr.on = []; pr.done = ['vis', 'voice', 'music', 'render']; pr.pct = 1;
+          if (S.route !== 'vidWiz') { v.prod = null; toast('הסרטון מוכן', '„' + it.t + '” מחכה בספריית התוכן.'); return; }
+          openStudio(v, m.url, m.thumb || '');
+          if (S.wiz) { S.wiz.replaces = it.id; S.wiz._ref = 'wiz:' + it.id; }
+          return;
+        }
+        pr.pct = Math.max(pr.pct, r.progress || 0);
+        if (r.step === 'start' || r.step === 'status') { pr.on = ['render']; pr.done = ['vis', 'voice', 'music']; pr.rp = Math.max(0, Math.min(1, ((r.progress || 0.42) - 0.42) / 0.56)); }
+        if (S.vd === v && S.route === 'vidWiz') render();
+      };
+    };
+    // the studio of an edited video: a change request goes back to the edit plan (the analysis is reused)
+    const _wAiE = ACT.wAi;
+    ACT.wAi = () => {
+      const w = S.wiz;
+      const m = w && w.media, vm = w && w.vmeta;
+      if (!m || m.eng !== 'v3' || !vm || vm.mode !== 'edit' || !vm.ed || !vm.ed.job) return _wAiE();
+      const el = $('#wAi'); const q = (el && el.value || '').trim();
+      if (!q) { toast('מה לשנות?', 'לדוגמה: תוריד את הקטע של הבמה, או כתוביות גדולות יותר.', 'err'); return; }
+      const v = Object.assign(JSON.parse(JSON.stringify(vm)), { replaces: w.replaces });
+      v.prod = null; v.ed.step = 2;
+      S.dirty = false; S.wiz = null; S.vd = v; go('vidWiz');
+      veRun(v, { from: v.ed.job, change: q });
     };
     // a reload in the middle of a production: that file is marked for a retry
     (function fixBusy() {

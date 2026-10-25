@@ -5,7 +5,7 @@
 import { fetchRetry } from './retry.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import JSZip from 'https://esm.sh/jszip@3.10.1';
-import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES } from './video.ts';
+import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES, scribe, isolateVoice, scanGemini, scanClaudeParts, SCAN_JSON_HE, SCAN_SYS, editorPrompt, EDIT_PACKS, packFor } from './video.ts';
 import { STYLE_PICK_HE, styleOf, PALETTE_MODES, DOC_RULES_HE, DOC_TYPES, DECK_RULES_HE, DECK_STYLES, VIDEO_RULES_HE, QA_PASS } from './design.ts';
 import { REVIEW_SYS, reviewPrompt } from './agency.ts';
 
@@ -309,6 +309,8 @@ ${RULES}`;
 interface Ctx { org: string; dept?: string; tone?: string; good?: string[]; bad?: string[]; facts?: string }
 
 // the director's answer, as a tool schema (the model fills it field by field, so the plan always arrives whole)
+// the editor's plan: the brief schema plus the clip fields
+const edited = (sch: any) => { const x = JSON.parse(JSON.stringify(sch)); const sc = x.properties.scenes.items.properties; sc.clipAudio = { type: 'boolean' }; sc.speed = { type: 'number' }; sc.why = { type: 'string' }; x.properties.skipped = { type: 'array', items: { type: 'object', properties: { i: { type: 'number' }, why: { type: 'string' } } } }; return x; };
 const BRIEF_SCHEMA = {
   type: 'object',
   properties: {
@@ -599,6 +601,63 @@ ${brief}
       try { plan = await ask(); } catch (e) { console.error('vbrief', e instanceof Error ? e.message : e); plan = await ask(); } // one retry
       const rv = p.review === false ? { out: plan, qa: null } : await supervised(key, 'video', `${p.title || ''}\n${p.desc || ''}\nסוג: ${p.goal || ''} | קהל: ${p.aud || ''} | אורך: ${p.duration || 30} שניות`, plan, ctx);
       return json(req, { ok: true, caps: c, ...sanitizeBrief(rv.out, p, voices), qa: rv.qa });
+    }
+    // ---- editing the person's own footage ----
+    if (mode === 'vstt') {
+      // Hebrew words with times for one clip's sound
+      if (!/^https:\/\//.test(String(p.audio ?? ''))) return json(req, { error: 'bad_audio' }, 400);
+      const t = await scribe(String(p.audio));
+      logUse({ kind: 'stt', model: t.model, render_sec: Math.round(+p.sec || 0) });
+      return json(req, { ok: true, ...t });
+    }
+    if (mode === 'visolate') {
+      if (!/^https:\/\//.test(String(p.audio ?? ''))) return json(req, { error: 'bad_audio' }, 400);
+      const r = await isolateVoice(database, CUR.org ?? '', String(p.audio));
+      logUse({ kind: 'isolate', model: 'eleven', music_sec: Math.round(r.sec) });
+      return json(req, { ok: true, ...r });
+    }
+    if (mode === 'vscan') {
+      // what is in each clip: Gemini watches the proxies (with sound); without a Gemini key Claude reads thumbnails + transcript
+      const clips = (Array.isArray(p.clips) ? p.clips : []).slice(0, 6);
+      if (!clips.length) return json(req, { error: 'no_clips' }, 400);
+      const brief = String(p.brief ?? '').slice(0, 1500);
+      let out: any = null, how = '';
+      if (Deno.env.get('GEMINI_API_KEY') && clips.every((c: any) => c.proxy)) {
+        try { out = await scanGemini(clips.map((c: any) => ({ i: +c.i, name: c.name, sec: +c.sec, proxy: c.proxy, transcript: (c.transcript ?? []).map((x: any) => x.t).join(' ') })), brief); how = 'gemini'; }
+        catch (e) { console.error('vscan gemini', e instanceof Error ? e.message : e); }
+      }
+      if (!out) {
+        const { extra, text } = scanClaudeParts(clips);
+        out = await claudeObj(key, SCAN_SYS, `הקשר: הסרטונים צולמו עבור סרטון קצר לרשתות. הבריף: ${brief}
+
+${text}
+
+${SCAN_JSON_HE}`, 7000, extra, { type: 'object', additionalProperties: true });
+        how = 'claude';
+      }
+      const list = (Array.isArray(out.clips) ? out.clips : []).map((c: any) => ({
+        i: +c.i, summary: String(c.summary ?? '').slice(0, 300), setting: String(c.setting ?? '').slice(0, 120), kind: String(c.kind ?? 'other'), people: String(c.people ?? ''),
+        quality: { shaky: !!c.quality?.shaky, dark: !!c.quality?.dark, noisy: !!c.quality?.noisy }, speech: String(c.speech ?? '').slice(0, 400),
+        segments: (Array.isArray(c.segments) ? c.segments : []).slice(0, 40).map((s: any) => ({ s: Math.max(0, +s.s || 0), e: Math.max(0, +s.e || 0), desc: String(s.desc ?? '').slice(0, 160), score: Math.max(1, Math.min(5, Math.round(+s.score || 3))), speech: !!s.speech, faces: String(s.faces ?? 'none'), motion: String(s.motion ?? ''), tags: (Array.isArray(s.tags) ? s.tags : []).slice(0, 6).map(String) })),
+      }));
+      return json(req, { ok: true, how, model: out.model ?? '', clips: list });
+    }
+    if (mode === 'vedit') {
+      const c = caps();
+      const { data: vs } = await database.from('admin_state').select('data').eq('id', 'voices').maybeSingle();
+      const voices = voicesFor(c, (vs?.data as any)?.approved);
+      const tg = p.toggles ?? {};
+      const pp = { ...p, voice: !!tg.voice, music: tg.music !== false, desc: p.message || p.desc, captionsOn: tg.captions !== false, maxDur: 15 };
+      const ask = () => claudeObj(key, DIRECTOR_SYS + '\n' + VIDEO_RULES_HE + '\n' + s, editorPrompt(pp, c, voices), 9000, [], edited(BRIEF_SCHEMA));
+      let plan: any;
+      try { plan = await ask(); } catch (e) { console.error('vedit', e instanceof Error ? e.message : e); plan = await ask(); }
+      const out: any = sanitizeBrief(plan, pp, voices);
+      // captions follow the person's choice: the clips' own speech and the narration both get them
+      out.captions = tg.captions === false ? 'none' : (['karaoke', 'pop', 'clean'].includes(plan.captions) ? plan.captions : (EDIT_PACKS[p.pack]?.caps ?? 'karaoke'));
+      out.pack = EDIT_PACKS[p.pack] ? p.pack : packFor(String(p.goal ?? ''), p.pace);
+      out.skipped = (Array.isArray(plan.skipped) ? plan.skipped : []).slice(0, 6).map((x: any) => ({ i: +x.i, why: String(x.why ?? '').slice(0, 160) }));
+      if (tg.outro === false) out.outro = { cta: '', details: [] };
+      return json(req, { ok: true, caps: c, ...out });
     }
     if (mode === 'vsample') {
       const text = String(p.text || 'שלום, אני הקול של PrimeOS. ביום חמישי הקרוב מחכה לכם פסטיבל הסתיו בפארק העירוני, עם הופעות, אוכל ופינת ילדים. נתראה שם!').slice(0, 300);

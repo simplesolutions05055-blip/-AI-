@@ -26,6 +26,9 @@ export interface Visual {
   focus?: [number, number];  // object-position %, where the subject is
   speed?: number;            // video playback rate
   trimStart?: number;        // seconds into the clip
+  audio?: boolean;           // video: keep the clip's own sound (an edit of the person's footage)
+  vol?: number;              // 0..1.5 level of that sound
+  audioSrc?: string;         // a cleaned copy of the clip's sound (noise removed), aligned to the clip's own time
 }
 
 export interface SceneText {

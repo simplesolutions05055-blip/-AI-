@@ -1,6 +1,6 @@
 import { asset } from './asset';
 import React from 'react';
-import { AbsoluteFill, Img, OffthreadVideo, interpolate, spring, useCurrentFrame, useVideoConfig, Easing } from 'remotion';
+import { AbsoluteFill, Audio, Img, OffthreadVideo, interpolate, spring, useCurrentFrame, useVideoConfig, Easing } from 'remotion';
 import type { Visual, Plan } from './types';
 
 // camera move over the whole scene; eased so it never looks mechanical
@@ -28,7 +28,12 @@ export const Background: React.FC<{ v: Visual; plan: Plan; durF: number }> = ({ 
   const media: React.CSSProperties = { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: pos, filter: v.blur ? `blur(${v.blur}px)` : undefined, ...ms, willChange: 'transform' };
   let layer: React.ReactNode;
   if (v.kind === 'image' && v.src) layer = <Img src={asset(v.src)!} style={media} />;
-  else if (v.kind === 'video' && v.src) layer = <OffthreadVideo src={asset(v.src)!} muted playbackRate={v.speed ?? 1} startFrom={Math.round((v.trimStart ?? 0) * fps)} style={media} />;
+  else if (v.kind === 'video' && v.src) layer = (
+    <>
+      <OffthreadVideo src={asset(v.src)!} muted={!v.audio || !!v.audioSrc} volume={v.vol ?? 1} playbackRate={v.speed ?? 1} startFrom={Math.round((v.trimStart ?? 0) * fps)} style={media} />
+      {v.audio && v.audioSrc ? <Audio src={asset(v.audioSrc)!} volume={v.vol ?? 1} playbackRate={v.speed ?? 1} startFrom={Math.round((v.trimStart ?? 0) * fps)} /> : null}
+    </>
+  );
   else if (v.kind === 'studio') {
     // pearl-white studio sweep: a soft light from the top, a faint brand tint low in the frame, no dark corners
     const a = interpolate(f, [0, durF], [0, 12]);

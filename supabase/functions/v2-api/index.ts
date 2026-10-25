@@ -236,8 +236,14 @@ async function jobCreate(d: DB, orgId: string, memberId: string | null, p: Recor
   const fmtLabel = ({ '9x16': '9:16', '1x1': '1:1', '4x5': '4:5', '16x9': '16:9' } as Record<string, string>)[format];
   // the wizard's own item (status "בהפקה"): the finished video is written into it, so the window may close
   const ui = uiOf(p.ui);
-  const input: Record<string, unknown> = { title: String(p.title ?? '').slice(0, 200), desc: String(p.desc ?? '').slice(0, 3000), goal: String(p.goal ?? 'event'), dur: Math.max(10, Math.min(60, +p.dur || 25)), imgs, dept: String(p.dept ?? '').slice(0, 80), outro, auto: true, format, fmtLabel, voice: p.voice !== false, music: p.music !== false };
+  const input: Record<string, unknown> = { title: String(p.title ?? '').slice(0, 200), desc: String(p.desc ?? '').slice(0, 3000), goal: String(p.goal ?? 'event'), dur: Math.max(10, Math.min(90, +p.dur || 25)), imgs, dept: String(p.dept ?? '').slice(0, 80), outro, auto: true, format, fmtLabel, voice: p.voice !== false, music: p.music !== false };
   if (ui) { input.ui = ui; input.vmeta = p.vmeta && typeof p.vmeta === 'object' ? p.vmeta : undefined; }
+  // an edit of the person's footage: the clips (with their transcripts) and the switches travel with the render
+  if (Array.isArray(p.clips) && p.clips.length) {
+    input.clips = p.clips.slice(0, 6).filter((c: any) => c && /^https:\/\//.test(String(c.url ?? ''))).map((c: any) => ({ i: +c.i || 0, url: String(c.url).slice(0, 600), name: String(c.name ?? '').slice(0, 120), sec: +c.sec || 0, audio: /^https:\/\//.test(String(c.audio ?? '')) ? String(c.audio) : '', words: (Array.isArray(c.words) ? c.words : []).slice(0, 2000).map((w: any) => ({ w: String(w.w ?? '').slice(0, 40), s: +w.s || 0, e: +w.e || 0 })) }));
+    input.toggles = p.toggles && typeof p.toggles === 'object' ? p.toggles : {};
+    input.clean = p.clean !== false;
+  }
   const { data, error } = await d.from('v2_jobs').insert({ org_id: orgId, member_id: await jobMember(d, orgId, memberId), src: 'web', kind: 'video', step: 'media', input, data: { brief: b }, ui_id: ui ? ui.id : null }).select('id').single();
   if (error) throw error;
   // wake the runner now instead of at the next cron minute
@@ -255,13 +261,13 @@ function uiOf(x: unknown): Record<string, any> | null {
   if (u.wz && typeof u.wz === 'object' && JSON.stringify(u.wz).length <= 16000) out.wz = u.wz;
   return out;
 }
-const WEB_FIRST: Record<string, string> = { graphic: 'texts', doc: 'texts', deck: 'texts' };
+const WEB_FIRST: Record<string, string> = { graphic: 'texts', doc: 'texts', deck: 'texts', vscan: 'prep' };
 // a graphic, a document or a presentation made on the server from the wizard's brief (web.ts runs the steps)
 async function jobStart(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
   const kind = String(p.kind ?? '');
   if (!WEB_FIRST[kind]) throw new Error('bad_kind');
   const ui = uiOf(p.ui);
-  if (!ui) throw new Error('bad_ui');
+  if (!ui && kind !== 'vscan') throw new Error('bad_ui');
   const { count } = await d.from('v2_jobs').select('id', { count: 'exact', head: true }).eq('org_id', orgId).eq('src', 'web').gte('created_at', new Date(Date.now() - 86400000).toISOString());
   if ((count ?? 0) >= 150) throw new Error('daily_jobs');
   const inp = p.input && typeof p.input === 'object' ? p.input : {};
@@ -269,7 +275,25 @@ async function jobStart(d: DB, orgId: string, memberId: string | null, p: Record
   const urls = (v: unknown, n: number) => (Array.isArray(v) ? v : []).map((u) => String(u)).filter((u) => /^https:\/\//.test(u)).slice(0, n);
   const files = (Array.isArray(inp.files) ? inp.files : []).filter((f: any) => f && /^https:\/\//.test(String(f.url ?? ''))).slice(0, 8).map((f: any) => ({ url: String(f.url), name: String(f.name ?? '').slice(0, 120) }));
   const ctx = inp.ctx && typeof inp.ctx === 'object' ? { org: String(inp.ctx.org ?? '').slice(0, 200), dept: String(inp.ctx.dept ?? '').slice(0, 120), tone: String(inp.ctx.tone ?? '').slice(0, 400), good: Array.isArray(inp.ctx.good) ? inp.ctx.good.slice(0, 20) : [], bad: Array.isArray(inp.ctx.bad) ? inp.ctx.bad.slice(0, 20) : [], facts: String(inp.ctx.facts ?? '').slice(0, 4000) } : {};
-  const input: Record<string, unknown> = { ui, ctx, title: str('title', 300), brief: str('brief', 6000), prompt: str('prompt', 6000), dept: str('dept', 120), files };
+  const input: Record<string, unknown> = { ui: ui ?? undefined, ctx, title: str('title', 300), brief: str('brief', 6000), prompt: str('prompt', 6000), dept: str('dept', 120), files };
+  if (kind === 'vscan') {
+    // the analysis of the person's footage (no quota: nothing is produced yet); a change request reuses an earlier analysis
+    const clips = (Array.isArray(inp.clips) ? inp.clips : []).filter((c: any) => c && /^https:\/\//.test(String(c.url ?? ''))).slice(0, 6).map((c: any, i: number) => ({ i, url: String(c.url).slice(0, 600), name: String(c.name ?? '').slice(0, 120), sec: Math.max(0, Math.min(120, +c.sec || 0)) }));
+    const tg = inp.toggles && typeof inp.toggles === 'object' ? inp.toggles : {};
+    Object.assign(input, { clips, message: str('message', 400), goal: str('goal', 20), aud: str('aud', 200), cta: str('cta', 160), must: str('must', 600), avoid: str('avoid', 600), notes: str('notes', 800), duration: Math.max(15, Math.min(90, Math.round(+inp.duration || 30))), format: ['9x16', '1x1', '4x5', '16x9'].includes(inp.format) ? inp.format : '9x16', pace: str('pace', 12), pack: str('pack', 10), voiceId: str('voiceId', 60) || 'auto', toggles: { captions: tg.captions !== false, music: tg.music !== false, voice: !!tg.voice, origAudio: tg.origAudio !== false, broll: tg.broll !== false, texts: tg.texts !== false, outro: tg.outro !== false, keepOrder: !!tg.keepOrder }, change: str('change', 600) });
+    let step = 'prep', data: Record<string, unknown> = {};
+    if (inp.from) {
+      const { data: prev } = await d.from('v2_jobs').select('data,input').eq('org_id', orgId).eq('id', String(inp.from)).eq('kind', 'vscan').maybeSingle();
+      if (!prev || !prev.data?.summary) throw new Error('bad_from');
+      data = { summary: prev.data.summary, transcripts: prev.data.transcripts, analysis: prev.data.analysis, plan: prev.data.plan }; step = 'direct';
+      input.clips = prev.input?.clips ?? clips;
+    } else if (!clips.length) throw new Error('no_clips');
+    const { data: row, error } = await d.from('v2_jobs').insert({ org_id: orgId, member_id: await jobMember(d, orgId, memberId), src: 'web', kind, step, input, data }).select('id').single();
+    if (error) throw error;
+    fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/smartsend-webhook?tick=1`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-tick': Deno.env.get('SMARTSEND_WEBHOOK_SECRET') ?? '' }, body: '{}' }).catch(() => {});
+    return { id: row.id };
+  }
+  if (!ui) throw new Error('bad_ui');
   let qkind = 'gfx', qty = 1;
   if (kind === 'graphic') {
     input.fmt = ['1:1', '4:5', '9:16', '16:9', '1.91:1'].includes(inp.fmt) ? inp.fmt : '1:1';
@@ -304,7 +328,13 @@ async function jobGet(d: DB, orgId: string, id: string) {
     : j.kind === 'doc' ? (st === 'texts' ? 0.15 : st === 'render' ? 0.7 : 0.99)
     : j.kind === 'deck' ? (st === 'texts' ? 0.1 : st === 'images' ? 0.4 : st === 'render' ? 0.8 : 0.99)
     : st === 'media' ? 0.15 : st === 'start' ? 0.4 : st === 'status' ? 0.42 + 0.56 * (+j.data?.progress || 0) : st === 'done' ? 0.99 : 0.05;
-  const out: Record<string, unknown> = { state: j.state, step: st, kind: j.kind, progress: j.state === 'done' ? 1 : pr, result: j.state === 'done' ? j.result : null, error: j.state === 'error' ? (String(j.error ?? '').startsWith('quota:') ? 'quota' : 'failed') : null };
+  const prV = j.kind === 'vscan' ? (st === 'prep' ? 0.05 : st === 'prepwait' ? 0.25 : st === 'stt' ? 0.55 : st === 'scan' ? 0.7 : st === 'direct' ? 0.88 : 0.99) : pr;
+  const out: Record<string, unknown> = { state: j.state, step: st, kind: j.kind, progress: j.state === 'done' ? 1 : prV, result: j.state === 'done' ? j.result : null, error: j.state === 'error' ? (String(j.error ?? '').startsWith('quota:') ? 'quota' : 'failed') : null };
+  if (j.kind === 'vscan') {
+    const dt = j.data ?? {};
+    if (j.state === 'run') out.note = dt.progress || '';
+    if (j.state === 'done') out.edit = { clips: dt.clips ?? [], analysis: dt.analysis ?? null, plan: dt.plan ?? null, summary: (dt.summary?.clips ?? []).map((c: any) => ({ i: c.i, sec: c.sec, w: c.w, h: c.h, thumbs: c.thumbs ?? [], quietRatio: c.quietRatio })) };
+  }
   // the texts arrive before the files: the wizard shows them while the design is still rendering
   if (j.src === 'web' && j.state === 'run') {
     const dt = j.data ?? {};

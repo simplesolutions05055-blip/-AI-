@@ -17,8 +17,8 @@ export interface Flow {
   fail: (why: string) => Promise<void>;
   later: (s: number) => string;
 }
-export const WEB_KINDS = ['graphic', 'doc', 'deck'];
-export const FIRST_STEP: Record<string, string> = { graphic: 'texts', doc: 'texts', deck: 'texts' };
+export const WEB_KINDS = ['graphic', 'doc', 'deck', 'vscan'];
+export const FIRST_STEP: Record<string, string> = { graphic: 'texts', doc: 'texts', deck: 'texts', vscan: 'prep' };
 const FMT_K: Record<string, string> = { '1:1': '1x1', '4:5': '4x5', '9:16': '9x16', '16:9': '16x9', '1.91:1': '1.91x1' };
 const AR: Record<string, string> = { '1:1': '1/1', '4:5': '4/5', '9:16': '9/16', '16:9': '16/9', '1.91:1': '1.91/1' };
 const sizeOf = (f: string) => (f === '4:5' || f === '9:16' ? 'portrait' : f === '16:9' || f === '1.91:1' ? 'landscape' : 'square');
@@ -232,6 +232,83 @@ export async function advanceWeb(d: DB, j: Job, token: string, f: Flow) {
       };
       await saveItem(token, ui);
       return f.upd({ state: 'done', step: 'done', result: { url: data.urls.main, ui_id: j.ui_id }, pend: {}, data });
+    }
+  }
+  /* ---------------- editing the person's footage: prepare -> transcribe -> understand -> the editor's plan ---------------- */
+  if (j.kind === 'vscan') {
+    const clips: any[] = Array.isArray(inp.clips) ? inp.clips : [];
+    if (j.step === 'prep') {
+      if (!ids.length) {
+        // a signed upload target for every file the sandbox will write
+        const sign = async (path: string) => { const r = await d.storage.from('v2-content').createSignedUploadUrl(path); if (r.error) throw r.error; return { upload: r.data.signedUrl, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl }; };
+        const base = `vedit/${j.org_id}/${j.id}`;
+        const list = [] as any[];
+        for (const c of clips) {
+          const out: Record<string, any> = { proxy: await sign(`${base}/c${c.i}-proxy.mp4`), audio: await sign(`${base}/c${c.i}-audio.mp3`) };
+          for (let k = 0; k < 12; k++) out['t' + k] = await sign(`${base}/c${c.i}-t${String(k).padStart(2, '0')}.jpg`);
+          list.push({ url: c.url, name: c.name || '', out });
+        }
+        const sum = await sign(`${base}/summary.json`);
+        const id = await httpLater(d, APP + '/api/video', token, { action: 'prep', clips: list, summaryUpload: sum.upload, summaryUrl: sum.url }, 120000);
+        data.summaryUrl = sum.url;
+        await f.upd({ data });
+        return f.upd({ pend: { p: id }, next_at: f.later(8) });
+      }
+      if (!ok(res.p) || !res.p.json.sandboxId) return f.retry('prep_start');
+      data.sb = { sandboxId: res.p.json.sandboxId, cmdId: res.p.json.cmdId };
+      data.t0 = Date.now();
+      return f.go('prepwait', { next_at: f.later(20) });
+    }
+    if (j.step === 'prepwait') {
+      if (!ids.length) { const id = await httpLater(d, APP + '/api/video', token, { action: 'prepStatus', ...data.sb, summaryUrl: data.summaryUrl }, 60000); return f.upd({ pend: { s: id }, next_at: f.later(8) }); }
+      const r = res.s;
+      if (ok(r) && r.json.stage === 'done') {
+        data.summary = r.json.summary;
+        return f.go('stt');
+      }
+      if (ok(r) && r.json.stage === 'error') return f.fail('prep_' + (r.json.message || 'failed'));
+      if (Date.now() - (data.t0 || Date.now()) > 15 * 60000) return f.fail('prep_timeout');
+      data.progress = ok(r) ? r.json.progress || '' : data.progress;
+      return f.upd({ pend: {}, data, next_at: f.later(8) });
+    }
+    if (j.step === 'stt') {
+      const sc: any[] = data.summary?.clips ?? [];
+      // Hebrew transcription for every clip that has sound and is not mostly silent
+      const todo = sc.filter((c) => c.files?.audio && (c.quietRatio ?? 1) < 0.97);
+      if (!ids.length) {
+        if (!todo.length) { data.transcripts = {}; return f.go('scan'); }
+        const p: Record<string, number> = {};
+        for (const c of todo) p['t' + c.i] = await httpLater(d, FN('generate'), token, { mode: 'vstt', audio: c.files.audio, sec: c.sec }, 170000);
+        await f.upd({ data, lock_until: f.later(120) }); return f.upd({ pend: p, next_at: f.later(12) });
+      }
+      data.transcripts = {};
+      for (const c of todo) { const r = res['t' + c.i]; if (ok(r) && Array.isArray(r.json.sentences)) data.transcripts[c.i] = { sentences: r.json.sentences, words: r.json.words ?? [] }; }
+      return f.go('scan');
+    }
+    if (j.step === 'scan') {
+      const sc: any[] = data.summary?.clips ?? [];
+      if (!ids.length) {
+        const list = sc.map((c) => ({ i: c.i, name: c.name, sec: c.sec, proxy: c.files?.proxy, thumbs: c.thumbs ?? [], cuts: c.cuts ?? [], silence: c.silence ?? [], transcript: (data.transcripts?.[c.i]?.sentences ?? []).map((x: any) => ({ s: x.s, e: x.e, t: x.t })) }));
+        const id = await httpLater(d, FN('generate'), token, { mode: 'vscan', ...ctx, clips: list, brief: [inp.title, inp.message, inp.must].filter(Boolean).join(' | ') }, 170000);
+        return f.upd({ pend: { a: id }, next_at: f.later(15) });
+      }
+      if (!ok(res.a)) return f.retry('scan');
+      data.analysis = { how: res.a.json.how, model: res.a.json.model, clips: res.a.json.clips ?? [] };
+      return f.go('direct');
+    }
+    if (j.step === 'direct') {
+      const sc: any[] = data.summary?.clips ?? [];
+      if (!ids.length) {
+        const list = sc.map((c) => ({ i: c.i, name: c.name, sec: c.sec, transcript: (data.transcripts?.[c.i]?.sentences ?? []).map((x: any) => ({ s: x.s, e: x.e, t: x.t })) }));
+        const body = { mode: 'vedit', ...ctx, title: inp.title, message: inp.message, goal: inp.goal, aud: inp.aud, cta: inp.cta, must: inp.must, avoid: inp.avoid, notes: inp.notes, duration: inp.duration, format: inp.format, pace: inp.pace, pack: inp.pack, toggles: inp.toggles ?? {}, voiceId: inp.voiceId || 'auto', clips: list, analysis: data.analysis, change: inp.change || undefined, prev: inp.change ? data.plan : undefined };
+        const id = await httpLater(d, FN('generate'), token, body, 170000);
+        return f.upd({ pend: { e: id }, next_at: f.later(15) });
+      }
+      if (!ok(res.e)) return f.retry('direct');
+      data.plan = res.e.json;
+      // what the render job needs about every clip
+      data.clips = sc.map((c) => ({ i: c.i, url: c.url, name: c.name, sec: c.sec, w: c.w, h: c.h, audio: c.files?.audio || '', thumbs: c.thumbs ?? [], words: data.transcripts?.[c.i]?.words ?? [] }));
+      return f.upd({ state: 'done', step: 'done', result: { ok: true }, pend: {}, data });
     }
   }
   await f.upd({ next_at: f.later(30) });

@@ -62,6 +62,27 @@ export const Main: React.FC<{ plan: Plan }> = ({ plan }) => {
   const starts = sceneStarts(plan, fps);
   const words = allWords(plan, fps);
   const hasVoice = !!voice?.src || plan.scenes.some((s) => s.voice?.src);
+  // frames where someone is talking (narration, or a clip that keeps its own sound): the music ducks under them
+  const talk: [number, number][] = [];
+  plan.scenes.forEach((s, i) => {
+    const a = starts[i], b = a + Math.round(s.dur * fps);
+    if (s.visual.kind === 'video' && s.visual.audio) talk.push([a, b]);
+    else if (s.voice?.src) talk.push([a + Math.round((s.voice.at ?? 0.25) * fps), b]);
+  });
+  const ramp = Math.round(fps * 0.35);
+  const duck = (f: number) => {
+    // 1 = full music, 0 = fully ducked; eased over 0.35s at both edges of every talking span
+    let d = 0;
+    for (const [a, b] of talk) {
+      if (f >= a - ramp && f <= b + ramp) {
+        const inE = Math.min(1, Math.max(0, (f - (a - ramp)) / ramp));
+        const outE = Math.min(1, Math.max(0, ((b + ramp) - f) / ramp));
+        d = Math.max(d, Math.min(inE, outE));
+      }
+    }
+    return d;
+  };
+  const keepsSound = plan.scenes.some((s) => s.visual.kind === 'video' && s.visual.audio);
   return (
     <AbsoluteFill style={{ background: '#000' }}>
       <TransitionSeries>{items}</TransitionSeries>
@@ -73,10 +94,12 @@ export const Main: React.FC<{ plan: Plan }> = ({ plan }) => {
       {music?.src && (
         <Audio src={asset(music.src)!} volume={(f) => {
           // music sits under the narration and swells at the open and the ending card
-          const base = music.vol ?? (hasVoice ? 0.16 : 0.55);
+          const full = music.vol ?? (hasVoice || keepsSound ? 0.42 : 0.55);
+          const under = music.vol != null ? music.vol * 0.35 : 0.14;
+          const base = full - (full - under) * duck(f);
           const open = interpolate(f, [0, fps * 0.8], [0, 1], { extrapolateRight: 'clamp' });
           const end = interpolate(f, [durationInFrames - fps * 1.6, durationInFrames - 2], [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
-          const swell = hasVoice && f > durationInFrames - oF ? 2.2 : 1;
+          const swell = (hasVoice || keepsSound) && f > durationInFrames - oF ? 1.5 : 1;
           return Math.min(1, base * swell) * open * end;
         }} />
       )}

@@ -5,6 +5,7 @@
 // The finished mp4 goes from the sandbox straight to storage; nothing large passes through this function.
 import path from 'node:path';
 import { Sandbox } from '@vercel/sandbox';
+import { PREP_SCRIPT } from './_prep/prep.js';
 import { addBundleToSandbox, createSandbox, getRenderProgress } from '@remotion/vercel';
 
 const SUPA_URL = process.env.VITE_SUPABASE_URL || 'https://tgropjisnheppsxejfdn.supabase.co';
@@ -53,6 +54,12 @@ export function cleanPlan(p: any) {
     const v = s?.visual ?? {};
     const visual = { ...v, kind: ['image', 'video', 'gradient', 'color', 'studio', 'mockup'].includes(v.kind) ? v.kind : 'gradient', tint: v.tint == null ? undefined : num(v.tint, 0, 0.3, 0.12) };
     if (visual.src && !okSrc(visual.src)) { delete visual.src; visual.kind = 'gradient'; }
+    // a clip that keeps its own sound (an edit of the person's footage), with an optional cleaned copy of that sound
+    visual.audio = !!v.audio && visual.kind === 'video';
+    visual.vol = num(v.vol, 0, 1.5, 1);
+    if (visual.audioSrc && !okSrc(visual.audioSrc)) delete visual.audioSrc;
+    if (v.trimStart != null) visual.trimStart = num(v.trimStart, 0, 600, 0);
+    if (v.speed != null) visual.speed = num(v.speed, 0.5, 2, 1);
     const t = s?.text;
     const text = t && Array.isArray(t.lines) ? { ...t, lines: t.lines.slice(0, 6).map((l: unknown) => str(l, 90) ?? ''), kicker: str(t.kicker, 60), sub: str(t.sub, 140), items: Array.isArray(t.items) ? t.items.slice(0, 6).map((x: any) => ({ t: str(x?.t, 80) ?? '', sub: str(x?.sub, 80) })) : undefined } : undefined;
     const vo = s?.voice;
@@ -139,6 +146,49 @@ async function status(body: any) {
   return json({ stage: p.stage, progress: p.overallProgress ?? 0, frames: p.progress?.renderedFrames });
 }
 
+/* ---------------- preparation of the person's own footage (the "edit an existing video" path) ----------------
+   For each uploaded clip, inside a plain sandbox with ffmpeg: technical details, a small analysis proxy (480p, 5 fps,
+   mono sound), the sound alone for transcription, scene cuts, silences and 12 thumbnails. Everything goes straight
+   from the sandbox to storage through the signed upload URLs the caller prepared; a summary JSON closes the run. */
+const okClipUrl = (u: unknown) => typeof u === 'string' && u.startsWith(PUB_PREFIX) && u.length < 700 && !/[\s'"]/.test(u);
+async function prep(body: any) {
+  const clips = Array.isArray(body.clips) ? body.clips.slice(0, 6) : [];
+  if (!clips.length || !clips.every((c: any) => okClipUrl(c.url) && c.out && typeof c.out === 'object')) return json({ error: 'bad_clips' }, 400);
+  if (!okUpload(body.summaryUpload) || !okUrl(body.summaryUrl)) return json({ error: 'bad_target' }, 400);
+  // every upload target must be one of our signed storage URLs
+  for (const c of clips) for (const k of Object.keys(c.out)) if (!okUpload(c.out[k]?.upload) || !okUrl(c.out[k]?.url)) return json({ error: 'bad_target' }, 400);
+  const sandbox = await Sandbox.create({ runtime: 'node24', resources: { vcpus: 4 }, timeout: 20 * 60 * 1000 });
+  try {
+    await sandbox.writeFiles([{ path: 'prep.mjs', content: Buffer.from(PREP_SCRIPT) }, { path: 'job.json', content: Buffer.from(JSON.stringify({ clips, summaryUpload: body.summaryUpload, summaryUrl: body.summaryUrl, thumbs: 12 })) }]);
+    const cmd = await sandbox.runCommand({ cmd: 'node', args: ['prep.mjs', 'job.json'], detached: true });
+    return json({ ok: true, sandboxId: sandbox.sandboxId, cmdId: cmd.cmdId });
+  } catch (e: any) {
+    await sandbox.stop().catch(() => {});
+    return json({ error: 'prep_start_failed', detail: String(e?.message || e).slice(0, 300) }, 500);
+  }
+}
+async function prepStatus(body: any) {
+  const { sandboxId, cmdId } = body;
+  if (typeof sandboxId !== 'string' || typeof cmdId !== 'string' || !okUrl(body.summaryUrl)) return json({ error: 'bad_request' }, 400);
+  const sb = await Sandbox.get({ sandboxId });
+  const cmd = await sb.getCommand(cmdId);
+  if (cmd.exitCode == null) {
+    // the script leaves a short progress line in a file
+    const pr = await sb.runCommand({ cmd: 'cat', args: ['progress.txt'] }).catch(() => null);
+    const line = pr && pr.exitCode === 0 ? (await pr.stdout()).trim().slice(0, 120) : '';
+    return json({ stage: 'prep', progress: line });
+  }
+  if (cmd.exitCode !== 0) {
+    const err = (await cmd.stderr().catch(() => '')).slice(-600);
+    await sb.stop().catch(() => {});
+    return json({ stage: 'error', message: 'prep_failed', detail: err });
+  }
+  await sb.stop().catch(() => {});
+  const r = await fetch(body.summaryUrl + '?t=' + Date.now(), { cache: 'no-store' });
+  if (!r.ok) return json({ stage: 'error', message: 'summary_missing' });
+  return json({ stage: 'done', summary: await r.json() });
+}
+
 export default {
   async fetch(req: Request): Promise<Response> {
     if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
@@ -150,6 +200,8 @@ export default {
     try {
       if (body.action === 'start') return await start(body, token, kind);
       if (body.action === 'status') return await status(body);
+      if (body.action === 'prep') return await prep(body);
+      if (body.action === 'prepStatus') return await prepStatus(body);
       return json({ error: 'unknown_action' }, 400);
     } catch (e: any) {
       return json({ error: 'video_failed', detail: String(e?.message || e).slice(0, 300) }, 500);

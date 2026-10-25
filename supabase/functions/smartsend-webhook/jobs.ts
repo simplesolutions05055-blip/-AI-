@@ -125,6 +125,13 @@ async function advance(d: DB, j: Job) {
         if (stockQ.length) p.stock = await httpLater(d, FN('generate'), token, { mode: 'vstock', format: inp.format || '9x16', queries: stockQ.map((x) => ({ q: x.src.replace(/^stockv?:/, ''), v: /^stockv:/.test(x.src) })) }, 170000);
         const ai = scenes.map((s, i) => ({ i, src: String(s.visual?.src ?? '') })).filter((x) => /^ai:/.test(x.src)).slice(0, 6);
         for (const x of ai) p['ai' + x.i] = await httpLater(d, FN('image'), token, { title: inp.title || '', brief: x.src.slice(3) + '\nהקשר: ' + (inp.desc || ''), dept: inp.dept || '', size: inp.format === '16x9' ? 'landscape' : inp.format === '1x1' ? 'square' : 'portrait', quality: 'high' }, 170000);
+        // an edit of the person's footage: the clips that keep their sound get a cleaned copy (wind and hum removed)
+        const eclips: any[] = Array.isArray(inp.clips) ? inp.clips : [];
+        if (eclips.length && inp.clean !== false) {
+          const need = new Set<number>();
+          scenes.forEach((s) => { const m = /^clip:(\d+):/.exec(String(s.visual?.src ?? '')); if (m && s.clipAudio) need.add(+m[1]); });
+          for (const i of need) { const c = eclips.find((x) => +x.i === i); if (c && c.audio) p['iso' + i] = await httpLater(d, FN('generate'), token, { mode: 'visolate', audio: c.audio }, 170000); }
+        }
         if (!Object.keys(p).length) p.none = await httpLater(d, FN('generate'), token, { mode: 'vcaps' }, 30000);
         return upd(d, j, { pend: p, next_at: later(20) });
       }
@@ -138,6 +145,13 @@ async function advance(d: DB, j: Job) {
         if (src === 'studio') return { ...base, kind: 'studio' };
         if ((m = /^mockup:(phone|app)/.exec(src))) return { ...base, kind: 'mockup', mock: m[1] };
         if ((m = /^upload:(\d+)/.exec(src)) && imgs[+m[1]]) return { ...base, kind: imgs[+m[1]].v ? 'video' : 'image', src: imgs[+m[1]].url };
+        if ((m = /^clip:(\d+):([\d.]+)/.exec(src))) {
+          const c = (inp.clips || []).find((x: any) => +x.i === +m![1]);
+          if (c && c.url) {
+            const iso = res['iso' + c.i];
+            return { ...base, kind: 'video', src: c.url, trimStart: Math.max(0, +m[2] || 0), motion: 'static', tint: s.clipAudio ? 0 : base.tint, audio: !!s.clipAudio, vol: 1, speed: s.speed && +s.speed !== 1 ? +s.speed : undefined, audioSrc: s.clipAudio && ok(iso) && iso.json.src ? iso.json.src : undefined };
+          }
+        }
         if (/^stockv?:/.test(src)) { const k = stockQ.findIndex((x) => x.i === i); const it = stockItems[k]; if (it && it.src) return { ...base, kind: it.v ? 'video' : 'image', src: it.src }; }
         if (/^ai:/.test(src) && ok(res['ai' + i]) && res['ai' + i].json.url) return { ...base, kind: 'image', src: res['ai' + i].json.url };
         return { ...base, kind: src === 'color' ? 'color' : 'gradient' };
@@ -150,11 +164,27 @@ async function advance(d: DB, j: Job) {
         if (c) o.voice = { src: c.src, words: c.words, at: 0.25 };
         return o;
       });
+      // captions for the clips' own speech: the transcript words inside each kept segment, moved to the final timeline
+      const capWords: any[] = [];
+      if (Array.isArray(inp.clips) && b.captions !== 'none') {
+        const tf = (t: any) => (!t || t.kind === 'cut' ? 0 : Math.min(0.9, Math.max(0.15, t.dur ?? (t.kind === 'flash' ? 0.3 : t.kind === 'whip' ? 0.35 : 0.6))));
+        let at = 0;
+        sc.forEach((o, i) => {
+          const m = /^clip:(\d+):([\d.]+)/.exec(String(scenes[i]?.visual?.src ?? ''));
+          if (m && scenes[i].clipAudio) {
+            const c = (inp.clips || []).find((x: any) => +x.i === +m![1]);
+            const t0 = +m[2] || 0, t1 = t0 + o.dur * (o.visual?.speed || 1);
+            for (const w of (c?.words ?? []) as any[]) if (w.s >= t0 - 0.05 && w.e <= t1 + 0.05) capWords.push({ w: w.w, s: +(at + (w.s - t0) / (o.visual?.speed || 1)).toFixed(2), e: +(at + (w.e - t0) / (o.visual?.speed || 1)).toFixed(2) });
+          }
+          at += o.dur - (i < sc.length - 1 ? tf(o.transition) : 0);
+        });
+      }
       const br = await brandOf(d, j.org_id);
       const mem = await memberOf(d, j.member_id);
       let brand: any = videoBrand(await orgName(d, j.org_id), inp.dept || mem.dept || '', br.colors, br.logo);
       if (b.kind === 'memorial') brand = { ...brand, colors: { deep: '#0A0F1A', main: '#2B3445', accent: '#C9B37E', light: '#D9D4C7' } };
-      data.plan = { format: inp.format || '9x16', fps: 30, brand, font: b.font, mood: b.mood, fx: b.fx, scenes: sc, outro: { dur: 3.6, ...(b.outro || {}), ...(inp.outro || {}) }, captions: { style: b.captions || 'karaoke', words: [] }, audio: music && music.src ? { music: { src: music.src } } : {}, showLogo: true };
+      data.plan = { format: inp.format || '9x16', fps: 30, brand, font: b.font, mood: b.mood, fx: b.fx, scenes: sc, outro: { dur: 3.6, ...(b.outro || {}), ...(inp.outro || {}) }, captions: { style: b.captions || 'karaoke', words: capWords }, audio: music && music.src ? { music: { src: music.src } } : {}, showLogo: true };
+      if (inp.toggles && inp.toggles.outro === false) delete data.plan.outro;
       data.thumb = ((vis.find((v: any) => v.kind === 'image') || {}) as any).src || '';
       return go('start');
     }
