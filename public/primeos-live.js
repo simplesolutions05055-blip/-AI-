@@ -4275,6 +4275,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         if (r.done) {
           const m = r.ui.media || {};
           p.on = []; p.done = ['vis', 'voice', 'music', 'render']; p.pct = 1;
+          // the person moved on: the item waits in the library, no screen is taken over
+          if (S.route !== 'vidWiz') { v.prod = null; toast('הסרטון מוכן', '„' + it.t + '” מחכה בספריית התוכן.'); return; }
           openStudio(v, m.url, m.thumb || '');
           if (S.wiz) { S.wiz.replaces = it.id; S.wiz._ref = 'wiz:' + it.id; }
           return;
