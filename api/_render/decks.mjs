@@ -8,6 +8,8 @@ export const DECK_STYLES = { formal: 'רשמי', data: 'גרפים וטבלאו�
 /* ---------------- HTML (PDF) ---------------- */
 function slides(k, d, style, o) {
   const N = d.slides.length, img = o.images || {};
+  // the person's own photos (uploaded to the presentation) are photographs even as .png: never a cutout
+  const photo = new Set(o.photos || []);
   const chrome = (i, dark) => `<div class="chrome ${dark ? 'dk' : ''}"><span>${crest(k, 38, dark)}</span><b>${esc(k.org)}</b>${k.dept ? `<span class="dp">${esc(k.dept)}</span>` : ''}<span class="num" dir="ltr">${i + 1} / ${N}</span></div>`;
   const photoBg = (u) => (u ? `<img class="bgimg" src="${esc(u)}" alt=""><div class="bgsh"></div>` : '<div class="deco"></div>');
   return d.slides.map((s, i) => {
@@ -47,7 +49,7 @@ function slides(k, d, style, o) {
     // every content slide carries a photo: a rounded column on the left, content on the right (RTL)
     // a .png side image is a cutout (person / object on a transparent background): it stands on the slide floor over a soft brand blob,
     // off-grid on purpose; a photo stays in its rounded column
-    const cut = su && /\.png(\?|$)/i.test(su);
+    const cut = su && /\.png(\?|$)/i.test(su) && !photo.has(su);
     if (su) body = `<div class="two"><div class="col">${body}</div><div class="sideimg ${cut ? 'cut' : ''}"><img src="${esc(su)}" alt=""></div></div>`;
     return `<div class="sl k-${s.kind} ${su ? 'ph' : ''}"><h2>${esc(s.t)}</h2><div class="bd">${body}</div>${chrome(i)}</div>`;
   }).join('');
@@ -138,6 +140,7 @@ export async function deckPptx(PptxGenJS, k, d, style = 'formal', o = {}) {
     }
   };
   const im = o.images || {};
+  const photoP = new Set(o.photos || []);
   d.slides.forEach((s, i) => {
     const sl = pptx.addSlide();
     const pts = s.pts || [];
@@ -164,7 +167,7 @@ export async function deckPptx(PptxGenJS, k, d, style = 'formal', o = {}) {
     const top = 1.75;
     const su = im['s' + i] || (style === 'designed' ? im.side : null);
     const hasPic = !!(su && imgs[su]);
-    const cutP = hasPic && /\.png(\?|$)/i.test(su);
+    const cutP = hasPic && /\.png(\?|$)/i.test(su) && !photoP.has(su);
     if (hasPic && cutP) sl.addImage({ data: imgs[su], x: M - 0.2, y: H - 0.72 - 5.0, w: 3.9, h: 5.0, sizing: { type: 'contain', w: 3.9, h: 5.0 } });
     else if (hasPic) sl.addImage({ data: imgs[su], x: M, y: top, w: 3.6, h: 4.6, rounding: false, sizing: { type: 'cover', w: 3.6, h: 4.6 } });
     const X0 = hasPic ? M + 4.0 : M, WD = W - M - X0; // content column (right side in RTL)

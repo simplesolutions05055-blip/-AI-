@@ -1,7 +1,8 @@
 // Server job runner: graphics and videos made without a browser.
 // Each step sends its long calls through pg_net (v2_http) and the next tick reads the answers,
 // so no edge function waits minutes on a render. A cron tick runs every minute and loops ~50s.
-import { APP, FN, DB, api, brandOf, callFn, httpLater, httpResults, kitOf, newUiId, saveItem, videoBrand } from './common.ts';
+import { APP, FN, DB, api, brandOf, callFn, httpLater, httpResults, itemOf, kitOf, newUiId, saveItem, videoBrand } from './common.ts';
+import { WEB_KINDS, advanceWeb } from './web.ts';
 import { sendImage as waImage, sendText as waText } from './wa.ts';
 import { remember } from './session.ts';
 
@@ -53,7 +54,8 @@ async function advance(d: DB, j: Job) {
     if (ids.some((id) => !got.has(id))) { await upd(d, j, { next_at: later(j.kind === 'graphic' ? 2 : 4), lock_until: new Date().toISOString() }); return; }
     for (const [k, id] of Object.entries(pend)) res[k] = got.get(Number(id));
   }
-  const data = j.data ?? {};
+  if (!j.data || typeof j.data !== 'object') j.data = {};
+  const data = j.data;
   const inp = j.input ?? {};
   const ok = (r: any) => r && r.status >= 200 && r.status < 300 && r.json && !r.json.error;
   const retry = async (why: string) => {
@@ -61,6 +63,8 @@ async function advance(d: DB, j: Job) {
     await fail(d, j, why);
   };
   const go = async (step: string, row: Record<string, unknown> = {}) => upd(d, j, { step, pend: {}, tries: 0, data, next_at: new Date().toISOString(), lock_until: new Date().toISOString(), ...row });
+  // the app's wizards (graphic / document / presentation after "צור"): their own steps, the result lands in the content item
+  if (j.src === 'web' && WEB_KINDS.includes(j.kind)) return advanceWeb(d, j, token, { ids, res, ok, retry, go, upd: (row) => upd(d, j, row), fail: (why) => fail(d, j, why), later });
 
   // ---- graphic ----
   if (j.kind === 'graphic') {
@@ -100,7 +104,7 @@ async function advance(d: DB, j: Job) {
   if (j.kind === 'video') {
     if (j.step === 'brief') {
       if (!ids.length) {
-        const id = await httpLater(d, FN('generate'), token, { mode: 'vbrief', title: inp.title || '', desc: inp.desc || '', goal: inp.goal || 'marketing', aud: '', format: '9x16', duration: inp.dur || 30, style: 'ai', voice: true, music: true, voiceId: 'auto', media: (inp.imgs || []).map((m: any) => ({ url: m.url, name: m.name || '', v: !!m.v })), dept: inp.dept || '', change: inp.change || undefined, prev: inp.change ? data.brief : undefined }, 170000);
+        const id = await httpLater(d, FN('generate'), token, { mode: 'vbrief', title: inp.title || '', desc: inp.desc || '', goal: inp.goal || 'marketing', aud: '', format: inp.format || '9x16', duration: inp.dur || 30, style: 'ai', voice: true, music: true, voiceId: 'auto', media: (inp.imgs || []).map((m: any) => ({ url: m.url, name: m.name || '', v: !!m.v })), dept: inp.dept || '', change: inp.change || undefined, prev: inp.change ? data.brief : undefined }, 170000);
         return upd(d, j, { pend: { b: id }, next_at: later(30) });
       }
       if (!ok(res.b)) return retry('brief');
@@ -114,13 +118,13 @@ async function advance(d: DB, j: Job) {
       const scenes: any[] = b.scenes || [];
       if (!ids.length) {
         const p: Record<string, number> = {};
-        if (b.voice && scenes.some((s) => s.say)) p.voice = await httpLater(d, FN('generate'), token, { mode: 'vvoice', voiceId: b.voice.id, stab: b.stab, says: scenes.map((s) => s.say || '') }, 170000);
+        if (b.voice && inp.voice !== false && scenes.some((s) => s.say)) p.voice = await httpLater(d, FN('generate'), token, { mode: 'vvoice', voiceId: b.voice.id, stab: b.stab, says: scenes.map((s) => s.say || '') }, 170000);
         const est = scenes.reduce((a, s) => a + (+s.dur || 3), 0) + 3;
-        if (b.musicPrompt) p.music = await httpLater(d, FN('generate'), token, { mode: 'vmusic', prompt: b.musicPrompt, seconds: Math.min(95, est + 4) }, 170000);
+        if (b.musicPrompt && inp.music !== false) p.music = await httpLater(d, FN('generate'), token, { mode: 'vmusic', prompt: b.musicPrompt, seconds: Math.min(95, est + 4) }, 170000);
         const stockQ = scenes.map((s, i) => ({ i, src: String(s.visual?.src ?? '') })).filter((x) => /^stockv?:/.test(x.src));
-        if (stockQ.length) p.stock = await httpLater(d, FN('generate'), token, { mode: 'vstock', format: '9x16', queries: stockQ.map((x) => ({ q: x.src.replace(/^stockv?:/, ''), v: /^stockv:/.test(x.src) })) }, 170000);
+        if (stockQ.length) p.stock = await httpLater(d, FN('generate'), token, { mode: 'vstock', format: inp.format || '9x16', queries: stockQ.map((x) => ({ q: x.src.replace(/^stockv?:/, ''), v: /^stockv:/.test(x.src) })) }, 170000);
         const ai = scenes.map((s, i) => ({ i, src: String(s.visual?.src ?? '') })).filter((x) => /^ai:/.test(x.src)).slice(0, 6);
-        for (const x of ai) p['ai' + x.i] = await httpLater(d, FN('image'), token, { title: inp.title || '', brief: x.src.slice(3) + '\nהקשר: ' + (inp.desc || ''), dept: inp.dept || '', size: 'portrait', quality: 'high' }, 170000);
+        for (const x of ai) p['ai' + x.i] = await httpLater(d, FN('image'), token, { title: inp.title || '', brief: x.src.slice(3) + '\nהקשר: ' + (inp.desc || ''), dept: inp.dept || '', size: inp.format === '16x9' ? 'landscape' : inp.format === '1x1' ? 'square' : 'portrait', quality: 'high' }, 170000);
         if (!Object.keys(p).length) p.none = await httpLater(d, FN('generate'), token, { mode: 'vcaps' }, 30000);
         return upd(d, j, { pend: p, next_at: later(20) });
       }
@@ -150,7 +154,7 @@ async function advance(d: DB, j: Job) {
       const mem = await memberOf(d, j.member_id);
       let brand: any = videoBrand(await orgName(d, j.org_id), inp.dept || mem.dept || '', br.colors, br.logo);
       if (b.kind === 'memorial') brand = { ...brand, colors: { deep: '#0A0F1A', main: '#2B3445', accent: '#C9B37E', light: '#D9D4C7' } };
-      data.plan = { format: '9x16', fps: 30, brand, font: b.font, mood: b.mood, fx: b.fx, scenes: sc, outro: { dur: 3.6, ...(b.outro || {}), ...(inp.outro || {}) }, captions: { style: b.captions || 'karaoke', words: [] }, audio: music && music.src ? { music: { src: music.src } } : {}, showLogo: true };
+      data.plan = { format: inp.format || '9x16', fps: 30, brand, font: b.font, mood: b.mood, fx: b.fx, scenes: sc, outro: { dur: 3.6, ...(b.outro || {}), ...(inp.outro || {}) }, captions: { style: b.captions || 'karaoke', words: [] }, audio: music && music.src ? { music: { src: music.src } } : {}, showLogo: true };
       data.thumb = ((vis.find((v: any) => v.kind === 'image') || {}) as any).src || '';
       return go('start');
     }
@@ -206,7 +210,19 @@ async function finishVideo(d: DB, j: Job, token: string) {
   const data = j.data, inp = j.input, b = data.brief || {}, mem = await memberOf(d, j.member_id);
   const sec = Math.round((Date.now() - (data.t0 || Date.now())) / 1000) + 20;
   callFn('generate', token, { mode: 'vrender', sec }).catch(() => {});
-  if (j.src === 'web') { await upd(d, j, { state: 'done', step: 'done', result: { url: data.url, thumb: data.thumb || '' }, pend: {} }); return; }
+  if (j.src === 'web') {
+    // the video wizard: the item it opened gets the file (the person may have closed the window)
+    if (j.ui_id && inp.ui) {
+      const fmt = String(inp.fmtLabel || '9:16');
+      const ui: Record<string, unknown> = {
+        ...inp.ui, t: inp.title || (b.brief && b.brief.idea) || inp.ui.t || 'סרטון', body: b.caption || inp.desc || '', tags: (b.tags || []).slice(0, 6), fmts: [fmt], prod: null,
+        media: { kind: 'video', eng: 'v3', url: data.url, thumb: data.thumb || '', ready: true, fmt, ar: ({ '9:16': '9/16', '1:1': '1/1', '4:5': '4/5', '16:9': '16/9' } as Record<string, string>)[fmt] || '9/16', cta: (b.outro && b.outro.cta) || '', vmeta: inp.vmeta || undefined, scenes: (b.scenes || []).map((s: any) => ({ t: ((s.text && s.text.lines) || []).join(' '), s: s.say || '' })) },
+        wiz: { kind: 'video', at: new Date().toISOString() },
+      };
+      await saveItem(token, ui);
+    }
+    await upd(d, j, { state: 'done', step: 'done', result: { url: data.url, thumb: data.thumb || '', ui_id: j.ui_id ?? null }, pend: {} }); return;
+  }
   const id = j.ui_id ?? await newUiId(d, j.org_id);
   const ui: Record<string, unknown> = {
     id, t: inp.title || (b.brief && b.brief.idea) || 'סרטון מ-WhatsApp', ty: 'video', d: inp.dept || mem.dept || '', s: 'draft', o: mem.name, u: 'עכשיו', pub: '', ch: [], th: '',
@@ -241,6 +257,14 @@ async function notifyBrief(d: DB, j: Job, b: any) {
 }
 async function fail(d: DB, j: Job, why: string) {
   await upd(d, j, { state: 'error', error: why.slice(0, 300), pend: {}, lock_until: new Date().toISOString() });
+  // a wizard item waiting for this job shows why it stopped (the quota, or a failure that can be retried)
+  if (j.src === 'web' && j.ui_id) {
+    try {
+      const token = await tokenOf(d, j.member_id);
+      const ui = await itemOf(d, j.org_id, Number(j.ui_id));
+      if (ui && ui.prod && ui.prod.job === j.id) await saveItem(token, { ...ui, prod: { ...ui.prod, err: why.startsWith('quota:') ? 'quota' : 'failed', why: why.slice(0, 200) } });
+    } catch (e) { console.error('fail mark', e instanceof Error ? e.message : e); }
+  }
   if (why.startsWith('quota:')) {
     // the subscription month is used up: no retry, the person is told when it opens again
     let q: any = {}; try { q = JSON.parse(why.slice(6)); } catch { /* plain */ }

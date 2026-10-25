@@ -231,18 +231,92 @@ async function jobCreate(d: DB, orgId: string, memberId: string | null, p: Recor
   const imgs = (Array.isArray(p.imgs) ? p.imgs : []).filter((m: any) => m && /^https:\/\//.test(String(m.url ?? ''))).slice(0, 12).map((m: any) => ({ url: String(m.url), name: String(m.name ?? '').slice(0, 80), v: !!m.v }));
   const st = p.outro && p.outro.sting ? p.outro.sting : null;
   const outro = st ? { sting: { logo: /^https:\/\//.test(String(st.logo ?? '')) ? String(st.logo) : undefined, motion: ['reveal', 'zoom', 'spin'].includes(st.motion) ? st.motion : 'reveal', bg: /^#[0-9a-f]{6}$/i.test(String(st.bg ?? '')) ? st.bg : undefined } } : undefined;
-  const input = { title: String(p.title ?? '').slice(0, 200), desc: String(p.desc ?? '').slice(0, 3000), goal: String(p.goal ?? 'event'), dur: Math.max(10, Math.min(60, +p.dur || 25)), imgs, dept: String(p.dept ?? '').slice(0, 80), outro, auto: true };
-  const { data, error } = await d.from('v2_jobs').insert({ org_id: orgId, member_id: await jobMember(d, orgId, memberId), src: 'web', kind: 'video', step: 'media', input, data: { brief: b } }).select('id').single();
+  const FMT_OK = ['9x16', '1x1', '4x5', '16x9'];
+  const format = FMT_OK.includes(String(p.format)) ? String(p.format) : '9x16';
+  const fmtLabel = ({ '9x16': '9:16', '1x1': '1:1', '4x5': '4:5', '16x9': '16:9' } as Record<string, string>)[format];
+  // the wizard's own item (status "בהפקה"): the finished video is written into it, so the window may close
+  const ui = uiOf(p.ui);
+  const input: Record<string, unknown> = { title: String(p.title ?? '').slice(0, 200), desc: String(p.desc ?? '').slice(0, 3000), goal: String(p.goal ?? 'event'), dur: Math.max(10, Math.min(60, +p.dur || 25)), imgs, dept: String(p.dept ?? '').slice(0, 80), outro, auto: true, format, fmtLabel, voice: p.voice !== false, music: p.music !== false };
+  if (ui) { input.ui = ui; input.vmeta = p.vmeta && typeof p.vmeta === 'object' ? p.vmeta : undefined; }
+  const { data, error } = await d.from('v2_jobs').insert({ org_id: orgId, member_id: await jobMember(d, orgId, memberId), src: 'web', kind: 'video', step: 'media', input, data: { brief: b }, ui_id: ui ? ui.id : null }).select('id').single();
   if (error) throw error;
   // wake the runner now instead of at the next cron minute
   fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/smartsend-webhook?tick=1`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-tick': Deno.env.get('SMARTSEND_WEBHOOK_SECRET') ?? '' }, body: '{}' }).catch(() => {});
   return { id: data.id };
 }
+// the placeholder item the wizard made (only its own fields are kept; the server fills texts and files)
+function uiOf(x: unknown): Record<string, any> | null {
+  if (!x || typeof x !== 'object' || typeof (x as any).id !== 'number') return null;
+  const u = x as Record<string, any>;
+  const out: Record<string, any> = { id: u.id, t: String(u.t ?? '').slice(0, 300), ty: String(u.ty ?? '').slice(0, 20), d: String(u.d ?? '').slice(0, 120), s: 'draft', o: String(u.o ?? '').slice(0, 120), u: 'עכשיו', pub: '', ch: Array.isArray(u.ch) ? u.ch.slice(0, 12) : [], th: String(u.th ?? '').slice(0, 20), body: '', cta: '', tags: [], wait: 'דקה' };
+  if (Array.isArray(u.fmts)) out.fmts = u.fmts.slice(0, 6);
+  if (u.prod && typeof u.prod === 'object') out.prod = u.prod;
+  // the wizard's inputs (brief, style, pages, photos): the wizard reopens from the item exactly where it was
+  if (u.wz && typeof u.wz === 'object' && JSON.stringify(u.wz).length <= 16000) out.wz = u.wz;
+  return out;
+}
+const WEB_FIRST: Record<string, string> = { graphic: 'texts', doc: 'texts', deck: 'texts' };
+// a graphic, a document or a presentation made on the server from the wizard's brief (web.ts runs the steps)
+async function jobStart(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const kind = String(p.kind ?? '');
+  if (!WEB_FIRST[kind]) throw new Error('bad_kind');
+  const ui = uiOf(p.ui);
+  if (!ui) throw new Error('bad_ui');
+  const { count } = await d.from('v2_jobs').select('id', { count: 'exact', head: true }).eq('org_id', orgId).eq('src', 'web').gte('created_at', new Date(Date.now() - 86400000).toISOString());
+  if ((count ?? 0) >= 150) throw new Error('daily_jobs');
+  const inp = p.input && typeof p.input === 'object' ? p.input : {};
+  const str = (k: string, n: number) => String(inp[k] ?? '').slice(0, n);
+  const urls = (v: unknown, n: number) => (Array.isArray(v) ? v : []).map((u) => String(u)).filter((u) => /^https:\/\//.test(u)).slice(0, n);
+  const files = (Array.isArray(inp.files) ? inp.files : []).filter((f: any) => f && /^https:\/\//.test(String(f.url ?? ''))).slice(0, 8).map((f: any) => ({ url: String(f.url), name: String(f.name ?? '').slice(0, 120) }));
+  const ctx = inp.ctx && typeof inp.ctx === 'object' ? { org: String(inp.ctx.org ?? '').slice(0, 200), dept: String(inp.ctx.dept ?? '').slice(0, 120), tone: String(inp.ctx.tone ?? '').slice(0, 400), good: Array.isArray(inp.ctx.good) ? inp.ctx.good.slice(0, 20) : [], bad: Array.isArray(inp.ctx.bad) ? inp.ctx.bad.slice(0, 20) : [], facts: String(inp.ctx.facts ?? '').slice(0, 4000) } : {};
+  const input: Record<string, unknown> = { ui, ctx, title: str('title', 300), brief: str('brief', 6000), prompt: str('prompt', 6000), dept: str('dept', 120), files };
+  let qkind = 'gfx', qty = 1;
+  if (kind === 'graphic') {
+    input.fmt = ['1:1', '4:5', '9:16', '16:9', '1.91:1'].includes(inp.fmt) ? inp.fmt : '1:1';
+    input.photos = urls(inp.photos, 4);
+    if (inp.tpl && /^https:\/\//.test(String(inp.tpl.url ?? ''))) { input.tpl = { url: String(inp.tpl.url), desc: String(inp.tpl.desc ?? '').slice(0, 1500), slots: Array.isArray(inp.tpl.slots) ? inp.tpl.slots.slice(0, 20) : [], r: String(inp.tpl.r ?? '').slice(0, 10) }; input.layout = str('layout', 60); }
+  } else if (kind === 'doc') {
+    input.style = ['formal', 'data', 'designed'].includes(inp.style) ? inp.style : 'formal';
+    input.styleLabel = str('styleLabel', 60);
+    qkind = 'doc';
+  } else {
+    input.style = ['formal', 'data', 'designed'].includes(inp.style) ? inp.style : 'formal';
+    input.pages = Math.max(3, Math.min(30, Math.round(+inp.pages || 8)));
+    input.keep = !!inp.keep;
+    input.photos = urls(inp.photos, 30);
+    if (inp.picks && typeof inp.picks === 'object') input.picks = inp.picks;
+    qkind = 'slides'; qty = input.pages as number;
+  }
+  // the subscription quota is taken now, under the item's reference: the renders of this same item later are free
+  const { data: q, error: qe } = await d.rpc('v2_quota_take', { org: orgId, kind: qkind, qty, member: memberId, src: 'web', ref: 'wiz:' + ui.id });
+  if (qe) console.error('quota', qe.message);
+  else if (q && q.ok === false) throw Object.assign(new Error('quota'), { detail: { kind: q.kind, used: q.used, limit: q.limit, left: q.left, reset: q.reset } });
+  const { data, error } = await d.from('v2_jobs').insert({ org_id: orgId, member_id: await jobMember(d, orgId, memberId), src: 'web', kind, step: WEB_FIRST[kind], input, data: {}, ui_id: ui.id }).select('id').single();
+  if (error) throw error;
+  fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/smartsend-webhook?tick=1`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-tick': Deno.env.get('SMARTSEND_WEBHOOK_SECRET') ?? '' }, body: '{}' }).catch(() => {});
+  return { id: data.id };
+}
 async function jobGet(d: DB, orgId: string, id: string) {
-  const { data: j } = await d.from('v2_jobs').select('id,state,step,data,result,error,updated_at').eq('org_id', orgId).eq('id', id).maybeSingle();
+  const { data: j } = await d.from('v2_jobs').select('id,kind,src,state,step,data,result,error,ui_id,updated_at').eq('org_id', orgId).eq('id', id).maybeSingle();
   if (!j) return { state: 'missing' };
-  const pr = j.step === 'media' ? 0.15 : j.step === 'start' ? 0.4 : j.step === 'status' ? 0.42 + 0.56 * (+j.data?.progress || 0) : j.step === 'done' ? 0.99 : 0.05;
-  return { state: j.state, step: j.step, progress: j.state === 'done' ? 1 : pr, result: j.state === 'done' ? j.result : null, error: j.state === 'error' ? 'failed' : null };
+  const st = j.step;
+  const pr = j.kind === 'graphic' ? (st === 'texts' ? 0.1 : st === 'design' ? 0.35 : st === 'fix' ? 0.75 : st === 'fit' ? 0.9 : 0.99)
+    : j.kind === 'doc' ? (st === 'texts' ? 0.15 : st === 'render' ? 0.7 : 0.99)
+    : j.kind === 'deck' ? (st === 'texts' ? 0.1 : st === 'images' ? 0.4 : st === 'render' ? 0.8 : 0.99)
+    : st === 'media' ? 0.15 : st === 'start' ? 0.4 : st === 'status' ? 0.42 + 0.56 * (+j.data?.progress || 0) : st === 'done' ? 0.99 : 0.05;
+  const out: Record<string, unknown> = { state: j.state, step: st, kind: j.kind, progress: j.state === 'done' ? 1 : pr, result: j.state === 'done' ? j.result : null, error: j.state === 'error' ? (String(j.error ?? '').startsWith('quota:') ? 'quota' : 'failed') : null };
+  // the texts arrive before the files: the wizard shows them while the design is still rendering
+  if (j.src === 'web' && j.state === 'run') {
+    const dt = j.data ?? {};
+    if (j.kind === 'graphic' && dt.texts) out.texts = { ...dt.texts, caption: dt.caption, tags: dt.tags, style: dt.style, palette: dt.palette, styleWhy: dt.styleWhy };
+    if (j.kind === 'doc' && dt.doc) out.doc = dt.doc;
+    if (j.kind === 'deck' && dt.deck) out.deck = dt.deck;
+  }
+  if (j.state === 'done' && j.ui_id) {
+    const { data: it } = await d.from('content_items').select('meta').eq('org_id', orgId).eq('ui_id', j.ui_id).maybeSingle();
+    if (it?.meta?.ui) out.ui = it.meta.ui;
+  }
+  return out;
 }
 async function jobRetry(d: DB, orgId: string, id: string) {
   const { data } = await d.from('v2_jobs').update({ state: 'run', pend: {}, tries: 0, error: null, next_at: new Date().toISOString(), lock_until: new Date().toISOString() }).eq('org_id', orgId).eq('id', id).eq('state', 'error').select('id');
@@ -1244,6 +1318,7 @@ Deno.serve(async (req) => {
       if (action === 'quota.state') { const { data } = await d.rpc('v2_quota', { org: s.orgId }); return json(req, { ok: true, quota: data }); }
       if (action === 'quota.take') return json(req, await quotaTake(d, s.orgId, s.memberId, p));
       if (action === 'job.create') return json(req, await jobCreate(d, s.orgId, s.memberId, p));
+      if (action === 'job.start') return json(req, await jobStart(d, s.orgId, s.memberId, p));
       if (action === 'job.get') return json(req, await jobGet(d, s.orgId, String(p.id ?? '')));
       if (action === 'job.retry') return json(req, await jobRetry(d, s.orgId, String(p.id ?? '')));
       if (action === 'wa.list') return json(req, await waList(d, s.orgId, s.memberId));
@@ -1295,6 +1370,8 @@ Deno.serve(async (req) => {
     return json(req, { error: 'unknown_action' }, 400);
   } catch (e) {
     const msg = e instanceof Error ? e.message : (e as any)?.message ?? 'internal_error';
+    // a full subscription quota answers like produce does: 402 with the numbers, so the app shows the same message
+    if (msg === 'quota' && (e as any)?.detail) return json(req, { error: 'quota', ...(e as any).detail }, 402);
     return json(req, { error: msg }, msg === 'invalid_credentials' ? 401 : 500);
   }
 });

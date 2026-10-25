@@ -159,7 +159,7 @@ async function renderAll(body: any) {
             out.push({ id: j.id, ok: true, bytes: pdf.length, ms: Date.now() - t0, thumb: j.thumb === false ? undefined : await thumb(p, 794, 1123, j.thumbMax || 560) });
           } else if (j.kind === 'deck') {
             const imgs = j.images || {};
-            const html = deckHtml(k, j.data, j.style, { images: imgs });
+            const html = deckHtml(k, j.data, j.style, { images: imgs, photos: j.photos || [] });
             await load(p, html, 1920, 1080);
             const pdf = Buffer.from(await p.pdf({ width: '1920px', height: '1080px', printBackground: true, preferCSSPageSize: true }));
             if (up.main) await put(up.main, pdf, 'application/pdf');
@@ -196,7 +196,7 @@ async function renderAll(body: any) {
             };
             const cd = await crestPng(true);
             const cl = await crestPng(false);
-            const pptx = (await deckPptx(PptxGenJS, k, j.data, j.style, { images: imgs, imageData, crestDark: cd, crestLight: cl })) as Buffer;
+            const pptx = (await deckPptx(PptxGenJS, k, j.data, j.style, { images: imgs, imageData, crestDark: cd, crestLight: cl, photos: j.photos || [] })) as Buffer;
             if (up.pptx) await put(up.pptx, pptx, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
             out.push({ id: j.id, ok: true, bytes: pdf.length, pptxBytes: pptx.length, ms: Date.now() - t0, slides: n, sheet: j.thumb === false ? undefined : thumbs });
           } else if (j.kind === 'video') {

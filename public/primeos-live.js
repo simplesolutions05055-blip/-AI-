@@ -1188,16 +1188,20 @@ function printRoles(colors = [], roles = {}) {
     const full = (s, i) => i === 0 || s.kind === 'end' || s.kind === 'quote' || s.kind === 'cover';
     const keyOf = (s, i) => (s.kind || 'b') + '|' + (full(s, i) ? 'f' : 'c') + '|' + (i === 0 ? (d.title || s.t || '') : (s.t || '')) + '|' + ((s.pts || []).slice(0, 2).join(' '));
     const briefOf = (s, i) => ((m.imgNote && m.imgNote[i]) ? m.imgNote[i] + '\n' : '') + (i === 0 ? 'תמונת שער רחבה ואווירתית למצגת: ' + (d.title || w.title) : s.kind === 'end' ? 'תמונת סיום חמה ואופטימית למצגת: ' + (d.title || w.title) : 'תמונה שמלווה את השקף "' + (s.t || '') + '": ' + (s.pts || []).slice(0, 3).join('. ')) + '\n' + (w.prompt || '');
-    const todo = sl.map((s, i) => [s, i]).filter(([s, i]) => !m.imgBy[keyOf(s, i)]);
+    // a photo the person chose for a slide (uploaded to the presentation) replaces the AI picture of that slide
+    const picks = m.picks || {};
+    const todo = sl.map((s, i) => [s, i]).filter(([s, i]) => !picks[i] && !m.imgBy[keyOf(s, i)]);
     // up to 4 images at a time
     let at = 0;
     const worker = async () => { while (at < todo.length) { const [s, i] = todo[at++]; try { m.imgBy[keyOf(s, i)] = full(s, i) ? await aiImage({ title: w.title, brief: briefOf(s, i), size: 'landscape', quality: 'medium', model: FAST_IMG }) : await aiImage({ title: w.title, brief: 'דמות או אובייקט שממחישים את השקף "' + (s.t || '') + '": ' + (s.pts || []).slice(0, 3).join('. '), size: 'portrait', quality: 'medium', model: FAST_IMG, cutout: true }); } catch (e) { /* that slide stays without a photo */ } } };
     await Promise.all(Array.from({ length: Math.min(4, todo.length) }, worker));
     const out = {};
-    sl.forEach((s, i) => { const u = m.imgBy[keyOf(s, i)]; if (u) out['s' + i] = u; });
+    sl.forEach((s, i) => { const u = picks[i] || m.imgBy[keyOf(s, i)]; if (u) out['s' + i] = u; });
     if (out.s0) out.cover = out.s0;
     return out;
   }
+  // the key deckImages files a slide's picture under (the wizard that reopens from a saved item rebuilds the same keys)
+  function deckImgKey(d, s, i) { const full = i === 0 || s.kind === 'end' || s.kind === 'quote' || s.kind === 'cover'; return (s.kind || 'b') + '|' + (full ? 'f' : 'c') + '|' + (i === 0 ? (d.title || s.t || '') : (s.t || '')) + '|' + ((s.pts || []).slice(0, 2).join(' ')); }
   async function produce(jobs, dept) {
     // the subscription quota counts one output per wizard: re-renders of the same draft (fixes) are free
     const w = S.wiz || S.dw || S.dk;
@@ -1702,7 +1706,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!opts.regen) { m.busy = 'ChatGPT מצלם תמונה לכל שקף...'; render(); m.images = await deckImages(w, m, w.deck); if (S.dk !== w || m.job !== job) return; }
       m.busy = 'מעצבים את המצגת...';
       render();
-      const r = await produce([{ id: 'k', kind: 'deck', style: w.style, data: w.deck, images: m.images || {}, thumb: false }]);
+      const r = await produce([{ id: 'k', kind: 'deck', style: w.style, data: w.deck, images: m.images || {}, photos: (w.photos || []).map((p) => p.url).filter(Boolean), thumb: false }]);
       if (S.dk !== w || m.job !== job) return;
       const x = (r.results || [])[0];
       if (!x || !x.ok) throw new Error((x && x.error) || 'render_failed');
@@ -1810,6 +1814,410 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const box = '<div class="note">' + ic('down', 16) + '<span>הקובץ המקורי: ' + links.map((l) => '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" style="font-weight:700;color:var(--brand)">' + l[0] + '</a>').join(' · ') + (m.kind === 'video' && !m.ready ? ' (הסרטון עדיין ברינדור)' : '') + (m.qa ? ' ' + qaHtml(m.qa) + (m.qa.issues && m.qa.issues.length ? '<br><small>בודק התוכן: ' + esc(m.qa.issues.slice(0, 3).join(' · ')) + (m.qa.fixed ? ' (תוקן אוטומטית)' : '') + '</small>' : '') : '') + '</span></div>';
     return h.replace('<div class="note">' + ic('help', 16), box + '<div class="note">' + ic('help', 16));
   };
+
+  /* =====================================================================
+   * PRODUCTION ON THE SERVER: "צור" opens the item at once (status "בהפקה") and a server job writes the
+   * texts and the files into it. The window can close; the library shows the item ready, the bell says so.
+   * If the wizard stays open it follows the job and shows the same result, step by step, as before.
+   * ===================================================================== */
+  const PROD = { on: {}, watch: {}, st: {} };
+  const PROD_MSG = {
+    graphic: { texts: 'ה-AI כותב את הטקסטים...', design: 'ChatGPT מעצב את הגרפיקה... (כדקה)', fix: 'מתקנים את הטקסט בגרפיקה...', fit: 'מתאימים לגודל...' },
+    doc: { texts: 'ה-AI כותב את המסמך...', render: 'מעצבים את קובץ ה-PDF...' },
+    deck: { texts: 'ה-AI בונה את השקפים...', images: 'ChatGPT מצלם תמונה לכל שקף...', render: 'מעצבים את המצגת...' },
+    video: { media: 'מכינים תמונות, קריינות ומוזיקה', start: 'מרנדרים את הסרטון', status: 'מרנדרים את הסרטון' },
+  };
+  const prodSt = (it) => PROD.st[it.id] || { pct: (it.prod && it.prod.pct) || 0.03, msg: (it.prod && it.prod.msg) || 'בהפקה' };
+  const isProd = (it) => !!(it && it.prod && !(it.media && it.media.url));
+  const slimUi = (it) => ({ id: it.id, t: it.t, ty: it.ty, d: it.d, o: it.o, ch: it.ch, th: it.th, fmts: it.fmts, prod: it.prod, wz: it.wz });
+  // the item that waits in the library while the server works
+  function prodItem(ty, o) {
+    const it = { id: ++S.seq, t: o.t || (TYPES[ty] ? TYPES[ty].t : 'תוכן'), ty, d: o.d || (S.user && S.user.dept) || '', s: 'draft', o: curUser().n, u: 'עכשיו', pub: '', ch: o.ch || [], th: GV[S.seq % GV.length], body: '', cta: '', tags: [], wait: 'דקה', prod: { job: null, at: Date.now() }, wz: o.wz || {} };
+    if (o.fmts) it.fmts = o.fmts;
+    items.unshift(it);
+    return it;
+  }
+  // start the job; on refusal the item goes away and the reason is shown (a full quota has its own words)
+  async function startProd(kind, it, input, video) {
+    try {
+      const r = video ? await call('job.create', Object.assign({ ui: slimUi(it) }, input)) : await call('job.start', { kind, ui: slimUi(it), input });
+      it.prod.job = r.id;
+      flush();
+      watchProd(it);
+      return r.id;
+    } catch (e) {
+      const i = items.indexOf(it); if (i >= 0) items.splice(i, 1);
+      if (e && e.message === 'quota' && L.quotaToast) L.quotaToast(e);
+      else if (e && e.message === 'daily_jobs') toast('הגעתם למכסת היצירות היומית', 'נסו שוב מחר.', 'err');
+      else aiFail(e);
+      throw e;
+    }
+  }
+  // follows one server job: progress to the card and the wizard, the finished item into the library
+  async function watchProd(it) {
+    if (!it || !it.prod || !it.prod.job || PROD.watch[it.id]) return;
+    PROD.watch[it.id] = true;
+    const job = it.prod.job;
+    const emit = (r) => { const f = PROD.on[it.id]; if (f) { try { f(r); } catch (e) { console.error('prod listener', e); } } };
+    try {
+      for (let n = 0; n < 400; n++) {
+        await new Promise((res) => setTimeout(res, n ? (n < 20 ? 3000 : 6000) : 1800));
+        if (items.indexOf(it) < 0 || !it.prod || it.prod.job !== job) return; // replaced or removed meanwhile
+        if (document.hidden) continue;
+        let r;
+        try { r = await call('job.get', { id: job }); } catch (e) { continue; }
+        if (r.state === 'done' && r.ui) {
+          const ui = r.ui;
+          replaceObj(it, ui);
+          SY.items.set(it.id, JSON.stringify(ui));
+          delete PROD.st[it.id];
+          const f = PROD.on[it.id];
+          delete PROD.on[it.id];
+          if (f) { try { f({ done: true, ui }); } catch (e) { console.error('prod done', e); } }
+          else { toast('התוצר מוכן', '„' + it.t + '” מחכה בספריית התוכן.'); if (!QUIET.includes(S.route)) render(); }
+          return;
+        }
+        if (r.state === 'error' || r.state === 'missing') {
+          it.prod = Object.assign({}, it.prod, { err: r.error === 'quota' ? 'quota' : 'failed' });
+          delete PROD.st[it.id];
+          delete PROD.on[it.id];
+          emit({ err: it.prod.err });
+          if (r.error === 'quota') toast('המכסה החודשית נוצלה', '„' + it.t + '” לא הופק. אפשר לבקש הגדלת חבילה בהגדרות ← מסלול.', 'err');
+          else toast('ההפקה לא הושלמה', '„' + it.t + '”. אפשר לנסות שוב מהפריט.', 'err');
+          if (L.refreshQuota) L.refreshQuota();
+          if (!QUIET.includes(S.route)) render();
+          return;
+        }
+        const msg = (PROD_MSG[r.kind || it.ty] || {})[r.step] || 'בהפקה...';
+        PROD.st[it.id] = { pct: r.progress || 0, msg, step: r.step };
+        emit({ step: r.step, progress: r.progress || 0, msg, texts: r.texts, doc: r.doc, deck: r.deck });
+        if (S.route === 'library' || S.route === 'dash' || S.route === 'item') paintProd(it);
+      }
+    } finally { delete PROD.watch[it.id]; }
+  }
+  // items still in production (after a reload, or made from another device) are followed again
+  function resumeProd() { items.forEach((it) => { if (isProd(it) && it.prod.job && !it.prod.err) watchProd(it); }); }
+  const _startSyncP = startSync;
+  startSync = function () { _startSyncP.apply(this, arguments); if (L.kind === 'client') setTimeout(resumeProd, 800); };
+  const _pullP = pull;
+  pull = async function () { const r = await _pullP.apply(this, arguments); if (L.kind === 'client') resumeProd(); return r; };
+  // the progress line on an open card, without re-rendering the whole screen
+  function paintProd(it) {
+    $$('[data-prod="' + it.id + '"]').forEach((el) => { const st = prodSt(it); const b = el.querySelector('.pr-msg'); if (b) b.textContent = st.msg; const bar = el.querySelector('.pr-bar i'); if (bar) bar.style.width = Math.round(st.pct * 100) + '%'; });
+  }
+  css.textContent += `
+.thumb .sp-mb.prod{gap:6px;font-size:13px;background:rgba(10,44,81,.7)}
+.thumb .sp-mb.prod .pr-msg{font-weight:600;opacity:.92;font-size:12.5px;max-width:220px}
+.thumb .sp-mb.prod .pr-bar{width:min(70%,180px);height:5px;border-radius:3px;background:rgba(255,255,255,.28);overflow:hidden}.thumb .sp-mb.prod .pr-bar i{display:block;height:100%;background:#fff;border-radius:3px;transition:width .6s}
+.thumb .sp-mb.err{background:rgba(155,28,28,.72)}
+.pimg.prodp{position:relative;overflow:hidden;background:#E6EBF2;padding:0;border-radius:14px}.pimg.prodp>*:not(.sp-mb){display:none!important}
+.pimg.prodp .sp-mb.prod{gap:8px}.pimg.prodp .sp-mb .pr-bar{width:min(70%,220px);height:5px;border-radius:3px;background:rgba(255,255,255,.28);overflow:hidden}.pimg.prodp .sp-mb .pr-bar i{display:block;height:100%;background:#fff;border-radius:3px}
+.raw.thumb.pick{cursor:pointer;border:2px solid transparent}.raw.thumb.pick.on{border-color:var(--brand,#4A1BE8);box-shadow:0 0 0 3px #fff inset}
+.raw.add.on{background:var(--brand,#4A1BE8);color:#fff;border-style:solid}`;
+  const prodOverlay = (it) => {
+    if (it.prod && it.prod.err) return '<span class="sp-mb err">' + ic('alert', 18) + '<span>' + (it.prod.err === 'quota' ? 'המכסה נוצלה' : 'ההפקה נעצרה') + '</span></span>';
+    const st = prodSt(it);
+    return '<span class="sp-mb prod" data-prod="' + it.id + '">' + thinkBox(1) + '<span class="pr-msg">' + esc(st.msg) + '</span><span class="pr-bar"><i style="width:' + Math.round(st.pct * 100) + '%"></i></span></span>';
+  };
+  // library card: the production state over the thumbnail
+  const _ccP = ccCard;
+  ccCard = function (i, first) {
+    const h = _ccP(i, first);
+    if (!isProd(i)) return h;
+    return h.replace('<div class="thumb ' + (i.th || '') + '">', '<div class="thumb ' + (i.th || '') + '">' + prodOverlay(i));
+  };
+  const _ppP = postPreview;
+  postPreview = function (it, ratio) {
+    const h = _ppP(it, ratio);
+    if (!isProd(it)) return h;
+    return h.replace('<div class="pimg">', '<div class="pimg prodp" style="aspect-ratio:1/1;width:min(100%,470px);margin-inline:auto">' + prodOverlay(it));
+  };
+  // item page: what is happening, and the way back into the wizard when the result is in
+  const _itemRP = SCREENS.item.render;
+  SCREENS.item.render = function () {
+    let h = _itemRP.call(this);
+    const it = items.find((x) => x.id === S.itemId) || items[0];
+    if (!it) return h;
+    let note = '';
+    if (isProd(it) && it.prod.err) note = '<div class="note warn">' + ic('alert', 16) + '<span><b>' + (it.prod.err === 'quota' ? 'המכסה החודשית נוצלה' : 'ההפקה לא הושלמה') + '.</b> ' + (it.prod.err === 'quota' ? 'אפשר לבקש הגדלת חבילה בהגדרות ← מסלול, או למחוק את הפריט.' : 'אפשר לנסות שוב.') + '</span>' + (it.prod.err === 'quota' ? '' : '<button class="btn btn-sm" data-act="prodRetry:' + it.id + '">' + ic('refresh', 14) + ' ניסיון חוזר</button>') + '</div>';
+    else if (isProd(it)) note = '<div class="note">' + ic('clock', 16) + '<span><b>בהפקה בשרת.</b> אפשר לסגור את החלון; הפריט יופיע כאן מוכן ותגיע התראה בפעמון.</span></div>';
+    else if (it.wiz && it.s === 'draft') note = '<div class="note">' + ic('spark', 16) + '<span><b>התוצר מוכן.</b> אפשר לבדוק, לתקן ולשלוח לאישור מתוך האשף.</span><button class="btn btn-primary btn-sm" data-act="prodOpen:' + it.id + '">' + ic('edit', 14) + ' המשך עריכה ופרסום</button></div>';
+    if (!note) return h;
+    return h.replace('<div class="note">' + ic('help', 16), note + '<div class="note">' + ic('help', 16));
+  };
+  ACT.prodRetry = async (id) => {
+    const it = itemById(id); if (!it || !it.prod || !it.prod.job) return;
+    try { const r = await call('job.retry', { id: it.prod.job }); if (r.ok) { delete it.prod.err; watchProd(it); render(); toast('נשלח לניסיון חוזר', ''); } else toast('הבקשה כבר בטיפול', ''); } catch (e) { toast('הניסיון החוזר נכשל', '', 'err'); }
+  };
+  ACT.prodOpen = (id) => { const it = itemById(id); if (it) resumeFromItem(it); };
+  // "עריכה" on a server-made draft reopens its wizard with everything in place
+  const _editP = ACT.edit;
+  ACT.edit = (id) => {
+    const it = itemById(id);
+    if (it && isProd(it)) { toast(it.prod.err ? 'ההפקה נעצרה' : 'הפריט עדיין בהפקה', it.prod.err ? 'אפשר לנסות שוב מהפריט.' : 'עוד רגע, הוא יופיע מוכן.'); return; }
+    if (it && it.wiz && it.s === 'draft' && it.media && it.media.url) { resumeFromItem(it); return; }
+    return _editP(id);
+  };
+
+  /* ---------- the wizards continue from the item (open or reopened later) ---------- */
+  function gfxFromUi(w, ui) {
+    const m = ui.media || {}, d = m.design || {};
+    w.t = ui.t || w.t; w.body = ui.body || ''; w.tags = (ui.tags || []).slice(0, 4);
+    w.sugg = [...new Set([...(ui.tags || []), ...suggestTags(w.t, w.brief.dept)])].slice(0, 7);
+    w.design = { kicker: d.kicker || '', sub: d.sub || '', details: d.details || [], cta: d.cta || '', keyword: d.keyword || '', icons: d.icons || [], style: d.style || m.style || 'official', palette: d.palette || '', styleWhy: d.styleWhy || '' };
+    w.media = { kind: 'graphic', layout: m.layout || 'ai', url: m.url, design: m.src || m.url, fmt: m.fmt || w.fmt, ar: m.ar || '1/1', image: '', model: m.model || '', qa: m.qa || null, style: m.style, warn: m.warn || null, want: m.want || [], fixes: m.fixes || [], dsize: m.dsize, dlay: m.dlay, job: (w.media && w.media.job) || 1, busy: '', ready: true };
+    if (m.fmt) { w.fmt = m.fmt; if (!(w.fmts || []).includes(m.fmt)) w.fmts = [m.fmt, ...(w.fmts || [])]; }
+    w.ver = 1; w.replaces = ui.id; w._ref = 'wiz:' + ui.id;
+  }
+  function docFromUi(w, ui) {
+    const m = ui.media || {};
+    w.doc = ui.doc || w.doc; w.ai = ui.ai || (w.doc ? { title: w.doc.title || ui.t, paras: flatDoc(w.doc) } : null);
+    if (!w.title.trim()) w.title = ui.t || '';
+    w.media = { kind: 'doc', ar: '210/297', url: m.url, docx: m.docx, thumb: m.thumb, image: m.image || '', job: (w.media && w.media.job) || 1, busy: '' };
+    w.replaces = ui.id; w._ref = 'wiz:' + ui.id;
+  }
+  function deckFromUi(w, ui) {
+    const m = ui.media || {}, d = ui.deck || w.deck || { slides: [] };
+    const sl = d.slides || [];
+    w.deck = d;
+    w.slides = mkSlides(sl.length || w.pages || 8);
+    w.slides.forEach((s, i) => { if (sl[i]) { s.t = sl[i].t || s.t; s.pts = sl[i].pts || []; } });
+    if (!w.title.trim()) w.title = ui.t || d.title || '';
+    w.ai = true;
+    if (w.cur >= w.slides.length) w.cur = 0;
+    const imgBy = {};
+    const images = m.images || {};
+    sl.forEach((s, i) => { if (images['s' + i]) imgBy[deckImgKey(d, s, i)] = images['s' + i]; });
+    w.photos = (m.photos || []).map((u) => ({ url: u, name: '' })).concat((w.photos || []).filter((p) => !(m.photos || []).includes(p.url)));
+    w.media = { kind: 'deck', ar: '16/9', url: m.url, pptx: m.pptx, slides: m.slides || [], thumb: m.thumb || '', images, imgBy, picks: m.picks || {}, rev: Date.now(), job: (w.media && w.media.job) || 1, busy: '' };
+    w.replaces = ui.id; w._ref = 'wiz:' + ui.id;
+  }
+  function resumeFromItem(it) {
+    const wz = it.wz || {};
+    S.dirty = false;
+    if (it.ty === 'graphic') {
+      startWiz('graphic', { brief: { title: wz.title || it.t, free: wz.brief || '', dept: it.d, files: wz.files || [] } });
+      const w = S.wiz;
+      w.ch = [...(it.ch || [])]; if (it.fmts) w.fmts = it.fmts.slice();
+      if (wz.layout && /^tpl:/.test(wz.layout)) w.tpl0 = wz.layout.slice(4);
+      gfxFromUi(w, it); w.step = 1; render(); window.scrollTo({ top: 0 });
+      return;
+    }
+    if (it.ty === 'doc') {
+      S.dw = { step: 1, style: wz.style || (it.media && it.media.style) || 'formal', src: wz.src || 'ai', title: it.t || '', prompt: wz.prompt || '', file: wz.file || null, useAs: wz.useAs || null, ver: 1, busy: false, fixKind: 'content', fixes: [], gen: false };
+      docFromUi(S.dw, it); go('docWiz');
+      return;
+    }
+    if (it.ty === 'deck') {
+      S.dk = { step: 1, style: wz.style || (it.media && it.media.style) || 'formal', src: wz.src || 'ai', title: it.t || '', prompt: wz.prompt || '', pages: wz.pages || 8, file: wz.file || null, editKind: wz.editKind || null, note: '', slides: [], cur: 0, fixKind: 'content', gen: false, photos: [] };
+      deckFromUi(S.dk, it); S.dk.fixKind = dkKinds(S.dk)[0]; go('deckWiz');
+      return;
+    }
+    if (it.ty === 'video') {
+      const m = it.media || {}; const v = m.vmeta || {};
+      startWiz('video', { brief: { title: it.t, free: v.desc || '' }, content: { title: it.t, body: it.body || '' }, ch: [...(it.ch || [])] });
+      const w = S.wiz;
+      w.fmts = [m.fmt || '9:16']; w.fmt = m.fmt || '9:16'; w.vmeta = m.vmeta || null; w.tags = (it.tags || []).slice(0, 4); w.sugg = [...new Set([...(it.tags || []), ...suggestTags(w.t, w.brief.dept)])].slice(0, 7);
+      w.media = JSON.parse(JSON.stringify(m)); w.replaces = it.id; render();
+      return;
+    }
+    ACT.open(it.id);
+  }
+  // a wizard screen repaint that never wipes what the person is typing
+  const quietRender = (collect) => { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); if (typing) return; try { collect && collect(); } catch (e) { /* no fields yet */ } render(); };
+
+  /* ---------- graphic: "צור" sends the brief to the server ---------- */
+  const _wizNextP = ACT.wizNext;
+  ACT.wizNext = async () => {
+    const w = S.wiz;
+    if (!w || w.step !== 0 || !isGfx(w) || w.carousel) return _wizNextP();
+    collectWiz();
+    if (!w.brief.title.trim() && !w.brief.free.trim()) { toast('חסר בריף', 'כותרת או בריף, לפחות אחד.', 'err'); return; }
+    if (!w.ch.length) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
+    const tpl = w.tpl0 ? tplOf('tpl:' + w.tpl0) : null;
+    const fmt = w.fmt || (w.fmts && w.fmts[0]) || '1:1';
+    const done = busyBtn('[data-act="wizNext"]', 'שולחים ליצירה...');
+    const it = prodItem('graphic', { t: w.brief.title || 'גרפיקה', d: w.brief.dept, ch: [...w.ch], fmts: (w.fmts || [fmt]).slice(), wz: { title: w.brief.title, brief: w.brief.free, files: (w.brief.files || []).slice(0, 8), layout: tpl ? 'tpl:' + w.tpl0 : 'ai' } });
+    try {
+      await startProd('graphic', it, { ctx: aiCtx(), title: w.brief.title, brief: w.brief.free, dept: w.brief.dept, files: briefFiles(w), photos: briefPhotos(w), fmt, tpl: tpl ? { url: tpl.url, desc: tpl.desc || '', slots: tpl.slots || [], r: tpl.r || '' } : undefined, layout: tpl ? 'tpl:' + w.tpl0 : 'ai' });
+    } catch (e) { done(); return; }
+    if (S.wiz !== w) return;
+    w.step = 1; w.t = w.brief.title; w.body = ''; w.tags = []; w.sugg = suggestTags(w.t, w.brief.dept); w.ver = 1;
+    w.design = { kicker: '', sub: '', details: [], cta: '', keyword: '', icons: [], style: 'official', palette: '', styleWhy: '' };
+    w.media = { kind: 'graphic', layout: tpl ? 'tpl:' + w.tpl0 : 'ai', busy: PROD_MSG.graphic.texts, job: 1 };
+    w.replaces = it.id; w._ref = 'wiz:' + it.id;
+    render(); window.scrollTo({ top: 0 });
+    let gotTexts = false;
+    PROD.on[it.id] = (r) => {
+      if (S.wiz !== w) { delete PROD.on[it.id]; return; }
+      if (r.err) { w.media.busy = ''; render(); return; }
+      if (r.done) { gfxFromUi(w, r.ui); render(); return; }
+      if (r.texts && !gotTexts) {
+        gotTexts = true;
+        const x = r.texts;
+        w.t = x.headline || w.t; w.body = x.caption || '';
+        const tags = (x.tags || []).slice(0, 6);
+        w.sugg = [...new Set([...tags, ...suggestTags(w.t, w.brief.dept)])].slice(0, 7); w.tags = tags.slice(0, 4);
+        w.design = { kicker: x.kicker || '', sub: x.sub || '', details: x.details || [], cta: x.cta || '', keyword: x.keyword || '', icons: x.icons || [], style: x.style || 'official', palette: x.palette || '', styleWhy: x.styleWhy || '' };
+      }
+      w.media.busy = r.msg;
+      quietRender(collectWiz);
+    };
+  };
+
+  /* ---------- document ---------- */
+  const _dwGenP = ACT.dwGen;
+  ACT.dwGen = async () => {
+    dwCollect();
+    const w = S.dw;
+    const fromFile = w && w.src === 'file' && w.file && w.file.url;
+    if (!w || !w.style || (w.src !== 'ai' && !fromFile)) return _dwGenP();
+    if (fromFile && !w.useAs) { toast('מה לעשות עם התוכן?', 'בחרו אם להשתמש בתוכן כמו שהוא או לערוך אותו עם AI.', 'err'); return; }
+    if (!fromFile && !w.title.trim() && !w.prompt.trim()) { toast('חסר תוכן', 'כתבו כותרת או תיאור חופשי למסמך.', 'err'); return; }
+    const brief = (fromFile ? (w.useAs === 'asis' ? 'השתמש בתוכן הקובץ המצורף כמו שהוא, מילה במילה. רק לארגן אותו למבנה המסמך. ' : 'ערוך ושפר את תוכן הקובץ המצורף: ניסוח, קיצור וסדר, בלי להוסיף עובדות. ') : '') + (w.prompt || '');
+    const it = prodItem('doc', { t: docTitle(w), d: (S.user && S.user.dept) || '', ch: ['web'], fmts: ['A4'], wz: { style: w.style, src: w.src, prompt: w.prompt, file: w.file || null, useAs: w.useAs || null } });
+    const done = busyBtn('[data-act="dwGen"]', 'שולחים ליצירה...');
+    try { await startProd('doc', it, { ctx: aiCtx(), title: w.title, prompt: w.prompt, brief, style: w.style, styleLabel: DOC_STYLE_T[w.style] || w.style, files: docFiles(w) }); } catch (e) { done(); return; }
+    if (S.dw !== w) return;
+    w.step = 1; w.doc = null; w.ai = null;
+    w.media = { kind: 'doc', ar: '210/297', busy: PROD_MSG.doc.texts, job: 1 };
+    w.replaces = it.id; w._ref = 'wiz:' + it.id;
+    render(); window.scrollTo({ top: 0 });
+    PROD.on[it.id] = (r) => {
+      if (S.dw !== w) { delete PROD.on[it.id]; return; }
+      if (r.err) { w.media.busy = ''; render(); return; }
+      if (r.done) { docFromUi(w, r.ui); render(); return; }
+      if (r.doc && !w.doc) { w.doc = r.doc; w.ai = { title: r.doc.title || w.title, paras: flatDoc(r.doc) }; if (!w.title.trim() && r.doc.title) w.title = r.doc.title; }
+      w.media.busy = r.msg;
+      quietRender(dwCollect);
+    };
+  };
+  const _dwDoneP = ACT.dwDone;
+  ACT.dwDone = (st) => {
+    const w = S.dw; const rep = w && w.replaces;
+    if (!rep) return _dwDoneP(st);
+    // the new item takes the place (and the id) of the one that waited in the library
+    const i = items.findIndex((x) => x.id === rep); if (i >= 0) items.splice(i, 1);
+    const keep = S.seq; S.seq = rep - 1;
+    try { _dwDoneP(st); } finally { S.seq = Math.max(keep, S.seq); }
+  };
+
+  /* ---------- presentation: own photos, then the server ---------- */
+  const pickerHtml = (w) => {
+    const ph = w.photos || [];
+    return '<div class="field full"><label>תמונות למצגת <span class="hint">לא חובה · התמונות שלכם נכנסות לשקפים במקום תמונות AI</span></label><div class="raw-grid dk-raw">' +
+      ph.map((m, i) => '<span class="raw thumb ' + GV[i % GV.length] + '">' + ic('img', 16) + '<button class="icon-btn" data-act="dkPhotoX:' + i + '" aria-label="הסרה">' + ic('x', 12) + '</button></span>').join('') +
+      '<button class="raw add" data-act="dkPhoto">' + ic('upload', 18) + '<small>תמונה</small></button></div>' + (ph.length ? '<div class="t-sub">' + ph.length + ' הועלו · הראשונה לשער, השאר לפי סדר השקפים</div>' : '') + '</div>';
+  };
+  const slidePicker = (w) => {
+    const ph = w.photos || []; const m = w.media || {};
+    if (!ph.length || !m.url) return '';
+    const cur = (m.picks || {})[w.cur] || '';
+    return '<div class="field full" style="margin:10px 0 4px"><label>תמונה לשקף הזה</label><div class="raw-grid dk-raw">' +
+      '<button class="raw add ' + (cur ? '' : 'on') + '" data-act="dkPick:-1"' + (m.busy ? ' disabled' : '') + '>' + ic('spark', 18) + '<small>תמונת AI</small></button>' +
+      ph.map((p, i) => '<button class="raw thumb pick ' + (cur === p.url ? 'on' : '') + '" data-act="dkPick:' + i + '" aria-label="תמונה ' + (i + 1) + '"' + (m.busy ? ' disabled' : '') + '></button>').join('') + '</div></div>';
+  };
+  const _deckR = SCREENS.deckWiz.render;
+  SCREENS.deckWiz.render = function () {
+    let h = _deckR.call(this);
+    const w = S.dk; if (!w) return h;
+    if (w.step === 0 && !w.gen) h = h.replace('<div class="brief-foot"><button class="btn btn-primary btn-lg" data-act="dkGen">', pickerHtml(w) + '<div class="brief-foot"><button class="btn btn-primary btn-lg" data-act="dkGen">');
+    else if (w.step === 1 && w.media) h = h.replace(/(<div class="studio-ed"><div class="rv-count">[\s\S]*?<\/div>)/, '$1' + slidePicker(w));
+    return h;
+  };
+  const _deckM = SCREENS.deckWiz.mount;
+  SCREENS.deckWiz.mount = function () {
+    _deckM && _deckM.call(this);
+    const w = S.dk; if (!w || !(w.photos || []).length) return;
+    $$('.dk-raw .raw.thumb').forEach((el, i) => { const m = w.photos[i]; if (m && m.url) { el.classList.add('real'); el.style.backgroundImage = "url('" + m.url + "')"; } });
+  };
+  ACT.dkPhoto = async () => {
+    dkCollect();
+    const fs = await uploadPicked('.png,.jpg,.jpeg,.webp', true);
+    if (!fs.length || !S.dk) return;
+    S.dk.photos = [...(S.dk.photos || []), ...fs.filter((f) => /^(png|jpe?g|webp)$/.test(extOf(f.name))).map((f) => ({ url: f.url, name: f.name }))].slice(0, 30);
+    render();
+  };
+  ACT.dkPhotoX = (i) => { dkCollect(); (S.dk.photos || []).splice(+i, 1); render(); };
+  ACT.dkPick = (i) => {
+    const w = S.dk; const m = w && w.media;
+    if (!w || !m || m.busy || !w.deck) return;
+    m.picks = m.picks || {};
+    const p = (w.photos || [])[+i];
+    if (+i < 0 || !p) delete m.picks[w.cur]; else m.picks[w.cur] = p.url;
+    const s = w.slides[w.cur]; if (s) { s.ver++; s.fixes.push({ k: 'visual', t: p ? 'תמונה שהעליתם' : 'תמונת AI', v: s.ver }); }
+    deckRun(w);
+  };
+  const _dkGenP = ACT.dkGen;
+  ACT.dkGen = async () => {
+    dkCollect();
+    const w = S.dk;
+    const fromFile = w && w.src === 'file' && w.file && w.file.url;
+    if (!w) return _dkGenP();
+    if (fromFile) {
+      if (!w.editKind) { toast('איזו עריכה דרושה?', 'בחרו: ויזואלית בלבד, טקסט בלבד או גם וגם.', 'err'); return; }
+      if (w.editKind !== 'text' && !w.style) { toast('לא נבחר סגנון', 'בחרו סגנון לעיצוב מחדש.', 'err'); return; }
+      if (!w.style) w.style = 'formal';
+    } else {
+      if (w.src !== 'ai' || !w.style) return _dkGenP();
+      if (!w.title.trim() && !w.prompt.trim()) { toast('חסר תוכן', 'כתבו כותרת או תיאור חופשי למצגת.', 'err'); return; }
+    }
+    const brief = (fromFile ? ({ visual: 'שמור על הטקסט של המצגת המצורפת כמו שהוא, מילה במילה, שקף אחר שקף. ', text: 'שפר את הניסוח של המצגת המצורפת: קצר, ברור ומדויק, בלי להוסיף עובדות. שמור על סדר השקפים. ', both: 'ערוך את המצגת המצורפת: שפר ניסוח וסדר, בלי להוסיף עובדות. ' })[w.editKind] + 'מספר השקפים כמו במצגת המקורית. ' : '') + (w.prompt || '');
+    const photos = (w.photos || []).map((p) => p.url).filter(Boolean);
+    const it = prodItem('deck', { t: dkTitle(w), d: (S.user && S.user.dept) || '', ch: ['web'], fmts: ['16:9'], wz: { style: w.style, src: w.src, prompt: w.prompt, pages: w.pages, file: w.file || null, editKind: w.editKind || null } });
+    const done = busyBtn('[data-act="dkGen"]', 'שולחים ליצירה...');
+    try { await startProd('deck', it, { ctx: aiCtx(), title: w.title, prompt: w.prompt, brief, style: w.style, pages: w.pages, keep: !!fromFile, files: w.file && w.file.url ? [{ url: w.file.url, name: w.file.n }] : [], photos }); } catch (e) { done(); return; }
+    if (S.dk !== w) return;
+    w.slides = mkSlides(w.pages); w.cur = 0; w.fixKind = dkKinds(w)[0]; w.step = 1; w.deck = null;
+    w.media = { kind: 'deck', ar: '16/9', busy: PROD_MSG.deck.texts, job: 1 };
+    w.replaces = it.id; w._ref = 'wiz:' + it.id;
+    render(); window.scrollTo({ top: 0 });
+    PROD.on[it.id] = (r) => {
+      if (S.dk !== w) { delete PROD.on[it.id]; return; }
+      if (r.err) { w.media.busy = ''; render(); return; }
+      if (r.done) { deckFromUi(w, r.ui); render(); return; }
+      if (r.deck && !w.deck) {
+        w.deck = r.deck;
+        const sl = r.deck.slides || [];
+        w.slides = mkSlides(sl.length || w.pages);
+        w.slides.forEach((s, i) => { if (sl[i]) { s.t = sl[i].t || s.t; s.pts = sl[i].pts || []; } });
+        if (!w.title.trim() && r.deck.title) w.title = r.deck.title;
+        w.ai = true;
+      }
+      w.media.busy = r.msg;
+      quietRender(dkCollect);
+    };
+  };
+  const _dkDoneP = ACT.dkDone;
+  ACT.dkDone = (st) => {
+    const w = S.dk; const rep = w && w.replaces;
+    if (!rep) return _dkDoneP(st);
+    const i = items.findIndex((x) => x.id === rep); if (i >= 0) items.splice(i, 1);
+    const keep = S.seq; S.seq = rep - 1;
+    try { _dkDoneP(st); } finally { S.seq = Math.max(keep, S.seq); }
+  };
+
+  /* ---------- the bell: real notifications of the organisation ---------- */
+  const agoP = (t) => { const s = Math.max(0, (Date.now() - t) / 1000); return s < 90 ? 'עכשיו' : s < 3600 ? 'לפני ' + Math.round(s / 60) + ' דקות' : s < 86400 ? 'לפני ' + Math.round(s / 3600) + ' שעות' : 'לפני ' + Math.round(s / 86400) + ' ימים'; };
+  const _bell = $('#btnNotif') && $('#btnNotif').onclick;
+  if ($('#btnNotif')) $('#btnNotif').onclick = () => {
+    if (L.kind !== 'client' || S.imp || (typeof S.mode !== 'undefined' && S.mode === 'admin')) return _bell && _bell();
+    const me = curUser().n, rows = [];
+    items.forEach((i) => {
+      if (isProd(i) && i.prod.err) rows.push(['fix', 'alert', '„' + i.t + '” - ההפקה נעצרה', (i.prod.err === 'quota' ? 'המכסה החודשית נוצלה' : 'אפשר לנסות שוב') + ' · ' + (TYPES[i.ty] ? TYPES[i.ty].t : ''), 'open:' + i.id]);
+      else if (isProd(i)) rows.push(['info', 'clock', '„' + i.t + '” בהפקה', prodSt(i).msg, 'open:' + i.id]);
+      else if (i.wiz && i.s === 'draft') rows.push(['', 'check', '„' + i.t + '” מוכן', (TYPES[i.ty] ? TYPES[i.ty].t : '') + (i.wiz.at ? ' · ' + agoP(Date.parse(i.wiz.at)) : ''), 'prodOpen:' + i.id]);
+    });
+    if (typeof canDirect === 'function' && canDirect()) items.filter((i) => i.s === 'pending' && i.o !== me).forEach((i) => rows.push(['warn', 'clock', '„' + i.t + '” ממתין לאישור', i.o + ' · ' + i.d, 'open:' + i.id]));
+    items.filter((i) => i.s === 'fix' && i.o === me).forEach((i) => rows.push(['fix', 'undo', '„' + i.t + '” הוחזר לתיקון', i.d, 'open:' + i.id]));
+    items.filter((i) => i.s === 'failed').forEach((i) => rows.push(['fix', 'alert', '„' + i.t + '” - הפרסום נכשל', (i.ch || []).map((x) => (CH[x] ? CH[x].t : x)).join(', '), 'open:' + i.id]));
+    openDrawer('<div class="drawer-head"><div><h3>התראות</h3><p>' + rows.length + ' פריטים</p></div><button class="icon-btn" style="margin-inline-start:auto" data-act="closeDrawer" aria-label="סגירה">' + ic('x', 17) + '</button></div>' +
+      '<div class="drawer-body" style="padding:0"><div class="row-list">' + (rows.length ? rows.map((n) => '<button class="rowi" style="width:100%;text-align:start;border:none;background:none" data-act="' + n[4] + '"><span class="ic-box ' + n[0] + '">' + ic(n[1], 16) + '</span><span class="grow"><span class="nm">' + esc(n[2]) + '</span><br><span class="mt">' + esc(n[3]) + '</span></span></button>').join('') : '<div class="card-pad t-sub">אין התראות חדשות.</div>') + '</div></div>');
+  };
+  const _prodOpen0 = ACT.prodOpen;
+  ACT.prodOpen = (id) => { closeDrawer(); _prodOpen0(id); };
+  const _openP = ACT.open;
+  ACT.open = (id) => { closeDrawer(); return _openP(id); };
 
   /* =====================================================================
    * REAL UPLOADS: brand assets, photos, videos and documents go to storage,
@@ -3806,6 +4214,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const v = S.vd, b = v.brief;
       if (!b || v.prod) return;
       const fmt = fmtK(v.fmt);
+      // the render runs on the server (same steps): the window can close, the item waits in the library
+      if (v.style !== 'existing' && !(v.clip && v.clip.url)) return vbGoServer(v, b, fmt);
       const wantVoice = v.voice && b.voice && ttsOn() && (b.scenes || []).some((s) => s.say);
       const wantMusic = v.music && musicOn() && b.musicPrompt;
       const p = (v.prod = { on: ['vis'], done: [], pct: 0.04, skip: [] });
@@ -3839,6 +4249,34 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         toast('יצירת הסרטון לא הושלמה', 'הבריף נשמר. נסו שוב בעוד רגע.', 'err');
       }
     };
+    async function vbGoServer(v, b, fmt) {
+      const wantVoice = v.voice && b.voice && ttsOn() && (b.scenes || []).some((s) => s.say);
+      const wantMusic = v.music && musicOn() && b.musicPrompt;
+      const p = (v.prod = { on: ['vis'], done: [], pct: 0.04, skip: [], srv: true });
+      if (!wantVoice) p.skip.push('voice'); if (!wantMusic) p.skip.push('music');
+      if (wantVoice) p.on.push('voice'); if (wantMusic) p.on.push('music');
+      render();
+      const tick = () => { if (S.vd === v && S.route === 'vidWiz') render(); };
+      const it = prodItem('video', { t: v.name || 'סרטון', d: v.dept || (S.user && S.user.dept) || '', ch: [...(v.ch || [])], fmts: [v.fmt], wz: { desc: v.desc, goal: v.goal, dur: v.dur } });
+      try {
+        await startProd('video', it, { brief: b, title: v.name, desc: v.desc, goal: v.goal, dur: v.dur, imgs: (v.imgs || []).filter((m) => m.url), dept: v.dept, format: fmt, voice: !!wantVoice, music: !!wantMusic, vmeta: slimV(v) }, true);
+      } catch (e) { v.prod = null; render(); return; }
+      v.replaces = it.id;
+      PROD.on[it.id] = (r) => {
+        if (S.vd !== v) { delete PROD.on[it.id]; return; }
+        if (r.err) { v.prod = null; render(); toast('יצירת הסרטון לא הושלמה', 'הבריף נשמר. נסו שוב בעוד רגע.', 'err'); return; }
+        if (r.done) {
+          const m = r.ui.media || {};
+          p.on = []; p.done = ['vis', 'voice', 'music', 'render']; p.pct = 1;
+          openStudio(v, m.url, m.thumb || '');
+          if (S.wiz) { S.wiz.replaces = it.id; S.wiz._ref = 'wiz:' + it.id; }
+          return;
+        }
+        p.pct = Math.max(p.pct, r.progress || 0);
+        if (r.step === 'start' || r.step === 'status') { p.on = ['render']; p.done = ['vis', 'voice', 'music']; p.rp = Math.max(0, Math.min(1, ((r.progress || 0.42) - 0.42) / 0.56)); }
+        tick();
+      };
+    }
     function openStudio(v, url, thumb) {
       if (S.vd !== v) return;
       const b = v.brief;
@@ -5460,6 +5898,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     let quotaAt = 0;
     const _toast = toast;
     toast = function (t) { if (t === 'ה-AI לא הצליח להשלים' && Date.now() - quotaAt < 3000) return; return _toast.apply(this, arguments); };
+    L.quotaToast = quotaToast;
     const _produce = produce;
     produce = async function (jobs, dept) {
       try { const r = await _produce(jobs, dept); refreshQuota(); return r; }
