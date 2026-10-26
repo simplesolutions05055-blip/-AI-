@@ -420,19 +420,24 @@ async function geminiFile(key: string, url: string, name: string) {
   const r0 = await fetch(url);
   if (!r0.ok) throw new Error('proxy_fetch_failed');
   const bytes = new Uint8Array(await r0.arrayBuffer());
-  const up = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=media&key=${key}`, { method: 'POST', headers: { 'content-type': 'video/mp4', 'x-goog-upload-protocol': 'raw', 'x-goog-file-name': name }, body: bytes });
+  const up = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=media`, { method: 'POST', headers: { 'x-goog-api-key': key, 'content-type': 'video/mp4', 'x-goog-upload-protocol': 'raw', 'x-goog-file-name': name }, body: bytes });
   if (!up.ok) throw new Error('gemini_upload_' + up.status + ' ' + (await up.text()).slice(0, 200));
   let f = (await up.json()).file;
   for (let k = 0; k < 40 && f.state === 'PROCESSING'; k++) {
     await wait(2000);
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/${f.name}?key=${key}`);
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/${f.name}`, { headers: { 'x-goog-api-key': key } });
     if (r.ok) f = await r.json();
   }
   if (f.state !== 'ACTIVE') throw new Error('gemini_file_' + f.state);
   return { uri: f.uri as string, mime: 'video/mp4' };
 }
-export async function scanGemini(clips: { i: number; name: string; sec: number; proxy: string; transcript?: string }[], brief: string) {
-  const key = env('GEMINI_API_KEY');
+// the key: the function secret, or the row kept in v2_secrets ('gemini'); sent as a header (the newer AQ. keys need it)
+export async function geminiKey(d: any) {
+  const e = env('GEMINI_API_KEY');
+  if (e) return e;
+  try { const { data } = await d.from('v2_secrets').select('v').eq('k', 'gemini').maybeSingle(); return String(data?.v ?? ''); } catch { return ''; }
+}
+export async function scanGemini(clips: { i: number; name: string; sec: number; proxy: string; transcript?: string }[], brief: string, key: string) {
   if (!key) throw new Error('gemini_not_configured');
   const files = [] as { uri: string; mime: string }[];
   for (const c of clips) files.push(await geminiFile(key, c.proxy, 'clip-' + c.i + '.mp4'));
@@ -441,8 +446,8 @@ export async function scanGemini(clips: { i: number; name: string; sec: number; 
   parts.push({ text: `הקשר: הסרטונים צולמו עבור סרטון קצר לרשתות. הבריף של המשתמש: ${brief}\n${SCAN_JSON_HE}` });
   let last = '';
   for (const model of GEMINI_MODELS()) {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({ system_instruction: { parts: [{ text: SCAN_SYS }] }, contents: [{ role: 'user', parts }], generationConfig: { response_mime_type: 'application/json', temperature: 0.2, max_output_tokens: 8000 } }),
     });
     if (r.ok) {

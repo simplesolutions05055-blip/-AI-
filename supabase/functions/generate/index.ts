@@ -5,7 +5,7 @@
 import { fetchRetry } from './retry.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import JSZip from 'https://esm.sh/jszip@3.10.1';
-import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES, scribe, isolateVoice, scanGemini, scanClaudeParts, SCAN_JSON_HE, SCAN_SYS, editorPrompt, EDIT_PACKS, packFor } from './video.ts';
+import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES, scribe, isolateVoice, scanGemini, geminiKey, scanClaudeParts, SCAN_JSON_HE, SCAN_SYS, editorPrompt, EDIT_PACKS, packFor } from './video.ts';
 import { STYLE_PICK_HE, styleOf, PALETTE_MODES, DOC_RULES_HE, DOC_TYPES, DECK_RULES_HE, DECK_STYLES, VIDEO_RULES_HE, QA_PASS } from './design.ts';
 import { REVIEW_SYS, reviewPrompt } from './agency.ts';
 
@@ -622,8 +622,9 @@ ${brief}
       if (!clips.length) return json(req, { error: 'no_clips' }, 400);
       const brief = String(p.brief ?? '').slice(0, 1500);
       let out: any = null, how = '';
-      if (Deno.env.get('GEMINI_API_KEY') && clips.every((c: any) => c.proxy)) {
-        try { out = await scanGemini(clips.map((c: any) => ({ i: +c.i, name: c.name, sec: +c.sec, proxy: c.proxy, transcript: (c.transcript ?? []).map((x: any) => x.t).join(' ') })), brief); how = 'gemini'; }
+      const gk = await geminiKey(database);
+      if (gk && clips.every((c: any) => c.proxy)) {
+        try { out = await scanGemini(clips.map((c: any) => ({ i: +c.i, name: c.name, sec: +c.sec, proxy: c.proxy, transcript: (c.transcript ?? []).map((x: any) => x.t).join(' ') })), brief, gk); how = 'gemini'; if (!Array.isArray(out?.clips) || !out.clips.length) { out = null; how = ''; } }
         catch (e) { console.error('vscan gemini', e instanceof Error ? e.message : e); }
       }
       if (!out) {
