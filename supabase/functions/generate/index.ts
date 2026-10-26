@@ -621,11 +621,11 @@ ${brief}
       const clips = (Array.isArray(p.clips) ? p.clips : []).slice(0, 6);
       if (!clips.length) return json(req, { error: 'no_clips' }, 400);
       const brief = String(p.brief ?? '').slice(0, 1500);
-      let out: any = null, how = '';
+      let out: any = null, how = '', gerr = '';
       const gk = await geminiKey(database);
       if (gk && clips.every((c: any) => c.proxy)) {
         try { out = await scanGemini(clips.map((c: any) => ({ i: +c.i, name: c.name, sec: +c.sec, proxy: c.proxy, transcript: (c.transcript ?? []).map((x: any) => x.t).join(' ') })), brief, gk); how = 'gemini'; if (!Array.isArray(out?.clips) || !out.clips.length) { out = null; how = ''; } }
-        catch (e) { console.error('vscan gemini', e instanceof Error ? e.message : e); }
+        catch (e) { gerr = e instanceof Error ? e.message : String(e); console.error('vscan gemini', gerr); }
       }
       if (!out) {
         const { extra, text } = scanClaudeParts(clips);
@@ -649,7 +649,7 @@ ${SCAN_JSON_HE}
         quality: { shaky: !!c.quality?.shaky, dark: !!c.quality?.dark, noisy: !!c.quality?.noisy }, burned: ['titles', 'captions'].includes(c.burned) ? c.burned : 'none', speech: String(c.speech ?? '').slice(0, 400),
         segments: (Array.isArray(c.segments) ? c.segments : []).slice(0, 40).map((s: any) => ({ s: Math.max(0, +s.s || 0), e: Math.max(0, +s.e || 0), desc: String(s.desc ?? '').slice(0, 160), score: Math.max(1, Math.min(5, Math.round(+s.score || 3))), speech: !!s.speech, faces: String(s.faces ?? 'none'), motion: String(s.motion ?? ''), tags: (Array.isArray(s.tags) ? s.tags : []).slice(0, 6).map(String) })),
       }));
-      return json(req, { ok: true, how, model: out.model ?? '', clips: list });
+      return json(req, { ok: true, how, model: out.model ?? '', clips: list, ...(gerr ? { gemini: gerr.slice(0, 300) } : {}) });
     }
     if (mode === 'vedit') {
       const c = caps();
