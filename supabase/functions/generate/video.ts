@@ -414,13 +414,22 @@ export const SCAN_JSON_HE = `החזר JSON בלבד:
 {"clips":[{"i":0,"summary":"מה יש בסרטון במשפט-שניים","setting":"איפה מצולם","kind":"event|interview|tour|performance|speech|broll|other","people":"none|few|crowd","quality":{"shaky":false,"dark":false,"noisy":false},"burned":"none|titles|captions","speech":"סיכום מה נאמר, או ריק","segments":[{"s":0,"e":4.5,"desc":"מה רואים ומה קורה","score":4,"speech":false,"faces":"none|far|close","motion":"static|calm|busy","tags":["מילת מפתח"]}]}]}
 כללים: segments של 2-8 שניות שמכסים את הסרטון, לפי מה שקורה (שינוי תמונה, פעולה, משפט). score 1-5: כמה הרגע חזק וראוי לסרטון קצר לרשתות (5 = רגע שיא ברור, 1 = חסר עניין או פגום). faces close = פנים של אדם ברור מקרוב. burned: האם יש בסרטון עצמו טקסט צרוב (titles = כותרות או גרפיקה, captions = כתוביות של דיבור, none = צילום נקי). בעברית בלבד, בלי מונחים באנגלית (לא B-roll, לא close-up), קצר, עובדות בלבד.`;
 export const SCAN_SYS = 'אתה עורך וידאו שמנתח חומרי גלם לפני עריכה. אתה מתאר מה באמת יש בכל קטע, בלי להמציא, ומדרג רגעים לפי כמה הם חזקים לסרטון קצר לרשתות החברתיות.';
-const GEMINI_MODELS = () => [...new Set([env('GEMINI_MODEL') || 'gemini-3.5-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-2.5-flash'])];
-// upload one proxy to the Gemini File API and wait until it is processed
-async function geminiFile(key: string, url: string, name: string) {
+const GEMINI_MODELS = () => [...new Set([env('GEMINI_MODEL') || 'gemini-3.5-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'])];
+// one proxy for Gemini: small files go inline in the request (base64), bigger ones through the resumable File API upload
+const toB64 = (u: Uint8Array) => { let t = ''; for (let k = 0; k < u.length; k += 0x8000) t += String.fromCharCode(...u.subarray(k, k + 0x8000)); return btoa(t); };
+async function geminiPart(key: string, url: string, name: string, inline: boolean) {
   const r0 = await fetch(url);
   if (!r0.ok) throw new Error('proxy_fetch_failed');
   const bytes = new Uint8Array(await r0.arrayBuffer());
-  const up = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=media`, { method: 'POST', headers: { 'x-goog-api-key': key, 'content-type': 'video/mp4', 'x-goog-upload-protocol': 'raw', 'x-goog-file-name': name }, body: bytes });
+  if (inline) return { inline_data: { mime_type: 'video/mp4', data: toB64(bytes) } };
+  const st = await fetch('https://generativelanguage.googleapis.com/upload/v1beta/files', {
+    method: 'POST',
+    headers: { 'x-goog-api-key': key, 'x-goog-upload-protocol': 'resumable', 'x-goog-upload-command': 'start', 'x-goog-upload-header-content-length': String(bytes.length), 'x-goog-upload-header-content-type': 'video/mp4', 'content-type': 'application/json' },
+    body: JSON.stringify({ file: { display_name: name } }),
+  });
+  const upUrl = st.headers.get('x-goog-upload-url');
+  if (!st.ok || !upUrl) throw new Error('gemini_upload_start_' + st.status + ' ' + (await st.text()).slice(0, 200));
+  const up = await fetch(upUrl, { method: 'POST', headers: { 'content-length': String(bytes.length), 'x-goog-upload-offset': '0', 'x-goog-upload-command': 'upload, finalize' }, body: bytes });
   if (!up.ok) throw new Error('gemini_upload_' + up.status + ' ' + (await up.text()).slice(0, 200));
   let f = (await up.json()).file;
   for (let k = 0; k < 40 && f.state === 'PROCESSING'; k++) {
@@ -429,7 +438,7 @@ async function geminiFile(key: string, url: string, name: string) {
     if (r.ok) f = await r.json();
   }
   if (f.state !== 'ACTIVE') throw new Error('gemini_file_' + f.state);
-  return { uri: f.uri as string, mime: 'video/mp4' };
+  return { file_data: { file_uri: f.uri as string, mime_type: 'video/mp4' } };
 }
 // the key: the function secret, or the row kept in v2_secrets ('gemini'); sent as a header (the newer AQ. keys need it)
 export async function geminiKey(d: any) {
@@ -439,10 +448,13 @@ export async function geminiKey(d: any) {
 }
 export async function scanGemini(clips: { i: number; name: string; sec: number; proxy: string; transcript?: string }[], brief: string, key: string) {
   if (!key) throw new Error('gemini_not_configured');
-  const files = [] as { uri: string; mime: string }[];
-  for (const c of clips) files.push(await geminiFile(key, c.proxy, 'clip-' + c.i + '.mp4'));
+  // the analysis proxies are small (480p, 5 fps): together under ~14MB they travel inline, otherwise through the File API
+  const sizes = await Promise.all(clips.map((c) => fetch(c.proxy, { method: 'HEAD' }).then((r) => +(r.headers.get('content-length') ?? 0)).catch(() => 0)));
+  const inline = sizes.reduce((a, b) => a + b, 0) < 14 * 1024 * 1024 && sizes.every((x) => x > 0);
+  const media = [] as any[];
+  for (const c of clips) media.push(await geminiPart(key, c.proxy, 'clip-' + c.i + '.mp4', inline));
   const parts: any[] = [];
-  clips.forEach((c, k) => { parts.push({ file_data: { file_uri: files[k].uri, mime_type: files[k].mime } }); parts.push({ text: `סרטון ${c.i + 1} (i=${c.i}): "${c.name || ''}", ${Math.round(c.sec)} שניות.${c.transcript ? ' תמלול הדיבור: ' + c.transcript.slice(0, 1500) : ''}` }); });
+  clips.forEach((c, k) => { parts.push(media[k]); parts.push({ text: `סרטון ${c.i + 1} (i=${c.i}): "${c.name || ''}", ${Math.round(c.sec)} שניות.${c.transcript ? ' תמלול הדיבור: ' + c.transcript.slice(0, 1500) : ''}` }); });
   parts.push({ text: `הקשר: הסרטונים צולמו עבור סרטון קצר לרשתות. הבריף של המשתמש: ${brief}\n${SCAN_JSON_HE}` });
   let last = '';
   for (const model of GEMINI_MODELS()) {
