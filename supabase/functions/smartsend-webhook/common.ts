@@ -34,6 +34,12 @@ export async function whoIs(d: DB, phone: string): Promise<Who | null> {
   const { data: mems } = await d.from('org_members').select('id,org_id,name,phone,role,dept,view,perms,created_at').eq('phone_key', key).order('created_at').limit(5);
   let m = (mems ?? [])[0];
   if (!m) {
+    // one of the up-to-3 extra phones a solo user let write to the bot: it works as that user
+    const { data: bp } = await d.from('v2_bot_phones').select('member_id').eq('phone_key', key).limit(1);
+    const mid = (bp ?? [])[0]?.member_id;
+    if (mid) { const { data: ms } = await d.from('org_members').select('id,org_id,name,phone,role,dept,view,perms,created_at').eq('id', mid).limit(1); m = (ms ?? [])[0]; }
+  }
+  if (!m) {
     // the account manager's phone from the client card
     const { data: orgs } = await d.from('organizations').select('id,contact_phone').eq('contact_phone_key', key).limit(1);
     const o = (orgs ?? [])[0];

@@ -1317,6 +1317,20 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       return dlBtn(id, !!auto) + '<button class="icon-btn" style="width:30px;height:30px;margin-inline-start:6px" data-act="menu:' + id + '"';
     });
   };
+  /* ---------- a draft of someone who publishes directly: "פרסום ותזמון" instead of "שליחה לאישור" ---------- */
+  const pubBtn = (id, block) => '<button class="btn btn-primary' + (block ? ' btn-block" style="justify-content:flex-start"' : '"') + ' data-act="edit:' + id + '">' + ic('cal', 16) + ' פרסום ותזמון</button>';
+  const sendRe = /<button class="btn( btn-block)? btn-primary"( style="justify-content:flex-start")? data-act="send:(\d+)">[\s\S]*?<\/button>/g;
+  const _itemSend = SCREENS.item.render;
+  SCREENS.item.render = function () {
+    const h = _itemSend.apply(this, arguments);
+    return canDirect() ? h.replace(sendRe, (all, blk, st, id) => pubBtn(id, !!blk)) : h;
+  };
+  const _menuSend = ACT.menu;
+  if (_menuSend) ACT.menu = (...a) => {
+    const r = _menuSend.apply(null, a);
+    if (canDirect()) $$('.drawer [data-act^="send:"]').forEach((b) => { b.outerHTML = pubBtn(b.dataset.act.slice(5), true); });
+    return r;
+  };
   const AR = { '1:1': '1/1', '4:5': '4/5', '9:16': '9/16', '16:9': '16/9', '1.91:1': '1.91/1', A4: '210/297' };
 
   /* ---------- graphic studio ---------- */
@@ -1980,7 +1994,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     let note = '';
     if (isProd(it) && it.prod.err) note = '<div class="note warn">' + ic('alert', 16) + '<span><b>' + (it.prod.err === 'quota' ? 'המכסה החודשית נוצלה' : 'ההפקה לא הושלמה') + '.</b> ' + (it.prod.err === 'quota' ? 'אפשר לבקש הגדלת חבילה בהגדרות ← מסלול, או למחוק את הפריט.' : 'אפשר לנסות שוב.') + '</span>' + (it.prod.err === 'quota' ? '' : '<button class="btn btn-sm" data-act="prodRetry:' + it.id + '">' + ic('refresh', 14) + ' ניסיון חוזר</button>') + '</div>';
     else if (isProd(it)) note = '<div class="note">' + ic('clock', 16) + '<span><b>בהפקה בשרת.</b> אפשר לסגור את החלון; הפריט יופיע כאן מוכן ותגיע התראה בפעמון.</span></div>';
-    else if (it.wiz && it.s === 'draft') note = '<div class="note">' + ic('spark', 16) + '<span><b>התוצר מוכן.</b> אפשר לבדוק, לתקן ולשלוח לאישור מתוך האשף.</span><button class="btn btn-primary btn-sm" data-act="prodOpen:' + it.id + '">' + ic('edit', 14) + ' המשך עריכה ופרסום</button></div>';
+    else if (it.wiz && it.s === 'draft') note = '<div class="note">' + ic('spark', 16) + '<span><b>התוצר מוכן.</b> אפשר לבדוק, לתקן ו' + (canDirect() ? 'לפרסם' : 'לשלוח לאישור') + ' מתוך האשף.</span><button class="btn btn-primary btn-sm" data-act="prodOpen:' + it.id + '">' + ic('edit', 14) + ' המשך עריכה ופרסום</button></div>';
     if (!note) return h;
     return h.replace('<div class="note">' + ic('help', 16), note + '<div class="note">' + ic('help', 16));
   };
@@ -5214,10 +5228,47 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const stCls = { 'בעבודה': 's-draft', 'ממתין לאישור בריף': 's-pending', 'נכשל': 's-pending', 'טיוטה נוצרה': 's-scheduled', 'ממתין לאישור': 's-pending', 'תוזמן': 's-scheduled', 'פורסם': 's-published' };
     const _r = SCREENS.whatsapp.render;
     SCREENS.whatsapp.nav.count = () => (L.demo ? waRequests.filter((r) => r.st === 'חדש').length : W.list.filter((r) => r.st === 'ממתין לאישור בריף' || r.st === 'ממתין לאישור').length);
+    // a solo user (basic plan) lets up to 3 more phones write to the bot on the account
+    const BP = { at: 0, busy: false, own: '', max: 3, list: [], err: '' };
+    const bpOn = () => !!(L.me && L.me.view === 'basic' && (L.me.role === 'owner' || L.me.role === 'admin'));
+    async function bpLoad(force) {
+      if (!bpOn() || BP.busy || (!force && BP.at)) return;
+      BP.busy = true;
+      try { const r = await call('bot.phones'); BP.own = r.own || ''; BP.max = r.max || 3; BP.list = r.phones || []; } catch (e) { BP.err = 'load'; }
+      BP.at = Date.now(); BP.busy = false;
+      if (S.route === 'whatsapp') render();
+    }
+    const BP_ERR = { bad_phone: 'מספר לא תקין. כתבו מספר נייד ישראלי, למשל 050-1234567.', bot_phones_full: 'אפשר להוסיף עד 3 מספרים. הסירו מספר כדי להוסיף אחר.', phone_is_yours: 'זה הטלפון של החשבון שלך, הוא כבר מחובר לבוט.', phone_taken: 'המספר הזה כבר מחובר לחשבון אחר במערכת.' };
+    function bpCard() {
+      if (!bpOn()) return '';
+      bpLoad(false);
+      const full = BP.list.length >= BP.max;
+      const rows = BP.list.map((x) => '<div class="rowi"><span class="ic-box">' + ic('msg', 16) + '</span><span class="grow" style="min-width:0"><span class="nm">' + esc(x.name || 'ללא שם') + '</span><br><span class="mt" dir="ltr" style="unicode-bidi:isolate">' + esc(x.phone) + '</span></span>' +
+        '<button class="icon-btn" data-act="bpDel:' + esc(x.id) + '" aria-label="הסרת המספר" title="הסרה">' + ic('x', 15) + '</button></div>').join('');
+      return '<div class="card" style="margin-bottom:16px"><div class="card-head">' + ic('msg', 17) + '<h3>טלפונים שמחוברים לבוט</h3><span class="chip" style="margin-inline-start:auto">' + BP.list.length + ' מתוך ' + BP.max + '</span></div>' +
+        '<div class="card-pad" style="display:flex;flex-direction:column;gap:12px">' +
+          '<span style="color:var(--ink-3)">עד ' + BP.max + ' מספרים נוספים יכולים לכתוב לבוט, ליצור תוצרים ולפרסם בשם החשבון שלך.' + (BP.own ? ' הטלפון של החשבון (<span dir="ltr" style="unicode-bidi:isolate">' + esc(BP.own) + '</span>) מחובר תמיד.' : '') + '</span>' +
+          (!BP.at ? '<div style="display:flex;gap:10px;align-items:center"><span class="gm-spin"></span> טוען...</div>' : (rows ? '<div class="row-list">' + rows + '</div>' : '')) +
+          (BP.at && !full ? '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">' +
+            '<div class="field" style="flex:1 1 160px;margin:0"><label for="bpName">שם</label><input type="text" id="bpName" placeholder="למשל: דנה מהמשרד" maxlength="60"></div>' +
+            '<div class="field" style="flex:1 1 160px;margin:0"><label for="bpPhone">טלפון נייד</label><input type="tel" id="bpPhone" dir="ltr" placeholder="050-1234567" inputmode="tel"></div>' +
+            '<button class="btn btn-primary" data-act="bpAdd">' + ic('create', 16) + ' הוספת מספר</button></div>' : '') +
+        '</div></div>';
+    }
+    ACT.bpAdd = async () => {
+      const ph = ($('#bpPhone') || {}).value || '', nm = ($('#bpName') || {}).value || '';
+      if (!ph.trim()) { toast('חסר מספר טלפון', 'כתבו את המספר הנייד שיוכל לכתוב לבוט.', 'err'); return; }
+      try { const r = await call('bot.phones.add', { phone: ph, name: nm }); BP.list = r.phones || []; BP.own = r.own || BP.own; render(); toast('המספר נוסף', 'מעכשיו הוא יכול לכתוב לבוט: 050-646-7554'); }
+      catch (e) { toast('המספר לא נוסף', BP_ERR[e && e.message] || 'נסו שוב בעוד רגע.', 'err'); }
+    };
+    ACT.bpDel = async (id) => {
+      try { const r = await call('bot.phones.remove', { id }); BP.list = r.phones || []; render(); toast('המספר הוסר', 'הוא כבר לא יכול לכתוב לבוט.'); }
+      catch (e) { toast('ההסרה נכשלה', 'נסו שוב בעוד רגע.', 'err'); }
+    };
     SCREENS.whatsapp.render = function () {
       if (L.demo) return _r.call(this);
       waLoad(false);
-      const head = pageHead({ title: 'בקשות WhatsApp', desc: 'בקשות שהגיעו לבוט ב-WhatsApp: גרפיקות, סרטונים ותזמונים. כל משתמש שהטלפון שלו רשום במערכת יכול לכתוב לבוט.' });
+      const head = pageHead({ title: 'בקשות WhatsApp', desc: 'בקשות שהגיעו לבוט ב-WhatsApp: גרפיקות, סרטונים ותזמונים. כל משתמש שהטלפון שלו רשום במערכת יכול לכתוב לבוט.' }) + bpCard();
       if (!W.at) return head + '<div class="card card-pad" style="display:flex;gap:10px;align-items:center"><span class="gm-spin"></span> טוען את הבקשות...</div>';
       if (!W.list.length) return head + '<div class="card card-pad" style="display:flex;flex-direction:column;gap:8px"><b>עוד אין בקשות מהבוט</b><span style="color:var(--ink-3)">משתמשים כותבים למספר הבוט, 050-646-7554, מהטלפון הרשום אצלם במערכת. הטלפון של כל משתמש נקבע במסך המשתמשים.</span></div>';
       const sel = W.list.find((r) => r.id === W.sel) || W.list[0];

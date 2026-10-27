@@ -114,6 +114,50 @@ async function mailTaken(d: DB, email: string | null | undefined, orgId: string 
   const { data: orgs } = await d.from('organizations').select('id,contact_email').ilike('contact_email', e);
   return (orgs ?? []).some((o: any) => normMail(o.contact_email) === e && o.id !== orgId);
 }
+// ---- WhatsApp bot: up to 3 extra phones a solo user lets write to the bot on their account ----
+const BOT_PHONES_MAX = 3;
+const keyOfPhone = (raw: unknown) => {
+  let x = String(raw ?? '').replace(/\D/g, '');
+  if (x.startsWith('00')) x = x.slice(2);
+  if (x.startsWith('972')) x = x.slice(3);
+  if (x.startsWith('0')) x = x.slice(1);
+  return x.length >= 8 ? x.slice(-9) : '';
+};
+async function botOwner(d: DB, orgId: string, memberId: string | null) {
+  if (!memberId) throw new Error('forbidden');
+  const { data: me } = await d.from('org_members').select('id,role,view,phone').eq('id', memberId).eq('org_id', orgId).maybeSingle();
+  if (!me || !isManager(me) || me.view !== 'basic') throw new Error('forbidden');
+  return me;
+}
+async function botPhonesList(d: DB, orgId: string, memberId: string | null) {
+  const me = await botOwner(d, orgId, memberId);
+  const { data } = await d.from('v2_bot_phones').select('id,name,phone,created_at').eq('member_id', me.id).order('created_at');
+  return { own: me.phone ?? '', max: BOT_PHONES_MAX, phones: data ?? [] };
+}
+async function botPhonesAdd(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const me = await botOwner(d, orgId, memberId);
+  const key = keyOfPhone(p.phone);
+  if (!/^5\d{8}$/.test(key)) throw new Error('bad_phone');
+  const { count } = await d.from('v2_bot_phones').select('id', { count: 'exact', head: true }).eq('member_id', me.id);
+  if ((count ?? 0) >= BOT_PHONES_MAX) throw new Error('bot_phones_full');
+  // a phone belongs to one account only: any member, client contact or other bot phone already on it blocks it
+  if (keyOfPhone(me.phone) === key) throw new Error('phone_is_yours');
+  const [{ data: m }, { data: o }, { data: b }] = await Promise.all([
+    d.from('org_members').select('id').eq('phone_key', key).limit(1),
+    d.from('organizations').select('id').eq('contact_phone_key', key).neq('id', orgId).limit(1),
+    d.from('v2_bot_phones').select('id').eq('phone_key', key).limit(1),
+  ]);
+  if ((m ?? []).length || (o ?? []).length || (b ?? []).length) throw new Error('phone_taken');
+  const phone = '0' + key.slice(0, 2) + '-' + key.slice(2, 5) + '-' + key.slice(5);
+  const { error } = await d.from('v2_bot_phones').insert({ org_id: orgId, member_id: me.id, name: String(p.name ?? '').trim().slice(0, 60) || null, phone });
+  if (error) throw new Error(/duplicate|unique/i.test(error.message) ? 'phone_taken' : error.message);
+  return botPhonesList(d, orgId, memberId);
+}
+async function botPhonesRemove(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
+  const me = await botOwner(d, orgId, memberId);
+  await d.from('v2_bot_phones').delete().eq('id', String(p.id ?? '')).eq('member_id', me.id);
+  return botPhonesList(d, orgId, memberId);
+}
 async function memberCreate(d: DB, orgId: string, memberId: string | null, p: Record<string, any>) {
   const { data: me } = memberId ? await d.from('org_members').select('role').eq('id', memberId).maybeSingle() : { data: null };
   if (!isManager(me)) throw new Error('forbidden');
@@ -364,6 +408,9 @@ async function waList(d: DB, orgId: string, memberId: string | null) {
   const mids = [...new Set(list.map((j: any) => j.member_id))];
   const { data: mems } = await d.from('org_members').select('id,name,dept,phone').in('id', mids);
   const mOf = new Map((mems ?? []).map((m: any) => [m.id, m]));
+  // requests from the extra phones a solo user added: shown under that phone's name
+  const { data: bps } = await d.from('v2_bot_phones').select('name,phone,phone_key').eq('org_id', orgId);
+  const bOf = new Map((bps ?? []).map((x: any) => [x.phone_key, x]));
   const phones = [...new Set(list.map((j: any) => j.phone).filter(Boolean))];
   const since = list[list.length - 1].created_at;
   const { data: msgs } = await d.from('v2_wa_msgs').select('phone,dir,body,media,created_at').eq('org_id', orgId).in('phone', phones).gte('created_at', new Date(new Date(since).getTime() - 30 * 60000).toISOString()).order('created_at').limit(1500);
@@ -383,7 +430,7 @@ async function waList(d: DB, orgId: string, memberId: string | null) {
       const conv = (msgs ?? []).filter((x: any) => x.phone === j.phone && new Date(x.created_at).getTime() >= t0 && new Date(x.created_at).getTime() < t1).slice(-30).map((x: any) => ({ dir: x.dir, body: x.body ?? '', media: x.media ? true : false, at: x.created_at }));
       const st = j.state === 'done' ? (ui && ui.s === 'scheduled' ? 'תוזמן' : ui && ui.s === 'pending' ? 'ממתין לאישור' : ui && ui.s === 'published' ? 'פורסם' : 'טיוטה נוצרה') : ST[j.state] ?? 'בעבודה';
       return {
-        id: j.id, kind: j.kind, st, from: m.name ?? '', dept: m.dept || j.input?.dept || '', ph: m.phone ?? '',
+        id: j.id, kind: j.kind, st, from: (bOf.get(keyOfPhone(j.phone)) as any)?.name || m.name || '', dept: m.dept || j.input?.dept || '', ph: (bOf.get(keyOfPhone(j.phone)) as any)?.phone || m.phone || '',
         voice: conv.some((x: any) => x.dir === 'in' && x.media), text: j.input?.brief || j.input?.desc || '', title: j.input?.title || '',
         at: j.created_at, ui: j.ui_id != null ? Number(j.ui_id) : null, url: j.result?.url ?? null, conv,
       };
@@ -1352,6 +1399,9 @@ Deno.serve(async (req) => {
       if (action === 'job.get') return json(req, await jobGet(d, s.orgId, String(p.id ?? '')));
       if (action === 'job.retry') return json(req, await jobRetry(d, s.orgId, String(p.id ?? '')));
       if (action === 'wa.list') return json(req, await waList(d, s.orgId, s.memberId));
+      if (action === 'bot.phones') return json(req, await botPhonesList(d, s.orgId, s.memberId));
+      if (action === 'bot.phones.add') return json(req, await botPhonesAdd(d, s.orgId, s.memberId, p));
+      if (action === 'bot.phones.remove') return json(req, await botPhonesRemove(d, s.orgId, s.memberId, p));
       if (action === 'ch.list') return json(req, await chList(d, s.orgId, s.memberId));
       if (action === 'ch.connect') return json(req, await chConnect(d, s.orgId, s.memberId, p));
       if (action === 'ch.stats') return json(req, await chStats(d, s.orgId, s.memberId, p));
