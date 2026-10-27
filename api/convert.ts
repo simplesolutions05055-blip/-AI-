@@ -77,7 +77,7 @@ export default {
       const fine = ext === 'mp4' && p.video === 'h264' && (!p.audio || p.audio === 'aac') && !p.rotated && Math.max(p.w, p.h) <= 1920;
       if (fine) return json({ url, name, converted: false, reason: 'video_ok' });
       const out = join(dir, 'out.mp4');
-      const args = ['-y', '-loglevel', 'error', '-i', src, '-vf', "scale='if(gt(iw,ih),min(1920,iw),-2)':'if(gt(iw,ih),-2,min(1920,ih))'", '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
+      const args = ['-y', '-loglevel', 'error', '-i', src, '-vf', "scale='if(gt(iw,ih),min(1920,iw),-2)':'if(gt(iw,ih),-2,min(1920,ih))'", '-c:v', 'libx264', '-preset', 'superfast', '-crf', '23', '-threads', '0', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
       if (p.audio) args.push('-c:a', 'aac', '-b:a', '128k'); else args.push('-an');
       args.push(out);
       await run(ff, args, { maxBuffer: 1 << 24 });

@@ -2258,12 +2258,34 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   const isRawPhoto = (n) => /\.(heic|heif|avif|tiff?|bmp)$/i.test(n || '');
   // kind 'doc': an internal document (brand guide, work plan, source file) is kept in the private bucket; the
   // server hands back `pv:` instead of a public link, and openPv() exchanges it for a one-hour signed link on demand
-  async function uploadFile(f, kind) {
+  // one PUT of the file; a phone that drops the connection mid-upload (switching apps, weak signal) gets two more tries
+  async function putUpload(f, kind) {
+    let last;
+    for (let n = 0; n < 3; n++) {
+      if (n) await new Promise((r) => setTimeout(r, 1500 * n));
+      try {
+        const s = await call('upload.sign', { name: f.name, kind: kind || undefined });
+        const r = await fetch(s.upload, { method: 'PUT', headers: { 'content-type': f.type || 'application/octet-stream', 'x-upsert': 'true' }, body: f });
+        if (r.ok) return s;
+        const t = await r.text().catch(() => '');
+        if (r.status === 413 || /EntityTooLarge|too large/i.test(t)) throw new Error('too_big_server');
+        if (r.status === 400 && /mime|type/i.test(t)) throw new Error('file_type_not_allowed');
+        last = new Error('upload_failed');
+      } catch (e) {
+        if (e && /too_big_server|file_type_not_allowed|invalid_token|session_required/.test(e.message)) throw e;
+        last = e;
+      }
+    }
+    throw last && /too_big|file_type/.test(last.message) ? last : new Error('upload_failed');
+  }
+  // the server re-encode of a clip; resolves with the converted file, or null when it is not needed or did not finish
+  const convertClip = (url, name) => post('/api/convert', { url, name }, 290000).then((c) => (c && c.url && c.converted ? c : null), (e) => { console.warn('convert', e && e.message); return null; });
+  async function uploadFile(f, kind, opt) {
     if (f.size > (isClip(f.name) ? MAXB_VIDEO : MAXB)) throw new Error('too_big');
-    const s = await call('upload.sign', { name: f.name, kind: kind || undefined });
-    const r = await fetch(s.upload, { method: 'PUT', headers: { 'content-type': f.type || 'application/octet-stream', 'x-upsert': 'true' }, body: f });
-    if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(r.status === 413 || /EntityTooLarge|too large/i.test(t) ? 'too_big_server' : 'upload_failed'); }
+    const s = await putUpload(f, kind);
     let out = { url: s.url, name: f.name, ext: s.ext, type: f.type, size: f.size };
+    // the edit path does not wait for the re-encode: the clip is ready once uploaded, the converted copy replaces it when done
+    if (opt && opt.bg && isClip(f.name)) { out.conv = convertClip(s.url, f.name); return out; }
     // phone clips (HEVC .mov/.mp4) and HEIC photos: re-encoded on the server into what the video engine plays
     if (isClip(f.name) || isRawPhoto(f.name)) {
       toast(isClip(f.name) ? 'מתאים את הסרטון למערכת...' : 'מתאים את התמונה...', f.name);
@@ -3333,7 +3355,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const waText = (name, link) => 'שלום ' + name + ', נפתח לך משתמש במערכת PrimeOS של ' + (L.org ? L.org.name : '') + '.\nקישור לכניסה הראשונה (אישי, לכניסה אחת, בתוקף 7 ימים):\n' + link + '\n\nבכניסות הבאות: app.primeos.co.il, מזינים את כתובת הדוא״ל ומקבלים קוד.';
     const inviteLink = async (mid) => (await call('members.invite.link', { id: mid })).link;
     function rowOf(m) {
-      return { n: m.name, r: ROLE_T[m.role] || m.role, d: m.view === 'dept' ? (m.dept || '') : 'דוברות', st: 'פעיל', last: m.id === (L.me && L.me.id) ? 'עכשיו' : '-', i: initials(m.name), mid: m.id, view: m.view || 'ext', tok: m.token || '', phone: m.phone || '', mail: m.email || '', role: m.role, direct: m.role !== 'member' || !!(m.perms && m.perms.direct) };
+      return { n: m.name, r: ROLE_T[m.role] || m.role, d: m.view === 'dept' ? (m.dept || '') : 'דוברות', st: 'פעיל', last: m.id === (L.me && L.me.id) ? 'עכשיו' : '-', i: initials(m.name), mid: m.id, view: m.view || 'ext', tok: m.token || '', phone: m.phone || '', mail: m.email || '', role: m.role, direct: m.role !== 'member' || m.view !== 'dept' || !!(m.perms && m.perms.direct) };
     }
     L.applyMembers = function (list) {
       if (!Array.isArray(list)) return;
@@ -3346,7 +3368,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       return '<div class="tbl-wrap"><table class="responsive"><thead><tr><th>שם</th><th>תפקיד</th><th>מחלקה</th><th>פרסום</th><th>כניסה</th><th></th></tr></thead><tbody>' +
         users.map((u) => '<tr><td data-l="שם"><span style="display:flex;align-items:center;gap:9px"><span class="avatar">' + esc(u.i) + '</span><span><b>' + esc(u.n) + '</b>' + (u.phone ? '<div class="t-sub" dir="ltr" style="text-align:start">' + esc(u.phone) + '</div>' : '') + '</span></span></td>' +
           '<td data-l="תפקיד">' + esc(u.r) + (u.mid === me ? ' <span class="badge s-approved">את/ה</span>' : '') + '</td><td data-l="מחלקה">' + esc(u.d) + '</td>' +
-          '<td data-l="פרסום">' + (u.role === 'member' ? '<button class="chip" data-act="userDirect:' + esc(u.mid) + '" title="לחיצה משנה">' + (u.direct ? ic('checkc', 13) + ' פרסום ישיר' : ic('clock', 13) + ' דרוש אישור') + '</button>' : '<span class="t-sub">ישיר</span>') + '</td>' +
+          '<td data-l="פרסום">' + (u.role === 'member' && u.view === 'dept' ? '<button class="chip" data-act="userDirect:' + esc(u.mid) + '" title="לחיצה משנה">' + (u.direct ? ic('checkc', 13) + ' פרסום ישיר' : ic('clock', 13) + ' דרוש אישור') + '</button>' : '<span class="t-sub">ישיר</span>') + '</td>' +
           '<td data-l="כניסה">' + (u.mail ? '<div class="t-sub" dir="ltr" style="text-align:start;margin-bottom:6px">' + esc(u.mail) + '</div>' : '<div class="t-sub" style="margin-bottom:6px">אין דוא״ל: לא יוכל להיכנס</div>') +
             (u.mid && u.mid !== me && canManage() ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap">' + (u.mail ? '<button class="btn btn-sm" data-act="userSend:' + esc(u.mid) + '">' + ic('send', 14) + ' שליחת הזמנה</button>' : '') + '<button class="btn btn-sm" data-act="userLink:' + esc(u.mid) + '">' + ic('copy', 14) + ' קישור כניסה ראשונה</button><button class="btn btn-sm" data-act="userWa:' + esc(u.mid) + '">' + ic('send', 14) + ' WhatsApp</button></span>' : '') + '</td>' +
           '<td>' + (u.mid && u.mid !== me && u.role !== 'owner' && canManage() ? '<span style="display:inline-flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" data-act="userRelink:' + esc(u.mid) + '">ניתוק כניסות</button><button class="btn btn-sm btn-quiet-bad" data-act="userRemove:' + esc(u.mid) + '">הסרה</button></span>' : '') + '</td></tr>').join('') +
@@ -3735,7 +3757,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const emptyChannels = () => (L.orgChannels || channels).map((c) => ({ k: c.k, st: 'לא מחובר', acc: '-', sync: '-', fol: '-' }));
     // direct publishing is a permission the organisation user grants; the mockup's department view had none
     const _canDirect = canDirect, _curUser = curUser;
-    canDirect = function () { return isSingle() ? !!(L.me.perms && L.me.perms.direct) : _canDirect(); };
+    // only a department user may need approval (the organisation sets it per user); solo and organisation users always publish directly
+    canDirect = function () { return isSingle() ? (L.me.view !== 'dept' || !!(L.me.perms && L.me.perms.direct)) : (S.view === 'dept' && S.mode !== 'admin' ? _canDirect() : true); };
     curUser = function () { return isSingle() ? { n: L.me.name, direct: canDirect() } : _curUser(); };
     // the member's department always exists locally, even if the organisation renamed its departments
     function ensureDept() {
@@ -4818,7 +4841,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     function veForm(v, e) {
       const used = e.clips.reduce((a, c) => a + (+c.sec || 0), 0);
       const tiles = e.clips.map((c, i) => '<span class="raw thumb ' + GV[i % GV.length] + '" data-vi="' + i + '">' +
-        (c.st === 'ok' ? '' : '<span class="ve-st' + (c.st === 'err' ? ' err' : '') + '">' + esc(c.st === 'err' ? (c.why || 'נכשל') : c.st === 'conv' ? 'מתאים...' : 'מעלה...') + '</span>') +
+        (c.st === 'ok' ? '' : '<span class="ve-st' + (c.st === 'err' ? ' err' : '') + '"' + (c.st === 'err' && c.f ? ' data-act="veClipRe:' + i + '" role="button" style="cursor:pointer"' : '') + '>' +esc(c.st === 'err' ? (c.why || 'נכשל') : c.st === 'conv' ? 'מתאים...' : 'מעלה...') + '</span>') +
         (c.sec ? '<span class="ve-dur">' + mmss(c.sec) + '</span>' : '') +
         '<button class="icon-btn" data-act="veClipX:' + i + '" aria-label="הסרה">' + ic('x', 12) + '</button></span>').join('');
       const add = e.clips.length < VE_MAX ? '<button class="raw add" data-act="veClip">' + ic('upload', 18) + '<small>סרטון</small></button>' : '';
@@ -4970,23 +4993,38 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         e.clips.push(c); add.push(c);
       }
       render();
-      // two uploads at a time; each tile shows its own state
-      let at = 0;
-      const worker = async () => {
-        while (at < add.length) {
-          const c = add[at++];
-          try {
-            const t = setTimeout(() => { if (c.st === 'up') { c.st = 'conv'; if (S.vd === v && S.route === 'vidWiz') render(); } }, 6000);
-            const r = await uploadFile(c.f, undefined);
-            clearTimeout(t);
-            c.url = r.url; c.name = r.name || c.name; c.st = 'ok';
-          } catch (er) { c.st = 'err'; c.why = er && er.message === 'too_big_server' ? 'גדול מדי' : 'ההעלאה נכשלה'; }
-          delete c.f;
-          if (S.vd === v && S.route === 'vidWiz') { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); if (!typing) { veCollect(); render(); } }
-        }
-      };
-      await Promise.all([worker(), worker()]);
+      veQueue(v, add);
     };
+    // one upload queue for the whole wizard: two files at a time, even when more are added while the first ones still go up
+    const VEQ = { list: [], run: 0 };
+    const veRepaint = (v) => { if (S.vd === v && S.route === 'vidWiz' && !(S.vd.ed && S.vd.ed.step)) { const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName); if (!typing) { veCollect(); render(); } } };
+    function veQueue(v, add) {
+      add.forEach((c) => VEQ.list.push({ v, c }));
+      while (VEQ.run < 2 && VEQ.list.length) veUpNext();
+    }
+    async function veUpNext() {
+      const x = VEQ.list.shift(); if (!x) return;
+      const { v, c } = x;
+      VEQ.run++;
+      try {
+        if (v.ed.clips.includes(c) && c.f) {
+          c.st = 'up';
+          const r = await uploadFile(c.f, undefined, { bg: true });
+          if (!v.ed.clips.includes(c)) return;
+          c.url = r.url; c.name = r.name || c.name; c.st = 'ok'; c.why = ''; delete c.f;
+          // the converted copy (H.264, up to 1080p) takes the original's place when it is ready, unless the analysis already started on it
+          if (r.conv) { c.cv = 1; r.conv.then((cv) => { c.cv = 0; if (cv && cv.url && v.ed.clips.includes(c) && !v.ed.job && !v.prod) c.url = cv.url; }); }
+        }
+      } catch (er) {
+        c.st = 'err'; c.why = er && (er.message === 'too_big_server' || er.message === 'too_big') ? 'גדול מדי' : er && er.message === 'file_type_not_allowed' ? 'סוג לא נתמך' : 'נכשל · לחצו לנסות שוב';
+      } finally {
+        VEQ.run--;
+        veRepaint(v);
+        if (VEQ.list.length) veUpNext();
+      }
+    }
+    // a failed tile: tap it to send the same file again
+    ACT.veClipRe = (i) => { veCollect(); const v = S.vd, c = v.ed.clips[+i]; if (!c || c.st !== 'err' || !c.f) return; c.st = 'up'; c.why = ''; render(); veQueue(v, [c]); };
     // the analysis on the server: prepare -> transcribe -> understand -> the editor's plan
     async function veRun(v, extra) {
       const e = v.ed;

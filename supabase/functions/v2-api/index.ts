@@ -949,7 +949,7 @@ async function adminOrgCreate(d: DB, p: Record<string, any>) {
   }).select('id').single();
   if (error) throw error;
   const { data: mem, error: e2 } = await d.from('org_members').insert({
-    org_id: org.id, name: p.contact || 'מנהל המערכת', email: p.mail ?? null, phone: p.phone ?? null, role: 'admin', view: p.plan === 'basic' ? 'basic' : 'ext',
+    org_id: org.id, name: p.contact || 'מנהל המערכת', email: p.mail ?? null, phone: p.phone ?? null, role: 'admin', view: p.plan === 'basic' ? 'basic' : 'ext', perms: { direct: true },
   }).select('id').single();
   if (e2) throw e2;
   const token = newToken();
