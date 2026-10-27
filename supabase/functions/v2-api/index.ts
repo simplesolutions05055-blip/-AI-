@@ -563,6 +563,7 @@ async function pubApply(d: DB, rec: any, status: string, per: PostOut['perTarget
     }
   });
 }
+const NO_CH_NOTE = 'אין ערוץ מחובר לפרסום. התוכן נשמר בספרייה כטיוטה. אחרי חיבור ערוץ אפשר לפרסם אותו.';
 async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; prev: string | null }[]) {
   const pv = provider();
   if (!pv || !moved.length) return;
@@ -576,8 +577,15 @@ async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; p
   const overOf = async () => { if (!overSet) overSet = (await orgProfiles(d, pv, orgId)).over; return overSet; };
   for (const { ui, prev } of moved) {
     const rec = recOf.get(ui.id);
-    const out = (ui.s === 'scheduled' || ui.s === 'published') && (ui.ty === 'graphic' || ui.ty === 'video') && Array.isArray(ui.ch) && ui.ch.length > 0;
+    const wants = (ui.s === 'scheduled' || ui.s === 'published') && (ui.ty === 'graphic' || ui.ty === 'video');
+    const out = wants && Array.isArray(ui.ch) && ui.ch.length > 0;
     const open = rec && rec.post_id && !FINAL.includes(rec.status);
+    // nothing to publish to: the item stays in the library as a draft (never a silent "scheduled" that never goes out)
+    if (wants && !out) {
+      if (open) { try { await pv.cancelPost(rec.post_id); } catch (_) { /* gone */ } await d.from('v2_pub_posts').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', rec.id); }
+      await setUi(d, orgId, ui.id, (u) => { u.s = 'draft'; u.pubWarn = NO_CH_NOTE; });
+      continue;
+    }
     if (!out) {
       // taken back from the schedule (draft / archive / back to approval)
       if (open && ui.s !== 'failed') { try { await pv.cancelPost(rec.post_id); } catch (_) { /* already gone */ } await d.from('v2_pub_posts').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', rec.id); }
@@ -628,6 +636,12 @@ async function pubSync(d: DB, orgId: string, moved: { ui: Record<string, any>; p
     }
     const base = { org_id: orgId, ui_id: ui.id, provider: pv.name, sig, updated_at: new Date().toISOString() };
     const missing = (ui.ch as string[]).filter((c) => !pick || ![...pick.targets.map((t) => t.ch), ...skipped].includes(c as ChKey));
+    if (!pick && !overHit) {
+      // none of the chosen networks is connected (any more): back to the library, not a failed post
+      if (rec) await d.from('v2_pub_posts').update({ status: 'cancelled', error: NO_CH_NOTE, updated_at: new Date().toISOString() }).eq('id', rec.id);
+      await setUi(d, orgId, ui.id, (u) => { u.s = 'draft'; u.pubWarn = NO_CH_NOTE; });
+      continue;
+    }
     if (!pick || !pick.targets.length) {
       const why = !pick ? (overHit ? 'הפרופיל שנבחר מעבר למכסת הפרופילים של המנוי. אפשר לבקש הרחבה בהגדרות ← מסלול.' : 'הערוצים שנבחרו לא מחוברים') : 'הרשתות שנבחרו דורשות תמונה או סרטון';
       const { data: r2 } = await d.from('v2_pub_posts').upsert({ ...base, post_id: null, status: 'failed', targets: [], error: why }, { onConflict: 'org_id,ui_id' }).select('*').single();

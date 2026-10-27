@@ -198,7 +198,7 @@ async function fixOwn(d: DB, who: Who, phone: string, s: Record<string, any>, ch
 async function publishNow(d: DB, who: Who, phone: string, s: Record<string, any>) {
   if (!s.last) return say(d, phone, 'אין עדיין תוצר לפרסם. בקשו קודם גרפיקה או סרטון.', who);
   const have = await connected(who);
-  if (!have.length) return say(d, phone, 'עוד לא חוברו רשתות חברתיות לחשבון. מחברים במערכת, במסך "ערוצים מחוברים".', who);
+  if (!have.length) return say(d, phone, 'עוד לא חוברו ערוצים לחשבון, ולכן אי אפשר לפרסם או לתזמן. התוצר שמור בספריית התוכן. אחרי חיבור ערוץ במערכת, במסך "ערוצים מחוברים", אפשר לפרסם אותו משם.', who);
   const ui = await itemOf(d, who.orgId, s.last.ui);
   if (!ui) return say(d, phone, 'לא מצאתי את התוצר במערכת. בקשו אותו מחדש.', who);
   ui.pub = ''; ui.ch = have; ui.s = who.direct ? 'published' : 'pending'; ui.u = 'עכשיו';
@@ -218,7 +218,7 @@ async function schedule(d: DB, who: Who, phone: string, s: Record<string, any>, 
   if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(when || '')) return say(d, phone, 'מתי לפרסם? כתבו תאריך ושעה, למשל: מחר ב-18:00.', who);
   if (when <= fmtIL(nowIL())) return say(d, phone, 'המועד כבר עבר. כתבו מועד עתידי.', who);
   const have = await connected(who);
-  if (!have.length) return say(d, phone, 'עוד לא חוברו רשתות חברתיות לחשבון. מחברים במערכת, במסך "ערוצים מחוברים".', who);
+  if (!have.length) return say(d, phone, 'עוד לא חוברו ערוצים לחשבון, ולכן אי אפשר לפרסם או לתזמן. התוצר שמור בספריית התוכן. אחרי חיבור ערוץ במערכת, במסך "ערוצים מחוברים", אפשר לפרסם אותו משם.', who);
   const want = (chans || []).filter((c) => have.includes(c));
   const ch = want.length ? want : have;
   const ui = await itemOf(d, who.orgId, s.last.ui);

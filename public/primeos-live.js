@@ -1318,17 +1318,19 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     });
   };
   /* ---------- a draft of someone who publishes directly: "פרסום ותזמון" instead of "שליחה לאישור" ---------- */
-  const pubBtn = (id, block) => '<button class="btn btn-primary' + (block ? ' btn-block" style="justify-content:flex-start"' : '"') + ' data-act="edit:' + id + '">' + ic('cal', 16) + ' פרסום ותזמון</button>';
+  const pubBtn = (id, block) => (L.noCh && L.noCh())
+    ? '<button class="btn' + (block ? ' btn-block" style="justify-content:flex-start"' : '"') + ' data-nav="channels">' + ic('plug', 16) + ' חיבור ערוצים לפרסום</button>'
+    : '<button class="btn btn-primary' + (block ? ' btn-block" style="justify-content:flex-start"' : '"') + ' data-act="edit:' + id + '">' + ic('cal', 16) + ' פרסום ותזמון</button>';
   const sendRe = /<button class="btn( btn-block)? btn-primary"( style="justify-content:flex-start")? data-act="send:(\d+)">[\s\S]*?<\/button>/g;
   const _itemSend = SCREENS.item.render;
   SCREENS.item.render = function () {
     const h = _itemSend.apply(this, arguments);
-    return canDirect() ? h.replace(sendRe, (all, blk, st, id) => pubBtn(id, !!blk)) : h;
+    return canDirect() || (L.noCh && L.noCh()) ? h.replace(sendRe, (all, blk, st, id) => pubBtn(id, !!blk)) : h;
   };
   const _menuSend = ACT.menu;
   if (_menuSend) ACT.menu = (...a) => {
     const r = _menuSend.apply(null, a);
-    if (canDirect()) $$('.drawer [data-act^="send:"]').forEach((b) => { b.outerHTML = pubBtn(b.dataset.act.slice(5), true); });
+    if (canDirect() || (L.noCh && L.noCh())) $$('.drawer [data-act^="send:"]').forEach((b) => { b.outerHTML = pubBtn(b.dataset.act.slice(5), true); });
     return r;
   };
   const AR = { '1:1': '1/1', '4:5': '4/5', '9:16': '9/16', '16:9': '16/9', '1.91:1': '1.91/1', A4: '210/297' };
@@ -3895,11 +3897,12 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const NO_POST = ['wa'];
     CHK.forEach((k) => { if (!channels.some((c) => c.k === k)) channels.push({ k, acc: '-', st: 'לא מחובר', sync: '-', fol: '-' }); });
     // the content wizards offer the networks the organisation actually connected
-    const DEF_ON = CH_ON.slice();
+    // only what is connected and active: no fallback list (nothing connected = nothing to publish to)
     L.syncChOn = function () {
-      if (!L.pub.on) return;
-      const on = channels.filter((c) => c.st === 'מחובר' && !NO_POST.includes(c.k)).map((c) => c.k);
-      CH_ON.splice(0, CH_ON.length, ...(on.length ? on : DEF_ON.filter((k) => k !== 'web')));
+      const on = L.pub.on ? channels.filter((c) => c.st === 'מחובר' && !NO_POST.includes(c.k)).map((c) => c.k) : [];
+      CH_ON.splice(0, CH_ON.length, ...on);
+      L.pub.ready = true;
+      if (L.chGate) L.chGate();
     };
     L.pub = { on: null, acc: [] };
     const hm = () => new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
@@ -3917,10 +3920,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       try {
         const r = await call('ch.list');
         L.pub.on = !!r.configured;
-        if (r.configured) { L.pub.acc = r.accounts || []; CHK.forEach((k) => { if (!channels.some((c) => c.k === k)) channels.push({ k, acc: '-', st: 'לא מחובר', sync: '-', fol: '-' }); }); applyAcc(L.pub.acc); L.syncChOn(); }
+        if (r.configured) { L.pub.acc = r.accounts || []; CHK.forEach((k) => { if (!channels.some((c) => c.k === k)) channels.push({ k, acc: '-', st: 'לא מחובר', sync: '-', fol: '-' }); }); applyAcc(L.pub.acc); }
+        L.syncChOn();
       } catch (e) {
         // a server without the publishing layer yet answers unknown_action: same as not configured
-        if (/unknown_action|publishing_not_configured/.test(String(e.message || ''))) { L.pub.on = false; if (S.route === 'channels') render(); return true; }
+        if (/unknown_action|publishing_not_configured/.test(String(e.message || ''))) { L.pub.on = false; L.syncChOn(); if (S.route === 'channels') render(); return true; }
         if (!quiet) toast('בדיקת הערוצים נכשלה', 'נסו שוב בעוד רגע.', 'err'); return false;
       }
       if (S.route === 'channels' && !$('#drawer').classList.contains('on')) render();
@@ -4730,7 +4734,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (canDirect() && e.posts.some((p) => !p.ok)) { toast('יש פרסומים שלא אושרו', 'אשרו את כל הפרסומים, או לחצו "אישור הכל".', 'err'); return; }
       if (e.posts.some((p) => { const m = pm(p); return m && m.busy && p.kind === 'graphic'; })) { toast('הגרפיקות עוד בעיצוב', 'עוד כמה שניות והן מוכנות.', 'err'); return; }
       if (e.posts.some((p) => { const m = pm(p); return !m || m.err; })) { toast('יש פרסום בלי קובץ', 'נסו שוב ליצור את הגרפיקה או הסרטון שלא נוצרו.', 'err'); return; }
-      const st = canDirect() ? 'scheduled' : 'pending';
+      const none = !!(L.noCh && L.noCh());
+      const st = none ? 'draft' : canDirect() ? 'scheduled' : 'pending';
       e.posts.forEach((p) => {
         const it = mkItem({ t: p.t, ty: p.kind, s: st, pub: p.date + ' ' + p.time, ch: [...e.ch], g: p.g, body: p.body, d: e.dept, tags: p.tags || [], fmts: [p.kind === 'video' ? '9:16' : '1:1'] });
         const m = pm(p);
@@ -4739,6 +4744,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       });
       e.st = 'scheduled'; if (!S.events.includes(e)) S.events.unshift(e); render(); window.scrollTo({ top: 0 });
       const wait = e.posts.some((p) => { const m = pm(p); return m && m.busy; });
+      if (none) { toast('נשמר בספריית התוכן', e.posts.length + ' פרסומים. אחרי חיבור ערוצים אפשר לפרסם אותם מהספרייה.'); return; }
       toast(canDirect() ? 'הפרסומים תוזמנו' : 'נשלח לאישור', e.posts.length + ' פרסומים' + (wait ? ' · סרטון שעוד בהכנה יצטרף לפרסום כשיהיה מוכן' : ''));
     };
     ACT.evSim = () => { S.ev.st = 'after'; render(); };
@@ -4783,11 +4789,13 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     ACT.evAfOk = () => {
       evCollect(); const e = S.ev, a = e.after, p = a.post;
       if (!a.vm || a.vm.err) { toast('אין סרטון סיכום', 'צרו את סרטון הסיכום לפני התזמון.', 'err'); return; }
-      const st = canDirect() ? 'scheduled' : 'pending';
+      const none = !!(L.noCh && L.noCh());
+      const st = none ? 'draft' : canDirect() ? 'scheduled' : 'pending';
       const it = mkItem({ t: a.video.t, ty: 'video', s: st, pub: p.date + ' ' + p.time, ch: [...e.ch], g: 4, body: p.body, d: e.dept, tags: p.tags || [], fmts: ['9:16'] });
       it.media = a.vm.url && !a.vm.busy ? JSON.parse(JSON.stringify(a.vm)) : { kind: 'video', ready: false };
       a.vItem = it.id;
       e.st = 'done'; render();
+      if (none) { toast('נשמר בספריית התוכן', 'אחרי חיבור ערוצים אפשר לפרסם את סרטון הסיכום מהספרייה.'); return; }
       toast(canDirect() ? 'סרטון הסיכום תוזמן' : 'נשלח לאישור', fmtD(p.date) + ' · ' + p.time + (a.vm.busy ? ' · יצא לפרסום כשהסרטון יהיה מוכן' : ''));
     };
     /* =================== video: two paths. "יצירת סרטון AI" (the brief flow above) and "עריכת סרטון קיים" ===================
@@ -5201,6 +5209,63 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .ev-prog i{display:block;width:80%;height:5px;border-radius:9px;background:#fff;overflow:hidden}.ev-prog i u{display:block;height:100%;background:var(--brand,#0E3B6B);text-decoration:none}
 .raw.has-real,.raw.ev-vid{background-size:cover;background-position:center;color:#fff}
 .st-logo img{width:78%;height:78%;object-fit:contain}`;
+  })();
+
+  /* =================== publishing needs a connected channel ===================
+     The create flows offer only the networks that are connected (and active). With none connected the content is
+     still made and kept in the library; publish / schedule turn into "שמירה בספרייה" until a channel is connected. */
+  (function () {
+    const gateOn = () => !!(L.kind === 'client' && !L.demo && L.pub && L.pub.ready && S.mode !== 'admin');
+    L.noCh = () => gateOn() && CH_ON.length === 0;
+    if (L.kind === 'client' && !L.demo) CH_ON.splice(0, CH_ON.length); // nothing offered until the real list arrives
+    // the flow being edited keeps only connected networks; a new flow starts with all of them selected
+    function chSanitize() {
+      if (!gateOn()) return;
+      const objs = [S.wiz, S.vd, S.ev, S.bulk].filter((o) => o && Array.isArray(o.ch));
+      objs.forEach((o) => {
+        const kept = o.ch.filter((k) => CH_ON.includes(k));
+        if (!o._chInit) { o._chInit = 1; o.ch = (o.replaces || o.from) && kept.length ? kept : CH_ON.slice(); }
+        else if (kept.length !== o.ch.length) o.ch = kept;
+        if (o.pch && !o.ch.includes(o.pch)) o.pch = null;
+      });
+    }
+    const noteHtml = '<div class="note" style="margin:0;align-items:center">' + ic('plug', 16) + '<span>עוד לא חיברת ערוצים. התוכן יישמר בספריית התוכן, ואחרי החיבור אפשר לפרסם אותו משם.</span>' +
+      '<button class="btn btn-sm" style="margin-inline-start:auto" data-nav="channels">חיבור ערוצים</button></div>';
+    const saveBtn = (act, big) => '<button class="btn btn-primary' + (big ? ' btn-lg' : '') + '" data-act="' + act + '">' + ic('save', big ? 17 : 16) + ' שמירה בספרייה</button>';
+    // after every paint: the platform pickers and the publish buttons follow the connected channels
+    function chGate() {
+      if (!gateOn()) return;
+      const view = document.getElementById('view'); if (!view) return;
+      view.querySelectorAll('.plat-pick').forEach((pk) => {
+        pk.querySelectorAll('[data-act]').forEach((b) => { const k = (b.dataset.act.split(':')[1] || ''); if (k && !CH_ON.includes(k)) b.remove(); });
+        if (!pk.querySelector('[data-act]') && !pk.dataset.none) { pk.dataset.none = '1'; pk.style.display = 'block'; pk.innerHTML = noteHtml; }
+      });
+      if (CH_ON.length) return;
+      const bar = (b) => b.closest('.action-bar,.brief-foot,.modal-foot,.ev-foot') || b.parentElement;
+      view.querySelectorAll('[data-act="wizPublish"],[data-act="wizSend"]').forEach((b) => {
+        const box = bar(b);
+        if (box && box.querySelector('[data-act="wizLib"]')) { b.remove(); return; }
+        box && box.querySelectorAll('[data-act="wizSave"]').forEach((x) => x.remove());
+        b.outerHTML = saveBtn('wizLib', true);
+      });
+      view.querySelectorAll('[data-act="cPublish"],[data-act="cSend"]').forEach((b) => { const box = bar(b); if (box && box.querySelector('[data-act="cLib"]')) b.remove(); else b.outerHTML = saveBtn('cLib', true); });
+      view.querySelectorAll('[data-act="evSched"],[data-act="evAfOk"]').forEach((b) => { if (!b.dataset.lib) { b.dataset.lib = '1'; b.innerHTML = ic('save', 17) + ' שמירה בספרייה'; } });
+      view.querySelectorAll('[data-act="evAll"]').forEach((b) => b.remove());
+      view.querySelectorAll('[data-act^="sched:"],[data-act^="publish:"]').forEach((b) => { b.outerHTML = '<button class="btn" data-nav="channels">' + ic('plug', 16) + ' חיבור ערוצים לפרסום</button>'; });
+      // the studio's "when to publish" block has nothing to schedule to
+      view.querySelectorAll('[data-act="mode:now"],[data-act="mode:schedule"]').forEach((b) => { const sec = b.closest('.ed-sec'); if (sec) sec.remove(); });
+    }
+    // the list arrived or changed: repaint now, unless a form is open (its next paint picks it up, typed text stays)
+    L.chGate = () => { if (!QUIET.includes(S.route)) render(); };
+    const _renderG = render;
+    render = function () { chSanitize(); const r = _renderG.apply(this, arguments); try { chGate(); } catch (e) { console.error('chGate', e); } return r; };
+    // the same rule on the actions themselves (a stale button, a keyboard shortcut)
+    const toLib = (msg) => { toast('נשמר בספריית התוכן', msg || 'אחרי חיבור ערוצים אפשר לפרסם אותו מהספרייה.'); };
+    ACT.wizLib = () => { if (!S.wiz) return; saveWizDraft(true); S.dirty = false; S.wiz = null; toLib(); go('library'); };
+    ACT.cLib = () => { const c = campById(S.campId); if (!c) return; c.status = 'draft'; campToItems(c, 'draft'); toLib(c.items.length + ' תכנים נשמרו. אחרי חיבור ערוצים אפשר לפרסם אותם מהספרייה.'); go('library'); };
+    ['wizPublish', 'wizSend'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => (L.noCh() ? ACT.wizLib() : f.apply(null, a)); });
+    ['cPublish', 'cSend'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => (L.noCh() ? ACT.cLib() : f.apply(null, a)); });
+    ['sched', 'publish'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => { if (L.noCh()) { toast('אין ערוצים מחוברים', 'חברו ערוץ כדי לפרסם או לתזמן.', 'err'); go('channels'); return; } return f.apply(null, a); }; });
   })();
 
   /* =================== WhatsApp requests: the real conversations of the bot =================== */
