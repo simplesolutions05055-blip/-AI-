@@ -5228,6 +5228,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         else if (kept.length !== o.ch.length) o.ch = kept;
         if (o.pch && !o.ch.includes(o.pch)) o.pch = null;
       });
+      // nothing to schedule to: the studio preview shows a draft, not a publish date
+      if (!CH_ON.length && S.wiz && S.wiz.mode === 'schedule') S.wiz.mode = 'now';
     }
     const noteHtml = '<div class="note" style="margin:0;align-items:center">' + ic('plug', 16) + '<span>עוד לא חיברת ערוצים. התוכן יישמר בספריית התוכן, ואחרי החיבור אפשר לפרסם אותו משם.</span>' +
       '<button class="btn btn-sm" style="margin-inline-start:auto" data-nav="channels">חיבור ערוצים</button></div>';
