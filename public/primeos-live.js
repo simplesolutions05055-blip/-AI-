@@ -1864,7 +1864,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const f = PROD.on[it.id];
       delete PROD.on[it.id];
       if (f) { try { f({ done: true, ui }); } catch (e) { console.error('prod done', e); } }
-      else { toast('התוצר מוכן', '„' + it.t + '” מחכה בספריית התוכן.'); if (!QUIET.includes(S.route)) render(); }
+      else toast('התוצר מוכן', '„' + it.t + '” מחכה בספריית התוכן.');
+      // the library, the dashboard or the item page still shows the loader over this card: repaint with the finished file
+      if (!QUIET.includes(S.route)) render();
     };
     try {
       for (let n = 0; n < 400; n++) {
