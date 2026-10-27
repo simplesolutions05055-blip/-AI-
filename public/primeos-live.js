@@ -12,6 +12,8 @@
   const API = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/v2-api' : API_PROXY;
   const GEN = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/generate' : '/api/generate';
   const L = (window.PrimeLive = { token: null, kind: null, org: null, me: null, admin: null, demo: false, ready: false });
+  // no connected channel at all: the create flows go on without a platform and keep the content in the library
+  const noChNow = () => !!(L.noCh && L.noCh());
 
   /* ---------------- transport ---------------- */
   async function post(url, body, timeoutMs) {
@@ -867,7 +869,7 @@
     collectWiz();
     if (w.step !== 0) { ACT.wizSend(); return; }
     if (!w.brief.title.trim() && !w.brief.free.trim()) { toast('חסר בריף', 'כותרת או בריף, לפחות אחד.', 'err'); return; }
-    if (!w.ch.length) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
+    if (!w.ch.length && !noChNow()) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
     const done = busyBtn('[data-act="wizNext"]', 'ה-AI כותב את התוכן...');
     try {
       const r = await gen({ mode: 'post', title: w.brief.title, brief: w.brief.free, dept: w.brief.dept, channels: chNames(w.ch), typeLabel: TYPES[w.type] ? TYPES[w.type].t : 'גרפיקה' });
@@ -1394,7 +1396,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     collectWiz();
     if (w.step !== 0) { ACT.wizSend(); return; }
     if (!w.brief.title.trim() && !w.brief.free.trim()) { toast('חסר בריף', 'כותרת או בריף, לפחות אחד.', 'err'); return; }
-    if (!w.ch.length) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
+    if (!w.ch.length && !noChNow()) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
     const done = busyBtn('[data-act="wizNext"]', 'ה-AI כותב את התוכן...');
     try {
       const gfx = isGfx(w);
@@ -2089,7 +2091,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     if (!w || w.step !== 0 || !isGfx(w) || w.carousel) return _wizNextP();
     collectWiz();
     if (!w.brief.title.trim() && !w.brief.free.trim()) { toast('חסר בריף', 'כותרת או בריף, לפחות אחד.', 'err'); return; }
-    if (!w.ch.length) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
+    if (!w.ch.length && !noChNow()) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
     const tpl = w.tpl0 ? tplOf('tpl:' + w.tpl0) : null;
     const fmt = w.fmt || (w.fmts && w.fmts[0]) || '1:1';
     const done = busyBtn('[data-act="wizNext"]', 'שולחים ליצירה...');
@@ -3294,7 +3296,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   ACT.bGen = async () => {
     const b = S.bulk;
     const bb = $('#bBrief'); if (bb) b.brief = bb.value;
-    if (!b.ch.length) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
+    if (!b.ch.length && !noChNow()) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
     const camp = buildCamp(b, curUser().n);
     if (!camp.items.length) { toast('אין מועדים בתקופה', 'הגדילו את התקופה או את מספר התכנים בשבוע.', 'err'); return; }
     S.camps.unshift(camp); S.genCamp = camp; S.genP = 0; S.genStage = 'text'; go('bulkGen');
@@ -4696,7 +4698,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!e.date || !e.start) { toast('חסרים תאריך ושעה', '', 'err'); return; }
       if (evDays(e) < 3) { toast('האירוע קרוב מדי', 'צריך לפחות 3 ימים עד האירוע כדי לבנות את רצף הפרסומים.', 'err'); return; }
       if (!e.place.trim()) { toast('חסר מקום', '', 'err'); return; }
-      if (!e.ch.length) { toast('לא נבחרה פלטפורמה', '', 'err'); return; }
+      if (!e.ch.length && !noChNow()) { toast('לא נבחרה פלטפורמה', '', 'err'); return; }
       if (!e.logo || !e.logo.url) { toast('חסר לוגו', 'העלו לוגו לאירוע או בחרו את לוגו הארגון.', 'err'); return; }
       if (e.media.length < 3) { toast('חסרים חומרים', 'העלו לפחות 3 תמונות או סרטונים.', 'err'); return; }
       e.step = 1; render(); window.scrollTo({ top: 0 });
@@ -4731,7 +4733,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     // scheduling: each post becomes an item with its file; a video still in production joins when it is ready
     ACT.evSched = () => {
       const e = S.ev;
-      if (canDirect() && e.posts.some((p) => !p.ok)) { toast('יש פרסומים שלא אושרו', 'אשרו את כל הפרסומים, או לחצו "אישור הכל".', 'err'); return; }
+      if (canDirect() && !noChNow() && e.posts.some((p) => !p.ok)) { toast('יש פרסומים שלא אושרו', 'אשרו את כל הפרסומים, או לחצו "אישור הכל".', 'err'); return; }
       if (e.posts.some((p) => { const m = pm(p); return m && m.busy && p.kind === 'graphic'; })) { toast('הגרפיקות עוד בעיצוב', 'עוד כמה שניות והן מוכנות.', 'err'); return; }
       if (e.posts.some((p) => { const m = pm(p); return !m || m.err; })) { toast('יש פרסום בלי קובץ', 'נסו שוב ליצור את הגרפיקה או הסרטון שלא נוצרו.', 'err'); return; }
       const none = !!(L.noCh && L.noCh());
@@ -5267,6 +5269,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     ACT.cLib = () => { const c = campById(S.campId); if (!c) return; c.status = 'draft'; campToItems(c, 'draft'); toLib(c.items.length + ' תכנים נשמרו. אחרי חיבור ערוצים אפשר לפרסם אותם מהספרייה.'); go('library'); };
     ['wizPublish', 'wizSend'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => (L.noCh() ? ACT.wizLib() : f.apply(null, a)); });
     ['cPublish', 'cSend'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => (L.noCh() ? ACT.cLib() : f.apply(null, a)); });
+    // the video brief's own "no platform" check: with nothing connected the brief goes on without one
+    const _vdNext = ACT.vdNext;
+    if (_vdNext) ACT.vdNext = (...a) => { const v = S.vd; if (L.noCh() && v && !v.ch.length) { v.ch = ['_none']; try { return _vdNext.apply(null, a); } finally { v.ch = v.ch.filter((k) => k !== '_none'); } } return _vdNext.apply(null, a); };
     ['sched', 'publish'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => { if (L.noCh()) { toast('אין ערוצים מחוברים', 'חברו ערוץ כדי לפרסם או לתזמן.', 'err'); go('channels'); return; } return f.apply(null, a); }; });
   })();
 
@@ -6111,7 +6116,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!e.date || !e.start) { toast('חסרים תאריך ושעה', '', 'err'); return; }
       if (evDays(e) < 3) { toast('האירוע קרוב מדי', 'צריך לפחות 3 ימים עד האירוע כדי לבנות את רצף הפרסומים.', 'err'); return; }
       if (!e.place.trim()) { toast('חסר מקום', '', 'err'); return; }
-      if (!e.ch.length) { toast('לא נבחרה פלטפורמה', '', 'err'); return; }
+      if (!e.ch.length && !noChNow()) { toast('לא נבחרה פלטפורמה', '', 'err'); return; }
       // no event logo: the organisation's logo; no media: the AI creates the imagery
       if (!e.logo || !e.logo.url) { const u = logoOf(); e.logo = u ? { k: 'png', n: 'לוגו ' + (aiCtx().org || 'הארגון'), url: u, auto: true } : null; }
       e.step = 1; render(); window.scrollTo({ top: 0 });
