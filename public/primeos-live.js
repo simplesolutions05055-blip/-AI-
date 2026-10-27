@@ -1286,6 +1286,37 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const t = realThumb(i.media);
     return t ? h.replace('<div class="thumb ' + (i.th || '') + '">', '<div class="thumb ' + (i.th || '') + ' has-real" style="background:url(\'' + esc(t) + '\')">') : h;
   };
+  /* ---------- library: one-tap download of the finished file to the phone / computer ---------- */
+  const dlReady = (it) => { const m = it && it.media; return !!(m && m.url && !(it.prod && !m.url) && !(m.kind === 'video' && m.ready === false)); };
+  const dlBtn = (id, auto) => '<button class="icon-btn" style="width:30px;height:30px' + (auto ? ';margin-inline-start:auto' : '') + '" data-act="dl:' + id + '" aria-label="הורדה" title="הורדה">' + ic('down', 16) + '</button>';
+  function dlName(it, url) {
+    const ext = (String(url).split('?')[0].split('.').pop() || 'file').toLowerCase().slice(0, 5);
+    const base = String(it.t || 'PrimeOS').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'PrimeOS';
+    return base + '.' + ext;
+  }
+  // storage serves the file as an attachment (?download=name): the browser saves it instead of opening it, on phones too
+  async function dlFile(it) {
+    let url = it.media.url;
+    if (isPv(url)) { const r = await call('file.sign', { urls: [url] }); url = r && r.urls && r.urls[url]; if (!url) throw new Error('no_link'); }
+    const name = dlName(it, it.media.url);
+    const href = /\/storage\/v1\/object\//.test(url) ? url + (url.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(name) : url;
+    const a = document.createElement('a'); a.href = href; a.download = name; a.rel = 'noopener'; a.style.display = 'none';
+    document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 1000);
+  }
+  ACT.dl = async (id) => {
+    const it = items.find((x) => String(x.id) === String(id));
+    if (!dlReady(it)) { toast(it && it.prod ? 'הפריט עדיין בהפקה' : 'אין קובץ להורדה', it && it.prod ? 'עוד רגע, הוא יופיע מוכן.' : 'לפריט הזה עוד לא נוצר קובץ.', 'err'); return; }
+    try { await dlFile(it); toast('ההורדה התחילה', dlName(it, it.media.url)); } catch (e) { toast('ההורדה נכשלה', 'נסו שוב בעוד רגע.', 'err'); }
+  };
+  const _libR = SCREENS.library.render;
+  SCREENS.library.render = function () {
+    const h = _libR.apply(this, arguments);
+    return h.replace(/<button class="icon-btn" style="width:30px;height:30px(;margin-inline-start:auto)?" data-act="menu:(\d+)"/g, (all, auto, id) => {
+      const it = items.find((x) => String(x.id) === id);
+      if (!dlReady(it)) return all;
+      return dlBtn(id, !!auto) + '<button class="icon-btn" style="width:30px;height:30px;margin-inline-start:6px" data-act="menu:' + id + '"';
+    });
+  };
   const AR = { '1:1': '1/1', '4:5': '4/5', '9:16': '9/16', '16:9': '16/9', '1.91:1': '1.91/1', A4: '210/297' };
 
   /* ---------- graphic studio ---------- */
