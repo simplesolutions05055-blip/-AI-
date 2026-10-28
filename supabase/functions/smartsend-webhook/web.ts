@@ -63,7 +63,8 @@ async function advanceCarousel(d: DB, j: Job, token: string, f: Flow, data: Res,
       const b = await brandOf(d, j.org_id);
       data.logo = b.logo;
       const kit = b.logo ? await kitOf(d, j.org_id, token, b, ctx.org) : null;
-      const photo = photos.length ? [photos[i % photos.length]] : [];
+      // one photo per slide, in order; slides past the last photo get new imagery (never the same photo again)
+      const photo = photos[i] ? [photos[i]] : [];
       const series = i > 0 && data.urls[0] ? { ref: data.urls[0], composition: data.comp || undefined, accent: data.accent || undefined, i: i + 1, n } : undefined;
       const id = await httpLater(d, FN('image'), token, {
         action: 'design', org: ctx.org, dept: ctx.dept, size, brief: (inp.title || '') + '\n' + (inp.brief || '') + `\nשקף ${i + 1} מתוך ${n} בקרוסלה אחת.`,

@@ -5856,7 +5856,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
             action: 'design', org: aiCtx().org, dept: w.brief.dept, size, brief: (w.brief.title || '') + '\n' + (w.brief.free || '') + '\nשקף ' + (i + 1) + ' מתוך ' + slides.length + ' בקרוסלה אחת.',
             colors: brandFor(w.brief.dept).colors, roles: brandFor(w.brief.dept).roles, style: w.design.style || 'official', palette: w.design.palette || '', kit: kit || undefined,
             texts: { kicker: noCount(sl.kicker), headline: sl.headline, sub: sl.sub, details: sl.details || [], cta: sl.cta || '', icons: sl.icons || [], keyword: sl.keyword || '' },
-            refs: [...(logo ? [logo] : []), ...(photos.length ? [photos[i % photos.length]] : [])].slice(0, 3), logo: !!logo, note: i === 0 && opts && opts.note || '', quality: 'high', n: 2, series,
+            refs: [...(logo ? [logo] : []), ...(photos[i] ? [photos[i]] : [])].slice(0, 3), logo: !!logo, note: i === 0 && opts && opts.note || '', quality: 'high', n: 2, series,
             font: BRAND.font && BRAND.font !== 'auto' ? BRAND.font : undefined,
           }, 150000);
           if (S.wiz !== w || m.job !== job) return;
