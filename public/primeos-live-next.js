@@ -24,8 +24,8 @@
   const LIVE_HOST = /(^|\.)primeos\.co\.il$|\.vercel\.app$/.test(location.hostname);
   // the API too: straight to the edge function on the live host (no proxy hop, no 30s cap); the same-origin proxy stays as a fallback
   const API_PROXY = '/api/v2';
-  const API = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/v2-api-next' : API_PROXY;
-  const GEN = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/generate-next' : '/api/generate';
+  const API = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/v2-api' : API_PROXY;
+  const GEN = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/generate' : '/api/generate';
   const L = (window.PrimeLive = { token: null, kind: null, org: null, me: null, admin: null, demo: false, ready: false });
   // no connected channel at all: the create flows go on without a platform and keep the content in the library
   const noChNow = () => !!(L.noCh && L.noCh());
@@ -1171,7 +1171,7 @@ function printRoles(colors = [], roles = {}) {
     return { paletteRoles, videoColors, lum, mix, contrast };
   })();
   const FN_URL = 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/';
-  const fx = (name, body, ms) => post(FN_URL + (name === 'image' ? 'image-next' : name), body, ms || 150000);
+  const fx = (name, body, ms) => post(FN_URL + name, body, ms || 150000);
   // period content (many graphics at once) uses OpenAI's fast model; single graphics use the server default (the precision model)
   const FAST_IMG = 'gpt-image-2.5-flare';
   const FMT_K = { '1:1': '1x1', '4:5': '4x5', '9:16': '9x16', '16:9': '16x9', '1.91:1': '191x1' };
@@ -1962,8 +1962,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         }
         const msg = (PROD_MSG[r.kind || it.ty] || {})[r.step] || 'בהפקה...';
         PROD.st[it.id] = { pct: r.progress || 0, msg, step: r.step };
-        const carMsg = Array.isArray(r.slides) && r.step === 'design' ? 'ChatGPT מעצב שקף ' + Math.min(r.slides.length, (r.done || 0) + 1) + ' מתוך ' + r.slides.length + '...' : '';
-        emit({ step: r.step, progress: r.progress || 0, msg: carMsg || msg, texts: r.texts, doc: r.doc, deck: r.deck, slides: r.slides });
+        emit({ step: r.step, progress: r.progress || 0, msg, texts: r.texts, doc: r.doc, deck: r.deck });
         if (S.route === 'library' || S.route === 'dash' || S.route === 'item') paintProd(it);
       }
     } finally { delete PROD.watch[it.id]; }
@@ -2039,7 +2038,6 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     w.sugg = [...new Set([...(ui.tags || []), ...suggestTags(w.t, w.brief.dept)])].slice(0, 7);
     w.design = { kicker: d.kicker || '', sub: d.sub || '', details: d.details || [], cta: d.cta || '', keyword: d.keyword || '', icons: d.icons || [], style: d.style || m.style || 'official', palette: d.palette || '', styleWhy: d.styleWhy || '' };
     w.media = { kind: 'graphic', layout: m.layout || 'ai', url: m.url, design: m.src || m.url, fmt: m.fmt || w.fmt, ar: m.ar || '1/1', image: '', model: m.model || '', qa: m.qa || null, style: m.style, warn: m.warn || null, want: m.want || [], fixes: m.fixes || [], dsize: m.dsize, dlay: m.dlay, job: (w.media && w.media.job) || 1, busy: '', ready: true };
-    if (Array.isArray(m.slides) && m.slides.length > 1) { w.media.slides = m.slides.slice(); w.media.thumb = m.slides[0]; w.carousel = ui.carousel || m.slides.length; if (Array.isArray(ui.car) && ui.car.length) w.slides = ui.car; }
     if (m.fmt) { w.fmt = m.fmt; if (!(w.fmts || []).includes(m.fmt)) w.fmts = [m.fmt, ...(w.fmts || [])]; }
     w.ver = 1; w.replaces = ui.id; w._ref = 'wiz:' + ui.id;
   }
@@ -2105,7 +2103,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   const _wizNextP = ACT.wizNext;
   ACT.wizNext = async () => {
     const w = S.wiz;
-    if (!w || w.step !== 0 || !isGfx(w)) return _wizNextP();
+    if (!w || w.step !== 0 || !isGfx(w) || w.carousel) return _wizNextP();
     collectWiz();
     if (!w.brief.title.trim() && !w.brief.free.trim()) { toast('חסר בריף', 'כותרת או בריף, לפחות אחד.', 'err'); return; }
     if (!w.ch.length && !noChNow()) { toast('לא נבחרה פלטפורמה', 'בחרו לפחות פלטפורמה אחת.', 'err'); return; }
@@ -2114,8 +2112,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const done = busyBtn('[data-act="wizNext"]', 'שולחים ליצירה...');
     const it = prodItem('graphic', { t: w.brief.title || 'גרפיקה', d: w.brief.dept, ch: [...w.ch], fmts: (w.fmts || [fmt]).slice(), wz: { title: w.brief.title, brief: w.brief.free, files: (w.brief.files || []).slice(0, 8), layout: tpl ? 'tpl:' + w.tpl0 : 'ai' } });
     try {
-      const car = +w.carousel || 0;
-      await startProd('graphic', it, { ctx: aiCtx(), title: w.brief.title, brief: w.brief.free, dept: w.brief.dept, files: briefFiles(w), photos: briefPhotos(w), fmt, carousel: car >= 2 ? car : undefined, tpl: !car && tpl ? { url: tpl.url, desc: tpl.desc || '', slots: tpl.slots || [], r: tpl.r || '' } : undefined, layout: !car && tpl ? 'tpl:' + w.tpl0 : 'ai' });
+      await startProd('graphic', it, { ctx: aiCtx(), title: w.brief.title, brief: w.brief.free, dept: w.brief.dept, files: briefFiles(w), photos: briefPhotos(w), fmt, tpl: tpl ? { url: tpl.url, desc: tpl.desc || '', slots: tpl.slots || [], r: tpl.r || '' } : undefined, layout: tpl ? 'tpl:' + w.tpl0 : 'ai' });
     } catch (e) { done(); return; }
     if (S.wiz !== w) return;
     w.step = 1; w.t = w.brief.title; w.body = ''; w.tags = []; w.sugg = suggestTags(w.t, w.brief.dept); w.ver = 1;
@@ -2128,7 +2125,6 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (S.wiz !== w) { delete PROD.on[it.id]; return; }
       if (r.err) { w.media.busy = ''; render(); return; }
       if (r.done) { gfxFromUi(w, r.ui); render(); return; }
-      if (Array.isArray(r.slides) && r.slides.length && !(w.slides || []).length) w.slides = r.slides;
       if (r.texts && !gotTexts) {
         gotTexts = true;
         const x = r.texts;
@@ -5843,34 +5839,18 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (!opts || !opts.keep) m.slides = [];
       m.url = ''; m.thumb = ''; m.warn = null; m.qa = null;
       const qas = [];
-      // slide 1 sets the series: later slides get it as their reference and the same composition; photos are spread one per slide
-      let comp = m.series && m.slides[0] ? m.series.comp : '', accent = m.series && m.slides[0] ? m.series.accent : '';
-      const noCount = (k) => (/שקף\s*\d|\d+\s*מתוך\s*\d+/.test(k || '') ? '' : k);
       try {
         for (let i = 0; i < slides.length; i++) {
           if (m.slides[i]) continue;
           const sl = slides[i];
           m.busy = 'ChatGPT מעצב שקף ' + (i + 1) + ' מתוך ' + slides.length + '...'; render();
-          const series = i > 0 && m.slides[0] ? { ref: m.slides[0], composition: comp || undefined, accent: accent || undefined, i: i + 1, n: slides.length } : undefined;
-          let r = await fx('image', {
-            action: 'design', org: aiCtx().org, dept: w.brief.dept, size, brief: (w.brief.title || '') + '\n' + (w.brief.free || '') + '\nשקף ' + (i + 1) + ' מתוך ' + slides.length + ' בקרוסלה אחת.',
+          const r = await fx('image', {
+            action: 'design', org: aiCtx().org, dept: w.brief.dept, size, brief: (w.brief.title || '') + '\n' + (w.brief.free || '') + '\nשקף ' + (i + 1) + ' מתוך ' + slides.length + ' בקרוסלה. אותה שפה בדיוק בכל השקפים.',
             colors: brandFor(w.brief.dept).colors, roles: brandFor(w.brief.dept).roles, style: w.design.style || 'official', palette: w.design.palette || '', kit: kit || undefined,
-            texts: { kicker: noCount(sl.kicker), headline: sl.headline, sub: sl.sub, details: sl.details || [], cta: sl.cta || '', icons: sl.icons || [], keyword: sl.keyword || '' },
-            refs: [...(logo ? [logo] : []), ...(photos[i] ? [photos[i]] : [])].slice(0, 3), logo: !!logo, note: i === 0 && opts && opts.note || '', quality: 'high', n: 2, series,
-            font: BRAND.font && BRAND.font !== 'auto' ? BRAND.font : undefined,
+            texts: { kicker: sl.kicker, headline: sl.headline, sub: sl.sub, details: sl.details || [], cta: sl.cta || '', icons: sl.icons || [], keyword: sl.keyword || '' },
+            refs: [...(logo ? [logo] : []), ...(i === 0 ? photos : [])].slice(0, 4), logo: !!logo, note: opts && opts.note || '', quality: 'high', n: 1, redo: false,
           }, 150000);
           if (S.wiz !== w || m.job !== job) return;
-          if (i === 0) { comp = (r.composition && r.composition.id) || ''; accent = r.accent || ''; m.series = { comp, accent }; }
-          // one text-fix round per slide, like a single graphic
-          if (r.check && !r.check.ok && (r.check.issues || []).length) {
-            m.busy = 'מתקנים את הטקסט בשקף ' + (i + 1) + '...'; render();
-            try {
-              const fx2 = await fx('image', { action: 'fixtext', url: r.url, issues: r.check.issues, fixes: r.check.fixes || [], want: r.want || [], size }, 150000);
-              const cnt = (c) => (c && !c.ok ? (c.issues || []).length || 1 : 0);
-              if (fx2 && fx2.url && cnt(fx2.check || { ok: true }) < cnt(r.check)) r = Object.assign({}, r, { url: fx2.url, check: fx2.check || { ok: true } });
-            } catch (e) { /* keep the slide as it is */ }
-            if (S.wiz !== w || m.job !== job) return;
-          }
           m.slides[i] = r.url; if (r.qa) qas.push(r.qa.score || 0);
           if (r.check && !r.check.ok && (r.check.issues || []).length) m.warn = [...(m.warn || []), 'שקף ' + (i + 1) + ': ' + r.check.issues.join('; ')];
           render();
