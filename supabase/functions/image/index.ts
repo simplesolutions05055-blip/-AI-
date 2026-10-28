@@ -491,6 +491,9 @@ fixed=true for texts that belong to the template itself and must stay (organisat
     const url = d.storage.from('v2-content').getPublicUrl(path).data.publicUrl;
     return json(req, { ok: true, url, prompt, model: used, size, cutout });
   } catch (e) {
-    return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
+    const msg = e instanceof Error ? e.message : String((e as any)?.message ?? e);
+    // every failure is written to the function log with the mode, so a client's failed graphic can be traced
+    console.error('image failed', JSON.stringify({ action: p?.action ?? 'photo', org: t?.org_id ?? null, base: !!p?.base, refs: Array.isArray(p?.refs) ? p.refs.length : 0, msg: msg.slice(0, 600) }));
+    return json(req, { error: msg }, 500);
   }
 });
