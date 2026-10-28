@@ -4746,6 +4746,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       });
       e.st = 'scheduled'; if (!S.events.includes(e)) S.events.unshift(e); render(); window.scrollTo({ top: 0 });
       const wait = e.posts.some((p) => { const m = pm(p); return m && m.busy; });
+      e.lib = none; // saved to the library, nothing scheduled (no channel connected)
       if (none) { toast('נשמר בספריית התוכן', e.posts.length + ' פרסומים. אחרי חיבור ערוצים אפשר לפרסם אותם מהספרייה.'); return; }
       toast(canDirect() ? 'הפרסומים תוזמנו' : 'נשלח לאישור', e.posts.length + ' פרסומים' + (wait ? ' · סרטון שעוד בהכנה יצטרף לפרסום כשיהיה מוכן' : ''));
     };
@@ -5269,6 +5270,29 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     ACT.cLib = () => { const c = campById(S.campId); if (!c) return; c.status = 'draft'; campToItems(c, 'draft'); toLib(c.items.length + ' תכנים נשמרו. אחרי חיבור ערוצים אפשר לפרסם אותם מהספרייה.'); go('library'); };
     ['wizPublish', 'wizSend'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => (L.noCh() ? ACT.wizLib() : f.apply(null, a)); });
     ['cPublish', 'cSend'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => (L.noCh() ? ACT.cLib() : f.apply(null, a)); });
+    // an event kit saved without channels says so: drafts in the library, not "scheduled"
+    const LIB_BADGE = '<span class="badge s-draft">טיוטה בספרייה</span>';
+    const schedBadge = /<span class="badge s-scheduled">(?:(?!<\/span>)[\s\S])*?(?:<\/svg>)?\s*מתוזמן<\/span>/;
+    if (SCREENS.eventKit) {
+      const _evLib = SCREENS.eventKit.render;
+      SCREENS.eventKit.render = function () {
+        let h = _evLib.apply(this, arguments);
+        if (!(S.ev && S.ev.lib)) return h;
+        h = h.replace('הפרסומים תוזמנו. אחרי האירוע תקבלו תזכורת להעלות חומרים מצולמים.', 'הפרסומים נשמרו בספריית התוכן כטיוטות. אחרי חיבור ערוצים אפשר לפרסם אותם משם.');
+        while (schedBadge.test(h)) h = h.replace(schedBadge, LIB_BADGE);
+        return h;
+      };
+    }
+    const _crLib = SCREENS.create.render;
+    SCREENS.create.render = function () {
+      let h = _crLib.apply(this, arguments);
+      (S.events || []).filter((x) => x.lib).forEach((x) => {
+        const i = h.indexOf('data-act="openEvent:' + x.id + '">'); if (i < 0) return;
+        const rest = h.slice(i).replace('<span class="badge s-scheduled">מתוזמן</span>', LIB_BADGE);
+        h = h.slice(0, i) + rest;
+      });
+      return h;
+    };
     // the video brief's own "no platform" check: with nothing connected the brief goes on without one
     const _vdNext = ACT.vdNext;
     if (_vdNext) ACT.vdNext = (...a) => { const v = S.vd; if (L.noCh() && v && !v.ch.length) { v.ch = ['_none']; try { return _vdNext.apply(null, a); } finally { v.ch = v.ch.filter((k) => k !== '_none'); } } return _vdNext.apply(null, a); };
