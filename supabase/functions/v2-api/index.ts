@@ -341,7 +341,10 @@ async function jobStart(d: DB, orgId: string, memberId: string | null, p: Record
   let qkind = 'gfx', qty = 1;
   if (kind === 'graphic') {
     input.fmt = ['1:1', '4:5', '9:16', '16:9', '1.91:1'].includes(inp.fmt) ? inp.fmt : '1:1';
-    input.photos = urls(inp.photos, 4);
+    // a carousel: 2-6 slides in one post, designed as one series on the server (each slide is one graphic of the quota)
+    const car = Math.round(+inp.carousel || 0);
+    if (car >= 2) { input.carousel = Math.min(6, car); qty = input.carousel as number; }
+    input.photos = urls(inp.photos, car >= 2 ? 6 : 4);
     if (inp.tpl && /^https:\/\//.test(String(inp.tpl.url ?? ''))) { input.tpl = { url: String(inp.tpl.url), desc: String(inp.tpl.desc ?? '').slice(0, 1500), slots: Array.isArray(inp.tpl.slots) ? inp.tpl.slots.slice(0, 20) : [], r: String(inp.tpl.r ?? '').slice(0, 10) }; input.layout = str('layout', 60); }
   } else if (kind === 'doc') {
     input.style = ['formal', 'data', 'designed'].includes(inp.style) ? inp.style : 'formal';
@@ -383,6 +386,7 @@ async function jobGet(d: DB, orgId: string, id: string) {
   if (j.src === 'web' && j.state === 'run') {
     const dt = j.data ?? {};
     if (j.kind === 'graphic' && dt.texts) out.texts = { ...dt.texts, caption: dt.caption, tags: dt.tags, style: dt.style, palette: dt.palette, styleWhy: dt.styleWhy };
+    if (j.kind === 'graphic' && Array.isArray(dt.slides)) { out.slides = dt.slides; out.done = (dt.urls ?? []).filter(Boolean).length; }
     if (j.kind === 'doc' && dt.doc) out.doc = dt.doc;
     if (j.kind === 'deck' && dt.deck) out.deck = dt.deck;
   }

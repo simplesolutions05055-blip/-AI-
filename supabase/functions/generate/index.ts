@@ -271,6 +271,26 @@ async function proof(key: string, obj: Record<string, unknown>) {
   }
 }
 
+// the texts of a graphic or a carousel against the request: what the user wrote must be there, nothing invented, Hebrew correct.
+// One pass that replaces the language-only proof for these modes, so the time stays the same.
+async function faithful(key: string, request: string, obj: Record<string, unknown>) {
+  try {
+    const raw = await claude(key, 'אתה עורך ראשי קפדן של רשות מקומית. בודק שתוצר נאמן לבקשת המשתמש ומתקן שגיאות לשון. מקף רגיל בלבד.',
+      `בקשת המשתמש:\n${request}\n\nהתוצר (JSON):\n${JSON.stringify(obj)}\n\nבדוק ותקן בתוך אותו JSON:
+1. הכותרת (headline, ובקרוסלה: headline של השקף הראשון) שומרת על המילים של הכותרת שהמשתמש הזין. אם הוזנה כותרת, היא לא מוחלפת בכותרת אחרת. אם היא ארוכה מדי לגרפיקה, אפשר לקצר רק בהשמטת מילים, בלי לשנות אותן, ולהעביר את השאר לשורת המשנה.
+2. כל פריט קונקרטי בבקשה (פעילות, אטרקציה, תאריך, שעה, מקום, טלפון) מופיע בתוצר: על הגרפיקה (icons / details / sub) או לפחות בטקסט הפוסט (caption). מה שחסר - להוסיף.
+3. כל טענה, פרט או משפט שלא נכתב בבקשה ולא נובע ממנה - להסיר (כולל "יפורסם בהמשך", "בקרוב פרטים" וכדומה, אלא אם המשתמש כתב זאת).
+4. בקרוסלה: השקף הראשון אומר במפורש מה הנושא או האירוע. kicker לא מכיל מספור שקפים.
+5. שגיאות דקדוק, כתיב, התאמה במין ובמספר ופיסוק.
+לא משנים סגנון, אורך כללי או מבנה. מחזירים את אותו JSON בדיוק, באותם מפתחות. JSON בלבד.`, 4000);
+    const j = parseJson(raw);
+    return tagFix(j && typeof j === 'object' ? { ...obj, ...j } : obj);
+  } catch (e) {
+    console.error('faithful', e instanceof Error ? e.message : e);
+    return proof(key, obj);
+  }
+}
+
 const STR = { type: 'string' };
 // supervisor pass: an independent reviewer scores the result against the brief and the rules and returns a corrected copy
 async function reviewContent(key: string, kind: 'doc' | 'deck' | 'video', brief: string, result: any) {
@@ -295,6 +315,7 @@ const RULES = `כללי כתיבה מחייבים:
 - עברית תקנית, פנייה לתושבים בלשון רבים.
 - מקף רגיל בלבד (-), אף פעם לא מקף ארוך.
 - לא להמציא נתונים, מספרי טלפון, כתובות או תאריכים שלא נמסרו בבריף או בפרטים מאתר הארגון. אם חסר פרט - לנסח בלעדיו.
+- נאמנות לבקשה: הכותרת שהמשתמש הזין היא הכותרת. שומרים על המילים שלו, גם כשהן באנגלית או בסלנג. כל פריט שמופיע בבריף (אטרקציה, פעילות, פרט, תאריך, שעה, מקום) חייב להופיע בתוצר. אסור להוסיף טענות, הבטחות או משפטי מילוי שלא נכתבו בבריף (למשל "הפרטים יפורסמו בהמשך") אלא אם הבריף אומר זאת.
 - בלי פתיחים כמו "בשמחה" ובלי הסברים מחוץ לתוצר.`;
 
 function sys(ctx: Ctx) {
@@ -541,13 +562,15 @@ tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתו
 ${brief}
 
 החזר JSON בלבד:
-{"slides":[{"i":1,"kicker":"1-3 מילים (בשקף הראשון: סיווג הנושא; בשאר: 'שקף 2 מתוך ${n}' או כותרת משנה קצרה)","headline":"כותרת השקף, 2-5 מילים","sub":"שורת משנה אחת, עד 50 תווים","keyword":"מילה אחת מהכותרת להדגשה","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט עד 28 תווים"}],"icons":[{"icon":"music|family|food|tree|bus|water|sun|home|phone|shop|chart|users|cone|recycle|book|heart","label":"תווית 2-4 מילים"}],"cta":"קריאה לפעולה רק בשקף האחרון, אחרת ריק"}],"caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"],"style":"id של סגנון","palette":"מצב פלטה","styleWhy":"משפט אחד"}
-מבנה הקרוסלה: שקף 1 = הוק וכותרת ראשית; שקפים אמצעיים = פרט אחד או רעיון אחד לכל שקף (מה, מתי, איפה, למה כדאי); שקף אחרון = סיכום וקריאה לפעולה. כל שקף עומד בפני עצמו. רק עובדות מהבריף. details עד 2 לשקף, icons עד 3 לשקף או ריק.
+{"slides":[{"i":1,"kicker":"1-3 מילים שמסווגות את הנושא, בלי מספור שקפים","headline":"כותרת השקף, 2-5 מילים. בשקף הראשון: הכותרת שהמשתמש הזין, במילים שלו","sub":"שורת משנה אחת, עד 50 תווים","keyword":"מילה אחת מהכותרת להדגשה","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט עד 28 תווים"}],"icons":[{"icon":"music|family|food|tree|bus|water|sun|home|phone|shop|chart|users|cone|recycle|book|heart","label":"תווית 2-4 מילים"}],"cta":"קריאה לפעולה רק בשקף האחרון, אחרת ריק"}],"caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"],"style":"id של סגנון","palette":"מצב פלטה","styleWhy":"משפט אחד"}
+מבנה הקרוסלה: שקף 1 = הכותרת שהוזנה ואומר במפורש מה האירוע או הנושא; שקפים אמצעיים = פרט אחד או רעיון אחד לכל שקף (מה, מתי, איפה, למה כדאי); שקף אחרון = סיכום וקריאה לפעולה. כל שקף עומד בפני עצמו. רק עובדות מהבריף. כל פריט שמופיע בבריף מופיע באחד השקפים. אסור לכתוב על הגרפיקה "שקף X מתוך Y". details עד 2 לשקף, icons עד 3 לשקף או ריק.
 ${STYLE_PICK_HE}
 tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.`, 4000, fb);
-      const g = await proof(key, parseJson(raw));
+      const g = await faithful(key, brief, parseJson(raw));
       g.style = styleOf(g.style); if (!PALETTE_MODES[g.palette as keyof typeof PALETTE_MODES]) delete g.palette;
       g.slides = (Array.isArray(g.slides) ? g.slides : []).slice(0, n);
+      // a slide counter never reaches the graphic
+      for (const x of g.slides as any[]) if (x && typeof x.kicker === 'string' && /שקף\s*\d|\d+\s*מתוך\s*\d+/.test(x.kicker)) x.kicker = '';
       return json(req, { ok: true, ...g });
     }
 
@@ -556,13 +579,14 @@ tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתו
 ${brief}
 
 החזר JSON בלבד:
-{"kicker":"1-3 מילים מעל הכותרת שמסווגות את הנושא באופן ספציפי, למשל: תרבות ופנאי / עבודות תשתית / איכות הסביבה / קול קורא / ברכת חג / שירות לתושב","headline":"כותרת ראשית לגרפיקה, 2-5 מילים, חזקה וברורה","sub":"שורת משנה אחת, עד 60 תווים","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט קצר, עד 28 תווים"}],"cta":"קריאה לפעולה קצרה עד 24 תווים","keyword":"המילה או שתי המילים בכותרת שמקבלות את צבע ההדגשה","icons":[{"icon":"music|family|food|tree|bus|water|sun|home|phone|shop|chart|users|cone|recycle|book|heart|clock|pin|cal|info","label":"תווית 2-4 מילים"}],"caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"],"style":"id של סגנון","palette":"מצב פלטה","styleWhy":"משפט אחד: למה הסגנון הזה"}
+{"kicker":"1-3 מילים מעל הכותרת שמסווגות את הנושא באופן ספציפי, למשל: תרבות ופנאי / עבודות תשתית / איכות הסביבה / קול קורא / ברכת חג / שירות לתושב","headline":"כותרת ראשית לגרפיקה, 2-6 מילים. אם המשתמש הזין כותרת - הכותרת שלו במילים שלו (מותר רק להשמיט מילים כשהיא ארוכה מדי)","sub":"שורת משנה אחת, עד 60 תווים","details":[{"icon":"cal|clock|pin|info|phone","text":"פרט קצר, עד 28 תווים"}],"cta":"קריאה לפעולה קצרה עד 24 תווים","keyword":"המילה או שתי המילים בכותרת שמקבלות את צבע ההדגשה","icons":[{"icon":"music|family|food|tree|bus|water|sun|home|phone|shop|chart|users|cone|recycle|book|heart|clock|pin|cal|info","label":"תווית 2-4 מילים"}],"caption":"טקסט הפוסט, 2-4 משפטים","tags":["#האשטג"],"style":"id של סגנון","palette":"מצב פלטה","styleWhy":"משפט אחד: למה הסגנון הזה"}
 details: רק פרטים שמופיעים בבריף (תאריך, שעה, מקום, טלפון), עד 3. אם אין פרטים - מערך ריק.
-icons: 3-4 פריטים שמסבירים מה כולל / מה לעשות / מה משתנה, רק מתוך הבריף. אם הבריף דל - מערך ריק. keyword: חייבת להופיע בכותרת כמו שהיא.
+icons: עד 5 פריטים שמסבירים מה כולל / מה לעשות / מה משתנה, רק מתוך הבריף. כשהבריף מונה פריטים (אטרקציות, פעילויות, שלבים) - כל אחד מהם הוא פריט, עד 5, והשאר נכנסים לטקסט הפוסט. אם הבריף דל - מערך ריק. caption מזכיר את כל הפריטים שבבריף. keyword: חייבת להופיע בכותרת כמו שהיא.
 ${p.keepStyle && styleOf(p.style) === p.style ? `style: חובה "${p.style}" (הסגנון של הגרפיקה הקיימת, לא לשנות).${p.palette ? ` palette: "${p.palette}".` : ''}` : STYLE_PICK_HE}
 kicker: לא "הודעה לתושבים" ולא "עדכון" כלליים, אלא אם אין שום נושא ספציפי.
 tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון (#פסטיבל_הסתיו), כולל אחד עם שם הרשות.`, 1500, fb);
-      const g = await proof(key, parseJson(raw));
+      const g = await faithful(key, brief, parseJson(raw));
+      if (Array.isArray(g.icons)) g.icons = (g.icons as unknown[]).slice(0, 5);
       g.style = styleOf(g.style); if (!PALETTE_MODES[g.palette as keyof typeof PALETTE_MODES]) delete g.palette;
       return json(req, { ok: true, ...g });
     }

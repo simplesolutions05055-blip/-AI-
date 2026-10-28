@@ -24,6 +24,7 @@ export interface Visual {
   tintColor?: string;        // overlay colour (default: brand deep)
   blur?: number;             // px, for a soft background behind big text
   focus?: [number, number];  // object-position %, where the subject is
+  ar?: number;               // width / height of the photo or clip (set by the server when known)
   speed?: number;            // video playback rate
   trimStart?: number;        // seconds into the clip
   audio?: boolean;           // video: keep the clip's own sound (an edit of the person's footage)

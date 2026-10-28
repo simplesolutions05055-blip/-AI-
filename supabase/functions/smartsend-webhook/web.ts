@@ -37,11 +37,97 @@ const keepUi = (inp: Job) => ({ ...(inp.ui || {}), prod: null });
 // the quota reference of the item: the first production took the quota at job start, later renders of the same item are free
 const refOf = (j: Job) => 'wiz:' + (j.ui_id ?? j.id);
 
+// One carousel post: the texts of all slides in one call, then each slide in its own design call. Slide 1 is designed
+// freely; every later slide gets slide 1 as its series reference and the same composition, so the post reads as one set.
+// The person's photos are spread over the slides (one each, in order). A slide with Hebrew errors gets one fix round.
+async function advanceCarousel(d: DB, j: Job, token: string, f: Flow, data: Res, inp: Job, ctx: ReturnType<typeof ctxOf>) {
+  const { ids, res, ok } = f;
+  const n = Math.min(6, Math.max(2, Math.round(+inp.carousel)));
+  const fmt = String(inp.fmt || '1:1');
+  const size = sizeOf(fmt);
+  const photos: string[] = Array.isArray(inp.photos) ? inp.photos.slice(0, 6) : [];
+  if (j.step === 'texts') {
+    if (!ids.length) { const id = await httpLater(d, FN('generate'), token, { mode: 'carousel', slides: n, ...ctx, title: inp.title || '', brief: inp.brief || '', files: inp.files || [] }, 120000); return f.upd({ pend: { t: id }, next_at: f.later(4) }); }
+    if (!ok(res.t)) return f.retry('texts');
+    const x = res.t.json;
+    const sl = (Array.isArray(x.slides) ? x.slides : []).slice(0, n).map((y: any) => ({ kicker: y.kicker || '', headline: y.headline || '', sub: y.sub || '', details: y.details || [], cta: y.cta || '', icons: Array.isArray(y.icons) ? y.icons.filter((i: any) => i && i.label).slice(0, 4) : [], keyword: y.keyword || '' }));
+    if (sl.length < 2) return f.retry('texts');
+    data.slides = sl; data.urls = []; data.checks = []; data.si = 0;
+    data.texts = { ...sl[0], headline: sl[0].headline || inp.title || '' };
+    data.caption = x.caption || ''; data.tags = (x.tags || []).slice(0, 6); data.style = x.style || 'official'; data.palette = x.palette || ''; data.styleWhy = x.styleWhy || '';
+    return f.go('design');
+  }
+  if (j.step === 'design') {
+    const i = +data.si || 0;
+    if (!ids.length) {
+      const b = await brandOf(d, j.org_id);
+      data.logo = b.logo;
+      const kit = b.logo ? await kitOf(d, j.org_id, token, b, ctx.org) : null;
+      const photo = photos.length ? [photos[i % photos.length]] : [];
+      const series = i > 0 && data.urls[0] ? { ref: data.urls[0], composition: data.comp || undefined, accent: data.accent || undefined, i: i + 1, n } : undefined;
+      const id = await httpLater(d, FN('image'), token, {
+        action: 'design', org: ctx.org, dept: ctx.dept, size, brief: (inp.title || '') + '\n' + (inp.brief || '') + `\nשקף ${i + 1} מתוך ${n} בקרוסלה אחת.`,
+        colors: b.colors, roles: b.roles, style: data.style || 'official', palette: data.palette || '', kit: kit || undefined, texts: data.slides[i],
+        refs: [...(b.logo ? [b.logo] : []), ...photo].slice(0, 3), logo: !!b.logo, note: '', quality: 'high', n: 2, series,
+        font: b.font || undefined,
+      }, 170000);
+      await f.upd({ data, lock_until: f.later(120) }); return f.upd({ pend: { g: id }, next_at: f.later(15) });
+    }
+    if (!ok(res.g)) return f.retry('design');
+    const g = res.g.json;
+    if (i === 0) { data.comp = g.composition?.id || ''; data.accent = g.accent || ''; data.qa = g.qa || null; data.model = g.model || ''; }
+    data.urls[i] = g.url; data.checks[i] = g.check || { ok: true }; data.want = data.want || []; data.wants = data.wants || []; data.wants[i] = g.want || [];
+    const bad = g.check && !g.check.ok && (g.check.issues || []).length;
+    return f.go(bad ? 'fix' : (i + 1 < n ? 'design' : 'fit'), bad ? { data } : { data: { ...data, si: i + 1 < n ? i + 1 : i } });
+  }
+  if (j.step === 'fix') {
+    const i = +data.si || 0;
+    if (!ids.length) { const c = data.checks[i]; const id = await httpLater(d, FN('image'), token, { action: 'fixtext', url: data.urls[i], issues: c.issues, fixes: c.fixes || [], want: data.wants[i] || [], size }, 170000); return f.upd({ pend: { f: id }, next_at: f.later(8) }); }
+    if (ok(res.f) && res.f.json.url) {
+      const c = res.f.json.check || { ok: true };
+      const cnt = (x: any) => (x && !x.ok ? (x.issues || []).length || 1 : 0);
+      if (cnt(c) < cnt(data.checks[i])) { data.urls[i] = res.f.json.url; data.checks[i] = c; }
+    }
+    return f.go(i + 1 < n ? 'design' : 'fit', { data: { ...data, si: i + 1 < n ? i + 1 : i } });
+  }
+  if (j.step === 'fit') {
+    data.src = data.urls[0];
+    if (size === 'square' && fmt === '1:1') { data.out = data.urls.slice(); return f.go('done', { data }); }
+    if (!ids.length) {
+      const { brand } = await brandBody(d, j);
+      const id = await httpLater(d, FN('produce'), token, { brand, jobs: data.urls.map((u: string, k: number) => ({ id: 's' + k, kind: 'graphic', layout: 'fit', format: FMT_K[fmt] || '1x1', data: { image: u }, thumb: false, ref: refOf(j) })) }, 170000);
+      return f.upd({ pend: { p: id }, next_at: f.later(6) });
+    }
+    const r = res.p;
+    const rs = ok(r) ? (r.json.results || []) : [];
+    data.out = data.urls.map((u: string, k: number) => { const x = rs.find((y: any) => y && y.id === 's' + k) || rs[k]; return x && x.ok && x.urls ? x.urls.main : u; });
+    return f.go('done', { data });
+  }
+  if (j.step === 'done') {
+    const t = data.slides?.[0] || {};
+    const warn = (data.checks || []).flatMap((c: any, k: number) => (c && !c.ok ? (c.issues || []).map((x: string) => 'שקף ' + (k + 1) + ': ' + x) : []));
+    const ui = {
+      ...keepUi(inp), t: t.headline || inp.title || 'קרוסלה', body: data.caption || '', tags: data.tags || [],
+      media: {
+        kind: 'graphic', url: data.out[0], src: data.urls[0], slides: data.out, layout: 'ai', fmt, ar: AR[fmt] || '1/1', image: data.out[0], design: data.out[0], thumb: data.out[0], ready: true,
+        style: data.style, qa: data.qa, model: data.model, warn: warn.length ? warn : null, dsize: size, dlay: 'ai',
+      },
+      car: data.slides, carousel: n,
+      wiz: { kind: 'graphic', at: new Date().toISOString() },
+    };
+    await saveItem(token, ui);
+    return f.upd({ state: 'done', step: 'done', result: { url: data.out[0], ui_id: j.ui_id }, pend: {}, data });
+  }
+}
+
 export async function advanceWeb(d: DB, j: Job, token: string, f: Flow) {
   const { ids, res, ok } = f;
   const data = j.data ?? {};
   const inp = j.input ?? {};
   const ctx = ctxOf(inp);
+
+  /* ---------------- carousel: texts -> design slide by slide (slide 1 sets the series) -> fit -> done ---------------- */
+  if (j.kind === 'graphic' && +inp.carousel >= 2) return advanceCarousel(d, j, token, f, data, inp, ctx);
 
   /* ---------------- graphic: texts -> design -> fix -> fit -> done ---------------- */
   if (j.kind === 'graphic') {
@@ -52,7 +138,7 @@ export async function advanceWeb(d: DB, j: Job, token: string, f: Flow) {
       if (!ids.length) { const id = await httpLater(d, FN('generate'), token, { mode: 'graphic', ...ctx, title: inp.title || '', brief: inp.brief || '', files: inp.files || [] }, 120000); return f.upd({ pend: { t: id }, next_at: f.later(4) }); }
       if (!ok(res.t)) return f.retry('texts');
       const x = res.t.json;
-      data.texts = { kicker: x.kicker || '', headline: x.headline || inp.title || '', sub: x.sub || '', details: x.details || [], cta: x.cta || '', icons: Array.isArray(x.icons) ? x.icons.filter((i: any) => i && i.label).slice(0, 4) : [], keyword: x.keyword || '' };
+      data.texts = { kicker: x.kicker || '', headline: x.headline || inp.title || '', sub: x.sub || '', details: x.details || [], cta: x.cta || '', icons: Array.isArray(x.icons) ? x.icons.filter((i: any) => i && i.label).slice(0, 5) : [], keyword: x.keyword || '' };
       data.caption = x.caption || ''; data.tags = (x.tags || []).slice(0, 6); data.style = x.style || 'official'; data.palette = x.palette || ''; data.styleWhy = x.styleWhy || '';
       return f.go('design');
     }

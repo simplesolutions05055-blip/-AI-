@@ -1,6 +1,22 @@
 import { asset } from './asset';
 import React from 'react';
-import { AbsoluteFill, Audio, Img, OffthreadVideo, interpolate, spring, useCurrentFrame, useVideoConfig, Easing } from 'remotion';
+import { AbsoluteFill, Audio, Img, OffthreadVideo, interpolate, spring, useCurrentFrame, useVideoConfig, Easing, delayRender, continueRender } from 'remotion';
+
+// the shape (width / height) of each photo or clip, read once per source
+const SHAPE = new Map<string, number>();
+function useShape(src: string | undefined, kind: string) {
+  const [r, setR] = React.useState<number | null>(() => (src ? SHAPE.get(src) ?? null : null));
+  const [handle] = React.useState(() => (src && !SHAPE.has(src) ? delayRender('media shape ' + src) : null));
+  React.useEffect(() => {
+    if (!src || handle === null) return;
+    let done = false;
+    const end = (v: number | null) => { if (done) return; done = true; if (v) SHAPE.set(src, v); setR(v); continueRender(handle); };
+    { const im = new Image(); im.onload = () => end(im.naturalWidth && im.naturalHeight ? im.naturalWidth / im.naturalHeight : null); im.onerror = () => end(null); im.src = src; }
+    const t = setTimeout(() => end(null), 20000);
+    return () => clearTimeout(t);
+  }, [src, kind, handle]);
+  return r;
+}
 import type { Visual, Plan } from './types';
 
 // camera move over the whole scene; eased so it never looks mechanical
@@ -25,11 +41,19 @@ export const Background: React.FC<{ v: Visual; plan: Plan; durF: number }> = ({ 
   const p = Math.min(1, Math.max(0, f / Math.max(1, durF)));
   const ms = motionStyle(v.motion ?? (v.kind === 'video' ? 'static' : 'zoomIn'), p);
   const pos = v.focus ? `${v.focus[0]}% ${v.focus[1]}%` : '50% 50%';
-  const media: React.CSSProperties = { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: pos, filter: v.blur ? `blur(${v.blur}px)` : undefined, ...ms, willChange: 'transform' };
+  // a photo or clip whose shape is far from the frame (a landscape clip in a vertical video, or the other way) is shown whole:
+  // the full picture across the frame, over a blurred, darker copy of itself that fills the rest. Close shapes keep filling the frame.
+  const { width: fw, height: fh } = useVideoConfig();
+  const probed = useShape(!v.ar && v.src && v.kind === 'image' ? asset(v.src)! : undefined, v.kind);
+  const shape = v.ar && v.ar > 0 ? v.ar : probed;
+  const fit = !!shape && !v.blur && Math.abs(Math.log(shape / (fw / fh))) > Math.log(1.35);
+  const media: React.CSSProperties = { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: fit ? 'contain' : 'cover', objectPosition: fit ? '50% 50%' : pos, filter: v.blur ? `blur(${v.blur}px)` : undefined, ...(fit ? {} : ms), willChange: 'transform' };
+  const fill: React.CSSProperties = { position: 'absolute', inset: '-6%', width: '112%', height: '112%', objectFit: 'cover', filter: 'blur(42px) brightness(0.55) saturate(1.1)' };
   let layer: React.ReactNode;
-  if (v.kind === 'image' && v.src) layer = <Img src={asset(v.src)!} style={media} />;
+  if (v.kind === 'image' && v.src) layer = <>{fit && <Img src={asset(v.src)!} style={fill} />}<Img src={asset(v.src)!} style={media} /></>;
   else if (v.kind === 'video' && v.src) layer = (
     <>
+      {fit && <OffthreadVideo src={asset(v.src)!} muted playbackRate={v.speed ?? 1} startFrom={Math.round((v.trimStart ?? 0) * fps)} style={fill} />}
       <OffthreadVideo src={asset(v.src)!} muted={!v.audio || !!v.audioSrc} volume={v.vol ?? 1} playbackRate={v.speed ?? 1} startFrom={Math.round((v.trimStart ?? 0) * fps)} style={media} />
       {v.audio && v.audioSrc ? <Audio src={asset(v.audioSrc)!} volume={v.vol ?? 1} playbackRate={v.speed ?? 1} startFrom={Math.round((v.trimStart ?? 0) * fps)} /> : null}
     </>

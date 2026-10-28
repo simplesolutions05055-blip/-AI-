@@ -348,32 +348,37 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       // a template that carries its own organisation line keeps it; the org name is not added again
       const ownOrg = !!p.template && ((p.template.slots ?? []) as any[]).some((x) => x?.fixed && (x.role === 'org' || x.role === 'footer'));
       const kit: BrandKit | null = p.kit && typeof p.kit === 'object' && !p.template ? p.kit as BrandKit : null;
-      const lines = [['kicker', tx.kicker], ['headline', tx.headline], ['sub', tx.sub], ...((tx.details ?? []) as any[]).map((d: any, i: number) => ['detail ' + (i + 1), typeof d === 'string' ? d : d?.text]), ...((kit ? (tx.icons ?? []) : []) as any[]).slice(0, 4).map((d: any, i: number) => ['icon label ' + (i + 1), typeof d === 'string' ? d : d?.label]), ['call to action', tx.cta], ['organisation name', ownOrg || kit ? '' : p.org]]
+      const lines = [['kicker', tx.kicker], ['headline', tx.headline], ['sub', tx.sub], ...((tx.details ?? []) as any[]).map((d: any, i: number) => ['detail ' + (i + 1), typeof d === 'string' ? d : d?.text]), ...((kit ? (tx.icons ?? []) : []) as any[]).slice(0, 5).map((d: any, i: number) => ['icon label ' + (i + 1), typeof d === 'string' ? d : d?.label]), ['call to action', tx.cta], ['organisation name', ownOrg || kit ? '' : p.org]]
         .filter((x) => x[1]).map((x) => `${x[0]}: "${x[1]}"`).join('\n');
       const colors = ((p.colors ?? []) as string[]).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 6).join(', ') || '#0E3B6B, #0A2C51, #9A6B1F, #1E6BA8';
       const okUrl = (u: string) => /^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(u);
       const tpl = p.template && okUrl(String(p.template.url ?? '')) ? p.template : null;
       const refs = [...(tpl ? [String(tpl.url)] : []), ...((p.refs ?? []) as string[]).filter(okUrl)].slice(0, 4);
       if (p.eventLogo && okUrl(String(p.eventLogo)) && !tpl) { refs.splice(p.logo ? 1 : 0, 0, String(p.eventLogo)); if (refs.length > 4) refs.length = 4; }
+      // a carousel slide after the first: slide 1 is attached LAST as the series reference, so every slide is the same family
+      const series = !tpl && p.series && typeof p.series === 'object' && okUrl(String(p.series.ref ?? '')) ? p.series as { ref: string; composition?: string; accent?: string; i?: number; n?: number } : null;
+      if (series) { if (refs.length > 3) refs.length = 3; refs.push(String(series.ref)); }
       const fmt = p.size === 'portrait' ? 'vertical portrait' : p.size === 'landscape' ? 'wide landscape' : 'square';
       const slots = tpl ? ((tpl.slots ?? []) as any[]).map((x) => `- ${x.role}${x.fixed ? ' (fixed, keep)' : ''}: ${x.he ?? ''}${x.text ? ' - currently "' + x.text + '"' : ''}`).join('\n') : '';
       const style = styleOf(p.style);
       const fmtId = p.size === 'portrait' ? 'portrait' : p.size === 'landscape' ? 'landscape' : 'square';
-      const nPhotos = refs.length - (p.logo && !tpl ? 1 : 0) - (tpl ? 1 : 0);
+      const nPhotos = refs.length - (p.logo && !tpl ? 1 : 0) - (tpl ? 1 : 0) - (series ? 1 : 0);
       const evLogo = !!p.eventLogo;
       // variety: 'mixed' (the brand constants stay, the composition moves) or 'uniform' (the fixed skeleton). Set per organisation by the console.
       let variety = varietyOf(p.variety);
       if (p.variety === undefined && t?.org_id) { const { data: og } = await d.from('organizations').select('settings').eq('id', t.org_id).maybeSingle(); variety = varietyOf(og?.settings?.variety); }
       const seed = Date.now() ^ Math.floor(Math.random() * 1e9);
-      const comp = kit && variety === 'mixed' ? pickComposition(style, String(p.brief ?? ''), seed, kit.template) : null;
-      const accent = comp ? accentFor(seed >>> 3) : '';
+      const forced = series && series.composition && COMPOSITIONS[series.composition as keyof typeof COMPOSITIONS] ? { id: series.composition as keyof typeof COMPOSITIONS, kind: 'series' } : null;
+      const comp = kit && variety === 'mixed' ? (forced ?? pickComposition(style, String(p.brief ?? ''), seed, kit.template)) : null;
+      const accent = comp ? (series?.accent && typeof series.accent === 'string' ? series.accent.slice(0, 300) : accentFor(seed >>> 3)) : '';
+      const SERIES_EN = series ? `\nCAROUSEL SERIES: this is slide ${series.i ?? 2} of ${series.n ?? 2} of ONE carousel post. The LAST attached reference image is slide 1 of the same carousel. Reproduce its layout grid exactly: the same composition, the same logo position and size, the same colour blocks and ground, the same typefaces and text sizes, the same icon style, the same margins and the same decorative shapes. Only the texts and the photo change. Do not print any slide number or counter.` : '';
       const mixed = !!comp && style !== 'service';
       const directive = (kit
         ? kitDirective(kit, { colors: p.colors, roles: p.roles, emergency: style === 'service', fmt: fmtId, photos: nPhotos - (evLogo ? 1 : 0), style, palette: p.palette, font: p.font, variety, composition: comp?.id, accent })
         : designDirective({ style, palette: p.palette, colors: p.colors, roles: p.roles, fmt: fmtId, photos: nPhotos - (evLogo ? 1 : 0), logo: !!p.logo, font: p.font })) + (p.event ? '\n' + EVENT_EN : '');
-      const iconsTx = kit ? ((tx.icons ?? []) as any[]).slice(0, 4).map((d: any) => typeof d === 'string' ? d : `${d?.icon ?? ''} "${d?.label ?? ''}"`).filter(Boolean).join(', ') : '';
+      const iconsTx = kit ? ((tx.icons ?? []) as any[]).slice(0, 5).map((d: any) => typeof d === 'string' ? d : `${d?.icon ?? ''} "${d?.label ?? ''}"`).filter(Boolean).join(', ') : '';
       let prompt = kit
-        ? (await claude(ckey, mixed ? KIT_DESIGNER_MIXED : KIT_DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nMood of the style "${style}": ${STYLES[style]?.he ?? ''} (energy ${STYLES[style]?.energy ?? 'mid'}).\n${directive}\nTexts to place (exactly):\n${lines}\n${tx.keyword ? `Key word(s) of the headline in the hot colour: "${tx.keyword}"\n` : ''}${tx.cta ? '' : 'No call to action on this graphic: omit the button (skeleton item 7) entirely, leave that space empty.\n'}${iconsTx ? `Icon row (icon name then Hebrew label): ${iconsTx}\n` : 'No icon row for this message.\n'}${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the organisation logo; ' : ''}${evLogo ? `image ${p.logo ? 2 : 1} is the EVENT logo (place it large near the headline, unchanged); ` : ''}${nPhotos - (evLogo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim()
+        ? (await claude(ckey, mixed ? KIT_DESIGNER_MIXED : KIT_DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\nMood of the style "${style}": ${STYLES[style]?.he ?? ''} (energy ${STYLES[style]?.energy ?? 'mid'}).\n${directive}\n${SERIES_EN}\nTexts to place (exactly):\n${lines}\n${tx.keyword ? `Key word(s) of the headline in the hot colour: "${tx.keyword}"\n` : ''}${tx.cta ? '' : 'No call to action on this graphic: omit the button (skeleton item 7) entirely, leave that space empty.\n'}${iconsTx ? `Icon row (icon name then Hebrew label): ${iconsTx}\n` : 'No icon row for this message.\n'}${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the organisation logo; ' : ''}${evLogo ? `image ${p.logo ? 2 : 1} is the EVENT logo (place it large near the headline, unchanged); ` : ''}${nPhotos - (evLogo ? 1 : 0)} photo(s).` : 'No reference images.'}\n${p.note ? 'Change request from the user: ' + p.note : ''}\n${p.fix ? 'The previous attempt misspelled the Hebrew. Stress exact spelling: ' + p.fix : ''}`)).trim()
         : tpl
         ? (await claude(ckey, TEMPLATE_DESIGNER, [
           { type: 'image', source: { type: 'url', url: String(tpl.url) } },
@@ -389,6 +394,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
         console.error('designer empty, plain prompt used');
         prompt = `Design a finished ${fmt} social-media graphic for an Israeli organisation, in Hebrew (right-to-left).\n${directive}\nPlace exactly these Hebrew texts, spelled exactly, large and legible:\n${lines}\n${refs.length ? (p.logo ? 'Reference image 1 is the organisation logo: place it unchanged. ' : '') + 'Use the attached photos as the main imagery.' : 'Create fitting imagery for the message: ' + String(p.brief ?? '').slice(0, 300)}\nClean, professional layout with clear hierarchy, no extra text, no watermarks.`;
       }
+      if (series) prompt += SERIES_EN;
       const size = SIZES[p.size] ?? SIZES.square;
       const fixedTx = tpl ? ((tpl.slots ?? []) as any[]).filter((x) => x.fixed && x.text).map((x) => `"${x.text}"`) : [];
       const wantTxt = lines.replace(/^[a-z0-9 ]+: /gim, '') + (fixedTx.length ? '\n' + fixedTx.join('\n') : '');
@@ -451,9 +457,11 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const up = await d.storage.from('v2-content').upload(path, bytes, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
       if (up.error) throw up.error;
       timing.total = Date.now() - t0;
-      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: wantList, prompt, model, size, style, qa, kit: !!kit, variety, composition: comp ? { id: comp.id, he: COMPOSITIONS[comp.id].he, kind: comp.kind } : undefined, timing });
+      return json(req, { ok: true, url: d.storage.from('v2-content').getPublicUrl(path).data.publicUrl, check, want: wantList, prompt, model, size, style, qa, kit: !!kit, variety, composition: comp ? { id: comp.id, he: COMPOSITIONS[comp.id].he, kind: comp.kind } : undefined, accent: accent || undefined, timing });
     } catch (e) {
-      return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
+      const msg = e instanceof Error ? e.message : String((e as any)?.message ?? e);
+      console.error('image design failed', JSON.stringify({ org: t?.org_id ?? null, base: !!p.base, series: !!p.series, msg: msg.slice(0, 600) }));
+      return json(req, { error: msg }, 500);
     }
   }
 

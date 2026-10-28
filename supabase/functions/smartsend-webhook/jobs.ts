@@ -161,6 +161,8 @@ async function advance(d: DB, j: Job) {
         if (/^ai:/.test(src) && ok(res['ai' + i]) && res['ai' + i].json.url) return { ...base, kind: 'image', src: res['ai' + i].json.url };
         return { ...base, kind: src === 'color' ? 'color' : 'gradient' };
       });
+      // the shape of every clip (a landscape clip in a vertical video is shown whole, not cut to its middle)
+      await Promise.all(vis.map(async (v: any) => { if (v && v.kind === 'video' && v.src && !v.ar) { const a = await mp4Shape(v.src); if (a) v.ar = a; } }));
       const clips: any[] = ok(res.voice) ? res.voice.json.clips || [] : [];
       const music = ok(res.music) ? res.music.json : null;
       const sc = scenes.map((s, i) => {
@@ -354,4 +356,33 @@ export async function tick(d: DB, budgetMs = 50000) {
 export function kick() {
   const s = Deno.env.get('SMARTSEND_WEBHOOK_SECRET') ?? '';
   return fetch(FN('smartsend-webhook') + '?tick=1', { method: 'POST', headers: { 'content-type': 'application/json', 'x-tick': s }, body: '{}' }).then(() => {}, () => {});
+}
+
+// width / height of an MP4 video from its track header (tkhd), the rotation matrix taken into account; null when unknown.
+// Only the start of the file is read, then the end (a phone file keeps its index there).
+export async function mp4Shape(url: string): Promise<number | null> {
+  const grab = async (range: string) => {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000);
+    try { const r = await fetch(url, { headers: { range }, signal: ctl.signal }); if (!r.ok && r.status !== 206) return null; return new Uint8Array(await r.arrayBuffer()); } catch { return null; } finally { clearTimeout(t); }
+  };
+  const scan = (b: Uint8Array): number | null => {
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    for (let i = 4; i + 92 < b.length; i++) {
+      if (b[i] !== 0x74 || b[i + 1] !== 0x6b || b[i + 2] !== 0x68 || b[i + 3] !== 0x64) continue; // 'tkhd'
+      const ver = b[i + 4];
+      const m = i + 8 + (ver === 1 ? 32 : 20) + 8 + 8; // after times, track id, duration, reserved, layer/alt/volume
+      if (m + 44 > b.length) continue;
+      const a = dv.getInt32(m), bb = dv.getInt32(m + 4);
+      const w = dv.getUint32(m + 36) / 65536, h = dv.getUint32(m + 40) / 65536;
+      if (!w || !h) continue; // an audio track
+      const rot = a === 0 && bb !== 0; // 90 / 270 degrees
+      return rot ? h / w : w / h;
+    }
+    return null;
+  };
+  const head = await grab('bytes=0-1048575');
+  const r1 = head ? scan(head) : null;
+  if (r1) return r1;
+  const tail = await grab('bytes=-1048576');
+  return tail ? scan(tail) : null;
 }
