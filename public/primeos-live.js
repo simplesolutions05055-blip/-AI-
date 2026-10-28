@@ -5,6 +5,21 @@
  */
 (function () {
   'use strict';
+  // test channel: ?channel=next (or =main to leave) loads primeos-live-next.js, where a release is tried on the test account first
+  try {
+    const qc = new URLSearchParams(location.search).get('channel');
+    if (qc === 'next') localStorage.setItem('primeos-channel', 'next'); else if (qc === 'main') localStorage.removeItem('primeos-channel');
+    const me = (document.currentScript && document.currentScript.src) || '';
+    if (localStorage.getItem('primeos-channel') === 'next' && !/primeos-live-next\.js/.test(me) && !window.__primeNext) {
+      window.__primeNext = true;
+      window.PrimeLive = { boot() {} };
+      const sc = document.createElement('script'); sc.src = '/primeos-live-next.js?t=' + Date.now();
+      sc.onload = () => { if (window.PrimeLive && window.PrimeLive.token !== undefined) window.PrimeLive.boot(); };
+      sc.onerror = () => { localStorage.removeItem('primeos-channel'); location.reload(); };
+      document.body.appendChild(sc);
+      return;
+    }
+  } catch (e) {}
   // long generations (documents, decks) go straight to the edge function: no 60s proxy limit
   const LIVE_HOST = /(^|\.)primeos\.co\.il$|\.vercel\.app$/.test(location.hostname);
   // the API too: straight to the edge function on the live host (no proxy hop, no 30s cap); the same-origin proxy stays as a fallback
