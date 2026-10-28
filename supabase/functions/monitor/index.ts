@@ -27,17 +27,17 @@ type Check = { ok: boolean; warn?: boolean; ms?: number; note?: string };
 const STORAGE_LIMIT_GB = 100, DISK_LIMIT_GB = 8;
 const mb = (b: number) => (b / 1048576).toFixed(b < 10485760 ? 1 : 0) + 'MB';
 // what the console says about each check: the words for the incident card and what "fix" would do
-const SEV: Record<string, string> = { site: 'crit', api: 'crit', wa: 'crit', jobs: 'high', stuck: 'mid', storage: 'high', backup: 'mid', tenant: 'crit', storage_use: 'high', db_size: 'high', credits: 'high' };
-const CHK: Record<string, string> = { site: 'הדף הראשי לא ענה או לא החזיר את האפליקציה ב-2 בדיקות רצופות', api: 'פעולת health של v2-api נכשלה או שבסיס הנתונים איטי ב-2 בדיקות רצופות', jobs: '5 עבודות יצירה או יותר נכשלו בשעה האחרונה', stuck: '3 עבודות או יותר בסטטוס ריצה בלי התקדמות מעל 10 דקות', wa: '5 שליחות WhatsApp או יותר נכשלו בשעה האחרונה', storage: 'רשימת ה-buckets של האחסון לא נענתה', backup: 'הגיבוי השבועי נכשל', tenant: 'בדיקת ההפרדה בין לקוחות נכשלה', storage_use: 'האחסון עבר 95% ממכסת התוכנית (100GB)', db_size: 'בסיס הנתונים עבר 95% מהדיסק (8GB)', credits: 'שימוש ה-AI היום גדול פי 3 מהממוצע היומי של השבוע' };
-const CAUSE: Record<string, string> = { site: 'תקלה ב-Vercel או פריסה שנכשלה', api: 'פונקציה שנפלה, או עומס על בסיס הנתונים', jobs: 'ספק AI לא זמין, או שינוי בקוד שגרם לשגיאות', stuck: 'ריצה שנקטעה באמצע והשאירה נעילות', wa: 'SmartSend לא זמין, או מספר שנחסם', storage: 'תקלה ב-Supabase Storage', backup: 'הפונקציה נכשלה באמצע או bucket הגיבוי לא נגיש', tenant: 'שינוי בקוד שפגע בבידוד; לטפל מיד', storage_use: 'קבצי גלם וסרטונים שלא נמחקו, או לקוח גדול חדש', db_size: 'טבלאות לוג שגדלות (v2_wa_raw, v2_usage, v2_audit) או גיבויים', credits: 'לולאה שחוזרת על עצמה, או לקוח שמריץ המון יצירות' };
-const FIX: Record<string, string> = { site: 'בדיקה חוזרת של האתר וה-API', api: 'בדיקה חוזרת של ה-API ובסיס הנתונים', jobs: 'החזרת העבודות שנכשלו בשעה האחרונה לתור עם ניסיון חוזר', stuck: 'שחרור הנעילות והרצת התור', wa: 'הרצת התור ובדיקה חוזרת של שליחות', storage: 'בדיקה חוזרת של האחסון', backup: 'הרצת הגיבוי מחדש', tenant: 'הרצת בדיקת ההפרדה מחדש', storage_use: 'אין תיקון אוטומטי: להגדיל את מכסת האחסון ב-Supabase או למחוק קבצי גלם ישנים', db_size: 'אין תיקון אוטומטי: להגדיל דיסק ב-Supabase או לנקות טבלאות לוג', credits: 'אין תיקון אוטומטי: לבדוק בהוצאות ושימוש איזה לקוח ואיזה משתמש' };
+const SEV: Record<string, string> = { site: 'crit', api: 'crit', wa: 'crit', jobs: 'high', stuck: 'mid', storage: 'high', backup: 'mid', tenant: 'crit', storage_use: 'high', db_size: 'high', credits: 'high', ai: 'crit', rate: 'high', publish: 'high', client: 'mid' };
+const CHK: Record<string, string> = { site: 'הדף הראשי לא ענה או לא החזיר את האפליקציה ב-2 בדיקות רצופות', api: 'פעולת health של v2-api נכשלה או שבסיס הנתונים איטי ב-2 בדיקות רצופות', jobs: '5 עבודות יצירה או יותר נכשלו בשעה האחרונה', stuck: '3 עבודות או יותר בסטטוס ריצה בלי התקדמות מעל 10 דקות', wa: '5 שליחות WhatsApp או יותר נכשלו בשעה האחרונה', storage: 'רשימת ה-buckets של האחסון לא נענתה', backup: 'הגיבוי השבועי נכשל', tenant: 'בדיקת ההפרדה בין לקוחות נכשלה', storage_use: 'האחסון עבר 95% ממכסת התוכנית (100GB)', db_size: 'בסיס הנתונים עבר 95% מהדיסק (8GB)', credits: 'שימוש ה-AI היום גדול פי 3 מהממוצע היומי של השבוע', ai: 'ספק AI (Anthropic, OpenAI או Gemini) לא ענה לבקשת בדיקה ב-2 בדיקות רצופות', rate: 'יותר מ-30% מעבודות הגרפיקה או הסרטונים נכשלו ב-3 השעות האחרונות (מינימום 3 כשלונות)', publish: '3 פרסומים או יותר נכשלו ב-24 השעות האחרונות', client: '20 שגיאות סקריפט או יותר בדפדפני משתמשים בשעה האחרונה' };
+const CAUSE: Record<string, string> = { site: 'תקלה ב-Vercel או פריסה שנכשלה', api: 'פונקציה שנפלה, או עומס על בסיס הנתונים', jobs: 'ספק AI לא זמין, או שינוי בקוד שגרם לשגיאות', stuck: 'ריצה שנקטעה באמצע והשאירה נעילות', wa: 'SmartSend לא זמין, או מספר שנחסם', storage: 'תקלה ב-Supabase Storage', backup: 'הפונקציה נכשלה באמצע או bucket הגיבוי לא נגיש', tenant: 'שינוי בקוד שפגע בבידוד; לטפל מיד', storage_use: 'קבצי גלם וסרטונים שלא נמחקו, או לקוח גדול חדש', db_size: 'טבלאות לוג שגדלות (v2_wa_raw, v2_usage, v2_audit) או גיבויים', credits: 'לולאה שחוזרת על עצמה, או לקוח שמריץ המון יצירות', ai: 'תקלה אצל הספק, מפתח שפג או חריגה ממכסה', rate: 'ספק AI איטי או מחזיר תשובות ריקות, או שינוי בקוד', publish: 'ערוץ שהחיבור שלו פג, או תקלה אצל ספק הפרסום', client: 'גרסה חדשה של האפליקציה עם באג בדפדפן' };
+const FIX: Record<string, string> = { site: 'בדיקה חוזרת של האתר וה-API', api: 'בדיקה חוזרת של ה-API ובסיס הנתונים', jobs: 'החזרת העבודות שנכשלו בשעה האחרונה לתור עם ניסיון חוזר', stuck: 'שחרור הנעילות והרצת התור', wa: 'הרצת התור ובדיקה חוזרת של שליחות', storage: 'בדיקה חוזרת של האחסון', backup: 'הרצת הגיבוי מחדש', tenant: 'הרצת בדיקת ההפרדה מחדש', storage_use: 'אין תיקון אוטומטי: להגדיל את מכסת האחסון ב-Supabase או למחוק קבצי גלם ישנים', db_size: 'אין תיקון אוטומטי: להגדיל דיסק ב-Supabase או לנקות טבלאות לוג', credits: 'אין תיקון אוטומטי: לבדוק בהוצאות ושימוש איזה לקוח ואיזה משתמש', ai: 'בדיקה חוזרת של הספקים', rate: 'בדיקה חוזרת; העבודות עצמן מופיעות כתקלות נפרדות עם תיקון לכל אחת', publish: 'אין תיקון אוטומטי: לבדוק את הערוץ של הלקוח', client: 'אין תיקון אוטומטי: לפתוח בקלוד עם השגיאות' };
 // one open incident per kind; a repeat only adds the latest note
 async function incident(d: DB, kind: string, note: string) {
   const { data: open } = await d.from('v2_incidents').select('id,detail').eq('kind', kind).eq('state', 'open').limit(1);
   if ((open ?? []).length) { await d.from('v2_incidents').update({ detail: { ...(open![0].detail ?? {}), note } }).eq('id', open![0].id); return; }
   await d.from('v2_incidents').insert({ kind, severity: SEV[kind] ?? 'mid', title: HE[kind] ?? kind, detail: { checked: CHK[kind] ?? '', note, cause: CAUSE[kind] ?? '', fix: FIX[kind] ?? '' } });
 }
-const HE: Record<string, string> = { site: 'האתר app.primeos.co.il', api: 'השרת (v2-api) ובסיס הנתונים', jobs: 'עבודות יצירה שנכשלו', stuck: 'עבודות יצירה תקועות', wa: 'שליחות WhatsApp שנכשלו', storage: 'אחסון הקבצים', backup: 'הגיבוי השבועי', tenant: 'ההפרדה בין לקוחות', storage_use: 'מכסת האחסון', db_size: 'גודל בסיס הנתונים', credits: 'שימוש AI חריג' };
+const HE: Record<string, string> = { site: 'האתר app.primeos.co.il', api: 'השרת (v2-api) ובסיס הנתונים', jobs: 'עבודות יצירה שנכשלו', stuck: 'עבודות יצירה תקועות', wa: 'שליחות WhatsApp שנכשלו', storage: 'אחסון הקבצים', backup: 'הגיבוי השבועי', tenant: 'ההפרדה בין לקוחות', storage_use: 'מכסת האחסון', db_size: 'גודל בסיס הנתונים', credits: 'שימוש AI חריג', ai: 'ספקי ה-AI', rate: 'שיעור כשלונות ביצירה', publish: 'פרסומים שנכשלו', client: 'שגיאות בדפדפן', job_fail: 'יצירה של לקוח שנכשלה' };
 
 async function checks(d: DB): Promise<Record<string, Check>> {
   const out: Record<string, Check> = {};
@@ -106,6 +106,40 @@ async function checks(d: DB): Promise<Record<string, Check>> {
     const runaway = cur > 20 && avg > 0 && cur > 3 * avg;
     out.credits = { ok: !runaway, warn: !runaway && cur > 20 && avg > 0 && cur > 2 * avg, note: `היום $${cur.toFixed(2)} · ממוצע יומי $${avg.toFixed(2)}` + (!runaway && cur > 2 * avg && cur > 20 ? ' · אזהרה' : '') };
   } catch (e) { out.credits = { ok: true, note: 'לא נמדד: ' + (e instanceof Error ? e.message : String(e)) }; }
+  // 10. the AI providers answer (a model list: no tokens spent)
+  try {
+    const probe = async (url: string, headers: Record<string, string>) => { const t0 = Date.now(); const r = await timed(10000, (signal) => fetch(url, { signal, headers })); await r.body?.cancel(); return { ok: r.ok, ms: Date.now() - t0, st: r.status }; };
+    const P: [string, string, Record<string, string>][] = [];
+    if (env('ANTHROPIC_API_KEY')) P.push(['Anthropic', 'https://api.anthropic.com/v1/models?limit=1', { 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' }]);
+    if (env('OPENAI_API_KEY')) P.push(['OpenAI', 'https://api.openai.com/v1/models', { authorization: 'Bearer ' + env('OPENAI_API_KEY') }]);
+    if (env('GEMINI_API_KEY')) P.push(['Gemini', 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', { 'x-goog-api-key': env('GEMINI_API_KEY') }]);
+    const rs = await Promise.all(P.map(([n, u, h]) => probe(u, h).then((x) => ({ n, ...x }), (e) => ({ n, ok: false, ms: 0, st: 0, e: e instanceof Error ? e.message : String(e) }))));
+    const bad = rs.filter((x) => !x.ok);
+    out.ai = { ok: !bad.length, ms: Math.max(0, ...rs.map((x) => x.ms)), note: rs.map((x) => `${x.n} ${x.ok ? 'תקין' : 'לא עונה ' + (x.st || '')}`).join(' · ') };
+  } catch (e) { out.ai = { ok: false, note: e instanceof Error ? e.message : String(e) }; }
+  // 11. failure rate of graphics and videos over 3 hours
+  try {
+    const since = new Date(Date.now() - 3 * 3600000).toISOString();
+    const { data: js } = await d.from('v2_jobs').select('kind,state,error').in('kind', ['graphic', 'video']).in('state', ['done', 'error']).gte('updated_at', since);
+    const rows = (js ?? []).filter((j: any) => !(j.error ?? '').startsWith('quota:'));
+    const part = (k: string) => { const a = rows.filter((j: any) => j.kind === k); const e = a.filter((j: any) => j.state === 'error').length; return { n: a.length, e }; };
+    const g = part('graphic'), v = part('video');
+    const high = (x: { n: number; e: number }) => x.e >= 3 && x.e / x.n > 0.3;
+    out.rate = { ok: !high(g) && !high(v), warn: g.e + v.e > 0 && !high(g) && !high(v), note: `גרפיקה ${g.e}/${g.n} נכשלו · סרטונים ${v.e}/${v.n} נכשלו (3 שעות)` };
+  } catch (e) { out.rate = { ok: true, note: 'לא נמדד: ' + (e instanceof Error ? e.message : String(e)) }; }
+  // 12. publishing that failed in the last day
+  try {
+    const { data: ps } = await d.from('v2_pub_posts').select('status,error').gte('updated_at', new Date(Date.now() - 86400000).toISOString());
+    const f = (ps ?? []).filter((x: any) => /fail|error/.test(String(x.status)) || (x.error && x.status !== 'cancelled' && x.status !== 'published')).length;
+    out.publish = { ok: f < 3, warn: f > 0 && f < 3, note: `${f} נכשלו מתוך ${(ps ?? []).length} (24 שעות)` };
+  } catch (e) { out.publish = { ok: true, note: 'לא נמדד: ' + (e instanceof Error ? e.message : String(e)) }; }
+  // 13. script errors reported by users' browsers
+  try {
+    const { count } = await d.from('v2_client_errors').select('id', { count: 'exact', head: true }).gte('created_at', hourAgo);
+    out.client = { ok: (count ?? 0) < 20, warn: (count ?? 0) >= 5 && (count ?? 0) < 20, note: `${count ?? 0} בשעה האחרונה` };
+    // two weeks are kept
+    await d.from('v2_client_errors').delete().lt('created_at', new Date(Date.now() - 14 * 86400000).toISOString());
+  } catch (e) { out.client = { ok: true, note: 'לא נמדד: ' + (e instanceof Error ? e.message : String(e)) }; }
   return out;
 }
 

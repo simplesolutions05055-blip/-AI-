@@ -6688,7 +6688,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   /* ---------------- incidents: what the monitor found, one "fix" per kind, and the security-event log ----------------
      Only the console (admin_users). Same parts as the rest of the console: request cards, row lists, stat tiles. */
   (function () {
-    const KN = { site: 'האתר', api: 'השרת ובסיס הנתונים', jobs: 'עבודות שנכשלו', stuck: 'עבודות תקועות', wa: 'שליחות WhatsApp', storage: 'אחסון', backup: 'גיבוי', tenant: 'הפרדה בין לקוחות', security: 'אבטחה' };
+    const KN = { site: 'האתר', api: 'השרת ובסיס הנתונים', jobs: 'עבודות שנכשלו', stuck: 'עבודות תקועות', wa: 'שליחות WhatsApp', storage: 'אחסון', backup: 'גיבוי', tenant: 'הפרדה בין לקוחות', security: 'אבטחה', job_fail: 'יצירה של לקוח', ai: 'ספקי ה-AI', rate: 'שיעור כשלונות ביצירה', publish: 'פרסומים', client: 'שגיאות בדפדפן', storage_use: 'מכסת האחסון', db_size: 'גודל בסיס הנתונים', credits: 'שימוש AI' };
     const SEV = { crit: ['s-rejected', 'קריטי'], high: ['s-fix', 'גבוה'], mid: ['s-pending', 'בינוני'], sec: ['s-scheduled', 'אבטחה'], ok: ['s-approved', 'תקין'] };
     const STT = { open: ['s-rejected', 'פתוחה'], fixed: ['s-approved', 'תוקנה'], resolved: ['s-approved', 'טופלה'], muted: ['s-archived', 'מושתקת'] };
     const SEC_T = { unauthorized: 'גישה לא מורשית', leak: 'דליפת מידע', integrity: 'אובדן או שינוי מידע', blocked: 'ניסיון פריצה שנחסם', other: 'אחר' };
@@ -6726,7 +6726,6 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           ...Object.entries(res).map(([k, c]) => ({ k, ok: !!c.ok, s: (c.ms ? c.ms + 'ms' : '') + (c.note ? (c.ms ? ' · ' : '') + c.note : '') })),
           { k: 'backup', ok: !!h.backup && !Object.values(h.backup.tables || {}).some((n) => n < 0), s: h.backup ? 'אחרון: ' + dt(h.backup.at) : 'עדיין לא רץ' },
           { k: 'tenant', ok: !h.tenant || !!h.tenant.ok, s: h.tenant ? (h.tenant.ok ? 'בדיקה יומית: תקין' : 'נכשלה ' + dt(h.tenant.at)) : 'עדיין לא רץ' },
-          { k: 'storage', ok: true, s: 'קבצים: ' + mb(h.storage_bytes) },
         ];
         return pageHead({ title: 'תקלות', actions: '<button class="btn" data-act="incSec">' + ic('shield', 16) + ' דיווח אירוע אבטחה</button><button class="btn btn-primary" data-act="incRun"' + (INC.busy.run ? ' disabled' : '') + '>' + ic('refresh', 16) + (INC.busy.run ? ' בודק...' : ' הרץ בדיקה עכשיו') + '</button>' }) +
           '<p class="t-sub" style="margin:-8px 0 16px">מה המוניטור מצא, מה נעשה ומה דורש טיפול. כל אירוע נשמר 30 יום ומשמש גם כיומן אירועי אבטחה.</p>' +
@@ -7031,5 +7030,69 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
     let tm = 0;
     new MutationObserver(() => { if (busy) return; clearTimeout(tm); tm = setTimeout(fix, 120); }).observe(document.body, { childList: true, subtree: true });
     apply(); fix();
+  })();
+
+  /* ---------------- live status, browser errors, new version ----------------
+     The sidebar light follows the monitor (green / orange / red); in the console it opens the incidents screen.
+     Script errors are sent to the server (the monitor counts them). A new release never reloads under the user:
+     a note offers the refresh. */
+  (function () {
+    const TXT = { ok: 'כל המערכות תקינות', warn: 'חלק מהמערכות בבדיקה', bad: 'יש תקלה, אנחנו מטפלים' };
+    const DOT = { ok: '#1FC764', warn: '#F5A524', bad: '#E5484D' };
+    const RING = { ok: 'rgba(31,199,100,.15)', warn: 'rgba(245,165,36,.18)', bad: 'rgba(229,72,77,.18)' };
+    let last = '';
+    function paint(r) {
+      const el = document.querySelector('.sys-status'); if (!el || !r) return;
+      const lv = TXT[r.level] ? r.level : 'ok';
+      const admin = L.kind === 'admin';
+      const t = admin && r.open ? TXT[lv] + ' · ' + r.open + ' תקלות פתוחות' : TXT[lv];
+      const key = lv + t + admin;
+      if (key === last) return; last = key;
+      el.innerHTML = '<i style="background:' + DOT[lv] + ';box-shadow:0 0 0 4px ' + RING[lv] + '"></i> ' + esc(t);
+      if (admin) { el.setAttribute('data-nav', 'a_incidents'); el.style.cursor = 'pointer'; el.title = 'מסך התקלות'; }
+    }
+    async function poll() {
+      if (!L.token || L.dead || L.demo) return;
+      try { paint(await call('sys.status', {})); } catch (e) {}
+    }
+    setTimeout(poll, 4000); setInterval(poll, 120000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+
+    // browser errors: at most 10 a page load, the same message once
+    const seen = new Set(); let sent = 0;
+    const ver = ((document.querySelector('script[src*="primeos-live.js"]') || {}).src || '').split('v=')[1] || '';
+    function report(msg, src, line, stack) {
+      try {
+        if (!L.token || L.dead || sent >= 10) return;
+        msg = String(msg || '').slice(0, 500);
+        if (!msg || /ResizeObserver|Script error\.?$|AbortError|aborted/i.test(msg) || seen.has(msg)) return;
+        seen.add(msg); sent++;
+        post(API, { action: 'client.error', payload: { msg, src: String(src || '').slice(0, 300), line: line || null, stack: String(stack || '').slice(0, 2000), route: (typeof S !== 'undefined' && S.route) || '', ver } }, 10000).catch(() => {});
+      } catch (e) {}
+    }
+    window.addEventListener('error', (e) => { if (e && e.message) report(e.message, e.filename, e.lineno, e.error && e.error.stack); });
+    window.addEventListener('unhandledrejection', (e) => { const r = e && e.reason; if (r && r.status) return; report(r && r.message ? r.message : String(r), '', null, r && r.stack); });
+
+    // a new release: the page keeps running; a note offers the refresh
+    let shown = false;
+    async function vcheck() {
+      if (shown || !ver || document.hidden) return;
+      try {
+        const html = await fetch('/?vcheck=' + Date.now(), { cache: 'no-store' }).then((r) => (r.ok ? r.text() : ''));
+        const m = /primeos-live\.js\?v=([a-z0-9]+)/.exec(html);
+        if (!m || m[1] === ver) return;
+        shown = true;
+        const box = document.getElementById('toasts'); if (!box) return;
+        const el = document.createElement('div');
+        el.className = 'toast';
+        el.innerHTML = '<span style="color:var(--ok);margin-top:1px">' + ic('refresh', 18) + '</span><div><div class="tt">יש גרסה חדשה</div><div class="ts">אפשר להמשיך לעבוד. לרענן כשנוח, העבודה השמורה לא תיפגע.</div></div><div class="tc"><button class="btn btn-sm">רענון</button><button class="icon-btn" style="width:26px;height:26px" aria-label="סגירה">' + ic('x', 14) + '</button></div>';
+        box.appendChild(el);
+        const b = el.querySelectorAll('button');
+        b[0].onclick = () => { try { if (typeof saveWizDraft === 'function') saveWizDraft(); } catch (e) {} location.reload(); };
+        b[1].onclick = () => { el.remove(); shown = false; setTimeout(vcheck, 3600000); };
+      } catch (e) {}
+    }
+    setInterval(vcheck, 300000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) vcheck(); });
   })();
 })();

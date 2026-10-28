@@ -840,6 +840,37 @@ async function incidentsLoad(d: DB) {
     health: { at: m.at ?? null, res: m.res ?? {}, backup: m.backup ?? null, tenant: m.tenant ?? null, load: m.load ?? null, history: (m.history ?? []).slice(-288), storage_bytes: sz ?? null },
   };
 }
+// the sidebar light: the platform checks for everyone; the console also counts open incidents
+const CORE = ['site', 'api', 'storage', 'wa'];
+async function sysStatus(d: DB, admin: boolean) {
+  const { data: st } = await d.from('admin_state').select('data').eq('id', 'monitor').maybeSingle();
+  const m = (st?.data ?? {}) as Record<string, any>;
+  const res = (m.res ?? {}) as Record<string, { ok: boolean; warn?: boolean }>;
+  const fresh = m.at ? Date.now() - new Date(m.at).getTime() < 15 * 60000 : false;
+  const coreBad = CORE.some((k) => res[k] && !res[k].ok && (m.bad?.[k] ?? 0) >= 2);
+  const anyBad = Object.values(res).some((c) => !c.ok), anyWarn = Object.values(res).some((c) => c.warn);
+  let level: 'ok' | 'warn' | 'bad' = coreBad ? 'bad' : (!fresh || (admin && (anyBad || anyWarn))) ? 'warn' : 'ok';
+  const out: Record<string, unknown> = { ok: true, level, at: m.at ?? null, fresh };
+  if (admin) {
+    const { data: inc } = await d.from('v2_incidents').select('severity').eq('state', 'open');
+    const open = (inc ?? []).length, crit = (inc ?? []).filter((i: any) => i.severity === 'crit').length;
+    if (crit) level = 'bad'; else if (open && level === 'ok') level = 'warn';
+    Object.assign(out, { level, open, crit });
+  }
+  return out;
+}
+// a script error in someone's browser: kept 14 days, counted by the monitor
+async function clientError(d: DB, s: any, p: Record<string, any>, req: Request) {
+  const t = (v: unknown, n: number) => (v == null ? null : String(v).slice(0, n));
+  const since = new Date(Date.now() - 3600000).toISOString();
+  // one browser cannot flood the table: 30 an hour per user
+  let q = d.from('v2_client_errors').select('id', { count: 'exact', head: true }).gte('created_at', since);
+  q = s.memberId ? q.eq('member_id', s.memberId) : q.eq('kind', 'admin');
+  const { count } = await q;
+  if ((count ?? 0) >= 30) return { ok: true, dropped: true };
+  await d.from('v2_client_errors').insert({ org_id: s.orgId ?? null, member_id: s.memberId ?? null, kind: s.kind, msg: t(p.msg, 500), src: t(p.src, 300), line: Number.isFinite(+p.line) ? +p.line : null, stack: t(p.stack, 2000), route: t(p.route, 60), ver: t(p.ver, 40), ua: t(req.headers.get('user-agent'), 200) });
+  return { ok: true };
+}
 // what "fix" does for each kind; returns the log lines and whether the check is clean afterwards
 async function incidentFix(d: DB, adminName: string, p: Record<string, any>) {
   const id = +p.id; if (!id) throw new Error('bad_id');
@@ -873,9 +904,16 @@ async function incidentFix(d: DB, adminName: string, p: Record<string, any>) {
   } else if (k === 'tenant') {
     const r = await monitorCall(d, 'tenant=1', 280000);
     clean = !!r?.ok; say(clean, clean ? 'בדיקת ההפרדה עברה' : 'הבדיקה נכשלה: ' + ((r?.fails ?? []) as string[]).join(' | '));
-  } else if (k === 'site' || k === 'api' || k === 'storage') {
+  } else if (k === 'site' || k === 'api' || k === 'storage' || k === 'ai' || k === 'rate') {
     const r = await monitorCall(d, 'run=1');
     const c = r?.res?.[k]; clean = !!c?.ok; say(clean, `בדיקה חוזרת: ${clean ? 'תקין' : 'עדיין לא עונה'}${c?.ms ? ' · ' + c.ms + 'ms' : ''}${c?.note ? ' · ' + c.note : ''}`);
+  } else if (k === 'job_fail') {
+    const jid = String(inc.detail?.job ?? '');
+    const { data: j } = jid ? await d.from('v2_jobs').select('id,org_id,state').eq('id', jid).maybeSingle() : { data: null };
+    if (!j) say(false, 'העבודה לא נמצאה (אולי נמחקה)');
+    else if (j.state === 'done') { clean = true; say(true, 'העבודה כבר הושלמה'); }
+    else if (j.state !== 'error') say(true, 'העבודה כבר בתור: ' + j.state);
+    else { const r = await jobRetry(d, j.org_id, j.id); say(r.ok, r.ok ? 'העבודה הוחזרה לתור. התקלה תיסגר מעצמה כשהיא תסתיים.' : 'ההחזרה לתור לא הצליחה'); }
   } else {
     say(false, 'לתקלה מסוג זה אין תיקון אוטומטי. לטפל ידנית או דרך קלוד.');
   }
@@ -1375,6 +1413,8 @@ Deno.serve(async (req) => {
     if ((action === 'live.load' || action === 'admin.load') && !s.session) return json(req, { error: 'session_required' }, 401);
     // the admin console has no server-side users: every admin call needs a browser session
     if (s.kind === 'admin' && !s.session) return json(req, { error: 'session_required' }, 401);
+    if (action === 'sys.status') return json(req, await sysStatus(d, s.kind === 'admin'));
+    if (action === 'client.error') return json(req, await clientError(d, s, p, req));
     if (action === 'upload.sign') return json(req, await uploadSign(d, s, p));
     if (action === 'file.sign') return json(req, await fileSign(d, s, p));
 
@@ -1466,6 +1506,8 @@ Deno.serve(async (req) => {
     const msg = e instanceof Error ? e.message : (e as any)?.message ?? 'internal_error';
     // a full subscription quota answers like produce does: 402 with the numbers, so the app shows the same message
     if (msg === 'quota' && (e as any)?.detail) return json(req, { error: 'quota', ...(e as any).detail }, 402);
-    return json(req, { error: msg }, msg === 'invalid_credentials' ? 401 : 500);
+    const code = msg === 'invalid_credentials' ? 401 : msg === 'forbidden' ? 403 : msg === 'not_found' ? 404 : msg !== 'internal_error' && /^[a-z][a-z0-9_]{1,40}$/.test(msg) ? 400 : 500;
+    if (code === 500) console.error('v2-api', action, msg);
+    return json(req, { error: msg }, code);
   }
 });
