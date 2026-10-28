@@ -67,10 +67,19 @@ async function claude(key: string, system: string, user: string | unknown[]) {
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model, max_tokens: 1200, system, messages: [{ role: 'user', content: user }] }),
     });
-    if (r.ok) { const d = await r.json(); logUse({ kind: 'claude', model, cin: d.usage?.input_tokens ?? 0, cout: d.usage?.output_tokens ?? 0 }); return (d.content ?? []).map((c: { text?: string }) => c.text ?? '').join(''); }
+    if (r.ok) {
+      const d = await r.json(); logUse({ kind: 'claude', model, cin: d.usage?.input_tokens ?? 0, cout: d.usage?.output_tokens ?? 0 });
+      const text = (d.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
+      if (text.trim()) return text;
+      // an empty answer (a refusal or a blank turn): the next model gets the same request
+      console.error('claude empty', model, d.stop_reason ?? '');
+      last = 'empty:' + (d.stop_reason ?? '');
+      continue;
+    }
     last = await r.text();
     if (r.status !== 404 && !(r.status === 400 && last.includes('model'))) break;
   }
+  if (last.startsWith('empty:')) return '';
   throw new Error('claude_api_error: ' + last.slice(0, 200));
 }
 
@@ -200,7 +209,15 @@ async function qaReview(ckey: string, b64: string, o: { brief: string; texts: st
     const m = raw.match(/\{[\s\S]*\}/);
     if (!m) { console.error('qa: no json', raw.slice(0, 200)); return null; }
     let j: any;
-    try { j = JSON.parse(m[0]); } catch { j = JSON.parse(m[0].replace(/([\u05d0-\u05ea])"(?=[\u05d0-\u05ea])/g, '$1\u05f4').replace(/,\s*([}\]])/g, '$1')); }
+    try { j = JSON.parse(m[0]); } catch {
+      try { j = JSON.parse(m[0].replace(/([\u05d0-\u05ea])"(?=[\u05d0-\u05ea])/g, '$1\u05f4').replace(/,\s*([}\]])/g, '$1')); }
+      catch {
+        // still broken (a quote inside a Hebrew sentence): keep the score and the hard stop, which is what decides the result
+        const sc = /"score"\s*:\s*(\d{1,3})/.exec(m[0]);
+        if (!sc) throw new Error('qa json');
+        j = { score: +sc[1], stop: /"stop"\s*:\s*true/.test(m[0]), redo: (/"redo"\s*:\s*"([^"]{0,500})/.exec(m[0]) ?? [])[1] ?? '', issues: [] };
+      }
+    }
     return { score: Math.max(0, Math.min(100, Math.round(+j.score || 0))), parts: j.parts ?? {}, issues: (Array.isArray(j.issues) ? j.issues : []).slice(0, 5).map(String), redo: String(j.redo ?? '').slice(0, 500), stop: !!j.stop, stopWhy: String(j.stopWhy ?? '').slice(0, 200), skeleton: j.skeleton && typeof j.skeleton === 'object' ? j.skeleton : undefined };
   } catch (e) { console.error('qa', e instanceof Error ? e.message : e); return null; }
 }
@@ -367,7 +384,11 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       if (!prompt && kit) {
         prompt = (await claude(ckey, KIT_DESIGNER, `Message brief (Hebrew): ${p.brief ?? ''}\nDepartment: ${p.dept ?? ''}\nFormat: ${fmt}\n${directive}\nTexts to place (exactly):\n${lines}\n${refs.length ? `Reference images attached: ${p.logo ? 'image 1 is the organisation logo; ' : ''}${nPhotos - (evLogo ? 1 : 0)} photo(s).` : 'No reference images.'}`)).trim();
       }
-      if (!prompt) throw new Error('designer_empty');
+      // still nothing: a plain prompt built from the same directive and texts, so the person still gets a graphic
+      if (!prompt) {
+        console.error('designer empty, plain prompt used');
+        prompt = `Design a finished ${fmt} social-media graphic for an Israeli organisation, in Hebrew (right-to-left).\n${directive}\nPlace exactly these Hebrew texts, spelled exactly, large and legible:\n${lines}\n${refs.length ? (p.logo ? 'Reference image 1 is the organisation logo: place it unchanged. ' : '') + 'Use the attached photos as the main imagery.' : 'Create fitting imagery for the message: ' + String(p.brief ?? '').slice(0, 300)}\nClean, professional layout with clear hierarchy, no extra text, no watermarks.`;
+      }
       const size = SIZES[p.size] ?? SIZES.square;
       const fixedTx = tpl ? ((tpl.slots ?? []) as any[]).filter((x) => x.fixed && x.text).map((x) => `"${x.text}"`) : [];
       const wantTxt = lines.replace(/^[a-z0-9 ]+: /gim, '') + (fixedTx.length ? '\n' + fixedTx.join('\n') : '');
@@ -410,9 +431,13 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       };
       // a weak result (missing / misspelled Hebrew, or a low review score) gets one more attempt with the reviewer's note (the edge
       // runtime allows 150s per call, two rounds fit); the best attempt wins: fewest text errors first, then the higher score
+      const tr0 = Date.now();
       const tries: Awaited<ReturnType<typeof round>>[] = [await round(prompt)];
+      // the edge runtime stops a call at 150s: a second round runs only when it fits (with the upload after it)
+      const roundMs = Date.now() - tr0;
+      const fits = () => Date.now() - t0 + roundMs * 1.15 < 138000;
       const weak = (r: typeof tries[0]) => issuesOf(r.check) > 0 || (r.qa && !r.qa.stop && r.qa.score < QA_REDO);
-      for (let k = 0; k < 1 && p.redo !== false && weak(tries[tries.length - 1]); k++) {
+      for (let k = 0; k < 1 && p.redo !== false && weak(tries[tries.length - 1]) && fits(); k++) {
         const last = tries[tries.length - 1];
         const note = [issuesOf(last.check) ? 'The previous attempt had Hebrew text errors: ' + (last.check.issues ?? []).join('; ') + '. Every text line must appear, spelled exactly.' : '', last.qa?.redo ? 'REVIEWER NOTE (must be applied): ' + last.qa.redo : ''].filter(Boolean).join('\n');
         const td = Date.now();
