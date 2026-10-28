@@ -126,7 +126,7 @@ const keyOfPhone = (raw: unknown) => {
 async function botOwner(d: DB, orgId: string, memberId: string | null) {
   if (!memberId) throw new Error('forbidden');
   const { data: me } = await d.from('org_members').select('id,role,view,phone').eq('id', memberId).eq('org_id', orgId).maybeSingle();
-  if (!me || !isManager(me) || me.view !== 'basic') throw new Error('forbidden');
+  if (!me) throw new Error('forbidden'); // any member manages their own extra phones; they act with that member's rights
   return me;
 }
 async function botPhonesList(d: DB, orgId: string, memberId: string | null) {

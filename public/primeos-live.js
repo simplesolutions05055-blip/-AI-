@@ -5326,7 +5326,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     SCREENS.whatsapp.nav.count = () => (L.demo ? waRequests.filter((r) => r.st === 'חדש').length : W.list.filter((r) => r.st === 'ממתין לאישור בריף' || r.st === 'ממתין לאישור').length);
     // a solo user (basic plan) lets up to 3 more phones write to the bot on the account
     const BP = { at: 0, busy: false, own: '', max: 3, list: [], err: '' };
-    const bpOn = () => !!(L.me && L.me.view === 'basic' && (L.me.role === 'owner' || L.me.role === 'admin'));
+    // every signed-in user (solo, organisation or department) may add up to 3 phones that work as them
+    const bpOn = () => !!(L.me && L.me.id && !L.demo);
     async function bpLoad(force) {
       if (!bpOn() || BP.busy || (!force && BP.at)) return;
       BP.busy = true;
@@ -5343,11 +5344,11 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         '<button class="icon-btn" data-act="bpDel:' + esc(x.id) + '" aria-label="הסרת המספר" title="הסרה">' + ic('x', 15) + '</button></div>').join('');
       return '<div class="card" style="margin-bottom:16px"><div class="card-head">' + ic('msg', 17) + '<h3>טלפונים שמחוברים לבוט</h3><span class="chip" style="margin-inline-start:auto">' + BP.list.length + ' מתוך ' + BP.max + '</span></div>' +
         '<div class="card-pad" style="display:flex;flex-direction:column;gap:12px">' +
-          '<span style="color:var(--ink-3)">עד ' + BP.max + ' מספרים נוספים יכולים לכתוב לבוט, ליצור תוצרים ולפרסם בשם החשבון שלך.' + (BP.own ? ' הטלפון של החשבון (<span dir="ltr" style="unicode-bidi:isolate">' + esc(BP.own) + '</span>) מחובר תמיד.' : '') + '</span>' +
+          '<span style="color:var(--ink-3)">עד ' + BP.max + ' מספרים נוספים יכולים לכתוב לבוט, ליצור תוצרים ולפרסם בשם המשתמש שלך, עם אותן הרשאות.' + (BP.own ? ' הטלפון של המשתמש (<span dir="ltr" style="unicode-bidi:isolate">' + esc(BP.own) + '</span>) מחובר תמיד.' : '') + '</span>' +
           (!BP.at ? '<div style="display:flex;gap:10px;align-items:center"><span class="gm-spin"></span> טוען...</div>' : (rows ? '<div class="row-list">' + rows + '</div>' : '')) +
           (BP.at && !full ? '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">' +
             '<div class="field" style="flex:1 1 160px;margin:0"><label for="bpName">שם</label><input type="text" id="bpName" placeholder="למשל: דנה מהמשרד" maxlength="60"></div>' +
-            '<div class="field" style="flex:1 1 160px;margin:0"><label for="bpPhone">טלפון נייד</label><input type="tel" id="bpPhone" dir="ltr" placeholder="050-1234567" inputmode="tel"></div>' +
+            '<div class="field" style="flex:1 1 160px;margin:0"><label for="bpPhone">טלפון נייד</label><input type="text" id="bpPhone" dir="ltr" style="text-align:start" placeholder="050-1234567" inputmode="tel" autocomplete="tel"></div>' +
             '<button class="btn btn-primary" data-act="bpAdd">' + ic('create', 16) + ' הוספת מספר</button></div>' : '') +
         '</div></div>';
     }
