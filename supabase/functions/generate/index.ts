@@ -54,15 +54,29 @@ async function claude(key: string, system: string, user: string, maxTokens = 150
       body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: extra.length ? [...extra, { type: 'text', text: user }] : user }] }),
     });
     if (res.ok) {
-      goodModel = model;
       const d = await res.json();
       logUse({ kind: 'claude', model, cin: d.usage?.input_tokens ?? 0, cout: d.usage?.output_tokens ?? 0 });
-      return (d.content ?? []).filter((c: { type: string }) => c.type === 'text').map((c: { text: string }) => c.text).join('');
+      const text = (d.content ?? []).filter((c: { type: string }) => c.type === 'text').map((c: { text: string }) => c.text).join('');
+      // an empty answer or a refusal from one model: the next model answers instead
+      if (!text.trim() || d.stop_reason === 'refusal') { console.error('claude empty', model, d.stop_reason); last = 'empty:' + d.stop_reason; continue; }
+      goodModel = model;
+      return text;
     }
     last = await res.text();
     if (res.status !== 404 && !(res.status === 400 && last.includes('model'))) break;
   }
   throw new Error('claude_api_error: ' + last.slice(0, 300));
+}
+
+// a JSON answer that never fails on the format: the plain answer first, and when it carries no readable JSON
+// (a prose reply, a refusal, a broken object) the same request again through a forced tool call
+async function claudeJson(key: string, system: string, user: string, maxTokens = 1500, extra: unknown[] = []): Promise<any> {
+  let raw = '';
+  try { raw = await claude(key, system, user, maxTokens, extra); return parseJson(raw); }
+  catch (e) {
+    console.error('json fallback', e instanceof Error ? e.message : e, raw.slice(0, 300));
+    return await claudeObj(key, system, user, Math.max(maxTokens, 2000), extra);
+  }
 }
 
 // a JSON answer through a forced tool call: the model fills a tool input, so the object always parses (no quote / fence / truncation repairs)
@@ -558,7 +572,7 @@ tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתו
     // a carousel: one post, several slides that tell one story
     if (mode === 'carousel') {
       const n = Math.max(2, Math.min(6, +p.slides || 4));
-      const raw = await claude(key, s, `אתה גם מעצב הפרסומים של הרשות. כתוב קרוסלה של ${n} שקפים לפוסט אחד ברשתות, ואת טקסט הפוסט שמתחתיה.
+      const raw = await claudeJson(key, s, `אתה גם מעצב הפרסומים של הרשות. כתוב קרוסלה של ${n} שקפים לפוסט אחד ברשתות, ואת טקסט הפוסט שמתחתיה.
 ${brief}
 
 החזר JSON בלבד:
@@ -566,7 +580,7 @@ ${brief}
 מבנה הקרוסלה: שקף 1 = הכותרת שהוזנה ואומר במפורש מה האירוע או הנושא; שקפים אמצעיים = פרט אחד או רעיון אחד לכל שקף (מה, מתי, איפה, למה כדאי); שקף אחרון = סיכום וקריאה לפעולה. כל שקף עומד בפני עצמו. רק עובדות מהבריף. כל פריט שמופיע בבריף מופיע באחד השקפים. אסור לכתוב על הגרפיקה "שקף X מתוך Y". details עד 2 לשקף, icons עד 3 לשקף או ריק.
 ${STYLE_PICK_HE}
 tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון, כולל אחד עם שם הרשות.`, 4000, fb);
-      const g = await faithful(key, brief, parseJson(raw));
+      const g = await faithful(key, brief, raw);
       g.style = styleOf(g.style); if (!PALETTE_MODES[g.palette as keyof typeof PALETTE_MODES]) delete g.palette;
       g.slides = (Array.isArray(g.slides) ? g.slides : []).slice(0, n);
       // a slide counter never reaches the graphic
@@ -575,7 +589,7 @@ tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתו
     }
 
     if (mode === 'graphic') {
-      const raw = await claude(key, s, `אתה גם מעצב הפרסומים של הרשות. כתוב את הטקסטים שיופיעו על גבי גרפיקה לרשתות, ואת טקסט הפוסט שמתחתיה.
+      const raw = await claudeJson(key, s, `אתה גם מעצב הפרסומים של הרשות. כתוב את הטקסטים שיופיעו על גבי גרפיקה לרשתות, ואת טקסט הפוסט שמתחתיה.
 ${brief}
 
 החזר JSON בלבד:
@@ -585,7 +599,7 @@ icons: עד 5 פריטים שמסבירים מה כולל / מה לעשות / מ
 ${p.keepStyle && styleOf(p.style) === p.style ? `style: חובה "${p.style}" (הסגנון של הגרפיקה הקיימת, לא לשנות).${p.palette ? ` palette: "${p.palette}".` : ''}` : STYLE_PICK_HE}
 kicker: לא "הודעה לתושבים" ולא "עדכון" כלליים, אלא אם אין שום נושא ספציפי.
 tags: 3-5 האשטגים בעברית, מילים מחוברות בקו תחתון (#פסטיבל_הסתיו), כולל אחד עם שם הרשות.`, 1500, fb);
-      const g = await faithful(key, brief, parseJson(raw));
+      const g = await faithful(key, brief, raw);
       if (Array.isArray(g.icons)) g.icons = (g.icons as unknown[]).slice(0, 5);
       g.style = styleOf(g.style); if (!PALETTE_MODES[g.palette as keyof typeof PALETTE_MODES]) delete g.palette;
       return json(req, { ok: true, ...g });
