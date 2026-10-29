@@ -51,7 +51,8 @@ async function claude(key: string, system: string, user: string, maxTokens = 150
     const res = await fetchRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: extra.length ? [...extra, { type: 'text', text: user }] : user }] }),
+      // room enough that a long answer is never cut in the middle of its JSON (only the tokens used are billed)
+      body: JSON.stringify({ model, max_tokens: Math.max(maxTokens, 4000), system, messages: [{ role: 'user', content: extra.length ? [...extra, { type: 'text', text: user }] : user }] }),
     });
     if (res.ok) {
       const d = await res.json();
