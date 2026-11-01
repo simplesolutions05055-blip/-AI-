@@ -123,8 +123,9 @@ async function advance(d: DB, j: Job) {
         if (b.musicPrompt && inp.music !== false) p.music = await httpLater(d, FN('generate'), token, { mode: 'vmusic', prompt: b.musicPrompt, seconds: Math.min(95, est + 4) }, 170000);
         const stockQ = scenes.map((s, i) => ({ i, src: String(s.visual?.src ?? '') })).filter((x) => /^stockv?:/.test(x.src));
         if (stockQ.length) p.stock = await httpLater(d, FN('generate'), token, { mode: 'vstock', format: inp.format || '9x16', queries: stockQ.map((x) => ({ q: x.src.replace(/^stockv?:/, ''), v: /^stockv:/.test(x.src) })) }, 170000);
-        const ai = scenes.map((s, i) => ({ i, src: String(s.visual?.src ?? '') })).filter((x) => /^ai:/.test(x.src)).slice(0, 6);
-        for (const x of ai) p['ai' + x.i] = await httpLater(d, FN('image'), token, { title: inp.title || '', brief: x.src.slice(3) + '\nהקשר: ' + (inp.desc || ''), dept: inp.dept || '', size: inp.format === '16x9' ? 'landscape' : inp.format === '1x1' ? 'square' : 'portrait', quality: 'high' }, 170000);
+        // AI stills; a scene that becomes an AI clip (aiv:) gets its still first, the clip is made from it
+        const ai = scenes.map((s, i) => ({ i, src: String(s.visual?.src ?? '') })).filter((x) => /^aiv?:/.test(x.src)).slice(0, 8);
+        for (const x of ai) p['ai' + x.i] = await httpLater(d, FN('image'), token, { title: inp.title || '', brief: x.src.replace(/^aiv?:/, '') + '\nהקשר: ' + (inp.desc || ''), dept: inp.dept || '', size: inp.format === '16x9' ? 'landscape' : inp.format === '1x1' ? 'square' : 'portrait', quality: 'high' }, 170000);
         // an edit of the person's footage: the clips that keep their sound get a cleaned copy (wind and hum removed)
         const eclips: any[] = Array.isArray(inp.clips) ? inp.clips : [];
         if (eclips.length && inp.clean !== false) {
@@ -158,7 +159,7 @@ async function advance(d: DB, j: Job) {
           }
         }
         if (/^stockv?:/.test(src)) { const k = stockQ.findIndex((x) => x.i === i); const it = stockItems[k]; if (it && it.src) return { ...base, kind: it.v ? 'video' : 'image', src: it.src }; }
-        if (/^ai:/.test(src) && ok(res['ai' + i]) && res['ai' + i].json.url) return { ...base, kind: 'image', src: res['ai' + i].json.url };
+        if (/^aiv?:/.test(src) && ok(res['ai' + i]) && res['ai' + i].json.url) return { ...base, kind: 'image', src: res['ai' + i].json.url };
         return { ...base, kind: src === 'color' ? 'color' : 'gradient' };
       });
       // the shape of every clip (a landscape clip in a vertical video is shown whole, not cut to its middle)
@@ -193,6 +194,45 @@ async function advance(d: DB, j: Job) {
       data.plan = { format: inp.format || '9x16', fps: 30, brand, font: b.font, mood: b.mood, fx: b.fx, scenes: sc, outro: { dur: 3.6, ...(b.outro || {}), ...(inp.outro || {}) }, captions: { style: b.captions || 'karaoke', words: capWords }, audio: music && music.src ? { music: { src: music.src } } : {}, showLogo: true };
       if (inp.toggles && inp.toggles.outro === false) delete data.plan.outro;
       data.thumb = ((vis.find((v: any) => v.kind === 'image') || {}) as any).src || '';
+      // AI clips: every aiv scene with a still goes to the clip step; the still stays as the fallback
+      const aiv = scenes.map((s, i) => ({ i, src: String(s.visual?.src ?? '') })).filter((x) => /^aiv:/.test(x.src) && vis[x.i]?.kind === 'image').slice(0, 3)
+        .map((x) => ({ i: x.i, image: (vis[x.i] as any).src, prompt: x.src.slice(4), sec: sc[x.i].dur }));
+      if (aiv.length) { data.aiv = aiv; return go('clips'); }
+      return go('start');
+    }
+    if (j.step === 'clips') {
+      const aiv: any[] = data.aiv || [];
+      if (!data.creq) {
+        if (!ids.length) {
+          const p: Record<string, number> = {};
+          for (const x of aiv) p['c' + x.i] = await httpLater(d, FN('generate'), token, { mode: 'vclip', image: x.image, prompt: x.prompt, sec: x.sec, format: inp.format || '9x16' }, 60000);
+          return upd(d, j, { data, pend: p, next_at: later(10) });
+        }
+        const creq: Record<string, any> = {};
+        for (const x of aiv) { const r = res['c' + x.i]; if (ok(r) && r.json.id) creq[x.i] = { id: r.json.id, model: r.json.model, sec: r.json.sec }; else console.error('clip submit', x.i, r && r.json); }
+        data.creq = creq; data.cdone = {}; data.cat = Date.now();
+        return upd(d, j, { data, pend: {}, next_at: later(40), lock_until: new Date().toISOString() });
+      }
+      const waiting = Object.keys(data.creq).filter((k) => !(k in data.cdone));
+      // a clip that takes too long is dropped: the scene keeps its still and the video goes on
+      if (waiting.length && Date.now() - (data.cat || 0) < 12 * 60000) {
+        if (!ids.length) {
+          const p: Record<string, number> = {};
+          for (const k of waiting) p['g' + k] = await httpLater(d, FN('generate'), token, { mode: 'vclipget', ...data.creq[k] }, 120000);
+          return upd(d, j, { data, pend: p, next_at: later(8) });
+        }
+        for (const k of waiting) {
+          const r = res['g' + k];
+          if (ok(r) && r.json.state === 'done' && r.json.src) data.cdone[k] = r.json.src;
+          else if (ok(r) && r.json.state === 'failed') { data.cdone[k] = ''; console.error('clip failed', k, r.json.why); }
+        }
+        if (Object.keys(data.creq).some((k) => !(k in data.cdone))) return upd(d, j, { data, pend: {}, next_at: later(20), lock_until: new Date().toISOString() });
+      }
+      for (const k of Object.keys(data.cdone || {})) {
+        const src = data.cdone[k];
+        const sc = data.plan?.scenes?.[+k];
+        if (src && sc) sc.visual = { ...sc.visual, kind: 'video', src, motion: 'static', ar: undefined };
+      }
       return go('start');
     }
     if (j.step === 'start') {

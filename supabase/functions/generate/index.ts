@@ -8,6 +8,9 @@ import JSZip from 'https://esm.sh/jszip@3.10.1';
 import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScenes, musicTrack, stock, VOICES, scribe, isolateVoice, scanGemini, geminiKey, scanClaudeParts, SCAN_JSON_HE, SCAN_SYS, editorPrompt, EDIT_PACKS, packFor } from './video.ts';
 import { STYLE_PICK_HE, styleOf, PALETTE_MODES, DOC_RULES_HE, DOC_TYPES, DECK_RULES_HE, DECK_STYLES, VIDEO_RULES_HE, QA_PASS } from './design.ts';
 import { REVIEW_SYS, reviewPrompt } from './agency.ts';
+import { clipSubmit, clipStatus, clipStore, clipModel } from './higgs.ts';
+// organisations that get AI video clips before everyone (the test account)
+const AIV_ORGS = ['82ce4b4e-2bdd-41d2-8efc-b1f4987df994'];
 
 const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-7-sonnet-latest'];
 let goodModel: string | null = null;
@@ -634,6 +637,9 @@ ${brief}
         logVoice(clips, says);
         return json(req, { ok: true, clips });
       }
+      // AI video clips: on for the test organisation first, then for everyone with AIV_ALL=1
+      c.higgs = c.higgs && (Deno.env.get('AIV_ALL') === '1' || AIV_ORGS.includes(CUR.org ?? ''));
+      p.aiv = c.higgs;
       const imgs = await fileBlocks(((p.media ?? []) as any[]).filter((m) => !m.v).map((m) => ({ url: m.url, name: m.name || m.url })));
       const ask = () => claudeObj(key, DIRECTOR_SYS + '\n' + VIDEO_RULES_HE + '\n' + s, directorPrompt(p, c, voices), 8000, [...imgs, ...fb], BRIEF_SCHEMA);
       let plan: any;
@@ -724,6 +730,18 @@ ${SCAN_JSON_HE}
       const r: any = await musicTrack(database, CUR.org ?? '', String(p.prompt ?? ''), sec);
       if (r && r.src) logUse({ kind: 'music', model: 'music_v1', music_sec: Math.round(Math.min(sec, 300)) });
       return json(req, { ok: true, ...r });
+    }
+    // ---- AI video clips (Higgsfield): start one from a still, then ask until it is ready and keep our own copy ----
+    if (mode === 'vclip') {
+      const r = await clipSubmit({ image: String(p.image ?? ''), prompt: String(p.prompt ?? ''), sec: +p.sec || 5, format: String(p.format ?? '9x16'), model: p.model ? String(p.model) : undefined });
+      return json(req, { ok: true, ...r });
+    }
+    if (mode === 'vclipget') {
+      const st = await clipStatus(String(p.id ?? ''));
+      if (st.state !== 'done') return json(req, { ok: true, ...st });
+      const src = await clipStore(database, CUR.org ?? '', st.url!);
+      logUse({ kind: 'clip', model: clipModel(p.model ? String(p.model) : undefined), render_sec: Math.round(+p.sec || 0) });
+      return json(req, { ok: true, state: 'done', src });
     }
     if (mode === 'vstock') {
       const items = await stock(database, CUR.org ?? '', (p.queries ?? []) as any[], String(p.format ?? '9x16'));

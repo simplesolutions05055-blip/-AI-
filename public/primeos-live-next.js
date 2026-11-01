@@ -4229,6 +4229,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const s = String(src || '');
       if (/^upload:(\d+)/.test(s)) { const m = (v.imgs || [])[+RegExp.$1]; return (m && m.v ? 'קטע שהעליתם' : 'תמונה שהעליתם') + (m && m.name ? '<small>' + esc(m.name) + '</small>' : ''); }
       if (/^clip:/.test(s)) return 'מהסרטון שלכם<small>משנייה ' + esc(s.slice(5)) + '</small>';
+      if (/^aiv:/.test(s)) return 'קליפ וידאו AI<small dir="ltr">' + esc(s.slice(4, 90)) + '</small>';
       if (/^ai:/.test(s)) return 'תמונת AI<small dir="ltr">' + esc(s.slice(3, 90)) + '</small>';
       if (/^stockv:/.test(s)) return 'וידאו סטוק<small dir="ltr">' + esc(s.slice(7, 60)) + '</small>';
       if (/^stock:/.test(s)) return 'צילום סטוק<small dir="ltr">' + esc(s.slice(6, 60)) + '</small>';
@@ -4291,7 +4292,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         else if ((m = /^upload:(\d+)/.exec(src)) && media[+m[1]]) { const u = media[+m[1]]; out[i] = Object.assign(base, { kind: u.v ? 'video' : 'image', src: u.url }); }
         else if ((m = /^clip:([\d.]+)/.exec(src)) && v.clip && v.clip.url) out[i] = Object.assign(base, { kind: 'video', src: v.clip.url, trimStart: +m[1] });
         else if (/^stockv?:/.test(src)) stockQ.push({ i, q: src.replace(/^stockv?:/, ''), v: /^stockv:/.test(src), base });
-        else if (/^ai:/.test(src)) ai.push({ i, q: src.slice(3), base });
+        else if (/^aiv?:/.test(src)) ai.push({ i, q: src.replace(/^aiv?:/, ''), base });
         else out[i] = Object.assign(base, { kind: src === 'color' ? 'color' : 'gradient' });
       });
       const jobs = [];

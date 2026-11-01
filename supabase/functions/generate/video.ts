@@ -74,6 +74,7 @@ export function directorPrompt(p: Record<string, any>, c: ReturnType<typeof caps
   if (p.style === 'existing') src.push('"clip:<שנייה בסרטון המקורי>" - קטע מהסרטון שהמשתמש העלה, מתחיל בשנייה שתבחר (סרטון המקור באורך ' + (p.clipSec || 'לא ידוע') + ' שניות)');
   if ((p.media ?? []).length) src.push('"upload:<מספר>" - חומר שהמשתמש העלה (התמונות מצורפות כדי שתראה אותן)');
   if (p.style !== 'existing') src.push('"ai:<English image prompt>" - תמונה שתיווצר ב-AI. תאר צילום ריאליסטי בישראל, בלי טקסט בתמונה');
+  if (c.higgs && p.style !== 'existing') src.push('"aiv:<English prompt: the still photo, then the motion in it>" - קליפ וידאו אמיתי שנוצר ב-AI (תמונה ריאליסטית שמתעוררת לחיים: אנשים זזים, מים זורמים, מצלמה נעה). תאר את הצילום ואת התנועה בו, בלי טקסט בתמונה. עד 3 סצנות כאלה בסרטון, לרגעים החזקים ביותר (פתיחה, שיא), סצנה של 3-6 שניות');
   if (c.pexels) src.push('"stock:<English search query>" - צילום סטוק אמיתי (מילות חיפוש קצרות באנגלית, 2-4 מילים)', '"stockv:<English search query>" - קטע וידאו סטוק אמיתי (מילות חיפוש קצרות באנגלית)');
   src.push('"studio" - רקע לבן פנינה יוקרתי וחלק כמו צילום סטודיו (הטקסט עליו כהה). ברירת המחדל לסצנה של טקסט בלבד, רשימה, שלבים או נתון', '"mockup:phone" - טלפון נייד על רקע סטודיו עם הלוגו של הארגון על המסך. חובה כשמדברים על אפליקציה, אתר או שירות דיגיטלי', '"gradient" - רקע מונפש כהה בצבעי המותג (רק לרגע שיא אחד או לפתיחה)', '"color" - רקע צבע אחיד כהה');
   const vlist = voices.map((v) => `${v.id} | ${v.n} | ${v.g === 'm' ? 'גבר' : 'אישה'} | ${v.tone}`).join('\n');
@@ -147,11 +148,14 @@ export function sanitizeBrief(j: any, p: Record<string, any>, voices: Voice[]) {
   // an edit has captions from the clips' own speech even without narration, and a speaker's sentence may run longer
   const captionsOn = (p.captionsOn ?? p.voice !== false) && j.captions !== 'none';
   const maxDur = Math.max(8, Math.min(15, +p.maxDur || 8));
+  // AI video clips: only where they are switched on, at most 3 a video (cost); any other one stays an AI still
+  let aivN = 0;
+  const aivSrc = (src: string) => (/^aiv:/.test(src) ? (p.aiv && aivN++ < 3 ? src : 'ai:' + src.slice(4)) : src);
   const scenes = (Array.isArray(j.scenes) ? j.scenes : []).slice(0, 30).map((s: any) => ({
     dur: Math.max(1.2, Math.min(maxDur, +s.dur || 3)),
     // the clip's own speech and the narration never talk at the same time: the real voice wins
     say: p.voice === false || s.clipAudio ? '' : cleanSay(String(s.say ?? '').slice(0, 300)),
-    visual: { src: String(s.visual?.src ?? 'gradient').slice(0, 400), motion: s.visual?.motion, tint: Math.max(0, Math.min(0.25, +s.visual?.tint || 0.12)) },
+    visual: { src: aivSrc(String(s.visual?.src ?? 'gradient').slice(0, 400)), motion: s.visual?.motion, tint: Math.max(0, Math.min(0.25, +s.visual?.tint || 0.12)) },
     // captions own the bottom of the frame: on-screen text moves to the centre so the two never overlap
     text: s.text && (Array.isArray(s.text.lines) || Array.isArray(s.text.items)) ? { ...s.text, lines: Array.isArray(s.text.lines) ? s.text.lines : [], style: TEXT_STYLES.includes(s.text.style) ? s.text.style : 'headline', pos: captionsOn && (s.text.pos === 'bottom' || s.text.pos === 'lower') ? 'center' : s.text.pos, items: Array.isArray(s.text.items) ? s.text.items.slice(0, 6).map((x: any) => ({ t: String(x?.t ?? '').slice(0, 80), sub: x?.sub ? String(x.sub).slice(0, 80) : undefined })) : undefined } : undefined,
     transition: s.transition,
