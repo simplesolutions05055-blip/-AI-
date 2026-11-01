@@ -108,10 +108,12 @@ async function checks(d: DB): Promise<Record<string, Check>> {
   } catch (e) { out.credits = { ok: true, note: 'לא נמדד: ' + (e instanceof Error ? e.message : String(e)) }; }
   // 10. the AI providers answer (a model list: no tokens spent)
   try {
-    const probe = async (url: string, headers: Record<string, string>) => { const t0 = Date.now(); const r = await timed(10000, (signal) => fetch(url, { signal, headers })); await r.body?.cancel(); return { ok: r.ok, ms: Date.now() - t0, st: r.status }; };
+    const probe = async (url: string, headers: Record<string, string>) => { const t0 = Date.now(); const r = await timed(10000, (signal) => fetch(url, { signal, headers })); await r.body?.cancel(); return { ok: r.ok || (url.includes('higgsfield') && r.status === 404), ms: Date.now() - t0, st: r.status }; };
     const P: [string, string, Record<string, string>][] = [];
     if (env('ANTHROPIC_API_KEY')) P.push(['Anthropic', 'https://api.anthropic.com/v1/models?limit=1', { 'x-api-key': env('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' }]);
     if (env('OPENAI_API_KEY')) P.push(['OpenAI', 'https://api.openai.com/v1/models', { authorization: 'Bearer ' + env('OPENAI_API_KEY') }]);
+    // Higgsfield has no free account endpoint: the status of a request that does not exist answers 404 with a good key, 401/403 with a bad one
+    if (env('HIGGSFIELD_API_KEY')) P.push(['Higgsfield', 'https://api.higgsfield.ai/requests/00000000-0000-4000-8000-000000000000/status', { authorization: 'Key ' + env('HIGGSFIELD_API_KEY') }]);
     if (env('GEMINI_API_KEY')) P.push(['Gemini', 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', { 'x-goog-api-key': env('GEMINI_API_KEY') }]);
     const rs = await Promise.all(P.map(([n, u, h]) => probe(u, h).then((x) => ({ n, ...x }), (e) => ({ n, ok: false, ms: 0, st: 0, e: e instanceof Error ? e.message : String(e) }))));
     const bad = rs.filter((x) => !x.ok);
