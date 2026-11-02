@@ -1,6 +1,6 @@
 // Sends each run's summary (and the pictures that are new or changed) to the staging qa helper,
 // so the result can be read without opening GitHub.
-import type { Reporter, TestCase, TestResult, FullResult } from '@playwright/test/reporter';
+import type { Reporter, TestCase, TestResult, FullResult, Suite, FullConfig } from '@playwright/test/reporter';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { qa } from './helpers';
@@ -11,13 +11,17 @@ export default class QaReporter implements Reporter {
   private t0 = Date.now();
   private passed = 0; private failed = 0; private flaky = 0; private skipped = 0;
   private failures: { test: string; error: string }[] = [];
-  onTestEnd(test: TestCase, result: TestResult) {
-    const o = test.outcome();
-    if (result.retry < test.retries && result.status !== 'passed' && o !== 'flaky') return;
-    if (o === 'expected') this.passed++; else if (o === 'flaky') this.flaky++; else if (o === 'skipped') this.skipped++;
-    else { this.failed++; this.failures.push({ test: test.titlePath().slice(1).join(' > '), error: (result.error?.message || '').replace(/\u001b\[[0-9;]*m/g, '').slice(0, 600) }); }
-  }
+  private suite?: Suite;
+  onBegin(_c: FullConfig, suite: Suite) { this.suite = suite; }
+  onTestEnd(_t: TestCase, _r: TestResult) { /* counted once at the end, after retries */ }
   async onEnd(_r: FullResult) {
+    for (const test of this.suite?.allTests() ?? []) {
+      const o = test.outcome();
+      const last = test.results[test.results.length - 1];
+      if (!last) continue;
+      if (o === 'expected') this.passed++; else if (o === 'flaky') this.flaky++; else if (o === 'skipped') this.skipped++;
+      else { this.failed++; this.failures.push({ test: test.titlePath().slice(1).join(' > '), error: (last.errors.map((e) => e.message || '').join(' | ') || '').replace(/\u001b\[[0-9;]*m/g, '').slice(0, 600) }); }
+    }
     if (!this.passed && !this.failed && !this.flaky && !this.skipped) return; // a listing, not a run
     const sha = (process.env.GITHUB_SHA || 'local').slice(0, 12);
     const shots: { name: string; url: string; kind: string }[] = [];

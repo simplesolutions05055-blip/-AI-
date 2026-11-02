@@ -3,6 +3,8 @@ import { test, expect } from '@playwright/test';
 import { login, navRoutes, goTo, watchErrors, expectNoSideScroll, type Who } from '../helpers';
 
 const USERS: Who[] = ['manager', 'dept', 'solo'];
+// one test walks every screen of a user
+test.describe.configure({ timeout: 240_000 });
 
 for (const who of USERS) {
   test(`${who}: all screens`, async ({ page }) => {

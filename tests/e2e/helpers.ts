@@ -30,10 +30,13 @@ export async function login(page: Page, who: Who) {
   await skipOnboarding(page);
 }
 
-// the first-run questionnaire of a new organisation
+// the first-run questionnaire of a new organisation (it opens a moment after the dashboard)
 export async function skipOnboarding(page: Page) {
-  const skip = page.getByText('דילוג על השאלון');
-  if (await skip.isVisible().catch(() => false)) { await skip.click(); await page.waitForTimeout(300); }
+  const skip = page.locator('.dq-skipall');
+  try { await skip.waitFor({ state: 'visible', timeout: 3000 }); } catch { return; }
+  await skip.click();
+  await skip.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(300);
 }
 
 // the screens in the side menu for whoever is signed in
