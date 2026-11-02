@@ -49,3 +49,7 @@ supabase/.branches/
 # Remotion bundle (built in npm run build)
 api/_video/
 video/_*.mjs
+
+# browser tests
+tests/e2e/node_modules/
+tests/e2e/results/

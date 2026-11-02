@@ -1,0 +1,57 @@
+name: Browser tests (staging)
+
+# Runs the Playwright suite against the staging site (primeos-staging.vercel.app), never the live one.
+# After every push it waits until Vercel serves that commit, then tests it. Nightly it runs again.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: e2e
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  e2e:
+    if: "!contains(github.event.head_commit.message, 'Test reference pictures')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Wait for the staging site to serve this commit
+        if: github.event_name == 'push'
+        run: |
+          for i in $(seq 1 60); do
+            v=$(curl -fsS "https://primeos-staging.vercel.app/version.json?t=$(date +%s)" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p' || true)
+            if [ "$v" = "$GITHUB_SHA" ]; then echo "staging is on $v"; exit 0; fi
+            sleep 10
+          done
+          echo "staging did not reach $GITHUB_SHA in 10 minutes"; exit 1
+      - name: Install
+        working-directory: tests/e2e
+        run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+      - name: Test
+        working-directory: tests/e2e
+        run: npx playwright test
+      - name: Keep new reference pictures
+        if: always()
+        run: |
+          git add tests/e2e/specs/__screens__ || true
+          if ! git diff --cached --quiet; then
+            git -c user.name="Simple Solutions" -c user.email="simple.solutions05055@gmail.com" commit -m "Test reference pictures"
+            git push origin HEAD:main || true
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-results
+          path: tests/e2e/results
+          retention-days: 14

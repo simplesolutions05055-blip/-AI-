@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/build-ui.mjs && vite",
-    "build": "node scripts/sync-design.mjs && node scripts/build-ui.mjs && node video/scripts/bundle.mjs && vite build",
+    "build": "node scripts/sync-design.mjs && node scripts/build-ui.mjs && node video/scripts/bundle.mjs && vite build && node scripts/version.mjs",
     "preview": "vite preview",
     "typecheck:api": "tsc -p tsconfig.api.json --noEmit",
     "typecheck": "node --check public/primeos-live.js && node --check scripts/build-ui.mjs",
