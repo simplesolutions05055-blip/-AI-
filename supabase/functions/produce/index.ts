@@ -4,13 +4,15 @@
 // POST { brand, jobs:[{ id, kind, ...render params }] }   header x-primeos-token
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
-const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
+const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 const cors = (req: Request) => {
   const o = req.headers.get('origin') ?? '';
   return { 'access-control-allow-origin': ORIGINS.includes(o) ? o : ORIGINS[0], 'access-control-allow-headers': 'content-type, x-primeos-token, apikey, authorization', 'access-control-allow-methods': 'POST, OPTIONS', vary: 'origin' };
 };
 const json = (req: Request, b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors(req), 'content-type': 'application/json; charset=utf-8' } });
-const RENDER_URL = Deno.env.get('PRIMEOS_RENDER_URL') ?? 'https://app.primeos.co.il/api/render';
+// the test environment (Supabase branch 'staging') runs this same code: anything that is not the live project is staging
+const IS_STAGING = !(Deno.env.get('SUPABASE_URL') ?? '').includes('tgropjisnheppsxejfdn');
+const RENDER_URL = Deno.env.get('PRIMEOS_RENDER_URL') ?? (IS_STAGING ? 'https://primeos-staging.vercel.app/api/render' : 'https://app.primeos.co.il/api/render');
 const OUTS: Record<string, [string, string][]> = {
   graphic: [['main', 'jpg']], doc: [['main', 'pdf'], ['docx', 'docx'], ['p1', 'jpg']],
   deck: [['main', 'pdf'], ['pptx', 'pptx'], ...Array.from({ length: 12 }, (_, i) => ['s' + (i + 1), 'jpg'] as [string, string])],
@@ -65,7 +67,7 @@ Deno.serve(async (req) => {
       statusUpload = s.data.signedUrl;
       statusUrl = d.storage.from('v2-content').getPublicUrl(sp).data.publicUrl;
     }
-    const r = await fetch(RENDER_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token }, body: JSON.stringify({ brand: p.brand ?? {}, jobs, async, statusUpload }) });
+    const r = await fetch(RENDER_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...(IS_STAGING ? { 'x-primeos-backend': 'staging' } : {}) }, body: JSON.stringify({ brand: p.brand ?? {}, jobs, async, statusUpload }) });
     const txt = await r.text();
     let res: any;
     try { res = JSON.parse(txt); } catch { throw new Error('render_bad_response ' + r.status + ' ' + txt.slice(0, 200)); }

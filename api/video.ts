@@ -1,3 +1,4 @@
+import { B, withBackend } from './_shared/backend.js';
 // PrimeOS video renderer: renders a director plan (video/src) with Remotion inside a Vercel Sandbox.
 // POST { action:'start', plan, upload, url }            -> { sandboxId, cmdId }
 // POST { action:'status', sandboxId, cmdId, upload, url } -> { stage, progress, url? }
@@ -8,17 +9,15 @@ import { Sandbox } from '@vercel/sandbox';
 import { PREP_SCRIPT } from './_prep/prep.js';
 import { addBundleToSandbox, createSandbox, getRenderProgress } from '@remotion/vercel';
 
-const SUPA_URL = process.env.VITE_SUPABASE_URL || 'https://tgropjisnheppsxejfdn.supabase.co';
-const SUPA_ANON = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_uwGM_HAjV28gchyFZHqZGg_9LjXwIJ-';
 const OUT = '/tmp/prime.mp4';
-const UP_PREFIX = `${SUPA_URL}/storage/v1/object/upload/sign/v2-content/`;
-const PUB_PREFIX = `${SUPA_URL}/storage/v1/object/public/v2-content/`;
+const UP_PREFIX = () => `${B().url}/storage/v1/object/upload/sign/v2-content/`;
+const PUB_PREFIX = () => `${B().url}/storage/v1/object/public/v2-content/`;
 const json = (b: unknown, s = 200) => Response.json(b, { status: s, headers: { 'cache-control': 'no-store' } });
 
 async function api(token: string, action: string, payload: unknown = {}) {
-  const r = await fetch(`${SUPA_URL}/functions/v1/v2-api`, {
+  const r = await fetch(`${B().url}/functions/v1/v2-api`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', apikey: SUPA_ANON, authorization: `Bearer ${SUPA_ANON}`, 'x-primeos-token': token },
+    headers: { 'content-type': 'application/json', apikey: B().anon, authorization: `Bearer ${B().anon}`, 'x-primeos-token': token },
     body: JSON.stringify({ action, payload }),
   });
   return r.ok ? await r.json() : null;
@@ -31,7 +30,7 @@ async function quotaTake(token: string, kind: string, qty: number, ref: string) 
 }
 
 // media the sandbox may fetch: our storage and the stock/AI providers the director uses
-const HOSTS = [new URL(SUPA_URL).host, 'images.pexels.com', 'videos.pexels.com', 'v3.fal.media', 'fal.media', 'cdn.higgsfield.ai'];
+const HOSTS = ['tgropjisnheppsxejfdn.supabase.co', 'lcbiktjrjcygxbteqaiu.supabase.co', 'images.pexels.com', 'videos.pexels.com', 'v3.fal.media', 'fal.media', 'cdn.higgsfield.ai'];
 const okSrc = (s: unknown) => {
   if (typeof s !== 'string' || s.length > 2000) return false;
   if (/^fonts\/[\w .-]+$/.test(s)) return true;
@@ -86,15 +85,15 @@ export function cleanPlan(p: any) {
   };
 }
 
-const okUpload = (u: unknown): u is string => typeof u === 'string' && u.startsWith(UP_PREFIX) && u.length < 2000;
-const okUrl = (u: unknown): u is string => typeof u === 'string' && u.startsWith(PUB_PREFIX) && u.length < 600 && !/[\s'"]/.test(u);
+const okUpload = (u: unknown): u is string => typeof u === 'string' && u.startsWith(UP_PREFIX()) && u.length < 2000;
+const okUrl = (u: unknown): u is string => typeof u === 'string' && u.startsWith(PUB_PREFIX()) && u.length < 600 && !/[\s'"]/.test(u);
 
 async function start(body: any, token: string, kind: string) {
   if (!okUpload(body.upload) || !okUrl(body.url)) return json({ error: 'bad_target' }, 400);
   let plan;
   try { plan = cleanPlan(body.plan); } catch { return json({ error: 'bad_plan' }, 400); }
   const secs = Math.ceil(plan.scenes.reduce((a: number, s: any) => a + s.dur, 0) + (plan.outro?.dur ?? 0));
-  const q = await quotaTake(token, kind, secs, 'video:' + body.url.slice(PUB_PREFIX.length).slice(0, 100));
+  const q = await quotaTake(token, kind, secs, 'video:' + body.url.slice(PUB_PREFIX().length).slice(0, 100));
   if (q && q.ok === false) return json({ error: 'quota', kind: 'vsec', used: q.used, limit: q.limit, left: q.left, reset: q.reset }, 402);
   const sandbox = await createSandbox({ resources: { vcpus: 8 } });
   try {
@@ -150,7 +149,7 @@ async function status(body: any) {
    For each uploaded clip, inside a plain sandbox with ffmpeg: technical details, a small analysis proxy (480p, 5 fps,
    mono sound), the sound alone for transcription, scene cuts, silences and 12 thumbnails. Everything goes straight
    from the sandbox to storage through the signed upload URLs the caller prepared; a summary JSON closes the run. */
-const okClipUrl = (u: unknown) => typeof u === 'string' && u.startsWith(PUB_PREFIX) && u.length < 700 && !/[\s'"]/.test(u);
+const okClipUrl = (u: unknown) => typeof u === 'string' && u.startsWith(PUB_PREFIX()) && u.length < 700 && !/[\s'"]/.test(u);
 async function prep(body: any) {
   const clips = Array.isArray(body.clips) ? body.clips.slice(0, 6) : [];
   if (!clips.length || !clips.every((c: any) => okClipUrl(c.url) && c.out && typeof c.out === 'object')) return json({ error: 'bad_clips' }, 400);
@@ -198,7 +197,11 @@ async function prepStatus(body: any) {
 }
 
 export default {
-  async fetch(req: Request): Promise<Response> {
+  // every request runs against its own backend (live or staging)
+  fetch(req: Request): Promise<Response> { return withBackend(req, () => handle(req)); },
+};
+async function handle(req: Request): Promise<Response> {
+  {
     if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
     const token = req.headers.get('x-primeos-token')?.trim() ?? '';
     const kind = token ? await whoami(token) : null;
@@ -214,5 +217,5 @@ export default {
     } catch (e: any) {
       return json({ error: 'video_failed', detail: String(e?.message || e).slice(0, 300) }, 500);
     }
-  },
-};
+  }
+}

@@ -1,10 +1,5 @@
 // Vercel proxy for Supabase generate function
-const SUPA_URL =
-  process.env.VITE_SUPABASE_URL ||
-  'https://tgropjisnheppsxejfdn.supabase.co';
-const SUPA_ANON =
-  process.env.VITE_SUPABASE_ANON_KEY ||
-  'sb_publishable_uwGM_HAjV28gchyFZHqZGg_9LjXwIJ-';
+import { pickBackend } from './_shared/backend.js';
 
 export const config = { maxDuration: 60 };
 
@@ -17,6 +12,8 @@ export default {
       });
     }
     const body = await request.text();
+    // live or the staging copy (the staging site says so in a header)
+    const { url: SUPA_URL, anon: SUPA_ANON } = pickBackend(request);
     const upstream = await fetch(`${SUPA_URL}/functions/v1/generate`, {
       method: 'POST',
       headers: {

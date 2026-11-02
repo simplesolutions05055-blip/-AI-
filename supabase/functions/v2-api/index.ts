@@ -7,7 +7,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, MAX_IMAGES, NEEDS_VIDEO, NO_POST, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
 
-const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
+const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
   const o = req.headers.get('origin') ?? '';
   return {
@@ -1064,7 +1064,9 @@ async function adminOrgCreate(d: DB, p: Record<string, any>) {
 }
 
 // ---------------- sending: e-mail (Resend) and WhatsApp (SmartSend) ----------------
-const APP = 'https://app.primeos.co.il';
+// the test environment (Supabase branch 'staging') runs this same code: anything that is not the live project is staging
+const IS_STAGING = !(Deno.env.get('SUPABASE_URL') ?? '').includes('tgropjisnheppsxejfdn');
+const APP = IS_STAGING ? 'https://primeos-staging.vercel.app' : 'https://app.primeos.co.il';
 async function sendMail(to: string, subject: string, html: string) {
   const key = Deno.env.get('RESEND_API_KEY'); const from = Deno.env.get('RESEND_FROM_EMAIL');
   if (!key || !from) throw new Error('mail_not_configured');
@@ -1073,6 +1075,7 @@ async function sendMail(to: string, subject: string, html: string) {
   return (await r.json()).id ?? '';
 }
 async function sendWa(phone: string, message: string) {
+  if (IS_STAGING) { console.log('staging: whatsapp not sent', phone.slice(-4)); return true; }
   const key = (Deno.env.get('SMARTSEND_ORGANIZATION_ID') || Deno.env.get('SMARTSEND_API_KEY') || '').trim();
   if (!key) throw new Error('whatsapp_not_configured');
   let digits = phone.replace(/\D/g, '');

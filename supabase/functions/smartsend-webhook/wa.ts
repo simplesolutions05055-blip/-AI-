@@ -42,9 +42,11 @@ async function post(path: string, payload: unknown) {
 
 // test mode: replies are collected instead of sent
 export const DRY = { on: false, out: [] as string[] };
+// the staging copy never messages real phones
+const STAGING = !(Deno.env.get('SUPABASE_URL') ?? '').includes('tgropjisnheppsxejfdn');
 
 export async function sendText(phone: string, text: string) {
-  if (DRY.on) { DRY.out.push(text); return; }
+  if (DRY.on || STAGING) { DRY.out.push(text); return; }
   const parts: string[] = [];
   let s = String(text ?? '').trim();
   while (s.length > 3500) { const cut = s.lastIndexOf('\n', 3500) > 1000 ? s.lastIndexOf('\n', 3500) : 3500; parts.push(s.slice(0, cut)); s = s.slice(cut).trim(); }
@@ -54,7 +56,7 @@ export async function sendText(phone: string, text: string) {
 
 // images ride an approved WhatsApp template with a media header (a free-form media message is not allowed)
 export async function sendImage(phone: string, url: string, orgName: string) {
-  if (DRY.on) { DRY.out.push('[image] ' + url); return; }
+  if (DRY.on || STAGING) { DRY.out.push('[image] ' + url); return; }
   const r = await fetch(url);
   if (!r.ok) throw new Error('image_download_' + r.status);
   const bytes = new Uint8Array(await r.arrayBuffer());

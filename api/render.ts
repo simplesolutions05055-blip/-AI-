@@ -1,3 +1,4 @@
+import { B, withBackend } from './_shared/backend.js';
 // PrimeOS render service: turns design-ready content into real files.
 // POST { jobs:[{ id, kind:'graphic'|'doc'|'deck'|'video', ... }], brand }   header x-primeos-token
 // Each job carries signed upload URLs (created by the 'produce' edge function); files go straight to storage.
@@ -23,15 +24,13 @@ import { videoHtml, cardHtml, overlayHtml } from './_render/video.mjs';
 
 // limits (maxDuration, memory, bundled ffmpeg) are set in vercel.json
 
-const SUPA_URL = process.env.VITE_SUPABASE_URL || 'https://tgropjisnheppsxejfdn.supabase.co';
-const SUPA_ANON = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_uwGM_HAjV28gchyFZHqZGg_9LjXwIJ-';
 const run = promisify(execFile);
 const json = (b: unknown, s = 200) => Response.json(b, { status: s, headers: { 'cache-control': 'no-store' } });
 
 async function whoami(token: string) {
-  const r = await fetch(`${SUPA_URL}/functions/v1/v2-api`, {
+  const r = await fetch(`${B().url}/functions/v1/v2-api`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', apikey: SUPA_ANON, authorization: `Bearer ${SUPA_ANON}`, 'x-primeos-token': token },
+    headers: { 'content-type': 'application/json', apikey: B().anon, authorization: `Bearer ${B().anon}`, 'x-primeos-token': token },
     body: JSON.stringify({ action: 'whoami' }),
   });
   return r.ok ? ((await r.json()) as { kind: string }).kind : null;
@@ -92,7 +91,11 @@ async function thumb(p: Page, w: number, h: number, max = 420) {
 }
 
 export default {
-  async fetch(req: Request): Promise<Response> {
+  // every request runs against its own backend (live or staging)
+  fetch(req: Request): Promise<Response> { return withBackend(req, () => handle(req)); },
+};
+async function handle(req: Request): Promise<Response> {
+  {
     if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
     const token = req.headers.get('x-primeos-token')?.trim() ?? '';
     const local = !process.env.VERCEL && process.env.RENDER_LOCAL === '1'; // offline lab runs only
@@ -109,8 +112,8 @@ export default {
       return json({ ok: true, accepted: true }, 202);
     }
     return json({ ok: true, results: await renderAll(body) });
-  },
-};
+  }
+}
 
 async function renderAll(body: any) {
     const k = kit(body.brand || {}, 'print');

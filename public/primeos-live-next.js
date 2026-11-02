@@ -22,10 +22,13 @@
   } catch (e) {}
   // long generations (documents, decks) go straight to the edge function: no 60s proxy limit
   const LIVE_HOST = /(^|\.)primeos\.co\.il$|\.vercel\.app$/.test(location.hostname);
+  // the staging site (tests) talks to the staging copy of the backend; everything else to the live one
+  const STAGING = location.hostname === 'primeos-staging.vercel.app';
+  const SUPA_BASE = STAGING ? 'https://lcbiktjrjcygxbteqaiu.supabase.co' : 'https://tgropjisnheppsxejfdn.supabase.co';
   // the API too: straight to the edge function on the live host (no proxy hop, no 30s cap); the same-origin proxy stays as a fallback
   const API_PROXY = '/api/v2';
-  const API = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/v2-api' : API_PROXY;
-  const GEN = LIVE_HOST ? 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/generate' : '/api/generate';
+  const API = LIVE_HOST ? SUPA_BASE + '/functions/v1/v2-api' : API_PROXY;
+  const GEN = LIVE_HOST ? SUPA_BASE + '/functions/v1/generate' : '/api/generate';
   const L = (window.PrimeLive = { token: null, kind: null, org: null, me: null, admin: null, demo: false, ready: false });
   // no connected channel at all: the create flows go on without a platform and keep the content in the library
   const noChNow = () => !!(L.noCh && L.noCh());
@@ -37,11 +40,11 @@
     try {
       let r;
       try {
-        r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': L.token || '' }, body: JSON.stringify(body), signal: ctl.signal });
+        r = await fetch(url, { method: 'POST', headers: Object.assign({ 'content-type': 'application/json', 'x-primeos-token': L.token || '' }, STAGING && /^\/api\//.test(url) ? { 'x-primeos-backend': 'staging' } : {}), body: JSON.stringify(body), signal: ctl.signal });
       } catch (e) {
         // the direct route is blocked (network, extension, DNS): the same-origin proxy carries the call
         if (url !== API || ctl.signal.aborted) throw e;
-        r = await fetch(API_PROXY, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': L.token || '' }, body: JSON.stringify(body), signal: ctl.signal });
+        r = await fetch(API_PROXY, { method: 'POST', headers: Object.assign({ 'content-type': 'application/json', 'x-primeos-token': L.token || '' }, STAGING ? { 'x-primeos-backend': 'staging' } : {}), body: JSON.stringify(body), signal: ctl.signal });
       }
       const j = await r.json().catch(() => ({ error: 'bad_response' }));
       if (r.status === 401 && (j.error === 'invalid_token' || j.error === 'session_required') && L.token && url === API) sessionLost();
@@ -1170,7 +1173,7 @@ function printRoles(colors = [], roles = {}) {
 /* @palette-end */
     return { paletteRoles, videoColors, lum, mix, contrast };
   })();
-  const FN_URL = 'https://tgropjisnheppsxejfdn.supabase.co/functions/v1/';
+  const FN_URL = SUPA_BASE + '/functions/v1/';
   const fx = (name, body, ms) => post(FN_URL + name, body, ms || 150000);
   // period content (many graphics at once) uses OpenAI's fast model; single graphics use the server default (the precision model)
   const FAST_IMG = 'gpt-image-2.5-flare';

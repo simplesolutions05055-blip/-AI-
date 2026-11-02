@@ -1,14 +1,7 @@
 // Same-origin proxy to the Supabase v2-api gateway.
 // Keeps the browser on one origin (no CORS preflight) and hides nothing:
 // the anon key is public by design; the real auth is the x-primeos-token.
-const SUPA_URL =
-  process.env.VITE_SUPABASE_URL ||
-  process.env.NEXT_PUBLIC_SUPABASE_URL ||
-  'https://tgropjisnheppsxejfdn.supabase.co';
-const SUPA_ANON =
-  process.env.VITE_SUPABASE_ANON_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  'sb_publishable_uwGM_HAjV28gchyFZHqZGg_9LjXwIJ-';
+import { pickBackend } from './_shared/backend.js';
 
 export const config = { maxDuration: 60 };
 
@@ -21,6 +14,8 @@ export default {
       });
     }
     const body = await request.text();
+    // live or the staging copy (the staging site says so in a header)
+    const { url: SUPA_URL, anon: SUPA_ANON } = pickBackend(request);
     const upstream = await fetch(`${SUPA_URL}/functions/v1/v2-api`, {
       method: 'POST',
       headers: {

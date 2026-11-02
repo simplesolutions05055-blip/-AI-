@@ -6,7 +6,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const env = (k: string) => (Deno.env.get(k) ?? '').trim();
 const SUPA = env('SUPABASE_URL');
-const APP = 'https://app.primeos.co.il';
+// the test environment (Supabase branch 'staging') runs this same code: anything that is not the live project is staging
+const IS_STAGING = !(Deno.env.get('SUPABASE_URL') ?? '').includes('tgropjisnheppsxejfdn');
+const APP = IS_STAGING ? 'https://primeos-staging.vercel.app' : 'https://app.primeos.co.il';
 // deno-lint-ignore no-explicit-any
 type DB = any;
 const db = (): DB => createClient(SUPA, env('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } });

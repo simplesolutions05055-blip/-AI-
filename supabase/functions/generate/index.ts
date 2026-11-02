@@ -15,7 +15,11 @@ const AIV_ORGS = ['82ce4b4e-2bdd-41d2-8efc-b1f4987df994'];
 const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-7-sonnet-latest'];
 let goodModel: string | null = null;
 
-const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
+// our own storage, in whichever project this runs (live or staging)
+const OWN_HOST = (Deno.env.get('SUPABASE_URL') ?? '').replace(/^https:\/\//, '').replace(/[.]/g, '\\.');
+const OWN_PUBLIC = new RegExp('^https://' + OWN_HOST + '/storage/v1/object/public/');
+const OWN_OBJECT = new RegExp('^https://' + OWN_HOST + '/storage/v1/object/(public|sign)/');
+const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
   const o = req.headers.get('origin') ?? '';
   return {
@@ -135,7 +139,7 @@ async function fileBlocks(files: any[]): Promise<unknown[]> {
   const out: unknown[] = [];
   for (const f of (files ?? []).slice(0, 6)) {
     const url = await pvUrl(String(f?.url ?? ''));
-    if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/(public|sign)\//.test(url)) continue;
+    if (!OWN_OBJECT.test(url)) continue;
     const ext = (String(f.name ?? url).split('.').pop() ?? '').toLowerCase();
     const name = String(f.name ?? 'קובץ');
     try {
@@ -564,7 +568,7 @@ ${p.after ? '' : STYLE_PICK_HE}`, 3000, fb);
     // a finished post the user uploaded: read it and write the caption for it
     if (mode === 'caption') {
       const url = String(p.image ?? '');
-      if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(url)) return json(req, { error: 'bad_url' }, 400);
+      if (!OWN_PUBLIC.test(url)) return json(req, { error: 'bad_url' }, 400);
       const raw = await claude(key, s, `המשתמש העלה גרפיקה מוכנה לפוסט (מצורפת). קרא את כל מה שכתוב בה ואת מה שרואים בה, וכתוב עבורו את הפוסט שיתלווה אליה ברשתות.
 ${p.title ? 'כותרת שהוזנה: ' + p.title + '\n' : ''}${p.brief ? 'הערות המשתמש: ' + p.brief + '\n' : ''}
 החזר JSON בלבד:

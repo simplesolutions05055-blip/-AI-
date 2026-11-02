@@ -8,7 +8,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { designDirective, qaPrompt, QA_SYS, QA_REDO, styleOf, kitDirective, KIT_SCAN, STYLES, EVENT_EN, varietyOf, pickComposition, accentFor, COMPOSITIONS } from './design.ts';
 import type { BrandKit } from './design.ts';
 
-const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
+// our own storage, in whichever project this runs (live or staging)
+const OWN_HOST = (Deno.env.get('SUPABASE_URL') ?? '').replace(/^https:\/\//, '').replace(/[.]/g, '\\.');
+const OWN_PUBLIC = new RegExp('^https://' + OWN_HOST + '/storage/v1/object/public/');
+const OWN_OBJECT = new RegExp('^https://' + OWN_HOST + '/storage/v1/object/(public|sign)/');
+const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
   const o = req.headers.get('origin') ?? '';
   return {
@@ -265,7 +269,7 @@ Deno.serve(async (req) => {
     const ckey = Deno.env.get('ANTHROPIC_API_KEY');
     try {
       const src = String(p.url ?? '');
-      if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(src)) throw new Error('bad_url');
+      if (!OWN_PUBLIC.test(src)) throw new Error('bad_url');
       const want = ((p.want ?? []) as string[]).map((x) => `"${x}"`).join('\n');
       const size = SIZES[p.size] ?? SIZES.square;
       const fixes = ((p.fixes ?? []) as any[]).filter((f) => Array.isArray(f?.box) && f.box.length === 4 && f.right);
@@ -293,7 +297,7 @@ Deno.serve(async (req) => {
     if (!ckey) return json(req, { error: 'claude_not_configured' }, 503);
     try {
       const src = String(p.url ?? '');
-      if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(src)) throw new Error('bad_url');
+      if (!OWN_PUBLIC.test(src)) throw new Error('bad_url');
       const raw = await claude(ckey, TEMPLATE_SCAN, [
         { type: 'image', source: { type: 'url', url: src } },
         { type: 'text', text: `Return JSON: {"desc":"precise English structural description for an image model, max 140 words: canvas, background, colour hex values you see, shapes/frames/bands and where, logo position, image/photo area position and shape, each text area with position, alignment, relative size, weight and colour","slots":[{"role":"kicker|headline|sub|details|cta|footer|org|other","he":"short Hebrew name of the area","text":"the text currently written there, if readable","fixed":true|false}],"image":"none|photo|illustration","summary":"one short Hebrew sentence describing the template for the user"}
@@ -313,7 +317,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
     if (!ckey) return json(req, { error: 'claude_not_configured' }, 503);
     try {
       const src = String(p.logo ?? '');
-      if (!/^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(src)) throw new Error('bad_url');
+      if (!OWN_PUBLIC.test(src)) throw new Error('bad_url');
       const colors = ((p.colors ?? []) as string[]).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 8).join(', ');
       const raw = await claude(ckey, KIT_SCAN, [
         { type: 'image', source: { type: 'url', url: src } },
@@ -351,7 +355,7 @@ fixed=true for texts that belong to the template itself and must stay (organisat
       const lines = [['kicker', tx.kicker], ['headline', tx.headline], ['sub', tx.sub], ...((tx.details ?? []) as any[]).map((d: any, i: number) => ['detail ' + (i + 1), typeof d === 'string' ? d : d?.text]), ...((kit ? (tx.icons ?? []) : []) as any[]).slice(0, 5).map((d: any, i: number) => ['icon label ' + (i + 1), typeof d === 'string' ? d : d?.label]), ['call to action', tx.cta], ['organisation name', ownOrg || kit ? '' : p.org]]
         .filter((x) => x[1]).map((x) => `${x[0]}: "${x[1]}"`).join('\n');
       const colors = ((p.colors ?? []) as string[]).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 6).join(', ') || '#0E3B6B, #0A2C51, #9A6B1F, #1E6BA8';
-      const okUrl = (u: string) => /^https:\/\/tgropjisnheppsxejfdn\.supabase\.co\/storage\/v1\/object\/public\//.test(u);
+      const okUrl = (u: string) => OWN_PUBLIC.test(u);
       const tpl = p.template && okUrl(String(p.template.url ?? '')) ? p.template : null;
       const refs = [...(tpl ? [String(tpl.url)] : []), ...((p.refs ?? []) as string[]).filter(okUrl)].slice(0, 4);
       if (p.eventLogo && okUrl(String(p.eventLogo)) && !tpl) { refs.splice(p.logo ? 1 : 0, 0, String(p.eventLogo)); if (refs.length > 4) refs.length = 4; }

@@ -1,3 +1,4 @@
+import { B, withBackend } from './_shared/backend.js';
 // PrimeOS media convert: an uploaded clip or photo becomes something the video engine (Chromium) can play.
 // Phones hand over HEVC .mov / .mp4 and HEIC photos; Chromium renders neither. Here ffmpeg re-encodes
 // what needs it (H.264 + AAC, at most 1080 px on the long side; HEIC -> JPEG) and puts the result next to the original.
@@ -10,16 +11,14 @@ import { join } from 'node:path';
 
 export const config = { maxDuration: 300, memory: 2048 };
 
-const SUPA_URL = process.env.VITE_SUPABASE_URL || 'https://tgropjisnheppsxejfdn.supabase.co';
-const SUPA_ANON = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_uwGM_HAjV28gchyFZHqZGg_9LjXwIJ-';
-const PUB_PREFIX = `${SUPA_URL}/storage/v1/object/public/v2-content/`;
+const PUB_PREFIX = () => `${B().url}/storage/v1/object/public/v2-content/`;
 const run = promisify(execFile);
 const json = (b: unknown, s = 200) => Response.json(b, { status: s, headers: { 'cache-control': 'no-store' } });
 
 async function api(token: string, action: string, payload: unknown) {
-  const r = await fetch(`${SUPA_URL}/functions/v1/v2-api`, {
+  const r = await fetch(`${B().url}/functions/v1/v2-api`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', apikey: SUPA_ANON, authorization: `Bearer ${SUPA_ANON}`, 'x-primeos-token': token },
+    headers: { 'content-type': 'application/json', apikey: B().anon, authorization: `Bearer ${B().anon}`, 'x-primeos-token': token },
     body: JSON.stringify({ action, payload }),
   });
   const j = (await r.json().catch(() => ({ error: 'bad_response' }))) as any;
@@ -41,14 +40,18 @@ async function probe(ff: string, src: string) {
 }
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  // every request runs against its own backend (live or staging)
+  fetch(request: Request): Promise<Response> { return withBackend(request, () => handle(request)); },
+};
+async function handle(request: Request): Promise<Response> {
+  {
     if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
     const token = request.headers.get('x-primeos-token') ?? '';
     if (!token) return json({ error: 'invalid_token' }, 401);
     let body: any;
     try { body = await request.json(); } catch { return json({ error: 'bad_json' }, 400); }
     const url = String(body?.url ?? '');
-    if (!url.startsWith(PUB_PREFIX)) return json({ error: 'bad_url' }, 400);
+    if (!url.startsWith(PUB_PREFIX())) return json({ error: 'bad_url' }, 400);
     try {
       await api(token, 'whoami', {}); // only a signed-in user converts, and only files of our storage
     } catch (e: any) { return json({ error: 'invalid_token' }, e?.status === 401 ? 401 : 500); }
@@ -90,8 +93,8 @@ export default {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  },
-};
+  }
+}
 
 async function putFile(url: string, body: Buffer, type: string) {
   const r = await fetch(url, { method: 'PUT', headers: { 'content-type': type, 'x-upsert': 'true' }, body: new Uint8Array(body) });

@@ -7,7 +7,9 @@ export type DB = any;
 export const env = (k: string) => (Deno.env.get(k) ?? '').trim();
 export const SUPA = env('SUPABASE_URL');
 export const FN = (name: string) => `${SUPA}/functions/v1/${name}`;
-export const APP = 'https://app.primeos.co.il';
+// staging (any project other than the live one) talks to the staging site and never sends WhatsApp
+export const IS_STAGING = !!SUPA && !SUPA.includes('tgropjisnheppsxejfdn');
+export const APP = IS_STAGING ? 'https://primeos-staging.vercel.app' : 'https://app.primeos.co.il';
 export function db(): DB {
   return createClient(SUPA, env('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } });
 }
@@ -72,7 +74,7 @@ export const api = (token: string, action: string, payload: unknown, ms = 60000)
 
 // a long call through pg_net: returns the request id, the answer is read later
 export async function httpLater(d: DB, url: string, token: string, body: unknown, ms = 170000): Promise<number> {
-  const { data, error } = await d.rpc('v2_http', { url, body, headers: { 'content-type': 'application/json', 'x-primeos-token': token }, timeout_ms: ms });
+  const { data, error } = await d.rpc('v2_http', { url, body, headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...(IS_STAGING && url.startsWith(APP) ? { 'x-primeos-backend': 'staging' } : {}) }, timeout_ms: ms });
   if (error) throw new Error('http_later: ' + error.message);
   return Number(data);
 }
