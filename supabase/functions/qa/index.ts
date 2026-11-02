@@ -53,6 +53,16 @@ Deno.serve(async (req) => {
     if (up.error) return json({ error: up.error.message }, 500);
     return json({ url: d.storage.from('qa').getPublicUrl(path).data.publicUrl });
   }
+  // back to the known starting point before a run: the saved state of each test organisation, no leftover items or jobs
+  if (p.action === 'reset') {
+    const { data: fx } = await d.from('qa_fixtures').select('org_id,data');
+    for (const f of fx ?? []) {
+      await d.from('org_state').upsert({ org_id: f.org_id, data: f.data, updated_at: new Date().toISOString() });
+      await d.from('content_items').delete().eq('org_id', f.org_id);
+      await d.from('v2_jobs').delete().eq('org_id', f.org_id);
+    }
+    return json({ ok: true, orgs: (fx ?? []).length });
+  }
   if (p.action === 'runs') {
     const { data } = await d.from('qa_runs').select('*').order('at', { ascending: false }).limit(10);
     return json({ runs: data ?? [] });

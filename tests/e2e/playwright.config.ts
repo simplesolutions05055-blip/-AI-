@@ -7,6 +7,7 @@ if (/app\.primeos\.co\.il/.test(BASE)) throw new Error('the browser tests never 
 
 export default defineConfig({
   testDir: './specs',
+  globalSetup: './setup.ts',
   timeout: 60_000,
   expect: { timeout: 10_000, toHaveScreenshot: { maxDiffPixelRatio: 0.01, animations: 'disabled', caret: 'hide' } },
   fullyParallel: true,

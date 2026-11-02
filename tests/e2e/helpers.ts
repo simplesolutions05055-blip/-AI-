@@ -35,8 +35,10 @@ export async function skipOnboarding(page: Page) {
   const skip = page.locator('.dq-skipall');
   try { await skip.waitFor({ state: 'visible', timeout: 3000 }); } catch { return; }
   await skip.click();
-  await skip.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
-  await page.waitForTimeout(300);
+  // the summary that follows the skip
+  const enter = page.getByRole('button', { name: 'כניסה למערכת' });
+  if (await enter.isVisible({ timeout: 2000 }).catch(() => false)) await enter.click();
+  await page.waitForTimeout(400);
 }
 
 // the screens in the side menu for whoever is signed in
