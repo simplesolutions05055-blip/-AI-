@@ -660,6 +660,7 @@
       keep.forEach((k) => { if (prev[k] !== undefined) o[k] = prev[k]; });
       o.live = { id: r.id, token: r.token, sign_token: r.agr && r.agr.sign_token || null };
       o.members = r.members || [];
+      o.dN = Math.max(0, +r.depts || 0);
       o.mainDept = r.main_dept || 'דוברות';
       o.role = r.role || '';
       if (r.agr) {
@@ -799,6 +800,20 @@
   ACT.impU = (id) => { const u = AUSERS[+id]; const o = u && ORGS.find((x) => x.id === u.org); if (o && o.live) { ACT.liveOpen(o.id); return; } _impU(id); };
 
   /* org profile shows the client's login link */
+  /* client list: the departments column shows each client's real count (the mockup's demo formula gave NaN for real ids) */
+  if (SCREENS.a_orgs) {
+    const _aorgs = SCREENS.a_orgs.render;
+    SCREENS.a_orgs.render = function () {
+      const html = _aorgs.apply(this, arguments);
+      return String(html).split('<tr>').map((row) => {
+        const m = row.match(/data-act="aOrg:([^"]+)"/);
+        const o = m && ORGS.find((x) => x.id === m[1]);
+        if (!o || o.plan === 'solo') return row;
+        const n = o.dN !== undefined ? o.dN : 0;
+        return row.replace(/(<td data-l="מחלקות">)[^<]*(<span class="t-sub"> \/ )/, (_, a, b) => a + n + b);
+      }).join('<tr>');
+    };
+  }
   if (SCREENS.a_org) {
     const _aorg = SCREENS.a_org.render;
     SCREENS.a_org.render = function () {

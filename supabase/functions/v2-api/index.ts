@@ -972,6 +972,10 @@ async function adminLoad(d: DB, adminId: string) {
   for (const t of mtoks ?? []) if (!mtokOf[t.member_id]) mtokOf[t.member_id] = t.token;
   const { data: mems } = ids.length ? await d.from('org_members').select('id,org_id,name,email,phone,role,dept,view,perms,created_at').in('org_id', ids).order('created_at') : { data: [] };
   const { data: cnt } = ids.length ? await d.from('content_items').select('org_id').in('org_id', ids).not('ui_id', 'is', null) : { data: [] };
+  // how many departments each organisation really has (its saved list; a new one has the wizard's list plus the main one)
+  const { data: dst } = ids.length ? await d.from('org_state').select('org_id,depts:data->DEPTS').in('org_id', ids) : { data: [] };
+  const deptsOf: Record<string, number> = {};
+  for (const r of dst ?? []) if (Array.isArray((r as any).depts)) deptsOf[(r as any).org_id] = (r as any).depts.length;
   const items: Record<string, number> = {};
   for (const c of cnt ?? []) items[c.org_id] = (items[c.org_id] ?? 0) + 1;
   // AI usage: this month per org and per member, and the last 12 months per org
@@ -996,6 +1000,7 @@ async function adminLoad(d: DB, adminId: string) {
     realOrgs: (orgs.data ?? []).map((o: any) => ({
       id: o.id, name: o.name, plan: o.plan, status: o.status, ui_id: o.settings?.ui_id ?? null, otype: o.settings?.otype ?? null, token: tokOf[o.id] ? 'live' : null, created: o.created_at,
       contact: o.contact_name ?? null, mail: o.contact_email ?? null, phone: o.contact_phone ?? null, items: items[o.id] ?? 0,
+      depts: deptsOf[o.id] ?? 1 + (Array.isArray(o.settings?.depts) ? o.settings.depts.filter((x: any) => String(x?.n ?? '').trim()).length : 0),
       main_dept: o.settings?.main_dept ?? null, role: o.settings?.role ?? null, agr: o.settings?.agr ?? null,
       use: usage[o.id]?.use ?? null, useM: usage[o.id]?.useM ?? null,
       quotas: o.quotas ?? {}, addons: o.addons ?? {}, billing_day: o.billing_day ?? 1, unlimited: !!o.quota_unlimited, quota: quotaOf[o.id] ?? null, variety: o.settings?.variety === 'uniform' ? 'uniform' : 'mixed',
