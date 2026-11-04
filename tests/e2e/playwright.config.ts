@@ -4,6 +4,9 @@ import { defineConfig, devices } from '@playwright/test';
 
 export const BASE = process.env.E2E_BASE_URL || 'https://primeos-staging.vercel.app';
 if (/app\.primeos\.co\.il/.test(BASE)) throw new Error('the browser tests never run against the live site');
+// staging is a preview (vercel login wall). setup.ts trades the bypass key for a cookie (staging site only, not supabase)
+export const BYPASS_STATE = 'results/bypass-state.json';
+const BYPASS = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
 
 export default defineConfig({
   testDir: './specs',
@@ -25,6 +28,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    storageState: BYPASS ? BYPASS_STATE : undefined,
   },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },

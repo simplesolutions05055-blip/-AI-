@@ -29,9 +29,11 @@ jobs:
           node-version: 22
       - name: Wait for the staging site to serve this commit
         if: github.event_name == 'push'
+        env:
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           for i in $(seq 1 60); do
-            v=$(curl -fsS "https://primeos-staging.vercel.app/version.json?t=$(date +%s)" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p' || true)
+            v=$(curl -fsS -H "x-vercel-protection-bypass: $BYPASS" "https://primeos-staging.vercel.app/version.json?t=$(date +%s)" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p' || true)
             if [ "$v" = "$GITHUB_SHA" ]; then echo "staging is on $v"; exit 0; fi
             sleep 10
           done
@@ -41,6 +43,8 @@ jobs:
         run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
       - name: Test
         working-directory: tests/e2e
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npx playwright test
       - name: Keep new reference pictures
         if: always()
