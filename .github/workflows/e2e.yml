@@ -1,10 +1,10 @@
 name: Browser tests (staging)
 
 # Runs the Playwright suite against the staging site (primeos-staging.vercel.app), never the live one.
-# After every push it waits until Vercel serves that commit, then tests it. Nightly it runs again.
+# Staging site builds from branch staging. After every push to staging it waits until Vercel serves that commit, then tests it. Nightly it runs again.
 on:
   push:
-    branches: [main]
+    branches: [staging]
   schedule:
     - cron: '17 1 * * *'
   workflow_dispatch:
@@ -48,7 +48,7 @@ jobs:
           git add tests/e2e/specs/__screens__ || true
           if ! git diff --cached --quiet; then
             git -c user.name="Simple Solutions" -c user.email="simple.solutions05055@gmail.com" commit -m "Test reference pictures"
-            git push origin HEAD:main || true
+            git push origin HEAD:${{ github.ref_name }} || true
           fi
       - uses: actions/upload-artifact@v4
         if: always()
