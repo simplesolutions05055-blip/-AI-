@@ -10,7 +10,7 @@ max_rows = 1000
 [db]
 port = 54322
 shadow_port = 54320
-major_version = 15
+major_version = 17
 
 [studio]
 enabled = true
@@ -30,50 +30,7 @@ file_size_limit = "10MiB"
 [analytics]
 enabled = false
 
-[functions.signup]
-verify_jwt = false
-
-# Browser error reports. Unauthenticated on purpose: the crashes most worth
-# seeing (login page, initial mount) happen before any session exists. The
-# function itself caps size and rate.
-[functions.client-error]
-verify_jwt = false
-
-[functions.resolve-invite]
-verify_jwt = false
-
-[functions.brand-autofill]
-verify_jwt = false
-
-[functions.process-request]
-verify_jwt = false
-
-# send-output is intentionally absent: it verifies the JWT at the platform gate
-# and checks for an admin profile itself (requireAdmin in _shared/auth.ts).
-
-[functions.conversation-maintenance]
-verify_jwt = false
-
-[functions.meta-oauth-start]
-verify_jwt = false
-
-[functions.meta-oauth-callback]
-verify_jwt = false
-
-# Facebook redirects the browser here — no Supabase JWT on a top-level redirect.
-# The function verifies the signed OAuth state itself (verifyOAuthState).
-[functions.autopost-oauth-callback]
-verify_jwt = false
-
-[functions.publish-scheduled-posts]
-verify_jwt = false
-
-# Smart Send posts its own JSON payload, not a Supabase JWT. The function
-# validates SMARTSEND_WEBHOOK_SECRET from the Authorization header or the
-# `secret` query parameter included in the registered hook URL.
 [functions.smartsend-webhook]
 verify_jwt = false
 
 # The handler validates the user JWT and requires an admin profile.
-[functions.brand-apify]
-verify_jwt = false
