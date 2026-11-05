@@ -17,6 +17,8 @@ for (const who of USERS) {
         await goTo(page, r);
         await expect(page.locator('#view')).toBeVisible();
         await expectNoSideScroll(page);
+        // data still loading = spinner on screen; the picture is taken only after it is gone
+        await expect(page.locator('#view .gm-spin')).toHaveCount(0, { timeout: 15_000 });
         await expect(page).toHaveScreenshot(`${who}-${r}.png`);
       });
     }
@@ -33,6 +35,7 @@ test('admin: all console screens', async ({ page }) => {
     await test.step(r, async () => {
       await goTo(page, r);
       await expectNoSideScroll(page);
+      await expect(page.locator('#view .gm-spin')).toHaveCount(0, { timeout: 15_000 });
       await expect(page).toHaveScreenshot(`admin-${r}.png`);
     });
   }
