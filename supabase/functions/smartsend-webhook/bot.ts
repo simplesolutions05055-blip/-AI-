@@ -4,13 +4,10 @@ import { CH_HE, DB, Who, api, callFn, env, fmtIL, heWhen, itemOf, newUiId, nowIL
 import { DRY, InMsg, download, sendText } from './wa.ts';
 import { remember, sessionOf } from './session.ts';
 import { MENU, kick } from './jobs.ts';
+import { logMsg } from './msglog.ts';
 
 const DAILY_MSGS = 80, DAILY_JOBS = 25;
 
-async function logMsg(d: DB, row: Record<string, unknown>) {
-  const { error } = await d.from('v2_wa_msgs').insert(row);
-  return !error;
-}
 async function say(d: DB, phone: string, text: string, who?: Who | null) {
   try {
     try { await sendText(phone, text); }

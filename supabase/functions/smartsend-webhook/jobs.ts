@@ -5,6 +5,7 @@ import { APP, FN, DB, api, brandOf, callFn, httpLater, httpResults, itemOf, kitO
 import { WEB_KINDS, advanceWeb } from './web.ts';
 import { sendImage as waImage, sendText as waText } from './wa.ts';
 import { remember } from './session.ts';
+import { afterBadAnswer, afterCrash, isQuota } from './jobPolicy.ts';
 
 type Job = Record<string, any>;
 // replies of a job: real WhatsApp, or collected on the job in test mode; a failed send never fails the job
@@ -59,7 +60,8 @@ async function advance(d: DB, j: Job) {
   const inp = j.input ?? {};
   const ok = (r: any) => r && r.status >= 200 && r.status < 300 && r.json && !r.json.error;
   const retry = async (why: string) => {
-    if ((j.tries ?? 0) < 2) { await upd(d, j, { pend: {}, tries: (j.tries ?? 0) + 1, next_at: later(5), lock_until: new Date().toISOString() }); return; }
+    const n = afterBadAnswer(j.tries);
+    if (n.retry) { await upd(d, j, n.row); return; }
     await fail(d, j, why);
   };
   const go = async (step: string, row: Record<string, unknown> = {}) => upd(d, j, { step, pend: {}, tries: 0, data, next_at: new Date().toISOString(), lock_until: new Date().toISOString(), ...row });
@@ -339,10 +341,10 @@ async function fail(d: DB, j: Job, why: string) {
     try {
       const token = await tokenOf(d, j.member_id);
       const ui = await itemOf(d, j.org_id, Number(j.ui_id));
-      if (ui && ui.prod && ui.prod.job === j.id) await saveItem(token, { ...ui, prod: { ...ui.prod, err: why.startsWith('quota:') ? 'quota' : 'failed', why: why.slice(0, 200) } });
+      if (ui && ui.prod && ui.prod.job === j.id) await saveItem(token, { ...ui, prod: { ...ui.prod, err: isQuota(why) ? 'quota' : 'failed', why: why.slice(0, 200) } });
     } catch (e) { console.error('fail mark', e instanceof Error ? e.message : e); }
   }
-  if (why.startsWith('quota:')) {
+  if (isQuota(why)) {
     // the subscription month is used up: no retry, the person is told when it opens again
     let q: any = {}; try { q = JSON.parse(why.slice(6)); } catch { /* plain */ }
     const t = q.reset ? new Date(q.reset) : null;
@@ -384,7 +386,8 @@ export async function tick(d: DB, budgetMs = 50000) {
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           console.error('job', j.id, j.step, msg);
-          if ((j.tries ?? 0) < 2) await upd(d, j, { tries: (j.tries ?? 0) + 1, pend: {}, next_at: later(10), lock_until: new Date().toISOString() });
+          const n = afterCrash(j.tries);
+          if (n.retry) await upd(d, j, n.row);
           else await fail(d, j, msg);
         }
       }
