@@ -106,19 +106,23 @@ jobs:
   rls:
     name: cross-tenant isolation
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      # 32 RLS policies decide which tenant sees which row. This job builds two
-      # throwaway brands, reads across the boundary as the wrong tenant, and
-      # fails if anything comes back. Everything runs in a rolled-back
-      # transaction, so it leaves no fixtures behind.
-      #
-      # Without DATABASE_URL the runner SKIPS instead of failing, so forks and
-      # first-time contributors are not blocked by a missing secret. Set the
-      # secret on this repo and the suite becomes enforcing.
+      # A throwaway Supabase stack built from this commit's migrations, right here on the
+      # runner: no secret, no staging, no prod, and it can never skip.
+      - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        with:
+          version: 3.0.0
+      - run: supabase start -x studio,imgproxy,mailpit,logflare,vector,supavisor,realtime,postgres-meta
+      # 1. database rules (RLS): two throwaway brands read across the boundary as the
+      #    wrong tenant, in a rolled-back transaction.
       - run: node scripts/rls-tenant-isolation.mjs
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+      # 2. v2-api: bad/expired/server tokens, admin vs client, and org A attacking org B
+      #    through every client action (a new action without a test fails this step).
+      - run: scripts/test-api.sh
