@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
 
 # Cancel superseded runs so a red main is never masked by a queue backlog.
@@ -71,11 +71,14 @@ jobs:
       #     are what turn into a runtime SyntaxError.
       - run: deno lint --rules-tags= --rules-include=no-dupe-args,no-dupe-keys,no-dupe-class-members supabase/functions
 
-      #  2. full typecheck of the live functions (v2-api, generate, image, produce).
-      #     Since the 12.10.2026 rebuild the old system's code (_shared, smartsend-webhook)
-      #     is not part of the product; it stays out of this check. deno.ci.json maps the
-      #     esm.sh imports to the same npm packages so the types are deterministic.
+      #  2. full typecheck of every deployed function: v2-api, generate, image, produce,
+      #     smartsend-webhook, monitor, qa, hprobe, qa-probe (_shared is checked through
+      #     their imports). deno.ci.json maps the esm.sh imports to the same npm packages
+      #     so the types are deterministic.
       - run: npm run check:functions
+
+      #  3. unit tests (*_test.ts next to the code). They existed but nothing ran them.
+      - run: npm run test:functions
 
   secrets:
     name: secret scan
