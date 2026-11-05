@@ -5,6 +5,7 @@
 // admin: admin.load | admin.state.save | admin.org.create | admin.org.delete | admin.invite.send | admin.org.update
 // open (sign token): sign.load | sign.submit
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import { BUILD } from '../_shared/build.ts';
 import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, MAX_IMAGES, NEEDS_VIDEO, NO_POST, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
@@ -1408,7 +1409,7 @@ Deno.serve(async (req) => {
     if (action === 'health') {
       const t0 = Date.now();
       const { error } = await d.from('v2_secrets').select('k', { head: true, count: 'exact' }).limit(1);
-      return json(req, { ok: !error, db_ms: Date.now() - t0, at: new Date().toISOString() }, error ? 503 : 200);
+      return json(req, { ok: !error, db_ms: Date.now() - t0, at: new Date().toISOString(), build: BUILD }, error ? 503 : 200);
     }
     const token = req.headers.get('x-primeos-token')?.trim() ?? '';
     const s = token ? await resolve(d, token) : null;

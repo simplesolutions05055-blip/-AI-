@@ -30,7 +30,32 @@ file_size_limit = "10MiB"
 [analytics]
 enabled = false
 
+# all live functions check their own auth (token, x-tick, webhook secret); none use supabase jwt. same as deployed.
 [functions.smartsend-webhook]
+verify_jwt = false
+
+[functions.v2-api]
+verify_jwt = false
+
+[functions.generate]
+verify_jwt = false
+
+[functions.image]
+verify_jwt = false
+
+[functions.produce]
+verify_jwt = false
+
+[functions.monitor]
+verify_jwt = false
+
+[functions.qa]
+verify_jwt = false
+
+[functions.hprobe]
+verify_jwt = false
+
+[functions.qa-probe]
 verify_jwt = false
 
 # The handler validates the user JWT and requires an admin profile.
