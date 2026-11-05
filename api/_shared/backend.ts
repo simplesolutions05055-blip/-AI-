@@ -1,5 +1,6 @@
 // Which Supabase project a request belongs to: the live one, or the staging copy used by tests.
 // The staging site (and staging edge functions) send `x-primeos-backend: staging`; everything else is live.
+// On the production deployment the header is ignored (see pickBackend).
 // Only these two fixed projects can be chosen, never a URL from the request.
 import { AsyncLocalStorage } from 'node:async_hooks';
 
@@ -14,5 +15,8 @@ export const STAGING: Backend = { name: 'staging', url: 'https://lcbiktjrjcygxbt
 const als = new AsyncLocalStorage<Backend>();
 // the backend of the request being handled (concurrent requests on one instance each keep their own)
 export const B = (): Backend => als.getStore() ?? LIVE;
-export const pickBackend = (req: Request): Backend => (req.headers.get('x-primeos-backend') === 'staging' ? STAGING : LIVE);
+// the production deployment never takes the header: a request can't move live routes onto the staging data.
+// staging (preview deployment of branch staging, its env already = staging) and local dev still can.
+const IS_PROD_DEPLOY = process.env.VERCEL_ENV === 'production';
+export const pickBackend = (req: Request): Backend => (!IS_PROD_DEPLOY && req.headers.get('x-primeos-backend') === 'staging' ? STAGING : LIVE);
 export function withBackend<T>(req: Request, fn: () => Promise<T>): Promise<T> { return als.run(pickBackend(req), fn); }
