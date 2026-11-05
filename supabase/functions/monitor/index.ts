@@ -9,6 +9,9 @@ const SUPA = env('SUPABASE_URL');
 // the test environment (Supabase branch 'staging') runs this same code: anything that is not the live project is staging
 const IS_STAGING = !(Deno.env.get('SUPABASE_URL') ?? '').includes('tgropjisnheppsxejfdn');
 const APP = IS_STAGING ? 'https://primeos-staging.vercel.app' : 'https://app.primeos.co.il';
+// staging site sits behind vercel login; the automation bypass key (staging secret only) lets the monitor in
+const BYPASS = Deno.env.get('VERCEL_AUTOMATION_BYPASS_SECRET') ?? '';
+const appHeaders = (h: Record<string, string>): Record<string, string> => (BYPASS ? { ...h, 'x-vercel-protection-bypass': BYPASS } : h);
 // deno-lint-ignore no-explicit-any
 type DB = any;
 const db = (): DB => createClient(SUPA, env('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } });
@@ -46,7 +49,7 @@ async function checks(d: DB): Promise<Record<string, Check>> {
   // 1. the site answers with the app
   try {
     const t0 = Date.now();
-    const r = await timed(15000, (signal) => fetch(APP + '/?monitor=1', { signal, headers: { 'user-agent': 'primeos-monitor' } }));
+    const r = await timed(15000, (signal) => fetch(APP + '/?monitor=1', { signal, headers: appHeaders({ 'user-agent': 'primeos-monitor' }) }));
     const body = r.ok ? await r.text() : '';
     out.site = { ok: r.ok && /PrimeOS/.test(body), ms: Date.now() - t0, note: r.ok ? undefined : 'http_' + r.status };
   } catch (e) { out.site = { ok: false, note: e instanceof Error ? e.message : String(e) }; }
@@ -325,7 +328,7 @@ async function loadTest(d: DB, n: number, c: number) {
     await d.from('api_tokens').insert({ token, org_id: org, member_id: m.id, kind: 'internal' });
     const { data: sec } = await d.from('v2_secrets').select('v').eq('k', 'tick').maybeSingle();
     // the calls themselves are fired from Vercel (Node): an edge function is limited in how many it may send
-    const r = await timed(290000, (signal) => fetch(APP + '/api/loadtest', { method: 'POST', signal, headers: { 'content-type': 'application/json', 'x-tick': sec?.v ?? '' }, body: JSON.stringify({ token, n, c }) }));
+    const r = await timed(290000, (signal) => fetch(APP + '/api/loadtest', { method: 'POST', signal, headers: appHeaders({ 'content-type': 'application/json', 'x-tick': sec?.v ?? '' }), body: JSON.stringify({ token, n, c }) }));
     res = await r.json().catch(() => ({ error: 'bad_response', status: r.status }));
   } catch (e) { res = { error: e instanceof Error ? e.message : String(e) }; console.error('load', res.error); }
   finally {
