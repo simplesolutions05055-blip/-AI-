@@ -2,6 +2,8 @@
 // on the live project every call answers 404, whatever is sent.
 //   POST { action:'login', who:'manager'|'dept'|'solo'|'admin' } -> { lc }   one-time entry link for a test user
 //   POST { action:'code', who:'manager'|'dept'|'solo' }          -> { email, code } a 6-digit login code, as if e-mailed
+//   POST { action:'incident' }                                     -> { id }   an open "stuck jobs" incident for the admin fix test
+//   POST { action:'jobs', who, since }                             -> { jobs } the test organisation's latest production jobs
 //   POST { action:'report', run }                                  -> { ok }   a test run's summary, kept in qa_runs
 //   POST { action:'runs' }                                         -> { runs } the last runs
 // Only the made-up qa organisations can be entered; nothing here touches a real account.
@@ -48,6 +50,20 @@ Deno.serve(async (req) => {
     if (error) return json({ error: error.message }, 500);
     return json({ email, code });
   }
+  // an open incident whose fix is harmless on staging (frees stuck job locks, runs the queue). marked qa so reset closes leftovers
+  if (p.action === 'incident') {
+    const { data, error } = await d.from('v2_incidents').insert({ kind: 'stuck', severity: 'mid', title: 'qa: עבודות תקועות (בדיקה)', detail: { qa: true } }).select('id').single();
+    return error ? json({ error: error.message }, 500) : json({ id: data.id });
+  }
+  // what the server made for a test organisation (the browser test waits on the real job, not on screen text)
+  if (p.action === 'jobs') {
+    const w = WHO[String(p.who)];
+    if (!w || w.kind !== 'client') return json({ error: 'unknown_user' }, 400);
+    let q = d.from('v2_jobs').select('id,kind,step,state,error,result,created_at').eq('org_id', w.org_id).order('created_at', { ascending: false }).limit(10);
+    if (p.since) q = q.gte('created_at', String(p.since));
+    const { data, error } = await q;
+    return error ? json({ error: error.message }, 500) : json({ jobs: data ?? [] });
+  }
   if (p.action === 'report') {
     const r = p.run ?? {};
     const { error } = await d.from('qa_runs').insert({
@@ -74,6 +90,7 @@ Deno.serve(async (req) => {
       await d.from('content_items').delete().eq('org_id', f.org_id);
       await d.from('v2_jobs').delete().eq('org_id', f.org_id);
     }
+    await d.from('v2_incidents').update({ state: 'resolved', closed_at: new Date().toISOString(), closed_by: 'qa' }).eq('state', 'open').eq('detail->>qa', 'true');
     return json({ ok: true, orgs: (fx ?? []).length });
   }
   if (p.action === 'runs') {

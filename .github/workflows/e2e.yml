@@ -1,13 +1,18 @@
 name: Browser tests (staging)
 
 # Runs the Playwright suite against the staging site (primeos-staging.vercel.app), never the live one.
-# Staging site builds from branch staging. After every push to staging it waits until Vercel serves that commit, then tests it. Nightly it runs again.
+# Staging site builds from branch staging. After every push to staging it waits until Vercel serves that commit, then tests it. Nightly it runs again, with the AI flows.
 on:
   push:
     branches: [staging]
   schedule:
     - cron: '17 1 * * *'
   workflow_dispatch:
+    inputs:
+      ai:
+        description: 'also run the AI flows (graphic, PDF document) - costs API credit'
+        type: boolean
+        default: true
 
 concurrency:
   group: e2e
@@ -45,6 +50,8 @@ jobs:
         working-directory: tests/e2e
         env:
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          # AI flows spend API credit: nightly and by hand only, never on a push
+          E2E_AI: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.ai)) && '1' || '' }}
         run: npx playwright test
       - name: Keep new reference pictures
         if: always()

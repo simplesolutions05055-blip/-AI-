@@ -1,6 +1,6 @@
 // Whole user journeys through the real screens (not shortcuts). Login: e-mail -> 6-digit code -> dashboard.
 import { test, expect } from '@playwright/test';
-import { qa, skipOnboarding, watchErrors } from '../helpers';
+import { goTo, login, qa, skipOnboarding, watchErrors } from '../helpers';
 
 // a right code empties every live code of that address, so desktop and mobile each sign in as a different user
 const userFor = (project: string) => (project === 'mobile' ? 'solo' : 'manager');
@@ -28,4 +28,15 @@ test('a wrong code is refused with a message next to the field', async ({ page }
   await expect(page.locator('#lCodeErr')).toBeVisible();
   await expect(page.locator('#lCode')).toHaveAttribute('aria-invalid', 'true');
   expect(await page.evaluate(() => !!(window as any).PrimeLive?.ready)).toBe(false);
+});
+
+test('admin fixes an open incident from the incidents screen', async ({ page }) => {
+  const { id } = await qa('incident');
+  await login(page, 'admin');
+  await goTo(page, 'a_incidents');
+  const fix = page.locator(`[data-act="incFix:${id}"]`);
+  await expect(fix).toBeVisible({ timeout: 15_000 });
+  await fix.click();
+  // the fix frees stuck jobs, runs the queue, re-counts; a clean result closes the incident and it leaves the open list
+  await expect(fix).toHaveCount(0, { timeout: 45_000 });
 });
