@@ -31,7 +31,9 @@ export default defineConfig({
     storageState: BYPASS ? BYPASS_STATE : undefined,
   },
   projects: [
-    { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
-    { name: 'mobile', use: { ...devices['Pixel 7'], viewport: { width: 400, height: 860 } } },
+    { name: 'desktop', testIgnore: /ai-flows/, use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
+    { name: 'mobile', testIgnore: /ai-flows/, use: { ...devices['Pixel 7'], viewport: { width: 400, height: 860 } } },
+    // AI flows add content to the manager's library: they run only after every screen picture is taken, desktop only
+    { name: 'ai', testMatch: /ai-flows/, dependencies: ['desktop', 'mobile'], use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
   ],
 });

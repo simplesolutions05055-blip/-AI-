@@ -1,5 +1,5 @@
 // Content made by the real AI on staging: graphic and PDF document, start to finished file.
-// Costs API credit, so it runs only nightly / on demand (E2E_AI=1), desktop only.
+// Costs API credit, so it runs only nightly / on demand (E2E_AI=1). Own project "ai" (desktop), after the screen pictures.
 import { test, expect, type Page } from '@playwright/test';
 import { login, qa } from '../helpers';
 
@@ -25,7 +25,8 @@ async function expectFile(page: Page, url: string, type: RegExp) {
   expect(r.headers()['content-type'] || '').toMatch(type);
 }
 
-test.beforeEach(({}, info) => { test.skip(info.project.name !== 'desktop', 'one device is enough, halves the AI spend'); });
+// the library goes back to its starting state for whatever runs next
+test.afterAll(async () => { await qa('reset'); });
 
 test('graphic: brief to finished image', async ({ page }) => {
   test.setTimeout(7 * 60_000);
