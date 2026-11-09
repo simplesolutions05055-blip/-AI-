@@ -7,12 +7,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { BUILD } from '../_shared/build.ts';
 import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, MAX_IMAGES, NEEDS_VIDEO, NO_POST, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
+import { allowOrigin } from '../_shared/v2config.ts';
 
-const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
   const o = req.headers.get('origin') ?? '';
   return {
-    'access-control-allow-origin': ORIGINS.includes(o) ? o : ORIGINS[0],
+    'access-control-allow-origin': allowOrigin(o),
     'access-control-allow-headers': 'content-type, x-primeos-token, apikey, authorization',
     'access-control-allow-methods': 'POST, OPTIONS',
     vary: 'origin',

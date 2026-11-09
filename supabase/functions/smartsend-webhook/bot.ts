@@ -5,6 +5,7 @@ import { DRY, InMsg, download, sendText } from './wa.ts';
 import { remember, sessionOf } from './session.ts';
 import { MENU, kick } from './jobs.ts';
 import { logMsg } from './msglog.ts';
+import { CLAUDE_MODELS } from '../_shared/v2config.ts';
 
 const DAILY_MSGS = 80, DAILY_JOBS = 25;
 
@@ -80,7 +81,7 @@ async function understand(who: Who, s: Record<string, any>, text: string, usage:
     s.ownWait ? 'המשתמש שלח סרטון מוכן ונשאל על מה הסרטון. התשובה שלו היא own עם brief = מה שכתב.' : '',
     s.menuFix && s.last ? `המשתמש מתאר מה לתקן ב${s.menuFix === 'image' ? 'תמונה' : 'טקסט'} של הגרפיקה האחרונה: החזר change עם target ${s.menuFix}.` : '',
   ].filter(Boolean).join('\n');
-  for (const model of ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5']) {
+  for (const model of CLAUDE_MODELS) {
     const r = await fetchRetry('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model, max_tokens: 900, system: SYS, messages: [{ role: 'user', content: `${ctx}\n\nההודעה:\n${text}` }] }),

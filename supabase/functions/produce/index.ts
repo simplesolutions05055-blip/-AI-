@@ -4,11 +4,11 @@
 // POST { brand, jobs:[{ id, kind, ...render params }] }   header x-primeos-token
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { bypassHeaders } from '../_shared/vercelBypass.ts';
+import { allowOrigin } from '../_shared/v2config.ts';
 
-const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 const cors = (req: Request) => {
   const o = req.headers.get('origin') ?? '';
-  return { 'access-control-allow-origin': ORIGINS.includes(o) ? o : ORIGINS[0], 'access-control-allow-headers': 'content-type, x-primeos-token, apikey, authorization', 'access-control-allow-methods': 'POST, OPTIONS', vary: 'origin' };
+  return { 'access-control-allow-origin': allowOrigin(o), 'access-control-allow-headers': 'content-type, x-primeos-token, apikey, authorization', 'access-control-allow-methods': 'POST, OPTIONS', vary: 'origin' };
 };
 const json = (req: Request, b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors(req), 'content-type': 'application/json; charset=utf-8' } });
 // the test environment (Supabase branch 'staging') runs this same code: anything that is not the live project is staging

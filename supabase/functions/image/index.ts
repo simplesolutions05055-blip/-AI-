@@ -7,16 +7,16 @@ import { fetchRetry } from './retry.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { designDirective, qaPrompt, QA_SYS, QA_REDO, styleOf, kitDirective, KIT_SCAN, STYLES, EVENT_EN, varietyOf, pickComposition, accentFor, COMPOSITIONS } from './design.ts';
 import type { BrandKit } from './design.ts';
+import { allowOrigin, CLAUDE_MODELS } from '../_shared/v2config.ts';
 
 // our own storage, in whichever project this runs (live or staging)
 const OWN_HOST = (Deno.env.get('SUPABASE_URL') ?? '').replace(/^https:\/\//, '').replace(/[.]/g, '\\.');
 const OWN_PUBLIC = new RegExp('^https://' + OWN_HOST + '/storage/v1/object/public/');
 const OWN_OBJECT = new RegExp('^https://' + OWN_HOST + '/storage/v1/object/(public|sign)/');
-const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
   const o = req.headers.get('origin') ?? '';
   return {
-    'access-control-allow-origin': ORIGINS.includes(o) ? o : ORIGINS[0],
+    'access-control-allow-origin': allowOrigin(o),
     'access-control-allow-headers': 'content-type, x-primeos-token, apikey, authorization',
     'access-control-allow-methods': 'POST, OPTIONS',
     vary: 'origin',
@@ -26,7 +26,6 @@ const json = (req: Request, body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors(req), 'content-type': 'application/json; charset=utf-8' } });
 const db = () => createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
-const CLAUDE_MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
 // static fallbacks; the live list from OpenAI (newest first, e.g. gpt-image-2.5-sunburst) is tried before these
 const IMAGE_MODELS = (Deno.env.get('OPENAI_IMAGE_MODEL') ? [Deno.env.get('OPENAI_IMAGE_MODEL')!] : []).concat(['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1']).filter((m, i, a) => a.indexOf(m) === i);
 // the newest gpt-image models the account's key can use, read once per cold start from OpenAI's model list

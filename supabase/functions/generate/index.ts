@@ -9,21 +9,21 @@ import { caps, voicesFor, directorPrompt, DIRECTOR_SYS, sanitizeBrief, voiceScen
 import { STYLE_PICK_HE, styleOf, PALETTE_MODES, DOC_RULES_HE, DOC_TYPES, DECK_RULES_HE, DECK_STYLES, VIDEO_RULES_HE, QA_PASS } from './design.ts';
 import { REVIEW_SYS, reviewPrompt } from './agency.ts';
 import { clipSubmit, clipStatus, clipStore, clipModel } from './higgs.ts';
+import { allowOrigin, CLAUDE_MODELS } from '../_shared/v2config.ts';
 // organisations that get AI video clips before everyone (the test account)
 const AIV_ORGS = ['82ce4b4e-2bdd-41d2-8efc-b1f4987df994'];
 
-const MODELS = ['claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-7-sonnet-latest'];
+const MODELS = [...CLAUDE_MODELS, 'claude-3-7-sonnet-latest'];
 let goodModel: string | null = null;
 
 // our own storage, in whichever project this runs (live or staging)
 const OWN_HOST = (Deno.env.get('SUPABASE_URL') ?? '').replace(/^https:\/\//, '').replace(/[.]/g, '\\.');
 const OWN_PUBLIC = new RegExp('^https://' + OWN_HOST + '/storage/v1/object/public/');
 const OWN_OBJECT = new RegExp('^https://' + OWN_HOST + '/storage/v1/object/(public|sign)/');
-const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 function cors(req: Request) {
   const o = req.headers.get('origin') ?? '';
   return {
-    'access-control-allow-origin': ORIGINS.includes(o) ? o : ORIGINS[0],
+    'access-control-allow-origin': allowOrigin(o),
     'access-control-allow-headers': 'content-type, x-primeos-token, apikey, authorization',
     'access-control-allow-methods': 'POST, OPTIONS',
     vary: 'origin',
