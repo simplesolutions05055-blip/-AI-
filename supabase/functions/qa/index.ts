@@ -89,6 +89,8 @@ Deno.serve(async (req) => {
       await d.from('org_state').upsert({ org_id: f.org_id, data: f.data, updated_at: new Date().toISOString() });
       await d.from('content_items').delete().eq('org_id', f.org_id);
       await d.from('v2_jobs').delete().eq('org_id', f.org_id);
+      // AI runs log real usage; it feeds the console's money screens, so the pictures would change after every AI run
+      await d.from('v2_usage').delete().eq('org_id', f.org_id);
     }
     await d.from('v2_incidents').update({ state: 'resolved', closed_at: new Date().toISOString(), closed_by: 'qa' }).eq('state', 'open').eq('detail->>qa', 'true');
     return json({ ok: true, orgs: (fx ?? []).length });

@@ -6969,7 +6969,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         const d = SYS.data[SYS.tab];
         return pageHead({ title: 'מערכת', actions: '<button class="btn" data-act="sysReload"' + (SYS.loading ? ' disabled' : '') + '>' + ic('refresh', 16) + ' רענון</button>' }) +
           '<p class="t-sub" style="margin:-8px 0 16px">מצב המערכת במקום אחד: בדיקות, עבודות הפקה, WhatsApp, עלויות AI ועדכוני גרסה.</p>' +
-          '<div class="filters"><div class="seg" role="tablist">' + TABS.map((t) => '<button role="tab" aria-selected="' + (SYS.tab === t[0]) + '" class="' + (SYS.tab === t[0] ? 'on' : '') + '" data-act="sysTab:' + t[0] + '">' + t[1] + '</button>').join('') + '</div></div>' +
+          '<div class="filters"><div class="seg sys-seg" role="tablist">' + TABS.map((t) => '<button role="tab" aria-selected="' + (SYS.tab === t[0]) + '" class="' + (SYS.tab === t[0] ? 'on' : '') + '" data-act="sysTab:' + t[0] + '">' + t[1] + '</button>').join('') + '</div></div>' +
           '<div id="sysBody" data-tab="' + SYS.tab + '">' + (d ? VIEW[SYS.tab](d) : '<div class="card"><div style="display:flex;gap:10px;align-items:center" class="t-sub"><span class="gm-spin"></span>טוען...</div></div>') + '</div>';
       },
       mount() { if (!SYS.data[SYS.tab] || Date.now() - (SYS.at[SYS.tab] || 0) > 60000) load(SYS.tab, true); },
@@ -6977,6 +6977,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     ACT.sysTab = (t) => { SYS.tab = t; render(); if (!SYS.data[t] || Date.now() - (SYS.at[t] || 0) > 60000) load(t, true); };
     ACT.sysReload = () => load(SYS.tab);
     css.textContent += `
+.sys-seg{flex-wrap:wrap;max-width:100%}.sys-seg button{white-space:nowrap}
 .sys-bars{display:flex;align-items:flex-end;gap:6px;height:150px;padding:8px 0;overflow-x:auto}
 .sys-col{flex:1 0 22px;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%}
 .sys-stack{flex:1;width:100%;max-width:34px;display:flex;flex-direction:column-reverse;border-radius:6px;overflow:hidden;background:var(--surface-2,#F3F5F9)}
