@@ -6876,6 +6876,116 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     buildNav = function () { _bn.apply(this, arguments); if (S.mode === 'admin' && !INC.at && !INC.loading) load(true); };
   })();
 
+  /* ---------------- System: health, production jobs, WhatsApp, AI cost and deploys, in one console screen ----------------
+     Read-only (admin.sys.load, one tab per call). Usage arrives as raw units and is priced here with the console's own rates (aiCost). */
+  (function () {
+    const TABS = [['overview', 'סקירה', 'pulse'], ['jobs', 'עבודות', 'list'], ['wa', 'WhatsApp', 'wa'], ['costs', 'עלויות AI', 'chart'], ['deploys', 'עדכוני גרסה', 'hist']];
+    const KIND = { graphic: 'גרפיקה', doc: 'מסמך', deck: 'מצגת', video: 'סרטון', vscan: 'ניתוח סרטון', carousel: 'קרוסלה' };
+    const CHK = { site: 'האתר', api: 'השרת ובסיס הנתונים', jobs: 'עבודות', stuck: 'עבודות תקועות', wa: 'WhatsApp', storage: 'אחסון', ai: 'מנועי AI', rate: 'מגבלות קצב' };
+    const SYS = { tab: 'overview', data: {}, at: {}, loading: '' };
+    // dates day/month (+ time)
+    const dm = (iso) => { if (!iso) return '-'; const t = new Date(iso); return t.getDate() + '/' + (t.getMonth() + 1); };
+    const dmt = (iso) => { if (!iso) return '-'; const t = new Date(iso); return dm(iso) + ' ' + String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0'); };
+    const n0 = (v) => (+v || 0).toLocaleString('he-IL');
+    const ils = (v) => '₪' + (Math.round((+v || 0) * 10) / 10).toLocaleString('he-IL');
+    const price = (u) => (typeof aiCost === 'function' ? aiCost(u) : 0);
+    const cut = (d) => (d && d.capped ? '<span class="chip" style="margin-inline-start:8px">מוצגות 1,000 השורות האחרונות</span>' : '');
+
+    async function load(tab, quiet) {
+      if (SYS.loading === tab) return;
+      SYS.loading = tab; if (!quiet) render();
+      try { SYS.data[tab] = await call('admin.sys.load', { tab }); SYS.at[tab] = Date.now(); }
+      catch (e) { toast('לא הצלחתי לטעון את נתוני המערכת', 'נסו שוב בעוד רגע.', 'err'); }
+      SYS.loading = ''; if (S.route === 'a_system') render();
+    }
+    // a small bar chart: one column per day, value(s) stacked
+    function bars(days, parts) {
+      const keys = Object.keys(days).sort();
+      if (!keys.length) return '';
+      const tot = (k) => parts.reduce((a, p) => a + p.v(days[k]), 0);
+      const max = Math.max(1, ...keys.map(tot));
+      return '<div class="sys-bars" role="img" aria-label="לפי יום">' + keys.map((k) => '<div class="sys-col" title="' + dm(k) + ': ' + parts.map((p) => p.l + ' ' + p.fmt(p.v(days[k]))).join(' · ') + '">' +
+        '<div class="sys-stack">' + parts.map((p) => '<i style="height:' + (p.v(days[k]) / max * 100).toFixed(1) + '%;background:' + p.c + '"></i>').join('') + '</div><small>' + dm(k) + '</small></div>').join('') + '</div>' +
+        '<div class="sys-legend">' + parts.map((p) => '<span><i style="background:' + p.c + '"></i>' + p.l + '</span>').join('') + '</div>';
+    }
+    const tbl = (head, rows, empty) => '<div class="tbl-wrap flat"><table class="responsive"><thead><tr>' + head.map((h) => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>' +
+      (rows.length ? rows.map((r) => '<tr>' + r.map((c, i) => '<td data-l="' + head[i] + '">' + c + '</td>').join('') + '</tr>').join('') : '<tr><td colspan="' + head.length + '" class="t-sub">' + empty + '</td></tr>') + '</tbody></table></div>';
+    const cardH = (icon, title, body, extra) => '<div class="card" style="margin-bottom:16px"><div class="card-head">' + ic(icon, 18) + '<h3>' + title + '</h3>' + (extra || '') + '</div>' + body + '</div>';
+
+    const VIEW = {
+      overview(d) {
+        const res = (d.monitor && d.monitor.res) || {}, chk = Object.entries(res), bad = chk.filter(([, c]) => !c.ok).length;
+        const j = d.jobs24 || {}, w = d.wa24 || {};
+        return '<div class="grid g-4" style="margin-bottom:16px">' +
+          stat({ l: 'בדיקות תקינות', n: (chk.length - bad) + '/' + chk.length, s: 'בדיקה אחרונה ' + dmt(d.monitor && d.monitor.at), i: 'pulse', nav: 'a_system', f: bad ? 'rejected' : 'approved' }) +
+          stat({ l: 'תקלות פתוחות', n: d.incidents ? d.incidents.open : 0, s: (d.incidents ? d.incidents.crit : 0) + ' קריטיות', i: 'alert', nav: 'a_incidents', f: d.incidents && d.incidents.open ? 'rejected' : 'approved' }) +
+          stat({ l: 'עבודות, 24 שעות', n: n0((j.done || 0) + (j.error || 0) + (j.run || 0)), s: n0(j.done) + ' הושלמו · ' + n0(j.error) + ' נכשלו', i: 'list', nav: 'a_system', f: j.error ? 'pending' : 'published' }) +
+          stat({ l: 'WhatsApp, 24 שעות', n: n0((w.in || 0) + (w.out || 0)), s: n0(w.in) + ' נכנסו · ' + n0(w.out) + ' יצאו', i: 'wa', nav: 'a_system', f: 'draft' }) + '</div>' +
+          cardH('pulse', 'בדיקות המוניטור', '<div class="row-list">' + (chk.length ? chk.map(([k, c]) => '<div class="rowi"><span class="ic-box ' + (c.ok ? 'ok' : 'bad') + '">' + ic(c.ok ? 'check' : 'alert', 16) + '</span><span class="grow"><span class="nm">' + esc(CHK[k] || k) + '</span><br><span class="mt">' + esc([c.ms ? c.ms + 'ms' : '', c.note || ''].filter(Boolean).join(' · ') || (c.ok ? 'תקין' : 'לא עונה')) + '</span></span></div>').join('') : '<div class="t-sub">המוניטור עוד לא רץ.</div>') + '</div>') +
+          cardH('hist', 'גרסה', '<div class="row-list"><div class="rowi"><span class="ic-box info">' + ic('gear', 16) + '</span><span class="grow"><span class="nm">שרת (v2-api)</span><br><span class="mt" dir="ltr">' + esc(d.build || '-') + '</span></span></div>' +
+            '<div class="rowi"><span class="ic-box info">' + ic('send', 16) + '</span><span class="grow"><span class="nm">עדכון אחרון</span><br><span class="mt">' + (d.lastDeploy ? dmt(d.lastDeploy.created_at) + ' · <span dir="ltr">' + esc(d.lastDeploy.target) + '</span>' : 'עוד לא נרשם עדכון') + '</span></span></div></div>');
+      },
+      jobs(d) {
+        const kinds = Object.entries(d.byKind || {});
+        const done = kinds.reduce((a, [, c]) => a + (c.done || 0), 0), err = kinds.reduce((a, [, c]) => a + (c.error || 0), 0);
+        const rate = done + err ? Math.round(err / (done + err) * 1000) / 10 : 0;
+        const row = (j) => [dmt(j.at), esc(KIND[j.kind] || j.kind), esc(j.org || '-'), esc(j.step || '-'), j.error ? '<span class="t-sub">' + esc(j.error) + '</span>' : '-'];
+        return '<div class="grid g-4" style="margin-bottom:16px">' +
+          stat({ l: 'עבודות, 7 ימים', n: n0(d.total), s: 'כל הסוגים', i: 'list', nav: 'a_system', f: 'draft' }) +
+          stat({ l: 'אחוז כישלון', n: rate + '%', s: n0(err) + ' מתוך ' + n0(done + err), i: 'alert', nav: 'a_system', f: rate > 10 ? 'rejected' : rate ? 'pending' : 'approved' }) +
+          stat({ l: 'תקועות עכשיו', n: (d.stuck || []).length, s: 'ממתינות יותר מ-10 דקות', i: 'clock', nav: 'a_system', f: (d.stuck || []).length ? 'rejected' : 'approved' }) +
+          stat({ l: 'בתור', n: n0(kinds.reduce((a, [, c]) => a + (c.run || 0), 0)), s: 'רצות או ממתינות', i: 'refresh', nav: 'a_system', f: 'published' }) + '</div>' +
+          cardH('chart', 'לפי סוג', tbl(['סוג', 'הושלמו', 'נכשלו', 'בתור'], kinds.map(([k, c]) => [esc(KIND[k] || k), n0(c.done), n0(c.error), n0(c.run)]), 'אין עבודות בשבוע האחרון.'), cut(d)) +
+          cardH('clock', 'עבודות תקועות', tbl(['מתי', 'סוג', 'לקוח', 'שלב', 'שגיאה'], (d.stuck || []).map(row), 'אין עבודות תקועות.')) +
+          cardH('alert', 'כישלונות אחרונים', tbl(['מתי', 'סוג', 'לקוח', 'שלב', 'שגיאה'], (d.errors || []).map(row), 'אין כישלונות בשבוע האחרון.'));
+      },
+      wa(d) {
+        const c = d.check;
+        return (c ? '<div class="note" style="margin-bottom:16px">' + ic(c.ok ? 'check' : 'alert', 15) + '<span>בדיקת המוניטור: ' + (c.ok ? 'תקין' : 'יש בעיה') + (c.note ? ' · ' + esc(c.note) : '') + '</span></div>' : '') +
+          cardH('chart', 'הודעות לפי יום, 7 ימים', bars(d.perDay || {}, [{ l: 'נכנסו', c: 'var(--brand,#0124C7)', v: (x) => x.in || 0, fmt: n0 }, { l: 'יצאו', c: '#2F8A00', v: (x) => x.out || 0, fmt: n0 }]) || '<div class="t-sub">אין הודעות בשבוע האחרון.</div>', cut(d)) +
+          cardH('wa', 'לפי לקוח', tbl(['לקוח', 'נכנסו', 'יצאו'], (d.perOrg || []).map((o) => [esc(o.org), n0(o.in), n0(o.out)]), 'אין הודעות בשבוע האחרון.'));
+      },
+      costs(d) {
+        const orgs = (d.perOrg || []).map((o) => ({ org: o.org, ils: price(o.use), use: o.use })).sort((a, b) => b.ils - a.ils);
+        const total = orgs.reduce((a, o) => a + o.ils, 0);
+        const days = Object.keys(d.perDay || {}).length || 1;
+        return '<div class="grid g-4" style="margin-bottom:16px">' +
+          stat({ l: 'עלות AI, 30 יום', n: ils(total), s: 'לפי התעריפים בהגדרות', i: 'chart', nav: 'a_system', f: 'draft' }) +
+          stat({ l: 'ממוצע ליום', n: ils(total / days), s: days + ' ימים עם שימוש', i: 'clock', nav: 'a_system', f: 'published' }) +
+          stat({ l: 'לקוחות עם שימוש', n: orgs.length, s: 'ב-30 יום', i: 'list', nav: 'a_system', f: 'pending' }) +
+          stat({ l: 'הלקוח היקר', n: orgs[0] ? ils(orgs[0].ils) : '-', s: orgs[0] ? orgs[0].org : 'אין שימוש', i: 'alert', nav: 'a_system', f: 'draft' }) + '</div>' +
+          cardH('chart', 'עלות לפי יום', bars(d.perDay || {}, [{ l: 'עלות', c: 'var(--brand,#0124C7)', v: (u) => price(u), fmt: ils }]) || '<div class="t-sub">אין שימוש ב-30 הימים האחרונים.</div>', cut(d)) +
+          cardH('list', 'לפי לקוח', tbl(['לקוח', 'עלות', 'טקסט (טוקנים)', 'תמונות', 'שניות רינדור'], orgs.map((o) => [esc(o.org), '<b>' + ils(o.ils) + '</b>', n0((o.use.cin || 0) + (o.use.cout || 0)), n0((o.use.img_low || 0) + (o.use.img_med || 0) + (o.use.img_high || 0)), n0(o.use.render_sec)]), 'אין שימוש ב-30 הימים האחרונים.'));
+      },
+      deploys(d) {
+        return cardH('hist', 'עדכוני גרסה אחרונים', tbl(['מתי', 'גרסה ומי', 'דרך'], (d.deploys || []).map((x) => [dmt(x.created_at), '<span dir="ltr">' + esc(x.target || '-') + '</span>', x.actor_kind === 'ci' ? 'צינור העדכונים' : esc(x.actor_kind || '-')]), 'עוד לא נרשמו עדכונים. כל עדכון דרך צינור העדכונים יופיע כאן.')) +
+          '<div class="note">' + ic('lock', 15) + '<span>עדכון לאוויר עובר בדיקות אוטומטיות בסביבת הבדיקות ומחכה לאישור בגיטהאב. כל עדכון נרשם כאן.</span></div>';
+      },
+    };
+
+    SCREENS.a_system = {
+      nav: { t: 'מערכת', i: 'pulse' },
+      render() {
+        const d = SYS.data[SYS.tab];
+        return pageHead({ title: 'מערכת', actions: '<button class="btn" data-act="sysReload"' + (SYS.loading ? ' disabled' : '') + '>' + ic('refresh', 16) + ' רענון</button>' }) +
+          '<p class="t-sub" style="margin:-8px 0 16px">מצב המערכת במקום אחד: בדיקות, עבודות הפקה, WhatsApp, עלויות AI ועדכוני גרסה.</p>' +
+          '<div class="filters"><div class="seg" role="tablist">' + TABS.map((t) => '<button role="tab" aria-selected="' + (SYS.tab === t[0]) + '" class="' + (SYS.tab === t[0] ? 'on' : '') + '" data-act="sysTab:' + t[0] + '">' + t[1] + '</button>').join('') + '</div></div>' +
+          '<div id="sysBody" data-tab="' + SYS.tab + '">' + (d ? VIEW[SYS.tab](d) : '<div class="card"><div style="display:flex;gap:10px;align-items:center" class="t-sub"><span class="gm-spin"></span>טוען...</div></div>') + '</div>';
+      },
+      mount() { if (!SYS.data[SYS.tab] || Date.now() - (SYS.at[SYS.tab] || 0) > 60000) load(SYS.tab, true); },
+    };
+    ACT.sysTab = (t) => { SYS.tab = t; render(); if (!SYS.data[t] || Date.now() - (SYS.at[t] || 0) > 60000) load(t, true); };
+    ACT.sysReload = () => load(SYS.tab);
+    css.textContent += `
+.sys-bars{display:flex;align-items:flex-end;gap:6px;height:150px;padding:8px 0;overflow-x:auto}
+.sys-col{flex:1 0 22px;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%}
+.sys-stack{flex:1;width:100%;max-width:34px;display:flex;flex-direction:column-reverse;border-radius:6px;overflow:hidden;background:var(--surface-2,#F3F5F9)}
+.sys-stack i{display:block;width:100%}
+.sys-col small{font-size:11px;color:var(--ink-3,#5A6386)}
+.sys-legend{display:flex;gap:14px;font-size:12.5px;color:var(--ink-3,#5A6386)}.sys-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-inline-end:6px}`;
+    if (!ADMIN_NAV.includes('a_system')) { const k = ADMIN_NAV.indexOf('a_incidents'); ADMIN_NAV.splice(k >= 0 ? k + 1 : ADMIN_NAV.length, 0, 'a_system'); }
+  })();
+
   /* ---------------- accessibility: widget, skip link, statement and automatic fixes (IS 5568 / WCAG AA) ---------------- */
   (function () {
     const KEY = 'pos_a11y';

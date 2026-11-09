@@ -846,6 +846,84 @@ async function incidentsLoad(d: DB) {
     health: { at: m.at ?? null, res: m.res ?? {}, backup: m.backup ?? null, tenant: m.tenant ?? null, load: m.load ?? null, history: (m.history ?? []).slice(-288), storage_bytes: sz ?? null },
   };
 }
+// System screen (admin console): read-only health, jobs, WhatsApp, AI usage and deploys, one tab per call.
+// usage comes back as raw units (tokens, images, seconds): the console prices them with its own editable rates.
+const SYS_TABS = ['overview', 'jobs', 'wa', 'costs', 'deploys'];
+const SYS_ROWS = 1000; // one page of rows per table; `capped` says when there were more
+async function sysLoad(d: DB, p: Record<string, any>) {
+  const tab = String(p.tab ?? 'overview');
+  if (!SYS_TABS.includes(tab)) throw new Error('bad_tab');
+  const DAYMS = 864e5, now = Date.now();
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const dayOf = (t: string) => String(t).slice(0, 10);
+  const names = async (ids: string[]) => {
+    const u = [...new Set(ids.filter(Boolean))];
+    const { data } = u.length ? await d.from('organizations').select('id,name').in('id', u) : { data: [] };
+    return Object.fromEntries((data ?? []).map((o: any) => [o.id, o.name]));
+  };
+  if (tab === 'overview') {
+    const [st, inc, jobs, wa, dep] = await Promise.all([
+      d.from('admin_state').select('data').eq('id', 'monitor').maybeSingle(),
+      d.from('v2_incidents').select('severity').eq('state', 'open'),
+      d.from('v2_jobs').select('state').gte('created_at', ago(DAYMS)).limit(SYS_ROWS),
+      d.from('v2_wa_msgs').select('dir').gte('created_at', ago(DAYMS)).limit(SYS_ROWS),
+      d.from('v2_audit').select('target,created_at').eq('action', 'deploy').order('created_at', { ascending: false }).limit(1),
+    ]);
+    const m = (st.data?.data ?? {}) as Record<string, any>;
+    const count = (rows: any[] | null, k: string) => (rows ?? []).reduce((a: Record<string, number>, r: any) => { a[r[k]] = (a[r[k]] ?? 0) + 1; return a; }, {});
+    return {
+      ok: true, tab, build: BUILD,
+      monitor: { at: m.at ?? null, res: m.res ?? {} },
+      incidents: { open: (inc.data ?? []).length, crit: (inc.data ?? []).filter((i: any) => i.severity === 'crit').length },
+      jobs24: count(jobs.data, 'state'), wa24: count(wa.data, 'dir'),
+      lastDeploy: dep.data?.[0] ?? null,
+    };
+  }
+  if (tab === 'jobs') {
+    const { data } = await d.from('v2_jobs').select('id,org_id,kind,step,state,error,tries,created_at,updated_at,next_at').gte('created_at', ago(7 * DAYMS)).order('created_at', { ascending: false }).limit(SYS_ROWS);
+    const rows = data ?? [];
+    const byKind: Record<string, Record<string, number>> = {};
+    for (const j of rows) { const k = byKind[j.kind] ??= { run: 0, done: 0, error: 0 }; k[j.state] = (k[j.state] ?? 0) + 1; }
+    const stuckCut = now - 10 * 60000;
+    const stuck = rows.filter((j: any) => j.state === 'run' && new Date(j.next_at).getTime() < stuckCut).slice(0, 20);
+    const errors = rows.filter((j: any) => j.state === 'error').slice(0, 20);
+    const org = await names([...stuck, ...errors].map((j: any) => j.org_id));
+    const slim = (j: any) => ({ id: j.id, kind: j.kind, step: j.step, error: j.error ? String(j.error).slice(0, 200) : null, tries: j.tries, org: org[j.org_id] ?? null, at: j.updated_at });
+    return { ok: true, tab, days: 7, total: rows.length, capped: rows.length >= SYS_ROWS, byKind, stuck: stuck.map(slim), errors: errors.map(slim) };
+  }
+  if (tab === 'wa') {
+    const { data } = await d.from('v2_wa_msgs').select('dir,org_id,created_at').gte('created_at', ago(7 * DAYMS)).order('created_at', { ascending: false }).limit(SYS_ROWS);
+    const rows = data ?? [];
+    const perDay: Record<string, { in: number; out: number }> = {};
+    const perOrg: Record<string, { in: number; out: number }> = {};
+    for (const r of rows) {
+      const k = r.dir === 'out' ? 'out' : 'in';
+      (perDay[dayOf(r.created_at)] ??= { in: 0, out: 0 })[k]++;
+      (perOrg[r.org_id ?? ''] ??= { in: 0, out: 0 })[k]++;
+    }
+    const org = await names(Object.keys(perOrg));
+    const st = await d.from('admin_state').select('data').eq('id', 'monitor').maybeSingle();
+    return {
+      ok: true, tab, days: 7, total: rows.length, capped: rows.length >= SYS_ROWS, perDay,
+      perOrg: Object.entries(perOrg).map(([id, c]) => ({ org: org[id] ?? (id ? id.slice(0, 8) : 'לא רשום'), ...c })).sort((a, b) => b.in + b.out - a.in - a.out),
+      check: (st.data?.data as any)?.res?.wa ?? null,
+    };
+  }
+  if (tab === 'costs') {
+    const UK = ['cin', 'cout', 'img_low', 'img_med', 'img_high', 'tts_chars', 'music_sec', 'stock', 'render_sec'];
+    const { data } = await d.from('v2_usage').select('org_id,' + UK.join(',') + ',created_at').gte('created_at', ago(30 * DAYMS)).order('created_at', { ascending: false }).limit(SYS_ROWS);
+    const rows = (data ?? []) as any[];
+    const zero = () => Object.fromEntries(UK.map((k) => [k, 0])) as Record<string, number>;
+    const add = (t: Record<string, number>, r: any) => { for (const k of UK) t[k] += +r[k] || 0; };
+    const perDay: Record<string, Record<string, number>> = {};
+    const perOrg: Record<string, Record<string, number>> = {};
+    for (const r of rows) { add(perDay[dayOf(r.created_at)] ??= zero(), r); add(perOrg[r.org_id ?? ''] ??= zero(), r); }
+    const org = await names(Object.keys(perOrg));
+    return { ok: true, tab, days: 30, total: rows.length, capped: rows.length >= SYS_ROWS, perDay, perOrg: Object.entries(perOrg).map(([id, u]) => ({ org: org[id] ?? (id ? id.slice(0, 8) : 'מערכת'), use: u })) };
+  }
+  const { data } = await d.from('v2_audit').select('target,actor_kind,created_at').eq('action', 'deploy').order('created_at', { ascending: false }).limit(50);
+  return { ok: true, tab, deploys: data ?? [] };
+}
 // the sidebar light: the platform checks for everyone; the console also counts open incidents
 const CORE = ['site', 'api', 'storage', 'wa'];
 async function sysStatus(d: DB, admin: boolean) {
@@ -1490,6 +1568,7 @@ Deno.serve(async (req) => {
       if (action === 'admin.org.update') return json(req, await adminOrgUpdate(d, p));
       if (action === 'admin.quota.set') return json(req, await adminQuotaSet(d, p));
       if (action === 'admin.incidents.load') return json(req, await incidentsLoad(d));
+      if (action === 'admin.sys.load') return json(req, await sysLoad(d, p));
       if (action === 'admin.incident.fix') return json(req, await incidentFix(d, await adminName(d, s.adminId), p));
       if (action === 'admin.incident.set') return json(req, await incidentSet(d, await adminName(d, s.adminId), p));
       if (action === 'admin.incident.create') return json(req, await incidentCreate(d, await adminName(d, s.adminId), p));

@@ -36,6 +36,8 @@ test('admin: all console screens', async ({ page }) => {
       await goTo(page, r);
       await expectNoSideScroll(page);
       await expect(page.locator('#view .gm-spin')).toHaveCount(0, { timeout: 15_000 });
+      // the System screen shows live counts that change every run: checked tab by tab in system.spec.ts instead
+      if (r === 'a_system') return;
       await expect(page).toHaveScreenshot(`admin-${r}.png`);
     });
   }
