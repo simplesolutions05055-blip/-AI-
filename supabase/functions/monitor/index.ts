@@ -200,8 +200,9 @@ async function run(d: DB) {
   return { ok: Object.values(res).every((c) => c.ok), res, down, back, mailed };
 }
 
-// a weekly copy of the data, table by table, into a private bucket; eight weeks are kept
-const TABLES = ['organizations', 'org_members', 'org_state', 'content_items', 'api_tokens', 'admin_users', 'admin_state', 'v2_jobs', 'v2_usage', 'v2_pub_posts', 'v2_pub_profiles', 'v2_wa_sessions', 'v2_wa_msgs', 'v2_brand_kits', 'v2_audit', 'v2_login_codes'];
+// a weekly copy of the data, table by table, into a private bucket; eight weeks are kept.
+// restore: ops/restore-backup.mjs (keep its ORDER in step with this list). files in storage buckets are not in here.
+const TABLES = ['organizations', 'org_members', 'org_state', 'content_items', 'api_tokens', 'admin_users', 'admin_state', 'v2_jobs', 'v2_usage', 'v2_pub_posts', 'v2_pub_profiles', 'v2_wa_sessions', 'v2_wa_msgs', 'v2_brand_kits', 'v2_audit', 'v2_login_codes', 'v2_outputs', 'v2_plan_defs', 'v2_pub_events', 'v2_incidents'];
 async function backup(d: DB) {
   const day = new Date().toISOString().slice(0, 10);
   const out: Record<string, number> = {};
