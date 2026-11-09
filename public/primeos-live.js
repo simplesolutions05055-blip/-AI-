@@ -6942,19 +6942,19 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       wa(d) {
         const c = d.check;
         return (c ? '<div class="note" style="margin-bottom:16px">' + ic(c.ok ? 'check' : 'alert', 15) + '<span>בדיקת המוניטור: ' + (c.ok ? 'תקין' : 'יש בעיה') + (c.note ? ' · ' + esc(c.note) : '') + '</span></div>' : '') +
-          cardH('chart', 'הודעות לפי יום, 7 ימים', bars(d.perDay || {}, [{ l: 'נכנסו', c: 'var(--brand,#0124C7)', v: (x) => x.in || 0, fmt: n0 }, { l: 'יצאו', c: '#2F8A00', v: (x) => x.out || 0, fmt: n0 }]) || '<div class="t-sub">אין הודעות בשבוע האחרון.</div>', cut(d)) +
+          cardH('chart', 'הודעות לפי יום, 7 ימים', bars(d.perDay || {}, [{ l: 'נכנסו', c: 'var(--brand,#0124C7)', v: (x) => x.in || 0, fmt: n0 }, { l: 'יצאו', c: '#2F8A00', v: (x) => x.out || 0, fmt: n0 }]) || '<div class="t-sub sys-empty">אין הודעות בשבוע האחרון.</div>', cut(d)) +
           cardH('wa', 'לפי לקוח', tbl(['לקוח', 'נכנסו', 'יצאו'], (d.perOrg || []).map((o) => [esc(o.org), n0(o.in), n0(o.out)]), 'אין הודעות בשבוע האחרון.'));
       },
       costs(d) {
         const orgs = (d.perOrg || []).map((o) => ({ org: o.org, ils: price(o.use), use: o.use })).sort((a, b) => b.ils - a.ils);
         const total = orgs.reduce((a, o) => a + o.ils, 0);
-        const days = Object.keys(d.perDay || {}).length || 1;
+        const days = Object.keys(d.perDay || {}).length;
         return '<div class="grid g-4" style="margin-bottom:16px">' +
           stat({ l: 'עלות AI, 30 יום', n: ils(total), s: 'לפי התעריפים בהגדרות', i: 'chart', nav: 'a_system', f: 'draft' }) +
-          stat({ l: 'ממוצע ליום', n: ils(total / days), s: days + ' ימים עם שימוש', i: 'clock', nav: 'a_system', f: 'published' }) +
+          stat({ l: 'ממוצע ליום', n: ils(days ? total / days : 0), s: days + ' ימים עם שימוש', i: 'clock', nav: 'a_system', f: 'published' }) +
           stat({ l: 'לקוחות עם שימוש', n: orgs.length, s: 'ב-30 יום', i: 'list', nav: 'a_system', f: 'pending' }) +
           stat({ l: 'הלקוח היקר', n: orgs[0] ? ils(orgs[0].ils) : '-', s: orgs[0] ? orgs[0].org : 'אין שימוש', i: 'alert', nav: 'a_system', f: 'draft' }) + '</div>' +
-          cardH('chart', 'עלות לפי יום', bars(d.perDay || {}, [{ l: 'עלות', c: 'var(--brand,#0124C7)', v: (u) => price(u), fmt: ils }]) || '<div class="t-sub">אין שימוש ב-30 הימים האחרונים.</div>', cut(d)) +
+          cardH('chart', 'עלות לפי יום', bars(d.perDay || {}, [{ l: 'עלות', c: 'var(--brand,#0124C7)', v: (u) => price(u), fmt: ils }]) || '<div class="t-sub sys-empty">אין שימוש ב-30 הימים האחרונים.</div>', cut(d)) +
           cardH('list', 'לפי לקוח', tbl(['לקוח', 'עלות', 'טקסט (טוקנים)', 'תמונות', 'שניות רינדור'], orgs.map((o) => [esc(o.org), '<b>' + ils(o.ils) + '</b>', n0((o.use.cin || 0) + (o.use.cout || 0)), n0((o.use.img_low || 0) + (o.use.img_med || 0) + (o.use.img_high || 0)), n0(o.use.render_sec)]), 'אין שימוש ב-30 הימים האחרונים.'));
       },
       deploys(d) {
@@ -6977,7 +6977,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     ACT.sysTab = (t) => { SYS.tab = t; render(); if (!SYS.data[t] || Date.now() - (SYS.at[t] || 0) > 60000) load(t, true); };
     ACT.sysReload = () => load(SYS.tab);
     css.textContent += `
-.sys-seg{flex-wrap:wrap;max-width:100%}.sys-seg button{white-space:nowrap}
+.sys-seg{flex-wrap:wrap;max-width:100%}.sys-empty{padding:14px 18px}.sys-seg button{white-space:nowrap}
 .sys-bars{display:flex;align-items:flex-end;gap:6px;height:150px;padding:8px 0;overflow-x:auto}
 .sys-col{flex:1 0 22px;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%}
 .sys-stack{flex:1;width:100%;max-width:34px;display:flex;flex-direction:column-reverse;border-radius:6px;overflow:hidden;background:var(--surface-2,#F3F5F9)}
