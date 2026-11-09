@@ -1,6 +1,7 @@
 // Test helper for the automated browser tests (Playwright). Runs ONLY in the staging copy of the backend:
 // on the live project every call answers 404, whatever is sent.
 //   POST { action:'login', who:'manager'|'dept'|'solo'|'admin' } -> { lc }   one-time entry link for a test user
+//   POST { action:'code', who:'manager'|'dept'|'solo' }          -> { email, code } a 6-digit login code, as if e-mailed
 //   POST { action:'report', run }                                  -> { ok }   a test run's summary, kept in qa_runs
 //   POST { action:'runs' }                                         -> { runs } the last runs
 // Only the made-up qa organisations can be entered; nothing here touches a real account.
@@ -34,6 +35,18 @@ Deno.serve(async (req) => {
     const { error } = await d.from('v2_login_codes').insert(row);
     if (error) return json({ error: error.message }, 500);
     return json({ lc: raw });
+  }
+  // the code the login e-mail would carry (staging sends no mail): the browser test types it into the real login screen
+  if (p.action === 'code') {
+    const w = WHO[String(p.who)];
+    if (!w || w.kind !== 'client') return json({ error: 'unknown_user' }, 400);
+    const { data: m } = await d.from('org_members').select('email').eq('id', w.member_id).eq('org_id', w.org_id).maybeSingle();
+    const email = String(m?.email ?? '').trim().toLowerCase();
+    if (!email.endsWith('@primeos.test')) return json({ error: 'not_a_test_user' }, 400);
+    const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
+    const { error } = await d.from('v2_login_codes').insert({ email, kind: 'client', purpose: 'code', code_hash: await sha(email + ':' + code), org_id: w.org_id, member_id: w.member_id, expires_at: new Date(Date.now() + 10 * 60000).toISOString() });
+    if (error) return json({ error: error.message }, 500);
+    return json({ email, code });
   }
   if (p.action === 'report') {
     const r = p.run ?? {};
