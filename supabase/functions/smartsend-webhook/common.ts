@@ -1,5 +1,6 @@
 // Shared helpers for the PrimeOS WhatsApp bot and the server job runner.
 import { videoColors } from './palette.ts';
+import { bypassHeaders } from '../_shared/vercelBypass.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 // deno-lint-ignore no-explicit-any
@@ -74,7 +75,7 @@ export const api = (token: string, action: string, payload: unknown, ms = 60000)
 
 // a long call through pg_net: returns the request id, the answer is read later
 export async function httpLater(d: DB, url: string, token: string, body: unknown, ms = 170000): Promise<number> {
-  const { data, error } = await d.rpc('v2_http', { url, body, headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...(IS_STAGING && url.startsWith(APP) ? { 'x-primeos-backend': 'staging' } : {}) }, timeout_ms: ms });
+  const { data, error } = await d.rpc('v2_http', { url, body, headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...(IS_STAGING && url.startsWith(APP) ? { 'x-primeos-backend': 'staging' } : {}), ...bypassHeaders(url) }, timeout_ms: ms });
   if (error) throw new Error('http_later: ' + error.message);
   return Number(data);
 }

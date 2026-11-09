@@ -3,6 +3,7 @@
 // service (Chromium + ffmpeg), and returns public URLs of the finished files.
 // POST { brand, jobs:[{ id, kind, ...render params }] }   header x-primeos-token
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import { bypassHeaders } from '../_shared/vercelBypass.ts';
 
 const ORIGINS = ['https://app.primeos.co.il', 'https://ai-mggo.vercel.app', 'https://primeos-staging.vercel.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:8080'];
 const cors = (req: Request) => {
@@ -67,7 +68,7 @@ Deno.serve(async (req) => {
       statusUpload = s.data.signedUrl;
       statusUrl = d.storage.from('v2-content').getPublicUrl(sp).data.publicUrl;
     }
-    const r = await fetch(RENDER_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...(IS_STAGING ? { 'x-primeos-backend': 'staging' } : {}) }, body: JSON.stringify({ brand: p.brand ?? {}, jobs, async, statusUpload }) });
+    const r = await fetch(RENDER_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...(IS_STAGING ? { 'x-primeos-backend': 'staging' } : {}), ...bypassHeaders(RENDER_URL) }, body: JSON.stringify({ brand: p.brand ?? {}, jobs, async, statusUpload }) });
     const txt = await r.text();
     let res: any;
     try { res = JSON.parse(txt); } catch { throw new Error('render_bad_response ' + r.status + ' ' + txt.slice(0, 200)); }
