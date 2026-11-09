@@ -110,7 +110,8 @@ jobs:
       - name: Functions
         env:
           PRIMEOS_ALLOW_PROD: '1'
-        run: scripts/deploy-functions.sh $PROD_REF
+        # the live functions only; qa (staging test helper) never goes to prod
+        run: scripts/deploy-functions.sh $PROD_REF v2-api generate image produce smartsend-webhook monitor qa-probe
       - name: Functions answer with this commit
         run: scripts/check-build.sh https://$PROD_REF.supabase.co "$SHA"
       - name: Audit row
