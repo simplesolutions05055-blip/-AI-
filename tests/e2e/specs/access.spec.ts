@@ -15,3 +15,13 @@ test('the staging site talks only to the staging backend', async ({ page }) => {
   await page.waitForTimeout(1500);
   expect([...hosts].some((h) => h.includes('tgropjisnheppsxejfdn')), 'no request to the live backend').toBe(false);
 });
+
+test('the site sends its security headers', async ({ page }) => {
+  const r = await page.request.get('/');
+  const h = r.headers();
+  expect(h['strict-transport-security']).toContain('max-age=');
+  expect(h['x-content-type-options']).toBe('nosniff');
+  expect(h['referrer-policy']).toBe('strict-origin-when-cross-origin');
+  // report-only first: violations show in the console (and fail the screen tests) before anything is enforced
+  expect(h['content-security-policy-report-only']).toContain("frame-ancestors 'none'");
+});
