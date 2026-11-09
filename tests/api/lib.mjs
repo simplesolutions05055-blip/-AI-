@@ -13,8 +13,10 @@ export const sha = (s) => createHash('sha256').update(s).digest('hex');
 export const uuid = () => randomUUID();
 
 // one v2-api call; returns { status, body }
-export async function call(action, body = {}, token) {
-  const h = { 'content-type': 'application/json', apikey: ANON, authorization: `Bearer ${ANON}` };
+// every call comes from its own made-up address unless the test picks one (sign-in has a per-address limit)
+export const randomIp = () => `198.18.${randomBytes(1)[0]}.${randomBytes(1)[0]}`;
+export async function call(action, body = {}, token, { ip = randomIp(), headers = {} } = {}) {
+  const h = { 'content-type': 'application/json', apikey: ANON, authorization: `Bearer ${ANON}`, 'cf-connecting-ip': ip, ...headers };
   if (token) h['x-primeos-token'] = token;
   const r = await fetch(`${API}/functions/v1/v2-api`, { method: 'POST', headers: h, body: JSON.stringify({ action, payload: body }) });
   let j = null; try { j = await r.json(); } catch { /* not json */ }

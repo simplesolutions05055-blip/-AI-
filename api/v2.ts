@@ -23,6 +23,8 @@ export default {
         apikey: SUPA_ANON,
         authorization: `Bearer ${SUPA_ANON}`,
         'x-primeos-token': request.headers.get('x-primeos-token') ?? '',
+        // many people share the proxy's few addresses: v2-api gives proxied sign-in calls a higher per-address limit
+        'x-primeos-via': 'proxy',
       },
       body,
     });

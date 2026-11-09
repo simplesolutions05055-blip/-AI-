@@ -452,7 +452,7 @@
         done();
         step = 'code'; paint();
         toast('אם הכתובת רשומה במערכת, נשלח אליה קוד', 'בדקו את תיבת הדוא״ל (וגם את תיקיית הספאם).', '');
-      } catch (e) { done(); toast('השליחה נכשלה', 'בעיית חיבור. נסו שוב בעוד רגע.', 'err'); }
+      } catch (e) { done(); if (e.message === 'rate_limited') toast('יותר מדי בקשות', 'נסו שוב בעוד שעה.', 'err'); else toast('השליחה נכשלה', 'בעיית חיבור. נסו שוב בעוד רגע.', 'err'); }
     };
     let verifying = false;
     const verify = async () => {
@@ -470,9 +470,9 @@
       } catch (e) {
         done(); verifying = false;
         const m = e.message;
-        toast(m === 'bad_code' ? 'הקוד שגוי' : m === 'too_many_tries' ? 'יותר מדי ניסיונות' : m === 'code_expired' ? 'הקוד פג תוקף' : 'הכניסה נכשלה',
-          m === 'bad_code' ? 'בדקו את הספרות ונסו שוב.' : m === 'too_many_tries' || m === 'code_expired' ? 'בקשו קוד חדש.' : 'נסו שוב בעוד רגע.', 'err');
-        fieldErr('lCode', m === 'bad_code' ? 'הקוד שגוי. בדקו את הספרות ונסו שוב.' : m === 'too_many_tries' ? 'יותר מדי ניסיונות. בקשו קוד חדש.' : m === 'code_expired' ? 'הקוד פג תוקף. בקשו קוד חדש.' : 'הכניסה נכשלה. נסו שוב בעוד רגע.');
+        toast(m === 'bad_code' ? 'הקוד שגוי' : m === 'too_many_tries' || m === 'rate_limited' ? 'יותר מדי ניסיונות' : m === 'code_expired' ? 'הקוד פג תוקף' : 'הכניסה נכשלה',
+          m === 'bad_code' ? 'בדקו את הספרות ונסו שוב.' : m === 'rate_limited' ? 'נסו שוב בעוד כמה דקות.' : m === 'too_many_tries' || m === 'code_expired' ? 'בקשו קוד חדש.' : 'נסו שוב בעוד רגע.', 'err');
+        fieldErr('lCode', m === 'bad_code' ? 'הקוד שגוי. בדקו את הספרות ונסו שוב.' : m === 'too_many_tries' ? 'יותר מדי ניסיונות. בקשו קוד חדש.' : m === 'rate_limited' ? 'יותר מדי ניסיונות. נסו שוב בעוד כמה דקות.' : m === 'code_expired' ? 'הקוד פג תוקף. בקשו קוד חדש.' : 'הכניסה נכשלה. נסו שוב בעוד רגע.');
         if (c) { c.value = ''; c.focus(); }
       }
     };

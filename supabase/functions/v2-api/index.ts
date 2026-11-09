@@ -8,6 +8,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { BUILD } from '../_shared/build.ts';
 import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, MAX_IMAGES, NEEDS_VIDEO, NO_POST, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
 import { allowOrigin } from '../_shared/v2config.ts';
+import { clientIp, limitFor, LOGIN_LIMITS, rateOk } from '../_shared/rateLimit.ts';
 
 function cors(req: Request) {
   const o = req.headers.get('origin') ?? '';
@@ -1400,6 +1401,9 @@ Deno.serve(async (req) => {
   }
   const d = db();
   try {
+    // sign-in endpoints need no token: a limit per address stops floods (per e-mail and per code limits sit inside)
+    const lim = LOGIN_LIMITS[action];
+    if (lim && !(await rateOk(d, `ip:${clientIp(req)}:${action === 'login.link' ? 'login.code' : action}`, lim.windowS, limitFor(req, lim.max)))) return json(req, { error: 'rate_limited' }, 429);
     if (action === 'login.code' || action === 'login.link') return json(req, await loginCode(d, p));
     if (action === 'login.verify') return json(req, await loginVerify(d, p));
     if (action === 'login.use') return json(req, await loginLinkUse(d, p));
