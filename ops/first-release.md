@@ -7,7 +7,7 @@ Read-only checks against production (`ops/`, next to env-matrix.md), done before
 2. **G2** `supabase migration repair --status applied 20261028145900 --remote=tgropjisnheppsxejfdn`
    Without it `db push` stops: "Found local migration files to be inserted before the last migration on remote" (checked 09/11).
    The catch-up migration only records objects prod already has (schema rebuild = 0 diff, 04/11).
-3. **G4** secret `SUPABASE_ACCESS_TOKEN` + GitHub Environment `production` (owner as reviewer).
+3. **G4** secret `SUPABASE_ACCESS_TOKEN` + GitHub Environment `prod-release` with the owner as required reviewer (not Vercel's "Production": names are case-insensitive and that one has no reviewer).
 4. Deploy workflow, target production, the merged commit's full sha. Owner approves in GitHub.
 
 ## Database: what `db push` will apply (dry run 09/11, after G2)
