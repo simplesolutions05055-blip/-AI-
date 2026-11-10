@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REF=lcbiktjrjcygxbteqaiu
-q() { supabase db query --read-only --remote=$REF "$1" 2>/dev/null | python3 -c "import sys,json; r=json.load(sys.stdin)['rows']; print(r[0][list(r[0])[0]] if r else '')"; }
+# json in both modes: plain list in CI, {rows: [...]} when the cli thinks an AI agent runs it
+q() { supabase db query --read-only --remote=$REF "$1" -o json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); r=d['rows'] if isinstance(d,dict) else d; print(r[0][list(r[0])[0]] if r else '')"; }
 export WA_TICK="$(q "select v from v2_secrets where k='tick'")"
 # in GitHub Actions the value is masked in every log line
 [ -n "${GITHUB_ACTIONS:-}" ] && [ -n "$WA_TICK" ] && echo "::add-mask::$WA_TICK"

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
   push:
     branches: [staging]
-    paths: [ops/v1-calls.sh, .github/workflows/v1-calls.yml]
+    paths: [ops/v1-calls.sh, ops/v1-callers.sh, .github/workflows/v1-calls.yml]
 
 permissions:
   contents: read
@@ -23,3 +23,7 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: ops/v1-calls.sh 7 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Who still calls the two busy ones (last 24h)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: ops/v1-callers.sh publish-scheduled-posts conversation-maintenance | tee -a "$GITHUB_STEP_SUMMARY"
