@@ -1,0 +1,64 @@
+name: Files backup
+
+# Off-site copy of every prod storage bucket to Cloudflare R2 (ops/files-backup.sh, restore in ops/RUNBOOK.md).
+#   every night 02:30 UTC      files changed in the last 8 days -> daily/<date>/
+#   1st of the month 03:30 UTC  every file -> full/<month>/, then 3 random files checked against the source
+# Until the R2 and Supabase S3 secrets exist, scheduled runs stop at the first step with a note.
+on:
+  schedule:
+    - cron: '30 2 * * *'
+    - cron: '30 3 1 * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'nightly, full or check'
+        type: choice
+        options: [nightly, full, check]
+        default: nightly
+
+concurrency:
+  group: files-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SUPABASE_S3_ENDPOINT: https://tgropjisnheppsxejfdn.storage.supabase.co/storage/v1/s3
+      SUPABASE_S3_REGION: eu-central-1
+      SUPABASE_S3_KEY_ID: ${{ secrets.SUPABASE_S3_KEY_ID }}
+      SUPABASE_S3_SECRET: ${{ secrets.SUPABASE_S3_SECRET }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_KEY_ID: ${{ secrets.R2_KEY_ID }}
+      R2_SECRET: ${{ secrets.R2_SECRET }}
+      R2_BUCKET: primeos-backup
+    steps:
+      - name: Keys present
+        id: keys
+        run: |
+          for k in SUPABASE_S3_KEY_ID SUPABASE_S3_SECRET R2_ACCOUNT_ID R2_KEY_ID R2_SECRET; do
+            if [ -z "${!k}" ]; then
+              if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then echo "::error::secret $k missing"; exit 1; fi
+              echo "::notice::files backup skipped: secret $k not set yet"; exit 0
+            fi
+          done
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        if: steps.keys.outputs.ok == 'true'
+      - name: rclone (pinned)
+        if: steps.keys.outputs.ok == 'true'
+        run: ops/install-rclone.sh "$RUNNER_TEMP/rclone" && echo "RCLONE=$RUNNER_TEMP/rclone/rclone" >> "$GITHUB_ENV"
+      - name: Copy
+        if: steps.keys.outputs.ok == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'check')
+        run: |
+          mode=nightly
+          if [ "${{ github.event.schedule }}" = '30 3 1 * *' ]; then mode=full; fi
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then mode='${{ inputs.mode }}'; fi
+          ops/files-backup.sh "$mode" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Check a sample against the source
+        if: steps.keys.outputs.ok == 'true' && (github.event.schedule == '30 3 1 * *' || inputs.mode == 'check' || inputs.mode == 'full')
+        run: ops/files-backup.sh check | tee -a "$GITHUB_STEP_SUMMARY"

@@ -49,9 +49,25 @@ What is backed up:
 - **Schema**: the migrations in this repo rebuild it exactly (0-line diff against production, 04/11).
 - Supabase's own daily database backups (Pro plan) are a second line, restored from the Supabase dashboard.
 
-Not backed up: **files in storage buckets** (`v2-content` ~4.1 GB, `outputs` ~431 MB on 09/11). Supabase's database backups do not include them either. Open decision for the owner: an off-site copy of `v2-content`.
+- **Files in storage buckets** (`v2-content` ~4.1 GB, `outputs` ~431 MB, the db backups in `v2-backups`, every other bucket): off-site in Cloudflare R2, bucket `primeos-backup` (decided 10/11). Workflow **Files backup** runs `ops/files-backup.sh`:
+  - every night 02:30 UTC: files changed in the last 8 days -> `daily/<yyyy-mm-dd>/<bucket>/`
+  - 1st of the month: every file -> `full/<yyyy-mm>/<bucket>/`, then 3 random files compared with the source (sha256)
+  - nothing in the backup is overwritten or deleted by the job; the R2 bucket lock keeps everything 30 days, R2 lifecycle removes `daily/` after 60 and `full/` after 95 days (three monthly copies)
+  - secrets: `SUPABASE_S3_KEY_ID`/`SUPABASE_S3_SECRET` (Supabase > Storage > S3 access keys, full access, never printed), `R2_ACCOUNT_ID`, `R2_KEY_ID`/`R2_SECRET` (token limited to this bucket)
+  - rclone v1.75.2, installed at a pinned sha256 by `ops/install-rclone.sh`
 
-Restore into a fresh project (or local):
+Restore files (latest monthly copy, then the nightly folders after it, oldest first):
+```bash
+ops/install-rclone.sh /tmp/rc            # same env as the workflow: SUPABASE_S3_* = the target project, R2_* = the backup
+# rclone remotes come from the env vars set in ops/files-backup.sh (src = Supabase, dst = R2)
+rclone copy dst:primeos-backup/full/<yyyy-mm>/<bucket> src:<bucket>
+for d in $(rclone lsf dst:primeos-backup/daily/ --dirs-only | sort); do   # only the dates after that month began
+  rclone copy dst:primeos-backup/daily/$d<bucket> src:<bucket>
+done
+```
+Tested 10/11 on a local stack: full + nightly + check, then a restore into a new bucket: 3 of 3 files identical.
+
+Restore the database into a fresh project (or local):
 ```bash
 supabase db push --remote=<ref>                       # schema from the repo
 supabase storage cp -r ss:///v2-backups/<day> ./restore --remote=<source ref> --experimental
