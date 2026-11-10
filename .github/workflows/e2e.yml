@@ -53,6 +53,17 @@ jobs:
           # AI flows spend API credit: nightly and by hand only, never on a push
           E2E_AI: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.ai)) && '1' || '' }}
         run: npx playwright test
+      # the WhatsApp bot with real AI on staging (dry mode: nothing is sent). AI runs only, like the AI browser flows
+      - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.ai))
+        with:
+          version: 3.0.0
+      - name: WhatsApp bot with AI (staging)
+        if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.ai))
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          WA_AI: '1'
+        run: scripts/test-wa.sh
       - name: Keep new reference pictures
         if: always()
         run: |
