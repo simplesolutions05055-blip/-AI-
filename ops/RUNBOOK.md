@@ -104,9 +104,16 @@ Check after each step:
 
 ## 6. Retiring V1
 
-39 V1 functions on production only answer 410 "retired". Nothing in this repo or the production database calls them, and the V1 scheduled jobs are already gone (checked 09/11).
+39 V1 functions on production only answer 410 "retired". Nothing in the production or staging database calls them.
+
+**Found 10/11:** two old migrations (`20260620110000`, `20260708150100`) scheduled jobs with production's url hardcoded, so *every database built from this repo* (laptops, CI test stacks) called production: `publish-scheduled-posts` every minute, `conversation-maintenance` every 5 minutes. Last 7 days: 2,951 and 595 calls, all answered 410. Fixed for new builds by `20261110150000_drop_v1_cron_calling_prod`.
+One stack still calls every minute from `79.177.141.131` (user agent `pg_net`, not one of May's machines). Whoever runs it: `git pull` and `supabase db reset`, or run
+```sql
+select cron.unschedule(jobname) from cron.job where jobname in ('conversation-maintenance', 'publish-scheduled-meta-posts');
+```
+Who calls a function: `ops/v1-callers.sh <slug>` (address, user agent, minute pattern; run by the V1 calls workflow).
 Calls from outside (old webhooks, OAuth redirects) show only in the logs:
 ```bash
 SUPABASE_ACCESS_TOKEN=... ops/v1-calls.sh 7     # counts per function, last 7 days, read-only
 ```
-Zero calls for two weeks: undeploy the stubs (gate G8).
+Zero outside calls for two weeks, apart from the stack above: undeploy the stubs (gate G8). The V1 calls workflow counts weekly.
