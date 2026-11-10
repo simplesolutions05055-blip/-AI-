@@ -1,0 +1,25 @@
+name: V1 calls
+
+# how often the 39 retired V1 functions are still called on prod (function logs, read-only, counts only).
+# decides when the stubs can go (gate G8). weekly from main; also when the counter itself changes on staging.
+on:
+  schedule:
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+  push:
+    branches: [staging]
+    paths: [ops/v1-calls.sh, .github/workflows/v1-calls.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Calls in the last 7 days
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: ops/v1-calls.sh 7 | tee -a "$GITHUB_STEP_SUMMARY"
