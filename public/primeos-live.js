@@ -7385,6 +7385,16 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
       const _dwR = SCREENS.docWiz.render;
       SCREENS.docWiz.render = function () { return _dwR.apply(this, arguments).replace(/<button class="chip" data-act="fakeVoice">[\s\S]*?<\/button>/g, ''); };
     }
+    // a deck has at most 20 pages
+    if (SCREENS.deckWiz) {
+      const DK_MAX = 20;
+      ACT.dkPg = (d) => { dkCollect(); S.dk.pages = Math.max(3, Math.min(DK_MAX, (+S.dk.pages || 10) + (+d))); render(); };
+      const _dkR = SCREENS.deckWiz.render;
+      SCREENS.deckWiz.render = function () {
+        if (S.dk && +S.dk.pages > DK_MAX) S.dk.pages = DK_MAX;
+        return _dkR.apply(this, arguments).replace('בין 3 ל-30 עמודים', 'בין 3 ל-' + DK_MAX + ' עמודים');
+      };
+    }
     ACT.upAi = () => { const w = S.wiz; if (!isUp(w)) return; collectWiz(); scan(w, false); };
     // the editing step of an upload: platforms on top, the file instead of the AI design tools, no way back to a brief
     const _wz = SCREENS.wizard.render;

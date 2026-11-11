@@ -461,7 +461,7 @@ ${JSON.stringify(p.content)}
     }
 
     if (mode === 'deck') {
-      const n = Math.max(3, Math.min(30, +p.pages || 10));
+      const n = Math.max(3, Math.min(20, +p.pages || 10)); // a deck has at most 20 pages
       const raw = await claude(key, s, `בנה מצגת של ${n} עמודים.
 כותרת: ${p.title || '(לנסח כותרת)'}
 מה המצגת צריכה להכיל: ${p.prompt || '(לפי הכותרת)'}
