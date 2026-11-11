@@ -5337,7 +5337,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const dated = !!(it && it.pub && L.chNone);
       if (it && L.chNone) { it.noch = true; if (typeof flush === 'function') try { flush(); } catch (e) {} }
       S.dirty = false; S.wiz = null;
-      if (dated) { toast('נשמר בלוח התוכן כטיוטה', 'במועד ' + it.pub + '. הפוסט לא יתפרסם עד שתחברו ערוצים ותאשרו אותו.'); go('calendar'); return; }
+      if (dated) { toast('נשמר בלוח התוכן כטיוטה', 'במועד ' + it.pub.slice(8, 10) + '.' + it.pub.slice(5, 7) + ' בשעה ' + it.pub.slice(11, 16) + '. הפוסט לא יתפרסם עד שתחברו ערוצים ותאשרו אותו.'); go('calendar'); return; }
       toLib(); go('library');
     };
     ACT.cLib = () => { const c = campById(S.campId); if (!c) return; c.status = 'draft'; campToItems(c, 'draft'); toLib(c.items.length + ' תכנים נשמרו. אחרי חיבור ערוצים אפשר לפרסם אותם מהספרייה.'); go('library'); };
@@ -7318,6 +7318,8 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
 .up-file{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .up-scan{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);margin-top:8px}`;
     const UP_T = 'העלאת תוכן מוכן';
+    // where an item came from (chips in approvals, the calendar drawer): an uploaded finished post
+    if (typeof SRC === 'object' && SRC && !SRC.upload) SRC.upload = { t: 'תוכן שהועלה', c: 'src-sys', i: 'upload' };
     const isUp = (w) => !!(w && w.upFlow);
     // the create center: one wide card under the four types
     const _cr = SCREENS.create.render;
