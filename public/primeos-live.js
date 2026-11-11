@@ -7263,9 +7263,10 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
   (function () {
     if (!SCREENS.create || !SCREENS.wizard) return;
     css.textContent += `
-.up-ready{width:100%;margin-top:18px;display:flex;align-items:center;gap:14px;padding:20px;text-align:start}
+.up-ready{width:100%;margin-top:18px;display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:14px;padding:20px;text-align:start}
+.up-ready .go{margin-inline-start:auto;width:32px;height:32px;border-radius:50%;background:var(--surface-2);display:grid;place-items:center;color:var(--ink-3);flex:none;transition:.2s}.up-ready:hover .go{background:var(--grad);color:#fff}
 .up-ready .ti{width:54px;height:54px;border-radius:16px;background:linear-gradient(135deg,#00A389,#01B6FD);color:#fff;box-shadow:0 8px 18px -8px rgba(0,163,137,.7)}
-.up-ready .tx{display:flex;flex-direction:column;gap:3px;min-width:0}.up-ready .tx b{font-size:17px}.up-ready .tx span{font-size:13.5px;color:var(--ink-3)}
+.up-ready .tx{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}.up-ready .tx b{font-size:17px}.up-ready .tx span{font-size:13.5px;color:var(--ink-3)}
 .up-file{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .up-scan{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);margin-top:8px}`;
     const UP_T = 'העלאת תוכן מוכן';
@@ -7376,6 +7377,10 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
       if (!isUp(w) || w.step !== 1) return h;
       const m = w.media || {};
       h = h.replace('<span>' + TYPES[w.type].t + '</span></div>', '<span>' + UP_T + '</span></div>');
+      // one step only: no brief, and the file keeps its own size
+      h = h.replace(/<div class="flow-steps">[\s\S]*?<\/div>/, '');
+      const fi = h.indexOf(' גודל הפוסט</h4>');
+      if (fi > 0) { const s0 = h.lastIndexOf('<section class="ed-sec">', fi), e0 = h.indexOf('<section class="ed-sec">', fi); if (s0 > 0 && e0 > s0) h = h.slice(0, s0) + h.slice(e0); }
       // the file section replaces the graphic tools
       const gi = h.indexOf(' גרפיקה</h4>');
       if (gi > 0) {
