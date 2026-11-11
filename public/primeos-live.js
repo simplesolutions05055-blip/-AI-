@@ -7259,4 +7259,165 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
     setInterval(vcheck, 300000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) vcheck(); });
   })();
+  /* ---------------- upload finished content: a ready graphic or video, AI reads it and writes the post ---------------- */
+  (function () {
+    if (!SCREENS.create || !SCREENS.wizard) return;
+    css.textContent += `
+.up-ready{width:100%;margin-top:18px;display:flex;align-items:center;gap:14px;padding:20px;text-align:start}
+.up-ready .ti{width:54px;height:54px;border-radius:16px;background:linear-gradient(135deg,#00A389,#01B6FD);color:#fff;box-shadow:0 8px 18px -8px rgba(0,163,137,.7)}
+.up-ready .tx{display:flex;flex-direction:column;gap:3px;min-width:0}.up-ready .tx b{font-size:17px}.up-ready .tx span{font-size:13.5px;color:var(--ink-3)}
+.up-file{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.up-scan{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);margin-top:8px}`;
+    const UP_T = 'העלאת תוכן מוכן';
+    const isUp = (w) => !!(w && w.upFlow);
+    // the create center: one wide card under the four types
+    const _cr = SCREENS.create.render;
+    SCREENS.create.render = function () {
+      const h = _cr.apply(this, arguments);
+      const card = '<button class="tile up-ready" data-act="upReady"><span class="ti">' + ic('upload', 22) + '</span><span class="tx"><b>' + UP_T + '</b><span>גרפיקה או סרטון שכבר יש לכם. ה-AI קורא את התוכן וכותב את הפוסט, ואתם בוחרים איפה ומתי לפרסם.</span></span><span class="go">' + ic('chevL', 16, 2.2) + '</span></button>';
+      const i = h.indexOf('<button class="bulk-cta"');
+      return i >= 0 ? h.slice(0, i) + card + h.slice(i) : h + card;
+    };
+    // one still from a video, read from the file on this computer (the server never sees an extra upload when it fails)
+    function frameOf(file) {
+      return new Promise((res) => {
+        let done = false; const fin = (b) => { if (done) return; done = true; try { URL.revokeObjectURL(v.src); } catch (e) {} res(b); };
+        const v = document.createElement('video');
+        v.muted = true; v.playsInline = true; v.preload = 'auto';
+        v.onloadedmetadata = () => { const d = isFinite(v.duration) ? v.duration : 2; v.currentTime = Math.min(Math.max(d * 0.35, 0.5), Math.max(d - 0.1, 0)); };
+        v.onseeked = () => {
+          try {
+            const k = Math.min(1, 1280 / Math.max(v.videoWidth || 1, v.videoHeight || 1));
+            const c = document.createElement('canvas'); c.width = Math.round((v.videoWidth || 720) * k); c.height = Math.round((v.videoHeight || 1280) * k);
+            c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+            c.toBlob((b) => fin(b && b.size > 2000 ? { blob: b, w: v.videoWidth, h: v.videoHeight } : null), 'image/jpeg', 0.86);
+          } catch (e) { fin(null); }
+        };
+        v.onerror = () => fin(null);
+        setTimeout(() => fin(null), 15000);
+        v.src = URL.createObjectURL(file);
+      });
+    }
+    const sizeOf = (url) => new Promise((res) => { const i = new Image(); i.onload = () => res({ w: i.naturalWidth, h: i.naturalHeight }); i.onerror = () => res(null); i.src = url; });
+    const fmtFor = (s) => { if (!s || !s.w || !s.h) return '1:1'; const r = s.w / s.h; return r < 0.7 ? '9:16' : r < 0.9 ? '4:5' : r > 1.4 ? '16:9' : '1:1'; };
+    // what the AI reads: the graphic itself, or one still of the video
+    async function scan(w, quiet) {
+      const m = w && w.media; if (!m || !m.url) return;
+      if (w.scanning) return;
+      let img = m.kind === 'graphic' ? m.url : (w.still || '');
+      if (!img) { if (!quiet) toast('לא הצלחתי לקרוא את הסרטון', 'אפשר לכתוב את הטקסט בעצמכם.', 'err'); return; }
+      w.scanning = true; render();
+      try {
+        const brief = [m.kind === 'video' ? 'זו תמונה מתוך סרטון שהמשתמש העלה. כתוב את הפוסט שילווה את הסרטון.' : '', w.brief.free || ''].filter(Boolean).join('\n');
+        const r = await gen({ mode: 'caption', image: img, title: w.brief.title || '', brief, dept: w.brief.dept });
+        if (S.wiz !== w) return;
+        if (r.title) w.t = r.title;
+        if (r.body) w.body = r.body + (r.cta ? '\n\n' + r.cta : '');
+        const tags = (r.tags || []).slice(0, 6);
+        if (tags.length) { w.sugg = [...new Set([...tags, ...(w.sugg || [])])].slice(0, 8); w.tags = tags.slice(0, 4); }
+        w.read = r.read ? String(r.read).slice(0, 200) : '';
+        if (!quiet) toast('הטקסט נכתב', m.kind === 'video' ? 'מתוך מה שרואים בסרטון.' : 'מתוך מה שכתוב בגרפיקה.');
+      } catch (e) {
+        if (S.wiz === w) toast('ה-AI לא הצליח לקרוא את התוכן', 'אפשר לכתוב את הטקסט בעצמכם, או לנסות שוב.', 'err');
+      } finally { if (S.wiz === w) { w.scanning = false; render(); } }
+    }
+    // the picked file becomes the post's media (the wizard opens on the editing step, no brief)
+    async function take(w, f) {
+      const vid = isVid(f.name) || /^video\//.test(f.type || '');
+      const up = await uploadFile(f).catch((e) => { toast('ההעלאה נכשלה', f.name + (e.message === 'too_big' ? ' גדול מדי.' : '. נסו שוב.'), 'err'); return null; });
+      if (!up || S.wiz !== w) return false;
+      let still = null, dims = null;
+      if (vid) {
+        const fr = await frameOf(f);
+        if (fr) { dims = { w: fr.w, h: fr.h }; try { const s = await uploadFile(new File([fr.blob], 'still-' + Date.now() + '.jpg', { type: 'image/jpeg' })); still = s.url; } catch (e) { /* no still: the text is written by hand */ } }
+      } else dims = await sizeOf(up.url);
+      if (S.wiz !== w) return false;
+      const fmt = fmtFor(dims);
+      w.fmt = fmt; w.fmts = [fmt]; w.still = still || '';
+      w.media = { kind: vid ? 'video' : 'graphic', layout: 'own', url: up.url, design: up.url, thumb: vid ? (still || '') : up.url, image: vid ? '' : up.url, ready: true, uploaded: true, fmt, ar: dims && dims.w && dims.h ? dims.w + '/' + dims.h : '1/1', name: f.name };
+      w.ver = (w.ver || 1) + 1;
+      return true;
+    }
+    ACT.upReady = async () => {
+      const [f] = await pickFiles('image/*,video/*', false);
+      if (!f) return;
+      startWiz('graphic');
+      const w = S.wiz;
+      w.upFlow = true; w.step = 1; w.t = f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' '); w.body = ''; w.tags = []; w.ment = w.ment || [];
+      w.sugg = suggestTags('', w.brief.dept); w.design = null;
+      w.media = { kind: 'graphic', layout: 'own', url: '', busy: 'מעלים את הקובץ...', ready: false };
+      w.scanning = true; render(); window.scrollTo({ top: 0 });
+      toast('מעלה את הקובץ...', f.name);
+      const ok = await take(w, f);
+      if (S.wiz !== w) return;
+      w.scanning = false;
+      if (!ok) { S.wiz = null; S.dirty = false; go('create'); return; }
+      w.media.busy = ''; render();
+      scan(w, false);
+    };
+    ACT.upReplace = async () => {
+      const w = S.wiz; if (!isUp(w) || w.scanning) return;
+      collectWiz();
+      const [f] = await pickFiles('image/*,video/*', false);
+      if (!f || S.wiz !== w) return;
+      w.scanning = true; render();
+      toast('מעלה את הקובץ...', f.name);
+      const ok = await take(w, f);
+      if (S.wiz !== w) return;
+      w.scanning = false; render();
+      if (ok) toast('הקובץ הוחלף', 'הטקסט נשאר. אפשר לכתוב אותו מחדש עם AI.');
+    };
+    ACT.upAi = () => { const w = S.wiz; if (!isUp(w)) return; collectWiz(); scan(w, false); };
+    // the editing step of an upload: platforms on top, the file instead of the AI design tools, no way back to a brief
+    const _wz = SCREENS.wizard.render;
+    SCREENS.wizard.render = function () {
+      let h = _wz.apply(this, arguments);
+      const w = S.wiz;
+      if (!isUp(w) || w.step !== 1) return h;
+      const m = w.media || {};
+      h = h.replace('<span>' + TYPES[w.type].t + '</span></div>', '<span>' + UP_T + '</span></div>');
+      // the file section replaces the graphic tools
+      const gi = h.indexOf(' גרפיקה</h4>');
+      if (gi > 0) {
+        const s = h.lastIndexOf('<section class="ed-sec">', gi), e = h.indexOf('<section class="ed-sec">', gi);
+        const fileSec = '<section class="ed-sec"><h4>' + ic(m.kind === 'video' ? 'vid' : 'img', 15) + ' ' + (m.kind === 'video' ? 'הסרטון' : 'הגרפיקה') + '</h4>' +
+          '<div class="up-file"><span class="t-sub" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(m.name || '') + '</span>' +
+          '<button class="btn btn-sm" data-act="upReplace" style="margin-inline-start:auto"' + (w.scanning ? ' disabled' : '') + '>' + ic('upload', 14) + ' החלפת קובץ</button></div>' +
+          '<div class="t-sub" style="margin-top:6px">הקובץ יפורסם כמו שהוא, בלי שינוי.</div></section>';
+        if (s > 0 && e > s) h = h.slice(0, s) + fileSec + h.slice(e);
+      }
+      // the text: write it, or let the AI write it from the content
+      const aiBtn = '<button class="btn btn-sm" data-act="upAi"' + (w.scanning || !m.url ? ' disabled' : '') + '>' + ic('spark', 14) + ' ' + (w.body ? 'כתיבה מחדש עם AI' : 'כתיבת הטקסט עם AI') + '</button>';
+      const scanNote = w.scanning ? '<div class="up-scan"><span class="gm-spin" style="width:14px;height:14px;border-width:2px;display:inline-block"></span> ' + (m.url ? 'ה-AI קורא את ' + (m.kind === 'video' ? 'הסרטון' : 'הגרפיקה') + ' וכותב את הפוסט...' : 'מעלים את הקובץ...') + '</div>' : '';
+      h = h.replace(/<button class="btn btn-sm btn-ghost" data-act="genAlt">[\s\S]*?<\/button>/, '<div style="display:flex;gap:6px;flex-wrap:wrap">' + aiBtn + (w.body ? '<button class="btn btn-sm btn-ghost" data-act="genAlt">' + ic('refresh', 14) + ' נוסח חלופי</button>' : '') + '</div>' + scanNote);
+      h = h.replace('<textarea id="sBody" rows="5" aria-label="טקסט הפרסום">', '<textarea id="sBody" rows="5" aria-label="טקסט הפרסום" placeholder="כתבו את טקסט הפוסט, או לחצו כתיבת הטקסט עם AI">');
+      // where to publish (the brief is skipped, so the choice lives here)
+      const plats = '<section class="ed-sec"><h4>' + ic('send', 15) + ' פלטפורמות לפרסום</h4><div class="plat-pick">' + Object.keys(CH).filter((k) => CH_ON.includes(k)).map((k) =>
+        '<button class="plat ' + (w.ch.includes(k) ? 'on' : '') + '" data-act="ch:' + k + '"><span class="chan-logo" style="background:' + CH[k].b + '">' + CH[k].s + '</span><span>' + CH[k].t + '</span><span class="pk">' + ic('check', 14, 2.6) + '</span></button>').join('') + '</div></section>';
+      const ti = h.indexOf(' תזמון</h4>');
+      const ts = ti > 0 ? h.lastIndexOf('<section class="ed-sec">', ti) : -1;
+      if (ts > 0) h = h.slice(0, ts) + plats + h.slice(ts);
+      else h = h.replace('<div class="studio-ed">', '<div class="studio-ed">' + plats);
+      // no brief to go back to
+      h = h.replace(/<button class="btn" data-act="wizBack">[\s\S]*?<\/button>/, '');
+      // nothing to publish until the file is up
+      if (!m.url) h = h.replace(/data-act="(wizPublish|wizSend|wizLib)"/g, 'data-act="$1" disabled');
+      return h;
+    };
+    // the saved item: a video upload is a video post (published as a video, not as an image)
+    const _wi = wizItem;
+    wizItem = function (st) {
+      const it = _wi.apply(this, arguments);
+      const w = S.wiz;
+      if (it && isUp(w) && w.media && w.media.kind === 'video') { it.ty = 'video'; it.fmts = [w.fmt || '9:16']; if (it.media) { it.media.kind = 'video'; it.media.thumb = w.still || it.media.thumb || ''; it.media.ready = true; } }
+      if (it && isUp(w)) it.src = 'upload';
+      return it;
+    };
+    // a half-finished upload (still uploading) is never kept as a draft to resume
+    const _pub = ACT.wizPublish, _send = ACT.wizSend;
+    const ready = () => { const w = S.wiz; if (isUp(w) && !(w.media && w.media.url)) { toast('הקובץ עוד עולה', 'רגע אחד.', 'err'); return false; } if (isUp(w) && !(w.ch || []).length && !L.noCh()) { toast('בחרו פלטפורמה', 'סמנו לפחות פלטפורמה אחת לפרסום.', 'err'); return false; } return true; };
+    if (_pub) ACT.wizPublish = (...a) => (ready() ? _pub.apply(null, a) : undefined);
+    if (_send) ACT.wizSend = (...a) => (ready() ? _send.apply(null, a) : undefined);
+  })();
+
 })();

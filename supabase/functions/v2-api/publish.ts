@@ -243,8 +243,11 @@ export function textOf(ui: Record<string, any>): string {
   // hashtags the text does not already carry
   const list = (Array.isArray(ui.tags) ? ui.tags : []).map((t: string) => (String(t).startsWith('#') ? String(t) : '#' + t).replace(/\s+/g, '_')).filter((t: string) => !body.includes(t));
   const tags = list.length ? '\n\n' + list.join(' ') : '';
+  // tagged accounts (@name) the text does not already carry
+  const ment = (Array.isArray(ui.ment) ? ui.ment : []).map((m: string) => (String(m).startsWith('@') ? String(m) : '@' + m).replace(/\s+/g, '_')).filter((m: string) => m.length > 1 && !body.includes(m));
+  const at = ment.length ? '\n\n' + ment.join(' ') : '';
   const cta = ui.cta && !body.includes(ui.cta) ? '\n\n' + ui.cta : '';
-  return (body + cta + tags).trim().slice(0, 5000);
+  return (body + cta + at + tags).trim().slice(0, 5000);
 }
 export function mediaOf(ui: Record<string, any>): Media[] {
   const m = ui.media || {};
