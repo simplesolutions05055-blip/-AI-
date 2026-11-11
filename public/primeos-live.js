@@ -5790,7 +5790,17 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       let h = _wizRB.apply(this, arguments);
       const w = S.wiz;
       if (!w || w.step !== 0 || !isGfx(w)) return h;
-      return h.replace(/(<div class="brief-tools">)/, '$1<button class="btn btn-sm" data-act="wOwnStart" type="button">' + ic('upload', 14) + ' יש לי פוסט מוכן (בלי AI)</button>');
+      // a finished post has its own card on the create screen; here: a photo, a figure or a product the AI builds into the design
+      return h.replace(/(<div class="brief-tools">)/, '$1<button class="btn btn-sm" data-act="wImgRef" type="button" title="דמות, מוצר או תמונה שה-AI ישלב בעיצוב">' + ic('img', 14) + ' תמונה לשילוב בעיצוב</button>');
+    };
+    ACT.wImgRef = async () => {
+      const w = S.wiz; if (!w || w.step !== 0) return;
+      collectWiz();
+      const fs = await uploadPicked('image/*', true);
+      if (!fs.length || S.wiz !== w) return;
+      w.brief.files = [...(w.brief.files || []), ...fs];
+      render();
+      toast(fs.length > 1 ? 'התמונות נוספו' : 'התמונה נוספה', 'ה-AI ישלב ' + (fs.length > 1 ? 'אותן' : 'אותה') + ' בעיצוב הגרפיקה.');
     };
     ACT.wOwnStart = async () => {
       const w = S.wiz; if (!w) return;
