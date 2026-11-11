@@ -5791,6 +5791,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const w = S.wiz;
       if (!w || w.step !== 0 || !isGfx(w)) return h;
       // a finished post has its own card on the create screen; here: a photo, a figure or a product the AI builds into the design
+      // one upload button: "file" goes (the image button takes photos; the brief text carries the details)
+      h = h.replace(/<button class="chip" data-act="fakeUpload">[\s\S]*?<\/button>/, '');
       return h.replace(/(<div class="brief-tools">)/, '$1<button class="btn btn-sm" data-act="wImgRef" type="button" title="דמות, מוצר או תמונה שה-AI ישלב בעיצוב">' + ic('img', 14) + ' תמונה לשילוב בעיצוב</button>');
     };
     ACT.wImgRef = async () => {
