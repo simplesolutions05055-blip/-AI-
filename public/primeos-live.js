@@ -7380,6 +7380,11 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
       w.scanning = false; render();
       if (ok) toast('הקובץ הוחלף', 'הטקסט נשאר. אפשר לכתוב אותו מחדש עם AI.');
     };
+    // the document brief: no voice button (typed brief and background files only)
+    if (SCREENS.docWiz) {
+      const _dwR = SCREENS.docWiz.render;
+      SCREENS.docWiz.render = function () { return _dwR.apply(this, arguments).replace(/<button class="chip" data-act="fakeVoice">[\s\S]*?<\/button>/g, ''); };
+    }
     ACT.upAi = () => { const w = S.wiz; if (!isUp(w)) return; collectWiz(); scan(w, false); };
     // the editing step of an upload: platforms on top, the file instead of the AI design tools, no way back to a brief
     const _wz = SCREENS.wizard.render;
