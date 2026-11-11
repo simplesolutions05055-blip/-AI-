@@ -5256,7 +5256,16 @@ video.sp-real{object-fit:contain;background:#0A2C51}
      still made and kept in the library; publish / schedule turn into "שמירה בספרייה" until a channel is connected. */
   (function () {
     const gateOn = () => !!(L.kind === 'client' && !L.demo && L.pub && L.pub.ready && S.mode !== 'admin');
-    L.noCh = () => gateOn() && CH_ON.length === 0;
+    // nothing connected: the flows still offer the main networks and a date, and the post is kept as a dated draft
+    const OFFER = ['fb', 'ig', 'tk', 'yt', 'li', 'x'];
+    L.chNone = false;
+    L.noCh = () => gateOn() && (CH_ON.length === 0 || L.chNone);
+    const _syncOn = L.syncChOn;
+    if (_syncOn) L.syncChOn = function () {
+      L.chNone = false;
+      _syncOn.apply(this, arguments);
+      if (L.kind === 'client' && !L.demo && L.pub && L.pub.ready && CH_ON.length === 0) { L.chNone = true; CH_ON.push(...OFFER); if (L.chGate) L.chGate(); }
+    };
     if (L.kind === 'client' && !L.demo) CH_ON.splice(0, CH_ON.length); // nothing offered until the real list arrives
     // the flow being edited keeps only connected networks; a new flow starts with all of them selected
     function chSanitize() {
@@ -5264,20 +5273,39 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const objs = [S.wiz, S.vd, S.ev, S.bulk].filter((o) => o && Array.isArray(o.ch));
       objs.forEach((o) => {
         const kept = o.ch.filter((k) => CH_ON.includes(k));
-        if (!o._chInit) { o._chInit = 1; o.ch = (o.replaces || o.from) && kept.length ? kept : CH_ON.slice(); }
+        if (!o._chInit) { o._chInit = 1; o.ch = (o.replaces || o.from) && kept.length ? kept : L.chNone ? ['fb', 'ig'] : CH_ON.slice(); }
         else if (kept.length !== o.ch.length) o.ch = kept;
         if (o.pch && !o.ch.includes(o.pch)) o.pch = null;
       });
       // nothing to schedule to: the studio preview shows a draft, not a publish date
       if (!CH_ON.length && S.wiz && S.wiz.mode === 'schedule') S.wiz.mode = 'now';
     }
-    const noteHtml = '<div class="note" style="margin:0;align-items:center">' + ic('plug', 16) + '<span>עוד לא חיברת ערוצים. התוכן יישמר בספריית התוכן, ואחרי החיבור אפשר לפרסם אותו משם.</span>' +
+    const noteHtml = '<div class="note" style="margin:0;align-items:center">' + ic('plug', 16) + '<span>עוד לא חיברת ערוצים. אפשר לבחור פלטפורמות ומועד: הפוסט יישמר בלוח התוכן כטיוטה, ולא יתפרסם. אחרי חיבור הערוצים מאשרים ומפרסמים אותו משם.</span>' +
       '<button class="btn btn-sm" style="margin-inline-start:auto" data-nav="channels">חיבור ערוצים</button></div>';
     const saveBtn = (act, big) => '<button class="btn btn-primary' + (big ? ' btn-lg' : '') + '" data-act="' + act + '">' + ic('save', big ? 17 : 16) + ' שמירה בספרייה</button>';
     // after every paint: the platform pickers and the publish buttons follow the connected channels
     function chGate() {
       if (!gateOn()) return;
       const view = document.getElementById('view'); if (!view) return;
+      if (L.chNone) {
+        view.querySelectorAll('.plat-pick').forEach((pk) => {
+          if (pk.previousElementSibling && pk.previousElementSibling.classList.contains('nochk')) return;
+          const n = document.createElement('div'); n.className = 'nochk'; n.style.marginBottom = '10px'; n.innerHTML = noteHtml; pk.parentNode.insertBefore(n, pk);
+        });
+        const bar2 = (b) => b.closest('.action-bar,.brief-foot,.modal-foot,.ev-foot') || b.parentElement;
+        view.querySelectorAll('[data-act="wizPublish"],[data-act="wizSend"]').forEach((b) => {
+          const box = bar2(b);
+          if (box && box.querySelector('[data-act="wizLib"]')) { b.remove(); return; }
+          box && box.querySelectorAll('[data-act="wizSave"]').forEach((x) => x.remove());
+          const sch = S.wiz && S.wiz.mode === 'schedule';
+          b.outerHTML = '<button class="btn btn-primary btn-lg" data-act="wizLib">' + ic(sch ? 'cal' : 'save', 17) + (sch ? ' שמירה בלוח התוכן כטיוטה' : ' שמירה בספרייה') + '</button>';
+        });
+        view.querySelectorAll('[data-act="cPublish"],[data-act="cSend"]').forEach((b) => { const box = bar2(b); if (box && box.querySelector('[data-act="cLib"]')) b.remove(); else b.outerHTML = '<button class="btn btn-primary btn-lg" data-act="cLib">' + ic('cal', 17) + ' שמירה בלוח התוכן כטיוטות</button>'; });
+        view.querySelectorAll('[data-act="evSched"],[data-act="evAfOk"]').forEach((b) => { if (!b.dataset.lib) { b.dataset.lib = '1'; b.innerHTML = ic('cal', 17) + ' שמירה בלוח התוכן כטיוטות'; } });
+        view.querySelectorAll('[data-act="evAll"]').forEach((b) => b.remove());
+        view.querySelectorAll('[data-act^="sched:"],[data-act^="publish:"]').forEach((b) => { b.outerHTML = '<button class="btn" data-nav="channels">' + ic('plug', 16) + ' חיבור ערוצים לפרסום</button>'; });
+        return;
+      }
       view.querySelectorAll('.plat-pick').forEach((pk) => {
         pk.querySelectorAll('[data-act]').forEach((b) => { const k = (b.dataset.act.split(':')[1] || ''); if (k && !CH_ON.includes(k)) b.remove(); });
         if (!pk.querySelector('[data-act]') && !pk.dataset.none) { pk.dataset.none = '1'; pk.style.display = 'block'; pk.innerHTML = noteHtml; }
@@ -5303,7 +5331,15 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     render = function () { chSanitize(); const r = _renderG.apply(this, arguments); try { chGate(); } catch (e) { console.error('chGate', e); } return r; };
     // the same rule on the actions themselves (a stale button, a keyboard shortcut)
     const toLib = (msg) => { toast('נשמר בספריית התוכן', msg || 'אחרי חיבור ערוצים אפשר לפרסם אותו מהספרייה.'); };
-    ACT.wizLib = () => { if (!S.wiz) return; saveWizDraft(true); S.dirty = false; S.wiz = null; toLib(); go('library'); };
+    ACT.wizLib = () => {
+      if (!S.wiz) return;
+      const it = saveWizDraft(true);
+      const dated = !!(it && it.pub && L.chNone);
+      if (it && L.chNone) { it.noch = true; if (typeof flush === 'function') try { flush(); } catch (e) {} }
+      S.dirty = false; S.wiz = null;
+      if (dated) { toast('נשמר בלוח התוכן כטיוטה', 'במועד ' + it.pub + '. הפוסט לא יתפרסם עד שתחברו ערוצים ותאשרו אותו.'); go('calendar'); return; }
+      toLib(); go('library');
+    };
     ACT.cLib = () => { const c = campById(S.campId); if (!c) return; c.status = 'draft'; campToItems(c, 'draft'); toLib(c.items.length + ' תכנים נשמרו. אחרי חיבור ערוצים אפשר לפרסם אותם מהספרייה.'); go('library'); };
     ['wizPublish', 'wizSend'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => (L.noCh() ? ACT.wizLib() : f.apply(null, a)); });
     ['cPublish', 'cSend'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => (L.noCh() ? ACT.cLib() : f.apply(null, a)); });
