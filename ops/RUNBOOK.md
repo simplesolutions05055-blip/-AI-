@@ -99,22 +99,17 @@ The drill found and fixed: computed columns broke the restore, a migration-creat
 | AI, mail, WhatsApp, Meta keys | function secrets | see `ops/env-matrix.md` | at the provider, then `supabase secrets set` |
 
 ### Production rotation (gate G6, owner approves the window)
-Run on one project at a time; staging first.
-```sql
--- 1. tick: new random value. callers read it on every call
-update v2_secrets set v = encode(extensions.gen_random_bytes(24), 'hex') where k = 'tick';
--- 2. cron_secret: unused, remove it and its plain-text copy in the migration history
-delete from vault.secrets where name = 'cron_secret';
-update supabase_migrations.schema_migrations
-   set statements = array['-- value removed 09/11/2026 (secret retired)']
- where version = '20260620105000';
--- 3. after GEMINI_API_KEY is rotated and the old key revoked at Google:
-delete from v2_secrets where k = 'gemini';
-```
-Check after each step:
-- the next minute's scheduled calls answer 200: `select status_code, count(*) from net._http_response where created > now() - interval '5 minutes' group by 1;`
-- monitor green on the incidents screen
-- staging only: `WA_AI=1 scripts/test-wa.sh` passes
+`ops/rotate-secrets.sh <staging|prod> <step>`, one step at a time, staging first. Prod needs `PRIMEOS_ALLOW_PROD=1`.
+New values are made inside postgres; no secret is printed or leaves the database.
+
+| Step | Does | Checks, then |
+|---|---|---|
+| `plan` | read-only: health + which steps are still open | |
+| `tick` | parks the old tick as `tick_prev`, writes a new random one | next monitor run (it is called with the tick) + no 401/403. Pass: deletes `tick_prev`. Fail or no run within 11 min: puts the old tick back by itself |
+| `cron-secret` | deletes the vault copy + the plain-text copy in the migration history | refuses if any cron job or database function mentions it; then the next monitor run |
+| `gemini` | deletes the plain-text `gemini` row | refuses until `GEMINI_API_KEY` was set on/after 11/11/2026 (the owner's new key) and a monitor run after that has the AI check green. Then the owner revokes the old key at Google |
+
+Tested on staging 11/11: forced rollback (tick unchanged), tick, cron-secret, gemini refusal. Extra check on staging: `WA_AI=1 scripts/test-wa.sh`.
 
 `wa_in` and `SMARTSEND_WEBHOOK_SECRET`: the webhook accepts either, so set the new `wa_in`, change the Smart Send webhook URL to `?k=<new>`, send one test message, then rotate `SMARTSEND_WEBHOOK_SECRET`.
 
@@ -123,7 +118,7 @@ Check after each step:
 39 V1 functions on production only answer 410 "retired". Nothing in the production or staging database calls them.
 
 **Found 10/11:** two old migrations (`20260620110000`, `20260708150100`) scheduled jobs with production's url hardcoded, so *every database built from this repo* (laptops, CI test stacks) called production: `publish-scheduled-posts` every minute, `conversation-maintenance` every 5 minutes. Last 7 days: 2,951 and 595 calls, all answered 410. Fixed for new builds by `20261110150000_drop_v1_cron_calling_prod`.
-One stack still calls every minute from `79.177.141.131` (user agent `pg_net`, not one of May's machines). Whoever runs it: `git pull` and `supabase db reset`, or run
+One stack still calls every minute from `79.177.141.131` (user agent `pg_net`, not one of May's machines). Whoever runs it: `ops/stop-old-stack.sh` on that machine (only docker needed; removes the jobs that call prod, `--stop` also stops the stack; a powershell one-liner is in its header). Or `git pull` and `supabase db reset`, or run
 ```sql
 select cron.unschedule(jobname) from cron.job where jobname in ('conversation-maintenance', 'publish-scheduled-meta-posts');
 ```
