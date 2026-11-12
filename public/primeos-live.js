@@ -1893,7 +1893,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const links = [[m.kind === 'video' ? 'הורדת הסרטון' : m.kind === 'graphic' ? 'הורדת הגרפיקה' : 'PDF', m.url]];
     if (m.pptx) links.push(['PowerPoint', m.pptx]);
     if (m.docx) links.push(['Word', m.docx]);
-    const box = '<div class="note">' + ic('down', 16) + '<span>הקובץ המקורי: ' + links.map((l) => '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" style="font-weight:700;color:var(--brand)">' + l[0] + '</a>').join(' · ') + (m.kind === 'video' && !m.ready ? ' (הסרטון עדיין ברינדור)' : '') + (m.qa ? ' ' + qaHtml(m.qa) + (m.qa.issues && m.qa.issues.length ? '<br><small>בודק התוכן: ' + esc(m.qa.issues.slice(0, 3).join(' · ')) + (m.qa.fixed ? ' (תוקן אוטומטית)' : '') + '</small>' : '') : '') + '</span></div>';
+    const box = '<div class="it-files">' + links.map((l) => '<a class="btn" href="' + esc(l[1]) + '" target="_blank" rel="noopener">' + ic('down', 16) + ' ' + l[0] + '</a>').join('') + '<!--it-acts-->' +
+      (m.kind === 'video' && !m.ready ? '<span class="t-sub">הסרטון עדיין ברינדור</span>' : '') + '</div>' +
+      (m.qa ? '<div class="note">' + ic('check', 16) + '<span>' + qaHtml(m.qa) + (m.qa.issues && m.qa.issues.length ? '<br><small>בודק התוכן: ' + esc(m.qa.issues.slice(0, 3).join(' · ')) + (m.qa.fixed ? ' (תוקן אוטומטית)' : '') + '</small>' : '') + '</span></div>' : '');
     return h.replace('<div class="note">' + ic('help', 16), box + '<div class="note">' + ic('help', 16));
   };
 
@@ -3689,11 +3691,17 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     // the item screen tabs are built from the log
     const _itemR = SCREENS.item.render;
     SCREENS.item.render = function () {
+      if (S.tab && (S.tab.item === 'versions' || S.tab.item === 'history')) S.tab.item = 'content';
       let h = _itemR.apply(this, arguments);
       const it = items.find((x) => x.id === S.itemId) || items[0];
       if (!it) return h;
       const tab = S.tab.item || 'content';
       const log = logOf(it);
+      // the approval history lives in the item details (content tab), no separate tab
+      if (tab === 'content') {
+        const hist = (log.length ? log : [{ k: 'created', w: it.o || '', t: it.at || now(), x: '' }]).slice().reverse().map((e) => '<div class="tl-i"><span class="tl-dot ' + (TONE[e.k] || '') + '">' + ic(ICON[e.k] || 'edit', 13, 2) + '</span><span class="tl-tx"><b>' + esc(LBL[e.k] || e.k) + (e.x && e.k !== 'created' ? ' · ' + esc(e.x) : '') + '</b><br><span class="tl-time">' + esc(e.w) + ' · ' + esc(fmt(e.t)) + '</span></span></div>').join('');
+        h = h.replace('<div style="border-top:1px solid var(--line-2);padding-top:12px;margin-top:2px">', '<div class="it-hist"><div class="it-hist-h">' + ic('clock', 14) + ' היסטוריית אישורים</div><div class="tl">' + hist + '</div></div><div style="border-top:1px solid var(--line-2);padding-top:12px;margin-top:2px">');
+      }
       if (tab === 'history') {
         const rows = (log.length ? log : [{ k: 'created', w: it.o || '', t: it.at || now(), x: '' }]).slice().reverse().map((e) => '<div class="tl-i"><span class="tl-dot ' + (TONE[e.k] || '') + '">' + ic(ICON[e.k] || 'edit', 13, 2) + '</span><span class="tl-tx"><b>' + esc(LBL[e.k] || e.k) + (e.x && e.k !== 'created' ? ' · ' + esc(e.x) : '') + '</b><br><span class="tl-time">' + esc(e.w) + ' · ' + esc(fmt(e.t)) + '</span></span></div>').join('');
         h = h.replace(/(<div class="tl" style="padding:14px 18px">)[\s\S]*?(<\/div><\/div>)/, '$1' + rows + '$2');
@@ -7488,6 +7496,60 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
     const ready = () => { const w = S.wiz; if (isUp(w) && !(w.media && w.media.url)) { toast('הקובץ עוד עולה', 'רגע אחד.', 'err'); return false; } if (isUp(w) && !(w.ch || []).length && !L.noCh()) { toast('בחרו פלטפורמה', 'סמנו לפחות פלטפורמה אחת לפרסום.', 'err'); return false; } return true; };
     if (_pub) ACT.wizPublish = (...a) => (ready() ? _pub.apply(null, a) : undefined);
     if (_send) ACT.wizSend = (...a) => (ready() ? _send.apply(null, a) : undefined);
+  })();
+
+  /* ---------------- item page + calendar drawer: compact framed details, date and time apart, actions by the file ---------------- */
+  (function () {
+    if (!SCREENS.item) return;
+    css.textContent += `
+.it-files{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:4px}
+.kv.kv-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.kv.kv-tiles>.r{flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:12px;padding:9px 12px;background:var(--surface,#fff);min-width:0}
+.kv.kv-tiles>.r .k{width:auto;font-size:12px}
+.kv.kv-tiles>.r .v{font-size:14px;min-width:0;overflow-wrap:anywhere}
+.kv.kv-tiles>.r.wide{grid-column:1/-1}
+.kv.kv-tiles>:not(.r){grid-column:1/-1}
+.it-hist{border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.it-hist-h{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);font-weight:600}
+.it-hist .tl{padding:2px 0 0}`;
+    const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+    // "2026-11-15 18:00" -> date tile and time tile
+    function splitWhen(html) {
+      return html.replace(/<div class="r"><span class="k">(מועד פרסום|מועד)<\/span><span class="v">(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{1,2}:\d{2}))?<\/span><\/div>/, (_, k, y, mo, d, t) => {
+        const day = DAYS[new Date(+y, +mo - 1, +d).getDay()];
+        return '<div class="r"><span class="k">תאריך פרסום</span><span class="v">יום ' + day + ', ' + (+d) + '.' + (+mo) + '.' + y + '</span></div>' +
+          '<div class="r"><span class="k">שעה</span><span class="v">' + (t || '-') + '</span></div>';
+      });
+    }
+    const tidy = (h) => splitWhen(h.replace(/<span class="k">בעלים<\/span>/g, '<span class="k">שולח</span>'));
+    const _ir = SCREENS.item.render;
+    SCREENS.item.render = function () {
+      let h = _ir.apply(this, arguments);
+      // only content and notes
+      h = h.replace(/<button class="[^"]*" data-act="tab:item:(versions|history)">[^<]*<\/button>/g, '');
+      // the details: framed tiles, sender, date apart from time
+      h = h.replace('<div class="card-pad kv">', '<div class="card-pad kv kv-tiles">');
+      h = tidy(h).replace(/<div class="r"><span class="k">ערוצים<\/span>/, '<div class="r wide"><span class="k">ערוצים</span>');
+      // edit and duplicate sit with the download button
+      if (h.includes('<!--it-acts-->')) {
+        const acts = [];
+        h = h.replace(/<button class="btn[^"]*" data-act="(edit|dup):[^"]*">[\s\S]*?<\/button>/g, (b) => { acts.push(b.replace(/btn-primary|btn-ghost/g, '').replace('class="btn ', 'class="btn ')); return ''; });
+        h = h.replace('<!--it-acts-->', acts.join(''));
+      }
+      return h;
+    };
+    // the calendar drawer
+    if (typeof peekDrawer === 'function') {
+      const _pd = peekDrawer;
+      peekDrawer = function (it) {
+        let h = _pd.apply(this, arguments);
+        h = h.replace('<div class="kv">', '<div class="kv kv-tiles">');
+        h = tidy(h).replace(/<div class="r"><span class="k">(ערוצים|מקור)<\/span>/g, '<div class="r wide"><span class="k">$1</span>');
+        // header line: day.month.year · hour
+        h = h.replace(/(<p>[^<]*?)(\d{4})-(\d{2})-(\d{2}) (\d{1,2}:\d{2})/, (_, pre, y, mo, d, t) => pre + (+d) + '.' + (+mo) + '.' + y + ' · ' + t);
+        return h;
+      };
+    }
   })();
 
 })();
