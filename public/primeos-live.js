@@ -1953,7 +1953,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       const f = PROD.on[it.id];
       delete PROD.on[it.id];
       if (f) { try { f({ done: true, ui }); } catch (e) { console.error('prod done', e); } }
-      else toast('התוצר מוכן', '„' + it.t + '” מחכה בספריית התוכן.');
+      else if (!(L.isWork && L.isWork(it.id))) toast('התוצר מוכן', '„' + it.t + '” מחכה בספריית התוכן.');
       // the library, the dashboard or the item page still shows the loader over this card: repaint with the finished file
       if (!QUIET.includes(S.route)) render();
     };
@@ -1969,6 +1969,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         try { r = await call('job.get', { id: job }); } catch (e) { continue; }
         if (r.state === 'done' && r.ui) {
           const ui = r.ui;
+          // a library refresh may have swapped the item object meanwhile: the result goes into the one the list holds now
+          const cur = items.find((x) => x.id === it.id);
+          if (cur && cur !== it) replaceObj(cur, ui);
           replaceObj(it, ui);
           SY.items.set(it.id, JSON.stringify(ui));
           finish(ui);
@@ -6337,16 +6340,16 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       }
       Object.keys(LIVE).forEach((wid) => {
         const L1 = LIVE[wid]; const e = d[wid]; if (!e) { delete LIVE[wid]; return; }
-        save(e, L1.k, L1.o, true);
+        const j = JSON.stringify(slim(L1.o));
+        if (j !== JSON.stringify(e.data)) { save(e, L1.k, L1.o, true); changed = true; }
         const b = busy(L1.k, L1.o);
-        if (!b) { delete LIVE[wid]; e.ready = true; e.busy = false; toast('יצירה מוכנה', '„' + (e.he || KINDS[L1.k].ty(L1.o)) + '” מחכה בתחתית יצירת תוכן.'); }
-        changed = true;
+        if (!b) { delete LIVE[wid]; e.ready = true; e.busy = false; changed = true; toast('יצירה מוכנה', '„' + (e.he || KINDS[L1.k].ty(L1.o)) + '” מחכה בתחתית יצירת תוכן.'); }
       });
       // server productions: ready when the item has its file
       Object.keys(d).forEach((wid) => {
         const e = d[wid]; if (!e || !e.item || !e.busy) return;
         const it = itemById(e.item);
-        if (it && !(L.isProd && L.isProd(it))) { e.busy = false; if (!(it.prod && it.prod.err)) e.ready = true; changed = true; }
+        if (it && !(L.isProd && L.isProd(it))) { e.busy = false; if (!(it.prod && it.prod.err)) { e.ready = true; toast('יצירה מוכנה', '„' + (e.he || it.t) + '” מחכה בתחתית יצירת תוכן.'); } changed = true; delete LIVE[wid]; }
       });
       // periodic series left while generating
       Object.keys(d).forEach((wid) => {
@@ -6403,6 +6406,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       $('#lvDrop').onclick = () => { closeModal(); o._left = true; if (e.data) delete e.cur; else delete d[o._wid]; S[K.key] = null; CUR = null; flush(); proceed(then); };
     }
     L.leaveFlow = leaveFlow;
+    L.isWork = (itemId) => { const d = store(); return Object.keys(d).some((w) => d[w] && d[w].item === itemId); };
     const _go = go;
     go = function (r, opts) {
       if (!(opts && opts.force) && FLOW_ROUTES.includes(S.route) && !FLOW_ROUTES.includes(r)) { leaveFlow(() => _go(r, Object.assign({}, opts || {}, { force: true }))); return; }
