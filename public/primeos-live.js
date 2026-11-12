@@ -6403,7 +6403,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         '<div class="modal-foot" style="flex-wrap:wrap"><button class="btn" id="lvStay">המשך עריכה</button><button class="btn btn-primary" id="lvSave">' + ic('save', 15) + ' יציאה ושמירת הנתונים</button><button class="btn btn-quiet-bad" id="lvDrop">יציאה ללא שמירה</button></div>');
       $('#lvStay').onclick = closeModal;
       $('#lvSave').onclick = () => { closeModal(); keep(); toast('נשמר', 'תמצאו את העבודה בתחתית יצירת תוכן.'); proceed(then); };
-      $('#lvDrop').onclick = () => { closeModal(); o._left = true; if (e.data) delete e.cur; else delete d[o._wid]; S[K.key] = null; CUR = null; flush(); proceed(then); };
+      $('#lvDrop').onclick = () => { closeModal(); o._left = true; if (e.data) { delete e.cur; e.he = K.name(e.data); e.step = K.step(e.data); } else delete d[o._wid]; S[K.key] = null; CUR = null; flush(); proceed(then); };
     }
     L.leaveFlow = leaveFlow;
     L.isWork = (itemId) => { const d = store(); return Object.keys(d).some((w) => d[w] && d[w].item === itemId); };
