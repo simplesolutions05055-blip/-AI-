@@ -1913,16 +1913,21 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   };
   const prodSt = (it) => PROD.st[it.id] || { pct: (it.prod && it.prod.pct) || 0.03, msg: (it.prod && it.prod.msg) || 'בהפקה' };
   const isProd = (it) => !!(it && it.prod && !(it.media && it.media.url));
+  L.isProd = isProd; L.prodSt = (it) => prodSt(it);
   const slimUi = (it) => ({ id: it.id, t: it.t, ty: it.ty, d: it.d, o: it.o, ch: it.ch, th: it.th, fmts: it.fmts, prod: it.prod, wz: it.wz });
   // the item that waits in the library while the server works
   function prodItem(ty, o) {
     const it = { id: ++S.seq, t: o.t || (TYPES[ty] ? TYPES[ty].t : 'תוכן'), ty, d: o.d || (S.user && S.user.dept) || '', s: 'draft', o: curUser().n, u: 'עכשיו', pub: '', ch: o.ch || [], th: GV[S.seq % GV.length], body: '', cta: '', tags: [], wait: 'דקה', prod: { job: null, at: Date.now() }, wz: o.wz || {} };
     if (o.fmts) it.fmts = o.fmts;
     items.unshift(it);
+    if (L.onProdItem) try { L.onProdItem(ty, it); } catch (e) { /* the works list links it later */ }
     return it;
   }
   // start the job; on refusal the item goes away and the reason is shown (a full quota has its own words)
   async function startProd(kind, it, input, video) {
+    // how many creations may run at once (works in progress, spec 12.11)
+    const why = L.prodGate ? L.prodGate(kind) : '';
+    if (why) { const i = items.indexOf(it); if (i >= 0) items.splice(i, 1); toast('אי אפשר להתחיל עכשיו', why, 'err'); throw new Error('busy_limit'); }
     try {
       const r = video ? await call('job.create', Object.assign({ ui: slimUi(it) }, input)) : await call('job.start', { kind, ui: slimUi(it), input });
       it.prod.job = r.id;
@@ -3354,7 +3359,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     }
     camp.items.forEach((x) => { if (!x.t) x.t = x.hol ? x.hol + ' שמח' : 'עדכון לתושבים'; });
     flush();
-    S.campId = camp.id; S.campMode = 'edit'; go('bulkReview');
+    // the series keeps generating when the user left the screen: it waits in the works list instead of pulling them back
+    if (S.route === 'bulkGen' && S.genCamp === camp) { S.campId = camp.id; S.campMode = 'edit'; go('bulkReview'); }
     const first = camp.gfxUntil ? camp.items.filter((x) => x.date <= camp.gfxUntil) : camp.items;
     first.forEach((x) => queueGraphic(camp, x));
     toast('הטקסטים מוכנים', 'מעצבים עכשיו את הגרפיקות של החודש הראשון, שתיים במקביל. אפשר לעבור על הפוסטים בינתיים.');
@@ -6273,29 +6279,83 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     }
     ACT.evSkipSting = () => { const e = S.ev; if (!e) return; e.sting.skip = true; toast('בלי סיומת לוגו', 'הסרטונים ייסגרו בסיום הרגיל של המותג.'); ACT.evNext1(); };
 
-    /* --- drafts: the work in progress of every wizard is saved and offered back on the create screen --- */
+    /* --- works in progress (spec 12.11.2026): every creation flow is kept when left in the middle, keeps producing in the
+       background, and waits at the bottom of the create screen (and in the library, filter "בעבודה") until it is finished --- */
     const isMember = () => !!(L.me && L.me.role === 'member');
     const mid = () => (L.me && L.me.id) || 'me';
-    const KINDS = [
-      { k: 'wiz', key: 'wiz', route: 'wizard', he: (w) => (TYPES[w.type] ? TYPES[w.type].t : 'תוכן') + ': ' + (w.t || w.brief && w.brief.title || 'בלי כותרת'), test: (w) => !!(w && (w.brief && (w.brief.title || w.brief.free) || w.t)) },
-      { k: 'vd', key: 'vd', route: 'vidWiz', he: (v) => 'סרטון: ' + (v.name || 'בלי שם'), test: (v) => !!(v && (v.name || v.desc)) },
-      { k: 'dw', key: 'dw', route: 'docWiz', he: (w) => 'מסמך: ' + (w.title || w.t || (w.brief && w.brief.title) || 'בלי כותרת'), test: (w) => !!w },
-      { k: 'dk', key: 'dk', route: 'deckWiz', he: (w) => 'מצגת: ' + (w.title || w.t || (w.brief && w.brief.title) || 'בלי כותרת'), test: (w) => !!w },
-      { k: 'ev', key: 'ev', route: 'eventKit', he: (e) => 'אירוע: ' + (e.name || 'בלי שם'), test: (e) => !!(e && e.name && e.st !== 'scheduled' && e.st !== 'after' && e.st !== 'done') },
-    ];
+    const KINDS = {
+      wiz: { key: 'wiz', route: 'wizard', ic: (w) => (w.upFlow ? 'upload' : w.vmeta ? 'vid' : 'img'), ty: (w) => (w.upFlow ? 'תוכן מוכן' : TYPES[w.type] ? TYPES[w.type].t : 'תוכן'), name: (w) => w.t || (w.brief && w.brief.title) || '', step: (w) => (w.step === 0 ? 'בריף' : 'עריכה ופרסום'), test: (w) => !!(w && (w.upFlow ? w.media && w.media.url : (w.brief && (w.brief.title || w.brief.free || (w.brief.files || []).length)) || w.t)) },
+      vd: { key: 'vd', route: 'vidWiz', ic: () => 'vid', ty: () => 'סרטון', name: (v) => v.name || '', step: (v) => (v.step ? 'תסריט ועריכה' : 'בריף'), test: (v) => !!(v && (v.name || v.desc || (v.imgs || []).length)) },
+      dw: { key: 'dw', route: 'docWiz', ic: () => 'doc', ty: () => 'מסמך', name: (w) => w.title || '', step: (w) => (w.step ? 'עריכה' : 'בריף'), test: (w) => !!(w && (w.title || w.prompt || w.file)) },
+      dk: { key: 'dk', route: 'deckWiz', ic: () => 'deck', ty: () => 'מצגת', name: (w) => w.title || '', step: (w) => (w.step ? 'עריכת עמודים' : 'בריף'), test: (w) => !!(w && (w.title || w.prompt || w.file)) },
+      ev: { key: 'ev', route: 'eventKit', ic: () => 'cal', ty: () => 'תוכן לאירוע', name: (e) => e.name || '', step: (e) => ['פרטים וחומרים', 'סיומת לוגו', 'תוכנית פרסום', 'סיכום'][e.step || 0] || 'תוכנית פרסום', test: (e) => !!(e && e.name && e.st !== 'scheduled' && e.st !== 'after' && e.st !== 'done') },
+      bulk: { key: 'bulk', route: 'bulk', ic: () => 'cal', ty: () => 'תוכן תקופתי', name: (b) => (b.file && b.file.n) || '', step: () => 'בריף', test: (b) => !!(b && (b.brief || (b.files || []).length)) },
+    };
+    const FLOW_ROUTES = ['wizard', 'vidWiz', 'docWiz', 'deckWiz', 'eventKit', 'bulk', 'bulkGen', 'bulkReview'];
+    const kindOf = (route) => Object.keys(KINDS).find((k) => KINDS[k].route === route) || (route === 'bulkGen' || route === 'bulkReview' ? 'camp' : null);
     const store = () => { if (isMember()) { S.myDrafts = S.myDrafts || {}; return S.myDrafts; } S.draftsAll = S.draftsAll || {}; return (S.draftsAll[mid()] = S.draftsAll[mid()] || {}); };
-    const slim = (o) => { try { return JSON.parse(JSON.stringify(o, (k, v) => (k === 'busy' ? '' : typeof v === 'function' ? undefined : v))); } catch (e) { return null; } };
-    // a draft is deleted only when a wizard that was open in THIS session closes (saved, sent or exited); a window that
-    // closed in the middle never reaches that branch, so its draft waits on the create screen
-    const seen = {};
+    const slim = (o) => { try { return JSON.parse(JSON.stringify(o, (k, v) => (k === 'busy' || k === 'scanning' ? (k === 'busy' ? '' : false) : typeof v === 'function' ? undefined : v))); } catch (e) { return null; } };
+    const newWid = () => 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    // old drafts were kept one per kind (key = kind); they become works
+    function migrate(d) { Object.keys(d).forEach((k) => { const e = d[k]; if (e && e.data && !e.k && KINDS[k]) { const w = newWid(); d[w] = { k, data: e.data, at: e.at || Date.now() }; delete d[k]; } }); }
+    // is the flow object producing right now (the AI or the server is still making it)
+    function busy(k, o) {
+      if (!o) return false;
+      const it = o._item && itemById(o._item);
+      if (it && L.isProd && L.isProd(it) && !(it.prod && it.prod.err)) return true;
+      if (k === 'wiz') return !!(o.media && (o.media.busy || o.scanning) && !o.media.url) || !!o.scanning;
+      if (k === 'dw' || k === 'dk') return !!(o.media && o.media.busy) || !!o.busy;
+      if (k === 'vd') return !!(o.prod && (o.prod.pct || 0) < 1 && !o.prod.err);
+      if (k === 'ev') return !!(o.gen || (o.posts || []).some((p) => (p.mg && p.mg.busy) || (p.mv && p.mv.busy)));
+      return false;
+    }
+    const campGen = (c) => !!c && ((S.genCamp === c && (S.genP || 0) < 100) || (c.items || []).some((x) => x.media && x.media.busy));
+    // the open flow, and objects that were left while producing (their async work keeps writing into them)
+    const LIVE = {}; // wid -> { k, o }
+    let CUR = null; // { k, o, wid }
+    function save(e, k, o, asBase) {
+      const sl = slim(o); if (!sl) return;
+      const K = KINDS[k];
+      Object.assign(e, { k, at: Date.now(), he: K.name(o), step: K.step(o), item: o._item || e.item || null });
+      if (asBase) { e.data = sl; delete e.cur; } else e.cur = sl;
+    }
+    // every 3 seconds: the open flow (crash-safe copy), and every flow still producing in the background
     setInterval(() => {
       if (!L.ready || L.kind !== 'client') return;
-      const d = store();
-      KINDS.forEach((K) => {
-        const cur = S[K.key];
-        if (cur && K.test(cur) && K.route === S.route) { seen[K.k] = true; const sl = slim(cur); if (sl) { const j = JSON.stringify(sl); if (!d[K.k] || JSON.stringify(d[K.k].data) !== j) d[K.k] = { data: sl, at: Date.now(), he: K.he(cur) }; } }
-        else if (!cur && d[K.k] && seen[K.k]) { delete d[K.k]; seen[K.k] = false; }
+      const d = store(); migrate(d);
+      let changed = false;
+      const k = kindOf(S.route), K = KINDS[k];
+      const o = K ? S[K.key] : null;
+      // the open flow was closed by its own actions (published, sent, saved to the library): its work is done
+      if (CUR && CUR.o !== o && !CUR.o._left) { if (d[CUR.wid] && !LIVE[CUR.wid]) { delete d[CUR.wid]; changed = true; } CUR = null; }
+      if (K && o && K.test(o)) {
+        if (!o._wid) o._wid = newWid();
+        const e = d[o._wid] || (d[o._wid] = { k });
+        const j = JSON.stringify(slim(o));
+        if (j !== JSON.stringify(e.cur || e.data)) { save(e, k, o, false); changed = true; }
+        CUR = { k, o, wid: o._wid };
+      }
+      Object.keys(LIVE).forEach((wid) => {
+        const L1 = LIVE[wid]; const e = d[wid]; if (!e) { delete LIVE[wid]; return; }
+        save(e, L1.k, L1.o, true);
+        const b = busy(L1.k, L1.o);
+        if (!b) { delete LIVE[wid]; e.ready = true; e.busy = false; toast('יצירה מוכנה', '„' + (e.he || KINDS[L1.k].ty(L1.o)) + '” מחכה בתחתית יצירת תוכן.'); }
+        changed = true;
       });
+      // server productions: ready when the item has its file
+      Object.keys(d).forEach((wid) => {
+        const e = d[wid]; if (!e || !e.item || !e.busy) return;
+        const it = itemById(e.item);
+        if (it && !(L.isProd && L.isProd(it))) { e.busy = false; if (!(it.prod && it.prod.err)) e.ready = true; changed = true; }
+      });
+      // periodic series left while generating
+      Object.keys(d).forEach((wid) => {
+        const e = d[wid]; if (!e || e.k !== 'camp') return;
+        const c = campById(e.camp);
+        if (!c || c.closed) { delete d[wid]; changed = true; return; }
+        if (e.busy && !campGen(c)) { e.busy = false; e.ready = true; changed = true; toast('יצירה מוכנה', '„' + (c.name || 'סדרת תוכן') + '” מחכה בתחתית יצירת תוכן.'); }
+      });
+      if (changed) { if (S.route === 'create' || (S.route === 'library' && S.libFilter && S.libFilter.status === 'wip')) render(); flush(); paintBadge(); }
     }, 3000);
     const _cs = clientState;
     clientState = function () { const o = _cs.apply(this, arguments); if (!isMember()) o.drafts = S.draftsAll || {}; return o; };
@@ -6309,29 +6369,165 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const _mp = L.memberPatch;
     L.memberPatch = function () { const o = _mp ? _mp.apply(this, arguments) : null; if (!o) return o; o.memberDrafts = { [mid()]: S.myDrafts || {} }; return o; };
     const rel = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'עכשיו' : m < 60 ? 'לפני ' + m + ' דק׳' : m < 1440 ? 'לפני ' + Math.round(m / 60) + ' שע׳' : 'לפני ' + Math.round(m / 1440) + ' ימים'; };
+
+    /* --- leaving a flow: keep editing / leave and save / leave without saving --- */
+    function proceed(fn) { S.dirty = false; fn(); }
+    function leaveFlow(then) {
+      const k = kindOf(S.route);
+      if (!k) return proceed(then);
+      const d = store();
+      if (k === 'camp') {
+        const c = campById(S.campId) || S.genCamp;
+        if (c && !c.closed && c.status === 'draft') {
+          let wid = Object.keys(d).find((w) => d[w] && d[w].k === 'camp' && d[w].camp === c.id);
+          if (!wid) { wid = newWid(); d[wid] = { k: 'camp', camp: c.id }; }
+          Object.assign(d[wid], { at: Date.now(), he: c.name || 'סדרת תוכן', step: campGen(c) ? 'יצירת הפוסטים' : 'בדיקת הפוסטים', busy: campGen(c), ready: false });
+          flush(); if (d[wid].busy) toast('היצירה ממשיכה ברקע', 'תמצאו אותה בתחתית יצירת תוכן.');
+        }
+        return proceed(then);
+      }
+      const K = KINDS[k], o = S[K.key];
+      if (!o || !K.test(o)) { S[K.key] = null; CUR = null; return proceed(then); }
+      if (!o._wid) o._wid = newWid();
+      const e = d[o._wid] || (d[o._wid] = { k });
+      const keep = () => { save(e, k, o, true); o._left = true; e.ready = false; S[K.key] = null; CUR = null; flush(); };
+      if (busy(k, o)) {
+        keep(); e.busy = true; LIVE[o._wid] = { k, o };
+        toast('היצירה ממשיכה ברקע', 'תמצאו אותה בתחתית יצירת תוכן.');
+        return proceed(then);
+      }
+      openModal('<div class="mb"><div class="m-ic warn">' + ic('alert', 20) + '</div><h3>לצאת מהיצירה?</h3><p>אפשר לשמור את מה שהוזן ולחזור לזה מאוחר יותר, מתחתית מסך יצירת תוכן.</p></div>' +
+        '<div class="modal-foot" style="flex-wrap:wrap"><button class="btn" id="lvStay">המשך עריכה</button><button class="btn btn-primary" id="lvSave">' + ic('save', 15) + ' יציאה ושמירת הנתונים</button><button class="btn btn-quiet-bad" id="lvDrop">יציאה ללא שמירה</button></div>');
+      $('#lvStay').onclick = closeModal;
+      $('#lvSave').onclick = () => { closeModal(); keep(); toast('נשמר', 'תמצאו את העבודה בתחתית יצירת תוכן.'); proceed(then); };
+      $('#lvDrop').onclick = () => { closeModal(); o._left = true; if (e.data) delete e.cur; else delete d[o._wid]; S[K.key] = null; CUR = null; flush(); proceed(then); };
+    }
+    L.leaveFlow = leaveFlow;
+    const _go = go;
+    go = function (r, opts) {
+      if (!(opts && opts.force) && FLOW_ROUTES.includes(S.route) && !FLOW_ROUTES.includes(r)) { leaveFlow(() => _go(r, Object.assign({}, opts || {}, { force: true }))); return; }
+      return _go(r, opts);
+    };
+    const _back = ACT.goBack;
+    if (_back) ACT.goBack = (...a) => { if (FLOW_ROUTES.includes(S.route)) { leaveFlow(() => _back.apply(null, a)); return; } return _back.apply(null, a); };
+    ACT.wizExit = () => go('create');
+    ACT.wzExit = () => go('create');
+    ACT.evExit = () => go('create');
+    window.addEventListener('beforeunload', () => { try { const d = store(); const k = kindOf(S.route), K = KINDS[k]; const o = K && S[K.key]; if (o && K.test(o)) { if (!o._wid) o._wid = newWid(); const e = d[o._wid] || (d[o._wid] = { k }); save(e, k, o, false); if (busy(k, o)) e.busy = true; flush(); } } catch (x) {} });
+
+    /* --- the list: create screen bottom, and the library filter "בעבודה" --- */
+    css.textContent += `
+.wk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.wk{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:16px;padding:14px;background:var(--surface,#fff);min-width:0}
+.wk.rd{border-color:#7FD7A6;box-shadow:0 0 0 3px rgba(22,163,74,.12)}
+.wk-top{display:flex;gap:10px;align-items:center;min-width:0}
+.wk-ic{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--surface-2,#EEF2FA);color:var(--brand);flex:none;overflow:hidden}
+.wk-ic img{width:100%;height:100%;object-fit:cover}
+.wk-t{min-width:0;display:flex;flex-direction:column}.wk-t b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wk-t span{font-size:12.5px;color:var(--ink-3)}
+.wk-chip{align-self:flex-start;font-size:12px;font-weight:700;padding:3px 10px;border-radius:99px;background:var(--surface-2,#EEF2FA);color:var(--ink-2)}
+.wk-chip.ok{background:#DCF5E6;color:#137A3E}.wk-chip.run{background:#E7EEFF;color:var(--brand)}.wk-chip.bad{background:#FDE2E2;color:#9B1C1C}
+.wk-bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden}.wk-bar i{display:block;height:100%;background:var(--brand);transition:width .6s}
+.wk-acts{display:flex;gap:6px;margin-top:2px}
+.nav-item .cnt.rdy{background:#16A34A;color:#fff}`;
+    function stateOf(wid, e) {
+      if (e.k === 'camp') { const c = campById(e.camp); if (!c) return null; return campGen(c) ? { st: 'run', pct: S.genCamp === c ? (S.genP || 0) / 100 : null } : e.ready ? { st: 'ready' } : { st: 'wip' }; }
+      const it = e.item && itemById(e.item);
+      if (it && L.isProd && L.isProd(it)) return it.prod && it.prod.err ? { st: 'err', it } : { st: 'run', pct: L.prodSt ? L.prodSt(it).pct : null, msg: L.prodSt ? L.prodSt(it).msg : '', it };
+      if (LIVE[wid] || e.busy) return { st: 'run' };
+      return e.ready ? { st: 'ready', it } : { st: 'wip' };
+    }
+    function works() {
+      const d = store(); migrate(d);
+      const rank = { ready: 0, run: 1, err: 1, wip: 2 };
+      return Object.keys(d).map((wid) => { const e = d[wid]; if (!e || (!e.data && !e.cur && e.k !== 'camp')) return null; const s1 = stateOf(wid, e); return s1 ? { wid, e, s: s1 } : null; })
+        .filter(Boolean).sort((a, b) => rank[a.s.st] - rank[b.s.st] || (b.e.at || 0) - (a.e.at || 0));
+    }
+    const readyCount = () => works().filter((w) => w.s.st === 'ready').length;
+    function card(w) {
+      const e = w.e, K = KINDS[e.k], dt = e.cur || e.data || {};
+      const it = w.s.it || (e.item && itemById(e.item));
+      const thumb = it && it.media && (it.media.thumb || (it.media.kind === 'graphic' && it.media.url)) || (dt.media && dt.media.thumb) || '';
+      const icn = e.k === 'camp' ? 'cal' : K ? K.ic(dt) : 'create';
+      const ty = e.k === 'camp' ? 'תוכן תקופתי' : K ? K.ty(dt) : 'תוכן';
+      const name = e.he || (ty + ' ללא כותרת');
+      const chip = { ready: '<span class="wk-chip ok">' + ic('check', 12, 2.4) + ' יצירה מוכנה</span>', run: '<span class="wk-chip run">' + ic('clock', 12) + ' ביצירה' + (w.s.msg ? ' · ' + esc(w.s.msg) : '') + '</span>', err: '<span class="wk-chip bad">' + ic('alert', 12) + ' היצירה נכשלה</span>', wip: '<span class="wk-chip">' + ic('edit', 12) + ' בעבודה</span>' }[w.s.st];
+      const bar = w.s.st === 'run' && w.s.pct != null ? '<div class="wk-bar"><i style="width:' + Math.round(Math.max(0.04, w.s.pct) * 100) + '%"></i></div>' : '';
+      const main = w.s.st === 'ready' ? '<button class="btn btn-sm btn-primary" data-act="wkGo:' + w.wid + '">' + ic('fwd', 14) + ' פתיחה</button>'
+        : w.s.st === 'run' ? '<button class="btn btn-sm" data-act="wkGo:' + w.wid + '">' + ic('eye', 14) + ' צפייה</button>'
+          : w.s.st === 'err' ? '<button class="btn btn-sm btn-primary" data-act="prodRetry:' + w.s.it.id + '">' + ic('refresh', 14) + ' נסו שוב</button>'
+            : '<button class="btn btn-sm btn-primary" data-act="wkGo:' + w.wid + '">' + ic('edit', 14) + ' המשך</button>';
+      return '<div class="wk' + (w.s.st === 'ready' ? ' rd' : '') + '"><div class="wk-top"><span class="wk-ic">' + (thumb ? '<img src="' + esc(thumb) + '" alt="">' : ic(icn, 18)) + '</span><span class="wk-t"><b>' + esc(name) + '</b><span>' + esc(ty) + (e.step ? ' · ' + esc(e.step) : '') + ' · ' + rel(e.at || Date.now()) + '</span></span></div>' +
+        chip + bar + '<div class="wk-acts">' + main + '<button class="btn btn-sm btn-quiet-bad" data-act="wkX:' + w.wid + '" aria-label="מחיקה">' + ic('x', 14) + '</button></div></div>';
+    }
+    L.worksHtml = (title) => { const ws = works(); if (!ws.length) return ''; return '<h2 class="sec-h">' + title + ' <span class="t-sub" style="font-weight:600">' + ws.length + '</span></h2><div class="t-sub" style="margin:-4px 0 10px">יצירות שהתחלתם ועוד לא סיימתם. הכל נשמר, אפשר להמשיך מהשלב שעצרתם.</div><div class="wk-grid">' + ws.map(card).join('') + '</div>'; };
     if (SCREENS.create) {
       const _cr = SCREENS.create.render;
       SCREENS.create.render = function () {
-        let h = _cr.apply(this, arguments);
-        const d = store(); const ks = Object.keys(d).filter((k) => d[k] && d[k].data);
-        if (!ks.length) return h;
-        const list = '<h2 class="sec-h">טיוטות בעבודה</h2><div class="t-sub" style="margin:-4px 0 10px">תוכן שהתחלתם ולא נשלח. נשמר אוטומטית, אפשר להמשיך מהנקודה שעצרתם.</div><div class="grid g-3">' + ks.map((k) => '<div class="card card-pad" style="display:flex;flex-direction:column;gap:8px"><b>' + esc(d[k].he || 'טיוטה') + '</b><span class="t-sub">' + ic('clock', 13) + ' נשמר ' + rel(d[k].at || Date.now()) + '</span><div style="display:flex;gap:6px;margin-top:4px"><button class="btn btn-sm btn-primary" data-act="draftGo:' + k + '">' + ic('edit', 14) + ' המשך מאיפה שעצרתי</button><button class="btn btn-sm btn-quiet-bad" data-act="draftX:' + k + '">' + ic('x', 14) + '</button></div></div>').join('') + '</div>';
-        const i = h.indexOf('<h2 class="sec-h">אירועים פעילים</h2>');
-        if (i >= 0) return h.slice(0, i) + list + h.slice(i);
-        const j = h.lastIndexOf('</span></button>');
-        return j >= 0 ? h.slice(0, j + '</span></button>'.length) + list + h.slice(j + '</span></button>'.length) : h + list;
+        const h = _cr.apply(this, arguments);
+        const list = L.worksHtml('העבודות שלי');
+        return list ? h + '<div style="margin-top:26px">' + list + '</div>' : h;
+      };
+      SCREENS.create.nav = SCREENS.create.nav || {};
+      SCREENS.create.nav.count = () => { try { return readyCount(); } catch (e) { return 0; } };
+    }
+    function paintBadge() { const b = $('#sidebar [data-nav="create"] .cnt'); if (b) b.classList.add('rdy'); else { try { buildNav(); } catch (e) {} } const c = $('#sidebar [data-nav="create"] .cnt'); if (c) c.classList.add('rdy'); }
+    const _rend = render;
+    render = function () { const r = _rend.apply(this, arguments); try { const c = $('#sidebar [data-nav="create"] .cnt'); if (c) c.classList.add('rdy'); } catch (e) {} return r; };
+    // library: the filter "בעבודה" shows the works instead of items
+    if (SCREENS.library) {
+      const _lib = SCREENS.library.render;
+      SCREENS.library.render = function () {
+        const f = S.libFilter || {};
+        if (f.status !== 'wip') return _lib.apply(this, arguments).replace('<option value="">כל הסטטוסים</option>', '<option value="">כל הסטטוסים</option><option value="wip">בעבודה</option>');
+        f.status = '__none__';
+        let h; try { h = _lib.apply(this, arguments); } finally { f.status = 'wip'; }
+        h = h.replace('<option value="">כל הסטטוסים</option>', '<option value="">כל הסטטוסים</option><option value="wip" selected>בעבודה</option>');
+        const cut = h.indexOf('<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px');
+        const ws = works();
+        const body = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13.5px;color:var(--ink-3)">' + ws.length + ' עבודות בתהליך</div>' + (ws.length ? '<div class="wk-grid">' + ws.map(card).join('') + '</div>' : '<div class="note">' + ic('edit', 15) + '<span>אין עבודות בתהליך.</span></div>');
+        return cut >= 0 ? h.slice(0, cut) + body : h + body;
       };
     }
-    ACT.draftGo = (k) => {
-      const d = store(); const K = KINDS.find((x) => x.k === k); const dr = d[k];
-      if (!K || !dr || !dr.data) return;
-      S[K.key] = JSON.parse(JSON.stringify(dr.data)); seen[K.k] = true;
-      if (K.k === 'ev') { const e = S[K.key]; (e.posts || []).forEach((p) => { if (p.mg && p.mg.busy) p.mg = null; if (p.mv && p.mv.busy && !p.mv.job) p.mv = null; }); }
-      if (K.k === 'wiz' && S.wiz.media && S.wiz.media.busy) S.wiz.media.busy = '';
-      S.dirty = true; go(K.route); window.scrollTo({ top: 0 });
-      toast('ממשיכים מהטיוטה', dr.he || '');
+    /* --- back into a work --- */
+    ACT.wkGo = (wid) => {
+      const d = store(); const e = d[wid]; if (!e) return;
+      if (e.k === 'camp') { const c = campById(e.camp); if (!c) { delete d[wid]; render(); return; } e.ready = false; S.campId = c.id; S.campMode = 'edit'; delete d[wid]; flush(); go(S.genCamp === c && (S.genP || 0) < 100 ? 'bulkGen' : 'bulkReview', { force: true }); return; }
+      const K = KINDS[e.k]; if (!K) return;
+      // a server production that finished: the wizard reopens on the result
+      const it = e.item && itemById(e.item);
+      if (it && !(L.isProd && L.isProd(it)) && it.media && it.media.url && e.ready && ACT.prodOpen) {
+        e.ready = false; delete LIVE[wid];
+        ACT.prodOpen(it.id);
+        const o = S[K.key]; if (o) { o._wid = wid; o._item = it.id; }
+        flush(); return;
+      }
+      // a flow still producing in this window: its live object, with the progress
+      const live = LIVE[wid];
+      const o = live ? live.o : JSON.parse(JSON.stringify(e.cur || e.data));
+      if (!live) {
+        if (e.k === 'ev') (o.posts || []).forEach((p) => { if (p.mg && p.mg.busy) p.mg = null; if (p.mv && p.mv.busy && !p.mv.job) p.mv = null; });
+        if (e.k === 'wiz' && o.media && o.media.busy && !(it && L.isProd && L.isProd(it))) o.media.busy = '';
+      }
+      delete o._left; o._wid = wid; e.ready = false; delete LIVE[wid];
+      S[K.key] = o; S.dirty = true; CUR = { k: e.k, o, wid };
+      go(K.route, { force: true }); window.scrollTo({ top: 0 });
     };
-    ACT.draftX = (k) => { const d = store(); delete d[k]; render(); flush(); toast('הטיוטה נמחקה', ''); };
+    ACT.wkX = (wid) => {
+      const d = store(); const e = d[wid]; if (!e) return;
+      confirmModal({ title: 'למחוק את העבודה?', body: '„' + esc(e.he || 'עבודה ללא כותרת') + '” תימחק, ואי אפשר לשחזר אותה.', ok: 'מחיקה', tone: 'bad', icon: 'x',
+        onOk: () => { delete d[wid]; delete LIVE[wid]; if (e.k === 'camp') { const c = campById(e.camp); if (c) c.closed = true; } render(); flush(); toast('העבודה נמחקה', ''); } });
+    };
+    // a periodic series closes when it is published, sent for approval or saved to the library
+    ['cPublish', 'cSend', 'cLib'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => { const c = campById(S.campId); const r = f.apply(null, a); if (c) c.closed = true; return r; }; });
+    // links a server production to the flow that started it
+    L.onProdItem = (ty, it) => { const o = ty === 'graphic' ? S.wiz : ty === 'doc' ? S.dw : ty === 'deck' ? S.dk : ty === 'video' ? (S.vd || S.wiz) : null; if (o) o._item = it.id; };
+
+    /* --- how many creations at once: up to 4; with a periodic series or an event kit running, that one plus one more --- */
+    const myRunning = () => { const me = curUser().n; return items.filter((i) => i.o === me && L.isProd && L.isProd(i) && !(i.prod && i.prod.err)).length; };
+    const bigRunning = () => (S.camps || []).some(campGen) || [].concat(S.events || [], S.ev ? [S.ev] : [], Object.values(LIVE).filter((x) => x.k === 'ev').map((x) => x.o)).some((e) => busy('ev', e));
+    L.prodGate = () => { const n = myRunning(); if (bigRunning() ? n >= 1 : n >= 4) return bigRunning() ? 'יש תוכן תקופתי או תוכן לאירוע ביצירה. בזמן הזה אפשר ליצור במקביל עוד יצירה אחת.' : 'כבר רצות 4 יצירות במקביל. אפשר להתחיל חדשה כשאחת מהן מסתיימת.'; return ''; };
+    const bigGate = () => { if (bigRunning()) return 'כבר יש תוכן תקופתי או תוכן לאירוע ביצירה. אפשר להתחיל עוד אחד כשהוא מסתיים.'; if (myRunning() > 1) return 'בזמן יצירת תוכן תקופתי או תוכן לאירוע אפשר להריץ במקביל רק יצירה אחת נוספת. כרגע רצות ' + myRunning() + '.'; return ''; };
+    ['bGen', 'evNext1', 'evSkipSting'].forEach((k) => { const f = ACT[k]; if (!f) return; ACT[k] = (...a) => { const why = bigGate(); if (why) { toast('אי אפשר להתחיל עכשיו', why, 'err'); return; } return f.apply(null, a); }; });
   })();
 
   /* ---------------- console on a phone: client and user lists as compact rows ----------------
