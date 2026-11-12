@@ -3700,7 +3700,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       // the approval history lives in the item details (content tab), no separate tab
       if (tab === 'content') {
         const hist = (log.length ? log : [{ k: 'created', w: it.o || '', t: it.at || now(), x: '' }]).slice().reverse().map((e) => '<div class="tl-i"><span class="tl-dot ' + (TONE[e.k] || '') + '">' + ic(ICON[e.k] || 'edit', 13, 2) + '</span><span class="tl-tx"><b>' + esc(LBL[e.k] || e.k) + (e.x && e.k !== 'created' ? ' · ' + esc(e.x) : '') + '</b><br><span class="tl-time">' + esc(e.w) + ' · ' + esc(fmt(e.t)) + '</span></span></div>').join('');
-        h = h.replace('<div style="border-top:1px solid var(--line-2);padding-top:12px;margin-top:2px">', '<div class="it-hist"><div class="it-hist-h">' + ic('clock', 14) + ' היסטוריית אישורים</div><div class="tl">' + hist + '</div></div><div style="border-top:1px solid var(--line-2);padding-top:12px;margin-top:2px">');
+        h = h.replace('<div style="border-top:1px solid var(--line-2);padding-top:12px;margin-top:2px">', '<div class="it-hist"><div class="it-hist-h">' + ic('clock', 14) + ' היסטוריית אישורים</div><div class="it-tl">' + hist + '</div></div><div style="border-top:1px solid var(--line-2);padding-top:12px;margin-top:2px">');
       }
       if (tab === 'history') {
         const rows = (log.length ? log : [{ k: 'created', w: it.o || '', t: it.at || now(), x: '' }]).slice().reverse().map((e) => '<div class="tl-i"><span class="tl-dot ' + (TONE[e.k] || '') + '">' + ic(ICON[e.k] || 'edit', 13, 2) + '</span><span class="tl-tx"><b>' + esc(LBL[e.k] || e.k) + (e.x && e.k !== 'created' ? ' · ' + esc(e.x) : '') + '</b><br><span class="tl-time">' + esc(e.w) + ' · ' + esc(fmt(e.t)) + '</span></span></div>').join('');
@@ -7511,7 +7511,7 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
 .kv.kv-tiles>:not(.r){grid-column:1/-1}
 .it-hist{border:1px solid var(--line);border-radius:12px;padding:10px 12px}
 .it-hist-h{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);font-weight:600}
-.it-hist .tl{padding:2px 0 0}`;
+.it-tl{display:flex;flex-direction:column;padding-top:4px}`;
     const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
     // "2026-11-15 18:00" -> date tile and time tile
     function splitWhen(html) {
@@ -7545,6 +7545,10 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
         let h = _pd.apply(this, arguments);
         h = h.replace('<div class="kv">', '<div class="kv kv-tiles">');
         h = tidy(h).replace(/<div class="r"><span class="k">(ערוצים|מקור)<\/span>/g, '<div class="r wide"><span class="k">$1</span>');
+        // two columns: sender beside "updated", date beside hour
+        const upd = (h.match(/<div class="r"><span class="k">עודכן<\/span><span class="v">[\s\S]*?<\/span><\/div>/) || [])[0];
+        const snd = (h.match(/<div class="r"><span class="k">שולח<\/span><span class="v">[\s\S]*?<\/span><\/div>/) || [])[0];
+        if (upd && snd) h = h.replace(upd, '').replace(snd, snd + upd);
         // header line: day.month.year · hour
         h = h.replace(/(<p>[^<]*?)(\d{4})-(\d{2})-(\d{2}) (\d{1,2}:\d{2})/, (_, pre, y, mo, d, t) => pre + (+d) + '.' + (+mo) + '.' + y + ' · ' + t);
         return h;
