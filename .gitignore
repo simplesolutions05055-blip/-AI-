@@ -53,3 +53,6 @@ video/_*.mjs
 # browser tests
 tests/e2e/node_modules/
 tests/e2e/results/
+
+# deno test writes this locally; edge function builds are not lock-pinned (removed in 61c17dc)
+deno.lock
