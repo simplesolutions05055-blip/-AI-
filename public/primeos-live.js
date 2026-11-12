@@ -7531,7 +7531,9 @@ html.a11y-space p,html.a11y-space li,html.a11y-space .note,html.a11y-space .msg{
       h = h.replace('<div class="card-pad kv">', '<div class="card-pad kv kv-tiles">');
       h = tidy(h).replace(/<div class="r"><span class="k">ערוצים<\/span>/, '<div class="r wide"><span class="k">ערוצים</span>');
       // edit and duplicate sit with the download button
-      if (h.includes('<!--it-acts-->')) {
+      // notes tab: no edit / duplicate (they live by the file on the content tab)
+      if ((S.tab && S.tab.item) === 'notes') h = h.replace(/<button class="btn[^"]*" data-act="(edit|dup):[^"]*">[\s\S]*?<\/button>/g, '');
+      else if (h.includes('<!--it-acts-->')) {
         const acts = [];
         h = h.replace(/<button class="btn[^"]*" data-act="(edit|dup):[^"]*">[\s\S]*?<\/button>/g, (b) => { acts.push(b.replace(/btn-primary|btn-ghost/g, '').replace('class="btn ', 'class="btn ')); return ''; });
         h = h.replace('<!--it-acts-->', acts.join(''));
