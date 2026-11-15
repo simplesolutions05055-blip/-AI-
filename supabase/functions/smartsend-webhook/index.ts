@@ -6,6 +6,7 @@ import { db, env } from './common.ts';
 import { DRY, readInbound } from './wa.ts';
 import { handle } from './bot.ts';
 import { tick } from './jobs.ts';
+import { errText, log } from '../_shared/events.ts';
 
 async function same(a: string, b: string) {
   if (!a || !b) return false;
@@ -41,7 +42,7 @@ Deno.serve(async (req) => {
     const { data: sec } = await d.from('v2_secrets').select('v').eq('k', 'tick').maybeSingle();
     if (!(await same(given, env('SMARTSEND_WEBHOOK_SECRET'))) && !(await same(given, sec?.v ?? ''))) return new Response('Forbidden', { status: 403 });
     // @ts-ignore EdgeRuntime is provided by the Supabase runtime
-    EdgeRuntime.waitUntil(tick(d).catch((e) => console.error('tick', e)));
+    EdgeRuntime.waitUntil(tick(d).catch((e) => { console.error('tick', e); log({ src: 'job', kind: 'fn.error', level: 'error', msg: 'מריץ ההפקות קרס', detail: { fn: 'smartsend-webhook.tick', error: errText(e) } }); }));
     return ok({ ok: true, ticking: true });
   }
 
@@ -58,6 +59,6 @@ Deno.serve(async (req) => {
   if (!msg) return ok({ ok: true, ignored: true });
   // answer the provider at once, the work continues in the background
   // @ts-ignore EdgeRuntime is provided by the Supabase runtime
-  EdgeRuntime.waitUntil(handle(d, msg).catch((e) => console.error('bot', e)));
+  EdgeRuntime.waitUntil(handle(d, msg).catch((e) => { console.error('bot', e); log({ src: 'wa', kind: 'fn.error', level: 'error', msg: 'הבוט קרס בטיפול בהודעה נכנסת', detail: { fn: 'smartsend-webhook.bot', error: errText(e) } }); }));
   return ok({ ok: true, accepted: true });
 });

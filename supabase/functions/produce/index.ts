@@ -5,6 +5,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { bypassHeaders } from '../_shared/vercelBypass.ts';
 import { allowOrigin } from '../_shared/v2config.ts';
+import { errText, evOrg, jobHeader, jobOf, log, withEv } from '../_shared/events.ts';
 
 const cors = (req: Request) => {
   const o = req.headers.get('origin') ?? '';
@@ -20,7 +21,9 @@ const OUTS: Record<string, [string, string][]> = {
   video: [['main', 'mp4']], edit: [['main', 'mp4']],
 };
 
-Deno.serve(async (req) => {
+// the request's events (and the render route's) carry the caller's org and the production it serves
+Deno.serve((req) => withEv({ job_id: jobOf(req) }, () => handle(req)));
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
   if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
   const d = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
@@ -28,6 +31,7 @@ Deno.serve(async (req) => {
   const { data: t } = await d.from('api_tokens').select('org_id').eq('token', token).maybeSingle();
   const { data: a } = t ? { data: null } : await d.from('admin_tokens').select('admin_id').eq('token', token).maybeSingle();
   if (!t && !a) return json(req, { error: 'invalid_token' }, 401);
+  await evOrg(t?.org_id, d);
   let p: any;
   try { p = await req.json(); } catch { return json(req, { error: 'bad_json' }, 400); }
   const jobs: any[] = (p.jobs ?? []).slice(0, 12);
@@ -68,7 +72,7 @@ Deno.serve(async (req) => {
       statusUpload = s.data.signedUrl;
       statusUrl = d.storage.from('v2-content').getPublicUrl(sp).data.publicUrl;
     }
-    const r = await fetch(RENDER_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...(IS_STAGING ? { 'x-primeos-backend': 'staging' } : {}), ...bypassHeaders(RENDER_URL) }, body: JSON.stringify({ brand: p.brand ?? {}, jobs, async, statusUpload }) });
+    const r = await fetch(RENDER_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...jobHeader(), ...(IS_STAGING ? { 'x-primeos-backend': 'staging' } : {}), ...bypassHeaders(RENDER_URL) }, body: JSON.stringify({ brand: p.brand ?? {}, jobs, async, statusUpload }) });
     const txt = await r.text();
     let res: any;
     try { res = JSON.parse(txt); } catch { throw new Error('render_bad_response ' + r.status + ' ' + txt.slice(0, 200)); }
@@ -76,6 +80,7 @@ Deno.serve(async (req) => {
     if (async) return json(req, { ok: true, batch, pending: true, status: statusUrl, results: jobs.map((j) => ({ id: j.id, urls: urls[j.id] })) });
     return json(req, { ok: true, batch, results: (res.results ?? []).map((x: any) => ({ ...x, urls: x.ok ? urls[x.id] : undefined })) });
   } catch (e) {
+    log({ src: 'api', kind: 'fn.error', level: 'error', msg: 'שגיאה בפונקציה produce', detail: { fn: 'produce', error: errText(e) } });
     return json(req, { error: e instanceof Error ? e.message : String((e as any)?.message ?? e) }, 500);
   }
-});
+}

@@ -1,3 +1,4 @@
+import { aiFetch } from './events.ts';
 import {
   isCircuitOpen,
   isQuotaExhausted,
@@ -74,7 +75,7 @@ async function openAiFetch(
 
   let lastBody = '';
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const res = await fetch(url, init());
+    const res = await aiFetch(url, init());
     if (res.ok) {
       // Half-open probe succeeded (or we were healthy all along) → close it.
       if (!overrideKey) await reportProviderHealthy();

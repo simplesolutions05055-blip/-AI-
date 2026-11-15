@@ -8,6 +8,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { designDirective, qaPrompt, QA_SYS, QA_REDO, styleOf, kitDirective, KIT_SCAN, STYLES, EVENT_EN, varietyOf, pickComposition, accentFor, COMPOSITIONS } from './design.ts';
 import type { BrandKit } from './design.ts';
 import { allowOrigin, CLAUDE_MODELS } from '../_shared/v2config.ts';
+import { errText, evOrg, jobOf, log, withEv } from '../_shared/events.ts';
 
 // our own storage, in whichever project this runs (live or staging)
 const OWN_HOST = (Deno.env.get('SUPABASE_URL') ?? '').replace(/^https:\/\//, '').replace(/[.]/g, '\\.');
@@ -246,7 +247,9 @@ async function maskPng(w: number, h: number, boxes: number[][]) {
   const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out;
 }
 
-Deno.serve(async (req) => {
+// every AI call of the request is logged with the caller's org and the production it serves
+Deno.serve((req) => withEv({ job_id: jobOf(req) }, () => handle(req)));
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
   if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
   const d = db();
@@ -255,6 +258,7 @@ Deno.serve(async (req) => {
   CUR = { org: t?.org_id ?? null, member: t?.member_id ?? null };
   const { data: a } = t ? { data: null } : await d.from('admin_tokens').select('admin_id').eq('token', token).maybeSingle();
   if (!t && !a) return json(req, { error: 'invalid_token' }, 401);
+  await evOrg(t?.org_id, d);
 
   let p: Record<string, any>;
   try { p = await req.json(); } catch { return json(req, { error: 'bad_json' }, 400); }
@@ -503,9 +507,10 @@ fixed=true for texts that belong to the template itself and must stay (organisat
     const url = d.storage.from('v2-content').getPublicUrl(path).data.publicUrl;
     return json(req, { ok: true, url, prompt, model: used, size, cutout });
   } catch (e) {
+    log({ src: 'api', kind: 'fn.error', level: 'error', msg: 'שגיאה בפונקציה image', detail: { fn: 'image', error: errText(e) } });
     const msg = e instanceof Error ? e.message : String((e as any)?.message ?? e);
     // every failure is written to the function log with the mode, so a client's failed graphic can be traced
     console.error('image failed', JSON.stringify({ action: p?.action ?? 'photo', org: t?.org_id ?? null, base: !!p?.base, refs: Array.isArray(p?.refs) ? p.refs.length : 0, msg: msg.slice(0, 600) }));
     return json(req, { error: msg }, 500);
   }
-});
+}

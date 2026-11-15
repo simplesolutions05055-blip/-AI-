@@ -1,4 +1,5 @@
 import { B, withBackend } from './_shared/backend.js';
+import { jobOf, renderEvent } from './_shared/events.js';
 // PrimeOS render service: turns design-ready content into real files.
 // POST { jobs:[{ id, kind:'graphic'|'doc'|'deck'|'video', ... }], brand }   header x-primeos-token
 // Each job carries signed upload URLs (created by the 'produce' edge function); files go straight to storage.
@@ -104,27 +105,37 @@ async function handle(req: Request): Promise<Response> {
     try { body = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
     // async: answer at once and keep rendering (long videos exceed the caller's 150s idle limit)
     if (body.async) {
-      const work = renderAll(body)
+      const work = renderAll(body, token, jobOf(req))
         .then((r) => body.statusUpload && put(body.statusUpload, Buffer.from(JSON.stringify({ ok: true, done: Date.now(), results: r.map(({ thumb, sheet, stills, ...x }: any) => x) })), 'application/json'))
         .catch((e: any) => body.statusUpload && put(body.statusUpload, Buffer.from(JSON.stringify({ ok: false, error: String(e?.message || e).slice(0, 300) })), 'application/json').catch(() => {}));
       if (process.env.VERCEL) { waitUntil(work); return json({ ok: true, accepted: true }, 202); }
       await work;
       return json({ ok: true, accepted: true }, 202);
     }
-    return json({ ok: true, results: await renderAll(body) });
+    return json({ ok: true, results: await renderAll(body, token, jobOf(req)) });
   }
 }
 
-async function renderAll(body: any) {
+// what the admin log calls a job's output
+const whatOf = (kind: unknown) => ({ graphic: 'image', doc: 'doc', deck: 'deck', video: 'video' } as Record<string, string>)[String(kind)] ?? 'pdf';
+
+async function renderAll(body: any, token: string, job?: string) {
     const k = kit(body.brand || {}, 'print');
     const kScreen = kit(body.brand || {}, 'screen');
     const jobs: any[] = Array.isArray(body.jobs) ? body.jobs.slice(0, 12) : [];
-    const b = await browser();
+    const t00 = Date.now();
+    const what0 = whatOf(jobs[0]?.kind);
+    // a failure before any job starts is still a failed render
+    let b: Awaited<ReturnType<typeof browser>>;
+    try { b = await browser(); } catch (e: any) { renderEvent(token, 'render.fail', { job_id: job, what: what0, ms: Date.now() - t00, error: String(e?.message ?? e) }); throw e; }
     const out: any[] = [];
     try {
-      const p = await b.newPage();
+      let p: Awaited<ReturnType<typeof b.newPage>>;
+      try { p = await b.newPage(); } catch (e: any) { renderEvent(token, 'render.fail', { job_id: job, what: what0, ms: Date.now() - t00, error: String(e?.message ?? e) }); throw e; }
       for (const j of jobs) {
         const t0 = Date.now();
+        const what = whatOf(j.kind);
+        renderEvent(token, 'render.start', { job_id: job, what });
         try {
           const up = j.uploads || {};
           if (j.kind === 'probe') {
@@ -269,7 +280,11 @@ async function renderAll(body: any) {
             if (up.main) await put(up.main, mp4, 'video/mp4');
             out.push({ id: j.id, ok: true, bytes: mp4.length, audio: hasAudio, ms: Date.now() - t0 });
           } else out.push({ id: j.id, ok: false, error: 'unknown_kind' });
+          const last = out[out.length - 1];
+          if (last?.ok) renderEvent(token, 'render.done', { job_id: job, what, ms: Date.now() - t0, size: last.bytes });
+          else renderEvent(token, 'render.fail', { job_id: job, what, ms: Date.now() - t0, error: String(last?.error ?? 'failed') });
         } catch (e: any) {
+          renderEvent(token, 'render.fail', { job_id: job, what, ms: Date.now() - t0, error: String(e?.message ?? e) });
           out.push({ id: j.id, ok: false, error: String(e?.message || e).slice(0, 300), ms: Date.now() - t0 });
         }
       }

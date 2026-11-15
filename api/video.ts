@@ -1,4 +1,5 @@
 import { B, withBackend } from './_shared/backend.js';
+import { jobOf, renderEvent } from './_shared/events.js';
 // PrimeOS video renderer: renders a director plan (video/src) with Remotion inside a Vercel Sandbox.
 // POST { action:'start', plan, upload, url }            -> { sandboxId, cmdId }
 // POST { action:'status', sandboxId, cmdId, upload, url } -> { stage, progress, url? }
@@ -88,14 +89,20 @@ export function cleanPlan(p: any) {
 const okUpload = (u: unknown): u is string => typeof u === 'string' && u.startsWith(UP_PREFIX()) && u.length < 2000;
 const okUrl = (u: unknown): u is string => typeof u === 'string' && u.startsWith(PUB_PREFIX()) && u.length < 600 && !/[\s'"]/.test(u);
 
-async function start(body: any, token: string, kind: string) {
+async function start(body: any, token: string, kind: string, job?: string) {
   if (!okUpload(body.upload) || !okUrl(body.url)) return json({ error: 'bad_target' }, 400);
   let plan;
   try { plan = cleanPlan(body.plan); } catch { return json({ error: 'bad_plan' }, 400); }
   const secs = Math.ceil(plan.scenes.reduce((a: number, s: any) => a + s.dur, 0) + (plan.outro?.dur ?? 0));
   const q = await quotaTake(token, kind, secs, 'video:' + body.url.slice(PUB_PREFIX().length).slice(0, 100));
   if (q && q.ok === false) return json({ error: 'quota', kind: 'vsec', used: q.used, limit: q.limit, left: q.left, reset: q.reset }, 402);
-  const sandbox = await createSandbox({ resources: { vcpus: 8 } });
+  const t0 = Date.now();
+  renderEvent(token, 'render.start', { job_id: job, what: 'video' });
+  let sandbox: Awaited<ReturnType<typeof createSandbox>>;
+  try { sandbox = await createSandbox({ resources: { vcpus: 8 } }); } catch (e: any) {
+    renderEvent(token, 'render.fail', { job_id: job, what: 'video', ms: Date.now() - t0, error: String(e?.message ?? e) });
+    throw e;
+  }
   try {
     // the library creates the bundle's sub folders but not the bundle root itself
     await sandbox.mkDir('remotion-bundle').catch(() => {});
@@ -117,20 +124,26 @@ async function start(body: any, token: string, kind: string) {
     const r = { sandboxId: sandbox.sandboxId, cmdId: cmd.cmdId };
     return json({ ok: true, sandboxId: r.sandboxId, cmdId: r.cmdId });
   } catch (e: any) {
+    renderEvent(token, 'render.fail', { job_id: job, what: 'video', ms: Date.now() - t0, error: String(e?.message ?? e) });
     await sandbox.stop().catch(() => {});
     return json({ error: 'render_start_failed', detail: String(e?.message || e).slice(0, 300) }, 500);
   }
 }
 
-async function status(body: any) {
+async function status(body: any, token: string, job?: string) {
   const { sandboxId, cmdId } = body;
   if (typeof sandboxId !== 'string' || typeof cmdId !== 'string' || !okUpload(body.upload) || !okUrl(body.url)) return json({ error: 'bad_request' }, 400);
   const p: any = await getRenderProgress({ sandboxId, cmdId });
   if (p.stage === 'done') {
     const sb = await Sandbox.get({ sandboxId });
     const up = await sb.runCommand({ cmd: 'curl', args: ['-sS', '-f', '-X', 'PUT', '-H', 'content-type: video/mp4', '-H', 'x-upsert: true', '--data-binary', `@${OUT}`, body.upload] });
-    if (up.exitCode !== 0) return json({ stage: 'error', message: 'upload_failed', detail: (await up.stderr()).slice(0, 200) });
+    if (up.exitCode !== 0) {
+      const detail = (await up.stderr()).slice(0, 200);
+      renderEvent(token, 'render.fail', { job_id: job, what: 'video', error: 'upload_failed ' + detail });
+      return json({ stage: 'error', message: 'upload_failed', detail });
+    }
     await sb.stop().catch(() => {});
+    renderEvent(token, 'render.done', { job_id: job, what: 'video', size: p.size });
     return json({ stage: 'done', progress: 1, url: body.url, size: p.size });
   }
   if (p.stage === 'expired') {
@@ -140,6 +153,7 @@ async function status(body: any) {
   }
   if (p.stage === 'error') {
     await Sandbox.get({ sandboxId }).then((s) => s.stop()).catch(() => {});
+    renderEvent(token, 'render.fail', { job_id: job, what: 'video', error: String(p.message || 'render_error') });
     return json({ stage: 'error', message: String(p.message || '').slice(0, 300) });
   }
   return json({ stage: p.stage, progress: p.overallProgress ?? 0, frames: p.progress?.renderedFrames });
@@ -209,8 +223,8 @@ async function handle(req: Request): Promise<Response> {
     let body: any;
     try { body = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
     try {
-      if (body.action === 'start') return await start(body, token, kind);
-      if (body.action === 'status') return await status(body);
+      if (body.action === 'start') return await start(body, token, kind, jobOf(req));
+      if (body.action === 'status') return await status(body, token, jobOf(req));
       if (body.action === 'prep') return await prep(body);
       if (body.action === 'prepStatus') return await prepStatus(body);
       return json({ error: 'unknown_action' }, 400);

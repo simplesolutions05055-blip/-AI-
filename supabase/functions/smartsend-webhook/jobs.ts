@@ -6,6 +6,7 @@ import { WEB_KINDS, advanceWeb } from './web.ts';
 import { sendImage as waImage, sendText as waText } from './wa.ts';
 import { remember } from './session.ts';
 import { afterBadAnswer, afterCrash, isQuota } from './jobPolicy.ts';
+import { errText, log, withEv } from '../_shared/events.ts';
 
 type Job = Record<string, any>;
 // replies of a job: real WhatsApp, or collected on the job in test mode; a failed send never fails the job
@@ -380,12 +381,13 @@ export async function tick(d: DB, budgetMs = 50000) {
         if (!got || !got.length) continue;
         n++;
         try {
-          await advance(d, j);
+          await withEv({ org_id: j.org_id, job_id: j.id }, () => advance(d, j));
           // the step is over: the lock goes, so the next tick (cron or another worker) continues the job as soon as next_at allows
           await d.from('v2_jobs').update({ lock_until: new Date().toISOString() }).eq('id', j.id).eq('state', 'run');
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           console.error('job', j.id, j.step, msg);
+          log({ src: 'job', kind: 'fn.error', level: 'error', msg: `שלב ${j.step} קרס`, detail: { fn: 'jobs.tick', step: j.step, error: errText(e), tries: j.tries }, org_id: j.org_id, job_id: j.id });
           const n = afterCrash(j.tries);
           if (n.retry) await upd(d, j, n.row);
           else await fail(d, j, msg);

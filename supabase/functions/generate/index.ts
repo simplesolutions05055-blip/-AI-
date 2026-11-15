@@ -10,6 +10,7 @@ import { STYLE_PICK_HE, styleOf, PALETTE_MODES, DOC_RULES_HE, DOC_TYPES, DECK_RU
 import { REVIEW_SYS, reviewPrompt } from './agency.ts';
 import { clipSubmit, clipStatus, clipStore, clipModel } from './higgs.ts';
 import { allowOrigin, CLAUDE_MODELS } from '../_shared/v2config.ts';
+import { errText, evOrg, jobOf, log, withEv } from '../_shared/events.ts';
 // organisations that get AI video clips before everyone (the test account)
 const AIV_ORGS = ['82ce4b4e-2bdd-41d2-8efc-b1f4987df994'];
 
@@ -383,7 +384,9 @@ const BRIEF_SCHEMA = {
   required: ['brief', 'scenes', 'outro', 'caption'],
 };
 
-Deno.serve(async (req) => {
+// every AI call of the request is logged with the caller's org and the production it serves
+Deno.serve((req) => withEv({ job_id: jobOf(req) }, () => handle(req)));
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors(req) });
   if (req.method !== 'POST') return json(req, { error: 'method_not_allowed' }, 405);
 
@@ -392,6 +395,7 @@ Deno.serve(async (req) => {
   const database = db();
   const { data: t } = await database.from('api_tokens').select('org_id,member_id').eq('token', token).maybeSingle();
   CUR = { org: t?.org_id ?? null, member: t?.member_id ?? null };
+  await evOrg(t?.org_id, database);
   let orgName = '';
   let isAdmin = false;
   if (t) {
@@ -793,6 +797,7 @@ ${fb.length && p.keep ? 'מספר השקפים כמו בקובץ המצורף (�
 
     return json(req, { error: 'unknown_mode' }, 400);
   } catch (e) {
+    log({ src: 'api', kind: 'fn.error', level: 'error', msg: 'שגיאה בפונקציה generate', detail: { fn: 'generate', error: errText(e) } });
     return json(req, { error: e instanceof Error ? e.message : 'internal_error' }, 500);
   }
-});
+}

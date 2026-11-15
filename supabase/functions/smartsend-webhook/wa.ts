@@ -1,5 +1,6 @@
 // SmartSend WhatsApp transport for the bot: inbound payload, text, images (approved media template).
 import { env } from './common.ts';
+import { errText, log } from '../_shared/events.ts';
 
 const base = () => (env('SMARTSEND_API_URL') || 'https://api.smartsend.co.il').replace(/\/$/, '');
 const key = () => env('SMARTSEND_ORGANIZATION_ID') || env('SMARTSEND_API_KEY');
@@ -34,10 +35,16 @@ export async function readInbound(raw: unknown): Promise<InMsg | null> {
 }
 
 async function post(path: string, payload: unknown) {
-  const r = await fetch(base() + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-organization-id': key() }, body: JSON.stringify(payload) });
-  const t = await r.text();
-  if (!r.ok) throw new Error(`smartsend_${r.status}: ${t.slice(0, 200)}`);
-  try { const j = JSON.parse(t); if (j && j.success === false) throw new Error('smartsend_rejected: ' + String(j.message ?? '').slice(0, 200)); } catch (e) { if (e instanceof Error && e.message.startsWith('smartsend_rejected')) throw e; }
+  const t0 = Date.now();
+  try {
+    const r = await fetch(base() + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-organization-id': key() }, body: JSON.stringify(payload) });
+    const t = await r.text();
+    if (!r.ok) throw new Error(`smartsend_${r.status}: ${t.slice(0, 200)}`);
+    try { const j = JSON.parse(t); if (j && j.success === false) throw new Error('smartsend_rejected: ' + String(j.message ?? '').slice(0, 200)); } catch (e) { if (e instanceof Error && e.message.startsWith('smartsend_rejected')) throw e; }
+  } catch (e) {
+    log({ src: 'wa', kind: 'wa.send_fail', level: 'error', msg: 'שליחת הודעת WhatsApp נכשלה', detail: { path, error: errText(e) }, ms: Date.now() - t0 });
+    throw e;
+  }
 }
 
 // test mode: replies are collected instead of sent

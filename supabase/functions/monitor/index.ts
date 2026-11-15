@@ -3,6 +3,7 @@
 // POST ?backup=1  header x-tick   -> a copy of every v2 table as JSON into the private bucket v2-backups
 // GET  /          no auth         -> the last known status (for an outside uptime check), no secrets inside
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import { errText, log } from '../_shared/events.ts';
 
 const env = (k: string) => (Deno.env.get(k) ?? '').trim();
 const SUPA = env('SUPABASE_URL');
@@ -177,6 +178,7 @@ async function run(d: DB) {
   const bad: Record<string, number> = {}; const alerted: Record<string, boolean> = { ...(prev.alerted ?? {}) };
   const down: string[] = [], back: string[] = [];
   for (const [k, c] of Object.entries(res)) {
+    if (!c.ok) log({ src: 'monitor', kind: 'monitor.fail', level: c.warn ? 'warn' : 'error', msg: 'בדיקה נכשלה: ' + (HE[k] ?? k), detail: { check: k, ms: c.ms ?? null, note: errText(c.note ?? '') } });
     bad[k] = c.ok ? 0 : (prev.bad?.[k] ?? 0) + 1;
     if (!c.ok && bad[k] >= 2 && !alerted[k]) { alerted[k] = true; down.push(k); }
     if (c.ok && alerted[k]) { alerted[k] = false; back.push(k); }

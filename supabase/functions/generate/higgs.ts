@@ -1,6 +1,7 @@
 // AI video clips through Higgsfield (one key, several video models).
 // A clip is made from a still we already designed (image-to-video), so the look stays the organisation's.
 // The provider keeps files for about 7 days: every finished clip is copied to our storage at once.
+import { aiFetch } from '../_shared/events.ts';
 const env = (k: string) => Deno.env.get(k) ?? '';
 const BASE = 'https://api.higgsfield.ai';
 
@@ -26,7 +27,7 @@ export async function clipSubmit(p: { image: string; prompt: string; sec: number
   const M = CLIP_MODELS[model];
   const sec = clipSeconds(model, p.sec);
   const body: Record<string, unknown> = { prompt: (String(p.prompt || '').slice(0, 900) + '\n' + RULES).trim(), image_url: p.image, duration: sec, aspect_ratio: ASPECT[p.format] ?? '9:16', resolution: M.res, generate_audio: false };
-  const r = await fetch(`${BASE}/${M.path}`, { method: 'POST', headers: { ...head(), 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify(body) });
+  const r = await aiFetch(`${BASE}/${M.path}`, { method: 'POST', headers: { ...head(), 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify(body) });
   const t = await r.text();
   if (!r.ok) throw new Error('clip_submit_' + r.status + ':' + t.slice(0, 200));
   const j = JSON.parse(t);
@@ -37,7 +38,7 @@ export async function clipSubmit(p: { image: string; prompt: string; sec: number
 // wait | done (with the provider url) | failed
 export async function clipStatus(id: string) {
   if (!/^[0-9a-f-]{20,60}$/i.test(id)) throw new Error('bad_id');
-  const r = await fetch(`${BASE}/requests/${id}/status`, { headers: head() });
+  const r = await aiFetch(`${BASE}/requests/${id}/status`, { headers: head() });
   const t = await r.text();
   if (!r.ok) return { state: r.status === 404 ? 'failed' : 'wait', why: 'status_' + r.status };
   const j = JSON.parse(t);

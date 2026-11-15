@@ -3,6 +3,7 @@
 // vvoice: Hebrew narration per scene (ElevenLabs or Google Chirp 3 HD) with word timings for captions.
 // vmusic: instrumental track at the exact length (ElevenLabs Music). vstock: Pixabay / Pexels photos and clips.
 // Provider keys live only in Supabase secrets; raw provider responses never go back to the browser.
+import { aiFetch } from '../_shared/events.ts';
 
 export const env = (k: string) => Deno.env.get(k) ?? '';
 export function caps() {
@@ -251,7 +252,7 @@ async function ttsEleven(id: string, text: string, stab?: number) {
   // v3 accepts only 0 / 0.5 / 1 for stability; v4 takes the full range
   const vs = (model: string) => (stab == null ? undefined : { stability: model === 'eleven_v3' ? (stab < 0.35 ? 0 : stab > 0.7 ? 1 : 0.5) : Math.max(0, Math.min(1, stab)), similarity_boost: 0.8 });
   let plain = false; // set when the provider rejects voice settings: retry without them
-  const once = (path: string, model: string) => fetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}${path}?output_format=mp3_44100_128`, {
+  const once = (path: string, model: string) => aiFetch(`https://api.elevenlabs.io/v1/text-to-speech/${id}${path}?output_format=mp3_44100_128`, {
     method: 'POST', headers: { 'xi-api-key': key, 'content-type': 'application/json' },
     body: JSON.stringify({ text, model_id: model, language_code: 'he', ...(plain || !vs(model) ? {} : { voice_settings: vs(model) }) }),
   });
@@ -273,7 +274,7 @@ async function ttsEleven(id: string, text: string, stab?: number) {
   throw new Error('tts_failed');
 }
 async function ttsGoogle(name: string, text: string) {
-  const r = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${env('GOOGLE_TTS_API_KEY')}`, {
+  const r = await aiFetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${env('GOOGLE_TTS_API_KEY')}`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ input: { text: untag(text) }, voice: { languageCode: 'he-IL', name }, audioConfig: { audioEncoding: 'MP3', sampleRateHertz: 44100 } }),
   });
@@ -301,7 +302,7 @@ export async function musicTrack(d: any, org: string, prompt: string, seconds: n
   const key = env('ELEVENLABS_API_KEY');
   if (!key) throw new Error('music_not_configured');
   const ms = Math.round(Math.max(10, Math.min(95, seconds)) * 1000);
-  const once = () => fetch('https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128', {
+  const once = () => aiFetch('https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128', {
     method: 'POST', headers: { 'xi-api-key': key, 'content-type': 'application/json' },
     body: JSON.stringify({ prompt: String(prompt).slice(0, 900) + ' Instrumental only, no vocals.', music_length_ms: ms, model_id: 'music_v1', force_instrumental: true }),
   });
@@ -385,7 +386,7 @@ export async function scribe(audioUrl: string) {
     fd.append('timestamps_granularity', 'word');
     fd.append('diarize', 'true');
     fd.append('tag_audio_events', 'false');
-    const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: fd });
+    const r = await aiFetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: fd });
     if (!r.ok) { if (r.status === 400 || r.status === 422 || r.status === 404) continue; throw new Error('stt_failed_' + r.status); }
     const j = await r.json();
     const words = ((j.words ?? []) as any[]).filter((w) => w.type === 'word' && String(w.text ?? '').trim()).map((w) => ({ w: strip(String(w.text).trim()), s: +(+w.start).toFixed(2), e: +(+w.end).toFixed(2), sp: w.speaker_id ?? '' }));
@@ -407,7 +408,7 @@ export async function isolateVoice(d: any, org: string, audioUrl: string) {
   if (!r0.ok) throw new Error('audio_fetch_failed');
   const fd = new FormData();
   fd.append('audio', await r0.blob(), /\.m4a(\?|$)/i.test(audioUrl) ? 'audio.m4a' : 'audio.mp3');
-  const r = await fetch('https://api.elevenlabs.io/v1/audio-isolation', { method: 'POST', headers: { 'xi-api-key': key }, body: fd });
+  const r = await aiFetch('https://api.elevenlabs.io/v1/audio-isolation', { method: 'POST', headers: { 'xi-api-key': key }, body: fd });
   if (!r.ok) throw new Error('isolate_failed_' + r.status);
   const bytes = new Uint8Array(await r.arrayBuffer());
   return { src: await store(d, org, bytes, 'mp3', 'audio/mpeg'), sec: +mp3Seconds(bytes).toFixed(2) };
@@ -426,7 +427,7 @@ async function geminiPart(key: string, url: string, name: string, inline: boolea
   if (!r0.ok) throw new Error('proxy_fetch_failed');
   const bytes = new Uint8Array(await r0.arrayBuffer());
   if (inline) return { inline_data: { mime_type: 'video/mp4', data: toB64(bytes) } };
-  const st = await fetch('https://generativelanguage.googleapis.com/upload/v1beta/files', {
+  const st = await aiFetch('https://generativelanguage.googleapis.com/upload/v1beta/files', {
     method: 'POST',
     headers: { 'x-goog-api-key': key, 'x-goog-upload-protocol': 'resumable', 'x-goog-upload-command': 'start', 'x-goog-upload-header-content-length': String(bytes.length), 'x-goog-upload-header-content-type': 'video/mp4', 'content-type': 'application/json' },
     body: JSON.stringify({ file: { display_name: name } }),
@@ -438,7 +439,7 @@ async function geminiPart(key: string, url: string, name: string, inline: boolea
   let f = (await up.json()).file;
   for (let k = 0; k < 40 && f.state === 'PROCESSING'; k++) {
     await wait(2000);
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/${f.name}`, { headers: { 'x-goog-api-key': key } });
+    const r = await aiFetch(`https://generativelanguage.googleapis.com/v1beta/${f.name}`, { headers: { 'x-goog-api-key': key } });
     if (r.ok) f = await r.json();
   }
   if (f.state !== 'ACTIVE') throw new Error('gemini_file_' + f.state);
@@ -462,7 +463,7 @@ export async function scanGemini(clips: { i: number; name: string; sec: number; 
   parts.push({ text: `הקשר: הסרטונים צולמו עבור סרטון קצר לרשתות. הבריף של המשתמש: ${brief}\n${SCAN_JSON_HE}` });
   let last = '';
   for (const model of GEMINI_MODELS()) {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    const r = await aiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({ system_instruction: { parts: [{ text: SCAN_SYS }] }, contents: [{ role: 'user', parts }], generationConfig: { response_mime_type: 'application/json', temperature: 0.2, max_output_tokens: 8000 } }),
     });

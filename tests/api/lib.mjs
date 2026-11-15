@@ -70,7 +70,7 @@ export async function makeAdmin() {
 }
 
 export async function dropOrg(o) {
-  for (const t of ['api_tokens', 'v2_jobs', 'content_items', 'org_members', 'v2_audit']) await del(t, `org_id=eq.${o.org}`);
+  for (const t of ['v2_events', 'api_tokens', 'v2_jobs', 'content_items', 'org_members', 'v2_audit']) await del(t, `org_id=eq.${o.org}`);
   await del('organizations', `id=eq.${o.org}`);
 }
 

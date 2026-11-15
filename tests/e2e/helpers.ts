@@ -11,6 +11,16 @@ export async function qa(action: string, body: Record<string, unknown> = {}) {
   return j as any;
 }
 
+// an admin action of the v2-api, called with the session the page already holds (the same token the console sends)
+export async function adminCall(page: Page, action: string, payload: Record<string, unknown> = {}) {
+  const token = await page.evaluate(() => (window as any).PrimeLive?.token || '');
+  expect(token, 'admin session token').toBeTruthy();
+  const r = await fetch(QA_URL.replace(/\/qa$/, '/v2-api'), { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token }, body: JSON.stringify({ action, payload }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`${action}: ${r.status} ${JSON.stringify(j)}`);
+  return j as any;
+}
+
 // the same day and hour on every run: greetings and dates on the screens stay the same, so the pictures can be compared
 export const FIXED_NOW = new Date('2026-11-04T10:00:00+02:00');
 

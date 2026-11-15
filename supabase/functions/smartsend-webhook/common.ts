@@ -1,6 +1,7 @@
 // Shared helpers for the PrimeOS WhatsApp bot and the server job runner.
 import { videoColors } from './palette.ts';
 import { bypassHeaders } from '../_shared/vercelBypass.ts';
+import { jobHeader } from '../_shared/events.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 // deno-lint-ignore no-explicit-any
@@ -61,11 +62,11 @@ export async function whoIs(d: DB, phone: string): Promise<Who | null> {
   return { orgId: org.id, orgName: org.name, orgStatus: org.status ?? 'active', plan: org.plan, memberId: m.id, name: m.name ?? '', role: m.role, view: m.view ?? '', dept: m.dept ?? '', direct, token: t.token };
 }
 
-// ---- calls to the PrimeOS functions as that member ----
+// ---- calls to the PrimeOS functions as that member (with the production being worked on, for the admin log) ----
 export async function callFn(name: string, token: string, body: unknown, ms = 60000) {
   const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), ms);
   try {
-    const r = await fetch(FN(name), { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token }, body: JSON.stringify(body), signal: ctl.signal });
+    const r = await fetch(FN(name), { method: 'POST', headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...jobHeader() }, body: JSON.stringify(body), signal: ctl.signal });
     const j = await r.json().catch(() => ({ error: 'bad_response' }));
     if (!r.ok || j.error) throw new Error(String(j.error ?? 'http_' + r.status));
     return j;
@@ -75,7 +76,7 @@ export const api = (token: string, action: string, payload: unknown, ms = 60000)
 
 // a long call through pg_net: returns the request id, the answer is read later
 export async function httpLater(d: DB, url: string, token: string, body: unknown, ms = 170000): Promise<number> {
-  const { data, error } = await d.rpc('v2_http', { url, body, headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...(IS_STAGING && url.startsWith(APP) ? { 'x-primeos-backend': 'staging' } : {}), ...bypassHeaders(url) }, timeout_ms: ms });
+  const { data, error } = await d.rpc('v2_http', { url, body, headers: { 'content-type': 'application/json', 'x-primeos-token': token, ...jobHeader(), ...(IS_STAGING && url.startsWith(APP) ? { 'x-primeos-backend': 'staging' } : {}), ...bypassHeaders(url) }, timeout_ms: ms });
   if (error) throw new Error('http_later: ' + error.message);
   return Number(data);
 }

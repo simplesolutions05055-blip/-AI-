@@ -1,6 +1,6 @@
 // Whole user journeys through the real screens (not shortcuts). Login: e-mail -> 6-digit code -> dashboard.
 import { test, expect } from '@playwright/test';
-import { goTo, login, qa, skipOnboarding, watchErrors } from '../helpers';
+import { adminCall, goTo, login, qa, skipOnboarding, watchErrors } from '../helpers';
 
 // a right code empties every live code of that address, so desktop and mobile each sign in as a different user
 const userFor = (project: string) => (project === 'mobile' ? 'solo' : 'manager');
@@ -39,4 +39,7 @@ test('admin fixes an open incident from the incidents screen', async ({ page }) 
   await fix.click();
   // the fix frees stuck jobs, runs the queue, re-counts; a clean result closes the incident and it leaves the open list
   await expect(fix).toHaveCount(0, { timeout: 45_000 });
+  // the close of this incident (not just any) is in the admin event log
+  const evs = await adminCall(page, 'admin.events.load', { src: 'monitor', limit: 50 });
+  expect(evs.events.some((e: any) => e.kind === 'incident.close' && e.detail?.incident === id)).toBeTruthy();
 });

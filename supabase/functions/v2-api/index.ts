@@ -8,6 +8,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { BUILD } from '../_shared/build.ts';
 import { provider, CH_KEYS, FINAL, NEEDS_MEDIA, MAX_IMAGES, NEEDS_VIDEO, NO_POST, mediaOf, sigOf, textOf, whenOf, type ChKey, type PostOut, type Provider } from './publish.ts';
 import { allowOrigin } from '../_shared/v2config.ts';
+import { errText, log } from '../_shared/events.ts';
+import { evLoad, evRender, evStream, evTimeline } from './events.ts';
 import { clientIp, limitFor, LOGIN_LIMITS, rateOk } from '../_shared/rateLimit.ts';
 
 function cors(req: Request) {
@@ -1497,7 +1499,7 @@ Deno.serve(async (req) => {
     const s = token ? await resolve(d, token) : null;
     if (!s) return json(req, { error: 'invalid_token' }, 401);
     // management actions are written to the audit log: who, what, on whom, from where
-    if (/^(admin\.(?!load$|env$|state\.save$)|members\.(create|remove|relink|update|send)|ch\.(connect|disconnect)|state\.save$|logout$)/.test(action)) {
+    if (/^(admin\.(?!load$|env$|state\.save$|events\.|job\.timeline$)|members\.(create|remove|relink|update|send)|ch\.(connect|disconnect)|state\.save$|logout$)/.test(action)) {
       const target = String(p.id ?? p.org_id ?? p.email ?? p.ch ?? '').slice(0, 200) || null;
       d.from('v2_audit').insert({ org_id: s.orgId ?? p.org_id ?? null, actor_kind: s.kind, actor_id: s.kind === 'admin' ? (s.adminId ?? null) : (s.memberId ?? null), action, target, ip: req.headers.get('cf-connecting-ip') ?? req.headers.get('x-forwarded-for') ?? null, ua: (req.headers.get('user-agent') ?? '').slice(0, 200) }).then(() => {}, () => {});
     }
@@ -1510,6 +1512,7 @@ Deno.serve(async (req) => {
     if (s.kind === 'admin' && !s.session) return json(req, { error: 'session_required' }, 401);
     if (action === 'sys.status') return json(req, await sysStatus(d, s.kind === 'admin'));
     if (action === 'client.error') return json(req, await clientError(d, s, p, req));
+    if (action === 'event.render') return json(req, await evRender(d, s, p));
     if (action === 'upload.sign') return json(req, await uploadSign(d, s, p));
     if (action === 'file.sign') return json(req, await fileSign(d, s, p));
 
@@ -1569,6 +1572,9 @@ Deno.serve(async (req) => {
       if (action === 'admin.quota.set') return json(req, await adminQuotaSet(d, p));
       if (action === 'admin.incidents.load') return json(req, await incidentsLoad(d));
       if (action === 'admin.sys.load') return json(req, await sysLoad(d, p));
+      if (action === 'admin.events.load') return json(req, await evLoad(d, p));
+      if (action === 'admin.job.timeline') return json(req, await evTimeline(d, p));
+      if (action === 'admin.events.stream') return evStream(req, d, p, cors(req));
       if (action === 'admin.incident.fix') return json(req, await incidentFix(d, await adminName(d, s.adminId), p));
       if (action === 'admin.incident.set') return json(req, await incidentSet(d, await adminName(d, s.adminId), p));
       if (action === 'admin.incident.create') return json(req, await incidentCreate(d, await adminName(d, s.adminId), p));
@@ -1603,7 +1609,7 @@ Deno.serve(async (req) => {
     // a full subscription quota answers like produce does: 402 with the numbers, so the app shows the same message
     if (msg === 'quota' && (e as any)?.detail) return json(req, { error: 'quota', ...(e as any).detail }, 402);
     const code = msg === 'invalid_credentials' ? 401 : msg === 'forbidden' ? 403 : msg === 'not_found' ? 404 : msg !== 'internal_error' && /^[a-z][a-z0-9_]{1,40}$/.test(msg) ? 400 : 500;
-    if (code === 500) console.error('v2-api', action, msg);
+    if (code === 500) { console.error('v2-api', action, msg); log({ src: 'api', kind: 'fn.error', level: 'error', msg: 'שגיאה ב-v2-api · ' + action, detail: { fn: 'v2-api', action, error: errText(e) } }); }
     return json(req, { error: msg }, code);
   }
 });

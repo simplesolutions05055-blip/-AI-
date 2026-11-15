@@ -1,4 +1,5 @@
 import { B, withBackend } from './_shared/backend.js';
+import { renderEvent } from './_shared/events.js';
 // PrimeOS media convert: an uploaded clip or photo becomes something the video engine (Chromium) can play.
 // Phones hand over HEVC .mov / .mp4 and HEIC photos; Chromium renders neither. Here ffmpeg re-encodes
 // what needs it (H.264 + AAC, at most 1080 px on the long side; HEIC -> JPEG) and puts the result next to the original.
@@ -58,6 +59,8 @@ async function handle(request: Request): Promise<Response> {
     const name = String(body?.name ?? url.split('/').pop() ?? 'file');
     const ext = (name.split('.').pop() || '').toLowerCase();
     const dir = mkdtempSync(join(tmpdir(), 'cv-'));
+    const t0 = Date.now();
+    renderEvent(token, 'render.start', { what: 'convert' });
     try {
       const rs = await fetch(url);
       if (!rs.ok) throw new Error('fetch_failed');
@@ -69,16 +72,17 @@ async function handle(request: Request): Promise<Response> {
       const isImage = /^(heic|heif|avif|tiff?|bmp)$/.test(ext) || p.isImage;
       if (isImage) {
         // a photo format browsers do not open becomes a JPEG; browser-native photos are kept as they are
-        if (/^(jpe?g|png|webp|gif)$/.test(ext) && !p.rotated) return json({ url, name, converted: false, reason: 'image_ok' });
+        if (/^(jpe?g|png|webp|gif)$/.test(ext) && !p.rotated) { renderEvent(token, 'render.done', { what: 'convert', ms: Date.now() - t0 }); return json({ url, name, converted: false, reason: 'image_ok' }); }
         const out = join(dir, 'out.jpg');
         await run(ff, ['-y', '-loglevel', 'error', '-i', src, '-vf', "scale='min(2000,iw)':-2", '-q:v', '3', out]);
         const s = await api(token, 'upload.sign', { name: name.replace(/\.[^.]+$/, '') + '.jpg' });
         await putFile(s.upload, readFileSync(out), 'image/jpeg');
+        renderEvent(token, 'render.done', { what: 'convert', ms: Date.now() - t0 });
         return json({ url: s.url, name: s.url.split('/').pop(), converted: true, reason: 'image_' + (ext || 'unknown') });
       }
       // a clip: H.264 + AAC in an mp4 that starts playing at once; already fine -> untouched
       const fine = ext === 'mp4' && p.video === 'h264' && (!p.audio || p.audio === 'aac') && !p.rotated && Math.max(p.w, p.h) <= 1920;
-      if (fine) return json({ url, name, converted: false, reason: 'video_ok' });
+      if (fine) { renderEvent(token, 'render.done', { what: 'convert', ms: Date.now() - t0 }); return json({ url, name, converted: false, reason: 'video_ok' }); }
       const out = join(dir, 'out.mp4');
       const args = ['-y', '-loglevel', 'error', '-i', src, '-vf', "scale='if(gt(iw,ih),min(1920,iw),-2)':'if(gt(iw,ih),-2,min(1920,ih))'", '-c:v', 'libx264', '-preset', 'superfast', '-crf', '23', '-threads', '0', '-pix_fmt', 'yuv420p', '-movflags', '+faststart'];
       if (p.audio) args.push('-c:a', 'aac', '-b:a', '128k'); else args.push('-an');
@@ -86,8 +90,10 @@ async function handle(request: Request): Promise<Response> {
       await run(ff, args, { maxBuffer: 1 << 24 });
       const s = await api(token, 'upload.sign', { name: name.replace(/\.[^.]+$/, '') + '.mp4' });
       await putFile(s.upload, readFileSync(out), 'video/mp4');
+      renderEvent(token, 'render.done', { what: 'convert', ms: Date.now() - t0 });
       return json({ url: s.url, name: s.url.split('/').pop(), converted: true, reason: `video_${p.video || ext}${p.rotated ? '_rotated' : ''}` });
     } catch (e: any) {
+      renderEvent(token, 'render.fail', { what: 'convert', ms: Date.now() - t0, error: String(e?.message ?? e) });
       console.error('convert', e?.message || e, String(e?.stderr || '').slice(0, 300));
       return json({ error: 'convert_failed', detail: String(e?.message || e).slice(0, 120) }, 500);
     } finally {

@@ -1,7 +1,7 @@
 // Content made by the real AI on staging: graphic and PDF document, start to finished file.
 // Costs API credit, so it runs only nightly / on demand (E2E_AI=1). Own project "ai" (desktop), after the screen pictures.
 import { test, expect, type Page } from '@playwright/test';
-import { login, qa } from '../helpers';
+import { adminCall, login, qa } from '../helpers';
 
 test.skip(process.env.E2E_AI !== '1', 'AI flows run nightly or on demand (E2E_AI=1)');
 test.describe.configure({ mode: 'serial' });
@@ -41,6 +41,11 @@ test('graphic: brief to finished image', async ({ page }) => {
   const job = await waitJob('graphic', since);
   expect(job.state, job.error || '').toBe('done');
   await expectFile(page, job.result.url, /^image\//);
+  // the production timeline in the admin log: start, the AI call, done
+  await login(page, 'admin');
+  const tl = await adminCall(page, 'admin.job.timeline', { job_id: job.id });
+  const kinds = tl.events.map((e: any) => e.kind);
+  expect(kinds[0]).toBe('job.start'); expect(kinds).toContain('job.done'); expect(kinds).toContain('ai.call');
 });
 
 test('document: request to finished PDF', async ({ page }) => {
