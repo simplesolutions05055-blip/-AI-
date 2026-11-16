@@ -823,6 +823,24 @@ async function quotaTake(d: DB, orgId: string, memberId: string | null, p: Recor
 
 /* ---------------- incidents: what the monitor found, what "fix" does, and the security-event log ---------------- */
 const MON = `${Deno.env.get('SUPABASE_URL')}/functions/v1/monitor`;
+// the admins' phones for WhatsApp alerts: admin_state 'alerts' (this is its only writer; the monitor keeps its place in 'alerts_state')
+const alertPhone = (v: unknown): string | null => { let x = String(v ?? '').replace(/\D/g, ''); if (/^05\d{8}$/.test(x)) x = '972' + x.slice(1); return /^[1-9]\d{9,14}$/.test(x) ? x : null; };
+async function alertsLoad(d: DB) {
+  const { data } = await d.from('admin_state').select('data').eq('id', 'alerts').maybeSingle();
+  const a = (data?.data ?? {}) as Record<string, any>;
+  return { ok: true as const, on: a.on !== false, phones: Array.isArray(a.phones) ? a.phones.map((x: any) => ({ n: String(x.n ?? ''), ph: String(x.ph ?? '') })) : [], staging: IS_STAGING };
+}
+async function alertsSave(d: DB, p: Record<string, any>) {
+  if (!Array.isArray(p.phones) || p.phones.length > 5) throw new Error('bad_phones');
+  const phones: { n: string; ph: string }[] = [];
+  for (const x of p.phones) {
+    const ph = alertPhone(x?.ph);
+    if (!ph) throw new Error('bad_phone');
+    if (!phones.some((y) => y.ph === ph)) phones.push({ n: String(x?.n ?? '').trim().slice(0, 60), ph });
+  }
+  await d.from('admin_state').upsert({ id: 'alerts', data: { on: p.on !== false, phones }, updated_at: new Date().toISOString() });
+  return alertsLoad(d);
+}
 async function monitorCall(d: DB, q: string, ms = 120000) {
   const { data: sec } = await d.from('v2_secrets').select('v').eq('k', 'tick').maybeSingle();
   const c = new AbortController(); const t = setTimeout(() => c.abort(), ms);
@@ -1579,6 +1597,10 @@ Deno.serve(async (req) => {
       if (action === 'admin.incident.set') return json(req, await incidentSet(d, await adminName(d, s.adminId), p));
       if (action === 'admin.incident.create') return json(req, await incidentCreate(d, await adminName(d, s.adminId), p));
       if (action === 'admin.monitor.run') return json(req, { ok: true, result: await monitorCall(d, 'run=1') });
+      // WhatsApp alerts: who gets them, on/off, a test message (the monitor sends; see monitor/alerts.ts)
+      if (action === 'admin.alerts.load') return json(req, await alertsLoad(d));
+      if (action === 'admin.alerts.save') return json(req, await alertsSave(d, p));
+      if (action === 'admin.alerts.test') return json(req, { ok: true, result: await monitorCall(d, 'alert_test=1', 60000) });
       if (action === 'admin.plan.save') return json(req, await adminPlanSave(d, p));
       // the admin opens a client's system (a short session), or copies a first-entry link for the client
       if (action === 'admin.enter' || action === 'admin.invite.link') {

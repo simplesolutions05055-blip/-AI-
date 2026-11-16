@@ -5,7 +5,7 @@ import { login, navRoutes, goTo, watchErrors, expectNoSideScroll, qa, adminCall 
 
 const TABS: [string, string[]][] = [
   ['live', ['יומן חי']],
-  ['overview', ['בדיקות המוניטור', 'גרסה']],
+  ['overview', ['בדיקות המוניטור', 'גרסה', 'התראות WhatsApp למנהלים']],
   ['jobs', ['לפי סוג', 'עבודות תקועות', 'כישלונות אחרונים']],
   ['wa', ['הודעות לפי יום, 7 ימים', 'לפי לקוח']],
   ['costs', ['עלות לפי יום', 'לפי לקוח']],
@@ -13,6 +13,8 @@ const TABS: [string, string[]][] = [
 ];
 
 test('admin: System screen, every tab', async ({ page }, info) => {
+  // six tabs, a full-page picture of each: the phone project needs more than the usual minute
+  test.setTimeout(150_000);
   const errors = watchErrors(page);
   await login(page, 'admin');
   expect(await navRoutes(page)).toContain('a_system');

@@ -1,9 +1,11 @@
 // PrimeOS monitor: the system checks itself every few minutes and tells a person only when something needs a hand.
 // POST ?run=1     header x-tick   -> runs the checks, keeps the state, mails on a change (down / back up)
+// POST ?alerts=1 / ?alert_test=1 header x-tick -> the WhatsApp alert round alone / one test message (alerts.ts)
 // POST ?backup=1  header x-tick   -> a copy of every v2 table as JSON into the private bucket v2-backups
 // GET  /          no auth         -> the last known status (for an outside uptime check), no secrets inside
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { errText, log } from '../_shared/events.ts';
+import { alertRound, deliver, message, phoneOf, type AlertDeps, type AlertSettings } from './alerts.ts';
 
 const env = (k: string) => (Deno.env.get(k) ?? '').trim();
 const SUPA = env('SUPABASE_URL');
@@ -169,6 +171,31 @@ function report(res: Record<string, Check>, when: string) {
   return `<div dir="rtl" style="font-family:Heebo,Arial,sans-serif;color:#17201b;max-width:560px"><table style="border-collapse:collapse;width:100%">${rows}</table><p style="color:#5d6a62;font-size:13px">נבדק ${esc(when)} (UTC). לוגים: Supabase → Edge Functions → monitor.</p></div>`;
 }
 
+// WhatsApp to the admins' phones (SmartSend, the same account the bot sends from). A refusal is thrown: deliver() falls back to mail.
+async function waSend(phone: string, text: string) {
+  const base = (env('SMARTSEND_API_URL') || 'https://api.smartsend.co.il').replace(/\/$/, '');
+  const r = await timed(20000, (signal) => fetch(base + '/integrations/make/messages/send-text', { method: 'POST', signal, headers: { 'content-type': 'application/json', 'x-organization-id': env('SMARTSEND_ORGANIZATION_ID') || env('SMARTSEND_API_KEY') }, body: JSON.stringify({ phoneNumber: phone, message: text }) }));
+  const t = await r.text();
+  if (!r.ok) throw new Error(`smartsend_${r.status}: ${t.slice(0, 200)}`);
+  let j: { success?: boolean; message?: string } | null = null;
+  try { j = JSON.parse(t); } catch { /* a plain-text answer with 200 is a send */ }
+  if (j && j.success === false) throw new Error('smartsend_rejected: ' + String(j.message ?? '').slice(0, 200));
+}
+const alertDeps = (d: DB): AlertDeps => ({
+  staging: IS_STAGING, app: APP, send: waSend,
+  mail: async (subject, html) => mail(await recipients(d), subject, html),
+  log: (e) => log({ src: 'monitor', ...e }),
+});
+// the "send a test" button of the console: one message to every saved phone, outside the quiet times and the hourly cap
+async function alertTest(d: DB) {
+  const { data: row } = await d.from('admin_state').select('data').eq('id', 'alerts').maybeSingle();
+  const phones = (((row?.data ?? {}) as AlertSettings).phones ?? []).filter((p) => phoneOf(p.ph));
+  if (!phones.length) return { ok: false, error: 'no_phones' };
+  const out = await deliver(message([{ line: 'הודעת בדיקה: כך נראית התראה מהמערכת' }], 0, APP), phones, alertDeps(d));
+  log({ src: 'monitor', kind: out.dry || out.ok ? 'alert.sent' : 'alert.fail', level: out.dry || out.ok ? 'info' : 'error', msg: out.dry ? 'התראת בדיקה (סביבת בדיקות, לא נשלחה)' : out.ok ? 'התראת בדיקה נשלחה' : 'התראת בדיקה לא נשלחה', detail: { test: true, phones: phones.length, ok: out.ok, fail: out.fail, dry: out.dry, mailed: out.mailed } });
+  return { ok: out.dry || out.ok > 0, delivered: out.ok, failed: out.fail, dry: out.dry, mailed: out.mailed };
+}
+
 // alerts go out on a change only: two bad rounds in a row -> "down", a good round after a down -> "back"
 async function run(d: DB) {
   const res = await checks(d);
@@ -199,7 +226,9 @@ async function run(d: DB) {
     const subject = down.length ? `PrimeOS: תקלה - ${down.map((k) => HE[k] ?? k).join(', ')}` : `PrimeOS: חזר לפעול - ${back.map((k) => HE[k] ?? k).join(', ')}`;
     mailed = await mail(to, subject, report(res, now));
   }
-  return { ok: Object.values(res).every((c) => c.ok), res, down, back, mailed };
+  // after the incidents of this round are written, so a new critical one goes out now and not in five minutes
+  const alerts = await alertRound(d, alertDeps(d));
+  return { ok: Object.values(res).every((c) => c.ok), res, down, back, mailed, alerts };
 }
 
 // a weekly copy of the data, table by table, into a private bucket; eight weeks are kept.
@@ -359,6 +388,8 @@ Deno.serve(async (req) => {
   if (!(await same(given, sec?.v ?? ''))) return json({ error: 'forbidden' }, 403);
   try {
     if (url.searchParams.get('auth')) return json({ ok: true });
+    if (url.searchParams.get('alert_test')) return json(await alertTest(d));
+    if (url.searchParams.get('alerts')) return json(await alertRound(d, alertDeps(d)));
     if (url.searchParams.get('backup')) return json(await backup(d));
     if (url.searchParams.get('tenant')) return json(await tenantTest(d));
     if (url.searchParams.get('load')) return json(await loadTest(d, Math.min(100, +(url.searchParams.get('n') ?? 20) || 20), Math.min(80, +(url.searchParams.get('c') ?? 20) || 20)));

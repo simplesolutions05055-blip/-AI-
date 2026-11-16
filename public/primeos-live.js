@@ -7179,7 +7179,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           stat({ l: 'WhatsApp, 24 שעות', n: n0((w.in || 0) + (w.out || 0)), s: n0(w.in) + ' נכנסו · ' + n0(w.out) + ' יצאו', i: 'wa', nav: 'a_system', f: 'draft' }) + '</div>' +
           cardH('pulse', 'בדיקות המוניטור', '<div class="row-list">' + (chk.length ? chk.map(([k, c]) => '<div class="rowi"><span class="ic-box ' + (c.ok ? 'ok' : 'bad') + '">' + ic(c.ok ? 'check' : 'alert', 16) + '</span><span class="grow"><span class="nm">' + esc(CHK[k] || k) + '</span><br><span class="mt">' + esc([c.ms ? c.ms + 'ms' : '', c.note || ''].filter(Boolean).join(' · ') || (c.ok ? 'תקין' : 'לא עונה')) + '</span></span></div>').join('') : '<div class="t-sub">המוניטור עוד לא רץ.</div>') + '</div>') +
           cardH('hist', 'גרסה', '<div class="row-list"><div class="rowi"><span class="ic-box info">' + ic('gear', 16) + '</span><span class="grow"><span class="nm">שרת (v2-api)</span><br><span class="mt" dir="ltr">' + esc(d.build || '-') + '</span></span></div>' +
-            '<div class="rowi"><span class="ic-box info">' + ic('send', 16) + '</span><span class="grow"><span class="nm">עדכון אחרון</span><br><span class="mt">' + (d.lastDeploy ? dmt(d.lastDeploy.created_at) + ' · <span dir="ltr">' + esc(d.lastDeploy.target) + '</span>' : 'עוד לא נרשם עדכון') + '</span></span></div></div>');
+            '<div class="rowi"><span class="ic-box info">' + ic('send', 16) + '</span><span class="grow"><span class="nm">עדכון אחרון</span><br><span class="mt">' + (d.lastDeploy ? dmt(d.lastDeploy.created_at) + ' · <span dir="ltr">' + esc(d.lastDeploy.target) + '</span>' : 'עוד לא נרשם עדכון') + '</span></span></div></div>') + alertsCard();
       },
       jobs(d) {
         const kinds = Object.entries(d.byKind || {});
@@ -7227,9 +7227,9 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const JSTATE = { run: 'רצה', done: 'הושלמה', error: 'נכשלה' };
     // admin actions by name (the log stores the action code)
     const ADM_HE = { 'admin.org.create': 'לקוח חדש הוקם', 'admin.org.update': 'פרטי לקוח עודכנו', 'admin.org.delete': 'לקוח נמחק', 'admin.quota.set': 'מכסה עודכנה', 'admin.plan.save': 'מסלול עודכן', 'admin.profile.save': 'פרופיל מנהל עודכן',
-      'admin.invite.send': 'הזמנה נשלחה', 'admin.invite.link': 'קישור כניסה הועתק', 'admin.enter': 'כניסה למערכת של לקוח', 'admin.incident.create': 'תקלה נפתחה ידנית', 'admin.incident.set': 'תקלה עודכנה', 'admin.incident.fix': 'הופעל תיקון לתקלה', 'admin.monitor.run': 'הופעלה בדיקת מוניטור' };
+      'admin.invite.send': 'הזמנה נשלחה', 'admin.invite.link': 'קישור כניסה הועתק', 'admin.enter': 'כניסה למערכת של לקוח', 'admin.incident.create': 'תקלה נפתחה ידנית', 'admin.incident.set': 'תקלה עודכנה', 'admin.incident.fix': 'הופעל תיקון לתקלה', 'admin.monitor.run': 'הופעלה בדיקת מוניטור', 'admin.alerts.save': 'הגדרות התראות WhatsApp עודכנו', 'admin.alerts.test': 'נשלחה הודעת בדיקה ב-WhatsApp' };
     // production steps and AI engines by name; a code with no name here shows as it is
-    const STEP_HE = { start: 'התחלה', brief: 'הבנת הבקשה', texts: 'כתיבת הטקסטים', design: 'עיצוב', fit: 'התאמת העיצוב', media: 'הכנת המדיה', clips: 'קטעי הווידאו', render: 'רינדור', status: 'בדיקת מצב', fix: 'תיקון', done: 'סיום' };
+    const STEP_HE = { start: 'התחלה', brief: 'הבנת הבקשה', texts: 'כתיבת הטקסטים', design: 'עיצוב', fit: 'התאמת העיצוב', media: 'הכנת המדיה', clips: 'קטעי הווידאו', render: 'רינדור', status: 'המתנה לרינדור', fix: 'תיקון', done: 'סיום' };
     const PROV_HE = { anthropic: 'מנוע הטקסט (Claude)', gemini: 'Gemini', 'google-tts': 'מנוע הקריינות (Google)', openai: 'OpenAI', fal: 'מנוע התמונות (fal)', higgsfield: 'מנוע הווידאו (Higgsfield)', elevenlabs: 'מנוע הקריינות (ElevenLabs)' };
     const stepHe = (c) => STEP_HE[c] || c || '-';
     // the plain line for the owner; the technical view keeps the line as the server wrote it
@@ -7417,6 +7417,54 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       catch (e) { openDrawer(drawerHead('ציר זמן', 'לא נמצא') + '<div class="drawer-body"><div class="note">' + ic('alert', 15) + '<span>לא מצאתי את ההפקה הזו ביומן. אירועים נשמרים 30 יום.</span></div></div>'); }
     };
 
+    /* ---- WhatsApp alerts to the admins: who gets them, on/off, a test message (admin.alerts.*; the monitor sends) ---- */
+    const ALR = { data: null, busy: false, loading: false };
+    async function alertsLoad() {
+      if (ALR.loading) return;
+      ALR.loading = true;
+      try { ALR.data = await call('admin.alerts.load', {}); } catch (e) { /* the card says so */ }
+      ALR.loading = false; if (S.route === 'a_system' && SYS.tab === 'overview') render();
+    }
+    // 972501234567 -> 050-1234567 for reading; other countries stay as saved
+    const phShow = (ph) => (/^9725\d{8}$/.test(ph) ? '0' + ph.slice(3, 5) + '-' + ph.slice(5) : '+' + ph);
+    function alertsCard() {
+      const a = ALR.data;
+      if (!a) return cardH('wa', 'התראות WhatsApp למנהלים', '<div class="t-sub sys-empty">' + (ALR.loading ? 'טוען...' : 'לא הצלחתי לטעון את הגדרות ההתראות.') + '</div>');
+      const dis = ALR.busy ? ' disabled' : '';
+      return cardH('wa', 'התראות WhatsApp למנהלים',
+        '<p class="t-sub" style="margin:0;padding:12px 18px 0">הודעה נשלחת כשהפקה נכשלת, כשהפקה תקועה מעל 10 דקות, כשנפתחת תקלה קריטית וכשהודעה ללקוח לא יוצאת. אותה תקלה לא נשלחת שוב ושוב, ולכל היותר 6 הודעות בשעה.</p>' +
+        (a.staging ? '<div class="note" style="margin:12px 18px 0">' + ic('lock', 15) + '<span>זו סביבת הבדיקות: הודעות לא נשלחות מכאן, רק נרשמות ביומן.</span></div>' : '') +
+        '<div class="row-list" id="alrList">' + (a.phones.length ? a.phones.map((p, i) => '<div class="rowi"><span class="ic-box ' + (a.on ? 'ok' : 'info') + '">' + ic('phone', 16) + '</span><span class="grow"><span class="nm">' + esc(p.n || 'ללא שם') + '</span><br><span class="mt" dir="ltr">' + esc(phShow(p.ph)) + '</span></span>' +
+          '<button class="icon-btn" data-act="alrDel:' + i + '" aria-label="הסרת ' + esc(p.n || p.ph) + '"' + dis + '>' + ic('x', 16) + '</button></div>').join('') : '<div class="t-sub sys-empty">עוד לא הוגדר מספר. בלי מספר לא נשלחות התראות.</div>') + '</div>' +
+        (a.phones.length < 5 ? '<div class="alr-add"><input type="text" id="alrN" placeholder="שם" maxlength="60" aria-label="שם"><input type="tel" id="alrP" placeholder="050-1234567" dir="ltr" maxlength="20" aria-label="מספר טלפון"><button class="btn btn-sm" data-act="alrAdd"' + dis + '>' + ic('check', 14) + ' הוספה</button></div>' : '') +
+        '<div class="alr-add"><button class="btn btn-sm" data-act="alrOn"' + dis + '>' + ic(a.on ? 'pause' : 'play', 14) + ' ' + (a.on ? 'השהיית ההתראות' : 'הפעלת ההתראות') + '</button>' +
+        '<button class="btn btn-sm" data-act="alrTest"' + (ALR.busy || !a.phones.length ? ' disabled' : '') + '>' + ic('send', 14) + ' שליחת הודעת בדיקה</button></div>',
+        '<span class="chip" style="margin-inline-start:auto">' + (a.on && a.phones.length ? 'פעיל' : a.on ? 'אין מספרים' : 'מושהה') + '</span>');
+    }
+    async function alertsSave(next, okMsg) {
+      ALR.busy = true; render();
+      try { ALR.data = await call('admin.alerts.save', next); if (okMsg) toast(okMsg[0], okMsg[1]); }
+      catch (e) { toast(e.message === 'bad_phone' ? 'המספר לא תקין' : 'לא הצלחתי לשמור', e.message === 'bad_phone' ? 'מספר נייד ישראלי (050-1234567) או מספר בינלאומי מלא.' : 'נסו שוב בעוד רגע.', 'err'); }
+      ALR.busy = false; render();
+    }
+    ACT.alrAdd = () => {
+      const a = ALR.data, n = ($('#alrN') || {}).value || '', ph = ($('#alrP') || {}).value || '';
+      if (!a || !ph.trim()) { toast('חסר מספר', 'הקלידו מספר טלפון.', 'err'); return; }
+      alertsSave({ on: a.on, phones: a.phones.concat([{ n: n.trim(), ph }]) }, ['המספר נוסף', 'התראות יישלחו גם אליו.']);
+    };
+    ACT.alrDel = (i) => { const a = ALR.data; if (a) alertsSave({ on: a.on, phones: a.phones.filter((_, k) => k !== +i) }, ['המספר הוסר', 'הוא כבר לא יקבל התראות.']); };
+    ACT.alrOn = () => { const a = ALR.data; if (a) alertsSave({ on: !a.on, phones: a.phones }, a.on ? ['ההתראות הושהו', 'לא יישלחו הודעות עד להפעלה מחדש.'] : ['ההתראות הופעלו', '']); };
+    ACT.alrTest = async () => {
+      ALR.busy = true; render();
+      try {
+        const r = (await call('admin.alerts.test', {})).result || {};
+        if (r.dry) toast('סביבת בדיקות', 'ההודעה נרשמה ביומן ולא נשלחה.');
+        else if (r.ok) toast('הודעת הבדיקה נשלחה', r.failed ? r.delivered + ' קיבלו, ' + r.failed + ' נכשלו.' : 'בדקו את ה-WhatsApp.');
+        else toast('ההודעה לא נשלחה', r.mailed ? 'WhatsApp לא זמין. נשלח דוא״ל במקום.' : 'WhatsApp לא זמין כרגע.', 'err');
+      } catch (e) { toast('ההודעה לא נשלחה', 'נסו שוב בעוד רגע.', 'err'); }
+      ALR.busy = false; render();
+    };
+
     SCREENS.a_system = {
       nav: { t: 'מערכת', i: 'pulse' },
       render() {
@@ -7426,7 +7474,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
           '<div class="filters"><div class="seg sys-seg" role="tablist">' + TABS.map((t) => '<button role="tab" aria-selected="' + (SYS.tab === t[0]) + '" class="' + (SYS.tab === t[0] ? 'on' : '') + '" data-act="sysTab:' + t[0] + '">' + t[1] + '</button>').join('') + '</div></div>' +
           '<div id="sysBody" data-tab="' + SYS.tab + '">' + (live ? liveView() : d ? VIEW[SYS.tab](d) : '<div class="card"><div style="display:flex;gap:10px;align-items:center" class="t-sub"><span class="gm-spin"></span>טוען...</div></div>') + '</div>';
       },
-      mount() { if (SYS.tab === 'live') return liveMount(); if (!SYS.data[SYS.tab] || Date.now() - (SYS.at[SYS.tab] || 0) > 60000) load(SYS.tab, true); },
+      mount() { if (SYS.tab === 'live') return liveMount(); if (SYS.tab === 'overview' && !ALR.data && !ALR.loading && !ALR.tried) { ALR.tried = true; alertsLoad(); } if (!SYS.data[SYS.tab] || Date.now() - (SYS.at[SYS.tab] || 0) > 60000) load(SYS.tab, true); },
     };
     ACT.sysTab = (t) => { SYS.tab = t; if (t !== 'live') liveStop(); render(); if (t !== 'live' && (!SYS.data[t] || Date.now() - (SYS.at[t] || 0) > 60000)) load(t, true); };
     ACT.sysReload = () => load(SYS.tab);
@@ -7451,11 +7499,20 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .lv-main .chip{flex:none;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lv-ms{flex:none;font-size:12.3px;color:var(--ink-3,#5A6386);font-variant-numeric:tabular-nums}
 .lv-open{padding:2px 15px 12px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
 .lv-det{width:100%;background:var(--surface-2,#F3F5F9);border-radius:10px;padding:9px 12px;display:flex;flex-direction:column;gap:3px;text-align:left}.lv-det div{display:flex;gap:10px}.lv-det b{flex:none;min-width:74px;font-weight:600;color:var(--ink-3,#5A6386)}.lv-det span{min-width:0;overflow-wrap:anywhere}
+.alr-add{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 18px}.alr-add:last-child{padding-bottom:16px}.alr-add input{height:34px;width:auto;flex:1 1 150px;max-width:240px}
 .lv-foot{display:flex;justify-content:center;padding:12px 18px}.lv-foot:empty{display:none}
 .lv-kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.lv-kv div{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line-2,#EEF1F8);border-radius:12px;padding:9px 11px;font-size:13.4px;min-width:0}.lv-kv b{overflow-wrap:anywhere}
 .lv-tl{display:flex;flex-direction:column;flex:none}.lv-kv{flex:none}.lv-st-error{color:var(--bad,#C7012B)}.lv-st-done{color:#2F8A00}.tl-dot.bad{background:var(--bad-100,#FDE7EC);border-color:#F6BFCB;color:var(--bad,#C7012B)}
 .lv-more summary{cursor:pointer;font-size:12.3px;color:var(--ink-3,#5A6386);margin-top:4px}.lv-more .lv-det{margin-top:6px}
 @media (max-width:640px){.lv-main{flex-wrap:wrap;gap:6px 8px;padding:9px 12px}.lv-msg{flex-basis:100%;order:5}.lv-kv{grid-template-columns:repeat(2,minmax(0,1fr))}.lv-bar{padding:10px 12px}.lv-bar select{flex:1 1 140px}}`;
+    // the link of a WhatsApp alert: /admin?job=<id> opens that production's timeline once the console is up
+    (function () {
+      let job = '';
+      try { const u = new URL(location.href); job = u.searchParams.get('job') || ''; if (job) { u.searchParams.delete('job'); history.replaceState(null, '', u.pathname + u.search + u.hash); } } catch (e) { /* no link */ }
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(job)) return;
+      const t = setInterval(() => { if (L.dead) return clearInterval(t); if (!L.ready || S.mode !== 'admin') return; clearInterval(t); go('a_system', { force: true }); ACT.sysJob(job); }, 400);
+      setTimeout(() => clearInterval(t), 600000);
+    })();
     if (!ADMIN_NAV.includes('a_system')) { const k = ADMIN_NAV.indexOf('a_incidents'); ADMIN_NAV.splice(k >= 0 ? k + 1 : ADMIN_NAV.length, 0, 'a_system'); }
   })();
 

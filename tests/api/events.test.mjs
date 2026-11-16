@@ -178,3 +178,21 @@ test('an admin action lands in the log, the console\'s own reads do not', async 
   assert.deepEqual(ev.map((e) => e.detail.action), ['admin.org.update']);
   await del('v2_audit', `target=eq.t-${tag}`);
 });
+
+test('alert settings: admin only, phones are checked and normalised, a save leaves the monitor\'s own row alone', async () => {
+  for (const a of ['admin.alerts.load', 'admin.alerts.save', 'admin.alerts.test']) for (const tok of [A.ownerTok, A.internalTok]) assert.notEqual((await call(a, { on: true, phones: [] }, tok)).status, 200, a);
+  await del('admin_state', 'id=in.(alerts,alerts_state)');
+  await insert('admin_state', [{ id: 'alerts_state', data: { last: 77, sent: { 'job:x': new Date().toISOString() } } }]);
+  const bad = await call('admin.alerts.save', { on: true, phones: [{ n: 'x', ph: '12345' }] }, ADM.sessionTok);
+  assert.equal(bad.status, 400); assert.equal(bad.body.error, 'bad_phone');
+  const ok = await call('admin.alerts.save', { on: true, phones: [{ n: ' מאור ', ph: '050-123 4567' }, { n: 'dup', ph: '+972501234567' }] }, ADM.sessionTok);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body.phones, [{ n: 'מאור', ph: '972501234567' }]);
+  const [row] = await select('admin_state', 'id=eq.alerts_state');
+  assert.equal(row.data.last, 77); assert.ok(row.data.sent['job:x']);
+  const [set] = await select('admin_state', 'id=eq.alerts');
+  assert.deepEqual(Object.keys(set.data).sort(), ['on', 'phones']);
+  const off = await call('admin.alerts.save', { on: false, phones: ok.body.phones }, ADM.sessionTok);
+  assert.equal(off.body.on, false);
+  await del('admin_state', 'id=in.(alerts,alerts_state)');
+});
