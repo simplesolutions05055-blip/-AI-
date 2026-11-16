@@ -97,5 +97,25 @@ t('attacker origin blocked', !isOriginAllowed('https://evil.com'));
 t('null origin blocked', !isOriginAllowed(null));
 t('subdomain not implicitly allowed', !isOriginAllowed('https://x.app.example.com'));
 
+// ── video render config: api/video.ts builds the config of the library's own render script by hand ─────────
+// a remotion bump that adds a key to that config breaks every video render (4.0.542: preferredEffectBackend). Both lists must match.
+{
+  const { readFileSync, existsSync } = await import('node:fs');
+  const libPath = 'node_modules/@remotion/vercel/dist/esm/index.mjs';
+  console.log('\nvideo render config:');
+  if (!existsSync(libPath)) t('@remotion/vercel is installed (npm ci)', false);
+  else {
+    const lib = readFileSync(libPath, 'utf8');
+    const at = lib.indexOf('const renderConfig = {');
+    const end = lib.indexOf('args: ["render-video.mjs"', at);
+    const libKeys = [...lib.slice(at, end).matchAll(/^ {4}([A-Za-z0-9]+)[,:]/gm)].map((m) => m[1]);
+    const mine = readFileSync(process.env.VIDEO_TS || 'api/video.ts', 'utf8');
+    const a2 = mine.indexOf('const cfg = {'), cfg = mine.slice(a2, mine.indexOf("args: ['render-video.mjs'", a2));
+    const missing = libKeys.filter((k) => !new RegExp('\\b' + k + ':').test(cfg));
+    t('the library config was found (' + libKeys.length + ' keys)', at > 0 && end > at && libKeys.length > 30);
+    t('api/video.ts sends every key of it' + (missing.length ? ', missing: ' + missing.join(', ') : ''), missing.length === 0);
+  }
+}
+
 console.log(fails ? `\n${fails} FAILURES\n` : '\nall logic assertions passed\n');
 process.exit(fails ? 1 : 0);
