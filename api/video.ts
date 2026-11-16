@@ -119,7 +119,7 @@ async function start(body: any, token: string, kind: string, job?: string) {
       offthreadVideoCacheSizeInBytes: null, mediaCacheSizeInBytes: null, offthreadVideoThreads: null, chromeMode: 'headless-shell',
       browserExecutable: null, binariesDirectory: null, repro: false, sampleRate: 48000, vercelBlob: null,
       // every key the library's own renderMediaOnVercel puts in this config must be here: its render script checks them
-      // (remotion 4.0.542 added preferredEffectBackend and refuses a config without it). scripts/hardening-tests.mjs compares the two lists.
+      // (remotion 4.0.542 added preferredEffectBackend and refuses a config without it). scripts/video-config-check.mjs compares the two lists (CI).
       preferredEffectBackend: 'auto', isProduction: null,
     };
     const cmd = await sandbox.runCommand({ cmd: 'node', args: ['render-video.mjs', JSON.stringify(cfg)], detached: true });

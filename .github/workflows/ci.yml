@@ -28,6 +28,8 @@ jobs:
       # api/ is excluded from the main tsconfig — without this, edits to the
       # Vercel functions are never typechecked and break only in production.
       - run: npm run typecheck:api
+      # the video render config written by hand must carry every key the installed remotion expects
+      - run: node scripts/video-config-check.mjs
       - run: npm run build
 
   guards:
