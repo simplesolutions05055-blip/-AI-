@@ -7239,6 +7239,8 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       if (e.kind === 'admin.action' && ADM_HE[d.action]) return 'פעולת מנהל: ' + ADM_HE[d.action];
       if (e.kind === 'job.step' && d.step_to) return (m.includes(': ') ? m.slice(0, m.indexOf(': ')) : 'הפקה') + ': ' + (d.step_to === 'done' ? 'כל השלבים הסתיימו' : 'השלב ' + stepHe(d.step_from) + ' הסתיים, עכשיו ' + stepHe(d.step_to));
       if (e.kind === 'ai.call' && d.provider) return (PROV_HE[d.provider] || d.provider) + (e.level === 'error' ? ' נכשל' + (d.status ? ' (שגיאה ' + d.status + ')' : '') : ' ענה') + (d.tries > 1 ? ' אחרי ' + d.tries + ' ניסיונות' : '');
+      if (e.kind === 'job.try' && d.step) return 'ניסיון חוזר ' + (d.tries || '') + ' לשלב ' + stepHe(d.step) + (d.wait_s ? ' (בעוד ' + dur(d.wait_s * 1000) + ')' : '');
+      if (e.kind === 'job.unstick' && d.step) return 'הפקה תקועה שוחררה: השלב ' + stepHe(d.step) + ' רץ שוב';
       if (e.kind === 'job.error' || e.kind === 'fn.error') return m.replace(/(שלב |בשלב )([a-z_]+)/, (x, a, c) => a + stepHe(c));
       return m;
     };

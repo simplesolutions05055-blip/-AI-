@@ -4,8 +4,8 @@
 // Only phones that belong to users of a PrimeOS organisation are served (common.ts whoIs).
 import { db, env } from './common.ts';
 import { DRY, readInbound } from './wa.ts';
-import { handle } from './bot.ts';
-import { tick } from './jobs.ts';
+import { apologize, handle } from './bot.ts';
+import { tick, watchdog } from './jobs.ts';
 import { errText, log } from '../_shared/events.ts';
 
 async function same(a: string, b: string) {
@@ -41,6 +41,8 @@ Deno.serve(async (req) => {
     const given = req.headers.get('x-tick') ?? '';
     const { data: sec } = await d.from('v2_secrets').select('v').eq('k', 'tick').maybeSingle();
     if (!(await same(given, env('SMARTSEND_WEBHOOK_SECRET'))) && !(await same(given, sec?.v ?? ''))) return new Response('Forbidden', { status: 403 });
+    // the watchdog alone, answered in the response (tests and a manual check): ?tick=1&watchdog=1
+    if (url.searchParams.get('watchdog')) return ok({ ok: true, ...(await watchdog(d)) });
     // @ts-ignore EdgeRuntime is provided by the Supabase runtime
     EdgeRuntime.waitUntil(tick(d).catch((e) => { console.error('tick', e); log({ src: 'job', kind: 'fn.error', level: 'error', msg: 'מריץ ההפקות קרס', detail: { fn: 'smartsend-webhook.tick', error: errText(e) } }); }));
     return ok({ ok: true, ticking: true });
@@ -58,7 +60,8 @@ Deno.serve(async (req) => {
   const msg = await readInbound(raw);
   if (!msg) return ok({ ok: true, ignored: true });
   // answer the provider at once, the work continues in the background
+  const t0 = Date.now();
   // @ts-ignore EdgeRuntime is provided by the Supabase runtime
-  EdgeRuntime.waitUntil(handle(d, msg).catch((e) => { console.error('bot', e); log({ src: 'wa', kind: 'fn.error', level: 'error', msg: 'הבוט קרס בטיפול בהודעה נכנסת', detail: { fn: 'smartsend-webhook.bot', error: errText(e) } }); }));
+  EdgeRuntime.waitUntil(handle(d, msg).catch(async (e) => { console.error('bot', e); log({ src: 'wa', kind: 'fn.error', level: 'error', msg: 'הבוט קרס בטיפול בהודעה נכנסת', detail: { fn: 'smartsend-webhook.bot', error: errText(e) } }); await apologize(d, msg.phone, t0); }));
   return ok({ ok: true, accepted: true });
 });

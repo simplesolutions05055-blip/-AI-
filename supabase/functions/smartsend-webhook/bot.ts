@@ -271,6 +271,24 @@ async function status(d: DB, who: Who, phone: string) {
 }
 
 // ---------------- entry ----------------
+// the bot crashed on a message: the person is told, so a request is never met with silence.
+//   only a registered phone; one such note per phone in 10 minutes; never throws (it runs inside the crash handler)
+//   if a production was already opened for this message it reports for itself, so nothing is said
+export const SORRY = 'משהו השתבש אצלי והבקשה לא טופלה. אפשר לשלוח אותה שוב בעוד רגע.';
+export async function apologize(d: DB, phone: string, since: number): Promise<'sent' | 'skipped'> {
+  try {
+    const who = await whoIs(d, phone);
+    if (!who) return 'skipped';
+    const [{ count: jobs }, { count: said }] = await Promise.all([
+      d.from('v2_jobs').select('id', { count: 'exact', head: true }).eq('phone', phone).gte('created_at', new Date(since - 2000).toISOString()),
+      d.from('v2_wa_msgs').select('id', { count: 'exact', head: true }).eq('phone', phone).eq('dir', 'out').eq('body', SORRY).gte('created_at', new Date(Date.now() - 600000).toISOString()),
+    ]);
+    if ((jobs ?? 0) > 0 || (said ?? 0) > 0) return 'skipped';
+    await say(d, phone, SORRY, who);
+    return 'sent';
+  } catch (e) { console.error('apologize', e instanceof Error ? e.message : e); return 'skipped'; }
+}
+
 export async function handle(d: DB, m: InMsg) {
   if (!(await logMsg(d, { id: m.id, phone: m.phone, dir: 'in', body: m.body.slice(0, 2000), media: m.mediaUrl }))) return; // already handled
   const who = await whoIs(d, m.phone);

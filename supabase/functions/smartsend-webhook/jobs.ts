@@ -5,7 +5,7 @@ import { APP, FN, DB, api, brandOf, callFn, httpLater, httpResults, itemOf, kitO
 import { WEB_KINDS, advanceWeb } from './web.ts';
 import { sendImage as waImage, sendText as waText } from './wa.ts';
 import { remember } from './session.ts';
-import { afterBadAnswer, afterCrash, isQuota } from './jobPolicy.ts';
+import { afterBadAnswer, afterCrash, isQuota, renderAgain, stuckLimitMs, stuckNext, STUCK_DEFAULT_MIN } from './jobPolicy.ts';
 import { errText, log, withEv } from '../_shared/events.ts';
 
 type Job = Record<string, any>;
@@ -44,6 +44,11 @@ async function memberOf(d: DB, id: string) {
 const upd = (d: DB, j: Job, row: Record<string, unknown>) => d.from('v2_jobs').update({ lock_until: new Date().toISOString(), ...row, updated_at: new Date().toISOString() }).eq('id', j.id);
 const later = (s: number) => new Date(Date.now() + s * 1000).toISOString();
 
+// a retry of the same step shows in the admin log (the step itself does not change, so the job trigger writes nothing)
+function tryEvent(j: Job, n: number, nextAt: string, why: string) {
+  log({ src: 'job', kind: 'job.try', level: 'warn', msg: `ניסיון חוזר ${n} לשלב ${j.step}`, detail: { step: j.step, tries: n, wait_s: Math.max(0, Math.round((new Date(nextAt).getTime() - Date.now()) / 1000)), error: errText(why) }, org_id: j.org_id, job_id: j.id });
+}
+
 // ---------------- one step forward ----------------
 async function advance(d: DB, j: Job) {
   const token = await tokenOf(d, j.member_id);
@@ -62,7 +67,7 @@ async function advance(d: DB, j: Job) {
   const ok = (r: any) => r && r.status >= 200 && r.status < 300 && r.json && !r.json.error;
   const retry = async (why: string) => {
     const n = afterBadAnswer(j.tries);
-    if (n.retry) { await upd(d, j, n.row); return; }
+    if (n.retry) { tryEvent(j, n.row.tries, n.row.next_at, why); await upd(d, j, n.row); return; }
     await fail(d, j, why);
   };
   const go = async (step: string, row: Record<string, unknown> = {}) => upd(d, j, { step, pend: {}, tries: 0, data, next_at: new Date().toISOString(), lock_until: new Date().toISOString(), ...row });
@@ -240,7 +245,8 @@ async function advance(d: DB, j: Job) {
     }
     if (j.step === 'start') {
       if (!ids.length) {
-        const slot = await api(token, 'upload.sign', { name: 'video.mp4' });
+        // a render that starts again keeps its output slot
+        const slot = data.rtry && data.slot && data.slot.upload ? data.slot : await api(token, 'upload.sign', { name: 'video.mp4' });
         data.slot = { upload: slot.upload, url: slot.url }; data.t0 = Date.now();
         await upd(d, j, { data, lock_until: later(120) });
         const id = await httpLater(d, APP + '/api/video', token, { action: 'start', plan: data.plan, upload: slot.upload, url: slot.url }, 295000);
@@ -255,7 +261,13 @@ async function advance(d: DB, j: Job) {
       if (!ids.length) { const id = await httpLater(d, APP + '/api/video', token, { action: 'status', ...data.sb, upload: data.slot.upload, url: data.slot.url }, 120000); return upd(d, j, { pend: { st: id }, next_at: later(8) }); }
       const r = res.st;
       if (ok(r) && r.json.stage === 'done') { data.url = r.json.url; return go('done'); }
-      if (ok(r) && (r.json.stage === 'error' || r.json.stage === 'expired')) return fail(d, j, 'render_' + r.json.stage);
+      if (ok(r) && (r.json.stage === 'error' || r.json.stage === 'expired')) {
+        // one more render in a fresh sandbox, into the same output slot (video seconds are taken per slot, so nothing is charged twice)
+        if (!renderAgain(data.rtry)) return fail(d, j, 'render_' + r.json.stage);
+        data.rtry = (data.rtry || 0) + 1; data.sb = null; data.progress = 0;
+        log({ src: 'render', kind: 'render.retry', level: 'warn', msg: 'רינדור הסרטון נכשל, מתחיל שוב', detail: { what: 'video', stage: r.json.stage, error: errText(r.json.message ?? ''), tries: data.rtry }, org_id: j.org_id, job_id: j.id });
+        return go('start', { data });
+      }
       if (Date.now() - (data.t0 || Date.now()) > 25 * 60000) return fail(d, j, 'render_timeout');
       data.progress = ok(r) ? r.json.progress || 0 : data.progress || 0;
       return upd(d, j, { pend: {}, data, next_at: later(10), lock_until: new Date().toISOString() });
@@ -357,8 +369,41 @@ async function fail(d: DB, j: Job, why: string) {
 }
 
 // ---------------- the tick ----------------
+// the watchdog: a job in 'run' whose step has not changed for longer than that step may take (jobPolicy.stuckNext).
+// It catches what the runner's own rules cannot see: an answer that never arrives (the step waits on it forever, re-read every few
+// seconds) and a worker that dies in the middle of a step. Released = the step runs again from its start; after two releases the job fails.
+// Every change is a conditional update, so two workers never act on the same job.
+export async function watchdog(d: DB, now = Date.now()): Promise<{ released: number; failed: number }> {
+  const out = { released: 0, failed: 0 };
+  const nowIso = new Date(now).toISOString();
+  const { data: rows } = await d.from('v2_jobs').select('*').eq('state', 'run').lt('step_at', new Date(now - STUCK_DEFAULT_MIN * 60000).toISOString()).lte('lock_until', nowIso).order('step_at').limit(20);
+  for (const j of (rows ?? []) as Job[]) {
+    const what = stuckNext(j, now);
+    if (what === 'ok') continue;
+    const cut = new Date(now - stuckLimitMs(j.step)).toISOString();
+    const mine = (row: Record<string, unknown>) => d.from('v2_jobs').update({ ...row, step_at: nowIso, updated_at: nowIso }).eq('id', j.id).eq('state', 'run').eq('step', j.step).lt('step_at', cut).lte('lock_until', nowIso).select('id');
+    const min = Math.round((now - new Date(j.step_at).getTime()) / 60000);
+    if (what === 'release') {
+      const { data: got } = await mine({ pend: {}, tries: 0, unstuck: (j.unstuck ?? 0) + 1, next_at: nowIso, lock_until: nowIso });
+      if (!got || !got.length) continue;
+      out.released++;
+      log({ src: 'job', kind: 'job.unstick', level: 'warn', msg: `הפקה תקועה שוחררה: השלב ${j.step} רץ שוב`, detail: { step: j.step, minutes: min, unstuck: (j.unstuck ?? 0) + 1 }, org_id: j.org_id, job_id: j.id });
+    } else {
+      // claimed first (a short lock), then failed the usual way: the person and the wizard item are told like any failure
+      const { data: got } = await mine({ lock_until: new Date(now + 60000).toISOString() });
+      if (!got || !got.length) continue;
+      out.failed++;
+      log({ src: 'job', kind: 'job.stuck', level: 'error', msg: `הפקה תקועה נעצרה אחרי ${j.unstuck ?? 0} שחרורים`, detail: { step: j.step, minutes: min }, org_id: j.org_id, job_id: j.id });
+      await withEv({ org_id: j.org_id, job_id: j.id }, () => fail(d, j, 'stuck'));
+    }
+  }
+  return out;
+}
+
 export async function tick(d: DB, budgetMs = 50000) {
   const t0 = Date.now();
+  // before the queue: what the watchdog releases is picked up by this same run
+  await watchdog(d).catch((e) => console.error('watchdog', e instanceof Error ? e.message : e));
   let n = 0, spawned = false;
   const BATCH = 24, PAR = 6;
   while (Date.now() - t0 < budgetMs) {
@@ -389,7 +434,7 @@ export async function tick(d: DB, budgetMs = 50000) {
           console.error('job', j.id, j.step, msg);
           log({ src: 'job', kind: 'fn.error', level: 'error', msg: `שלב ${j.step} קרס`, detail: { fn: 'jobs.tick', step: j.step, error: errText(e), tries: j.tries }, org_id: j.org_id, job_id: j.id });
           const n = afterCrash(j.tries);
-          if (n.retry) await upd(d, j, n.row);
+          if (n.retry) { tryEvent(j, n.row.tries, n.row.next_at, msg); await upd(d, j, n.row); }
           else await fail(d, j, msg);
         }
       }
