@@ -7135,7 +7135,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
   /* ---------------- System: health, production jobs, WhatsApp, AI cost and deploys, in one console screen ----------------
      Read-only (admin.sys.load, one tab per call). Usage arrives as raw units and is priced here with the console's own rates (aiCost). */
   (function () {
-    const TABS = [['overview', 'סקירה', 'pulse'], ['jobs', 'עבודות', 'list'], ['wa', 'WhatsApp', 'wa'], ['costs', 'עלויות AI', 'chart'], ['deploys', 'עדכוני גרסה', 'hist']];
+    const TABS = [['live', 'חי', 'pulse'], ['overview', 'סקירה', 'pulse'], ['jobs', 'עבודות', 'list'], ['wa', 'WhatsApp', 'wa'], ['costs', 'עלויות AI', 'chart'], ['deploys', 'עדכוני גרסה', 'hist']];
     const KIND = { graphic: 'גרפיקה', doc: 'מסמך', deck: 'מצגת', video: 'סרטון', vscan: 'ניתוח סרטון', carousel: 'קרוסלה' };
     const CHK = { site: 'האתר', api: 'השרת ובסיס הנתונים', jobs: 'עבודות', stuck: 'עבודות תקועות', wa: 'WhatsApp', storage: 'אחסון', ai: 'מנועי AI', rate: 'מגבלות קצב' };
     const SYS = { tab: 'overview', data: {}, at: {}, loading: '' };
@@ -7148,7 +7148,7 @@ video.sp-real{object-fit:contain;background:#0A2C51}
     const cut = (d) => (d && d.capped ? '<span class="chip" style="margin-inline-start:8px">מוצגות 1,000 השורות האחרונות</span>' : '');
 
     async function load(tab, quiet) {
-      if (SYS.loading === tab) return;
+      if (tab === 'live' || SYS.loading === tab) return;
       SYS.loading = tab; if (!quiet) render();
       try { SYS.data[tab] = await call('admin.sys.load', { tab }); SYS.at[tab] = Date.now(); }
       catch (e) { toast('לא הצלחתי לטעון את נתוני המערכת', 'נסו שוב בעוד רגע.', 'err'); }
@@ -7185,15 +7185,15 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         const kinds = Object.entries(d.byKind || {});
         const done = kinds.reduce((a, [, c]) => a + (c.done || 0), 0), err = kinds.reduce((a, [, c]) => a + (c.error || 0), 0);
         const rate = done + err ? Math.round(err / (done + err) * 1000) / 10 : 0;
-        const row = (j) => [dmt(j.at), esc(KIND[j.kind] || j.kind), esc(j.org || '-'), esc(j.step || '-'), j.error ? '<span class="t-sub">' + esc(j.error) + '</span>' : '-'];
+        const row = (j) => [dmt(j.at), esc(KIND[j.kind] || j.kind), esc(j.org || '-'), esc(j.step || '-'), j.error ? '<span class="t-sub">' + esc(j.error) + '</span>' : '-', '<button class="btn btn-sm" data-act="sysJob:' + esc(j.id) + '">' + ic('hist', 14) + ' ציר זמן</button>'];
         return '<div class="grid g-4" style="margin-bottom:16px">' +
           stat({ l: 'עבודות, 7 ימים', n: n0(d.total), s: 'כל הסוגים', i: 'list', nav: 'a_system', f: 'draft' }) +
           stat({ l: 'אחוז כישלון', n: rate + '%', s: n0(err) + ' מתוך ' + n0(done + err), i: 'alert', nav: 'a_system', f: rate > 10 ? 'rejected' : rate ? 'pending' : 'approved' }) +
           stat({ l: 'תקועות עכשיו', n: (d.stuck || []).length, s: 'ממתינות יותר מ-10 דקות', i: 'clock', nav: 'a_system', f: (d.stuck || []).length ? 'rejected' : 'approved' }) +
           stat({ l: 'בתור', n: n0(kinds.reduce((a, [, c]) => a + (c.run || 0), 0)), s: 'רצות או ממתינות', i: 'refresh', nav: 'a_system', f: 'published' }) + '</div>' +
           cardH('chart', 'לפי סוג', tbl(['סוג', 'הושלמו', 'נכשלו', 'בתור'], kinds.map(([k, c]) => [esc(KIND[k] || k), n0(c.done), n0(c.error), n0(c.run)]), 'אין עבודות בשבוע האחרון.'), cut(d)) +
-          cardH('clock', 'עבודות תקועות', tbl(['מתי', 'סוג', 'לקוח', 'שלב', 'שגיאה'], (d.stuck || []).map(row), 'אין עבודות תקועות.')) +
-          cardH('alert', 'כישלונות אחרונים', tbl(['מתי', 'סוג', 'לקוח', 'שלב', 'שגיאה'], (d.errors || []).map(row), 'אין כישלונות בשבוע האחרון.'));
+          cardH('clock', 'עבודות תקועות', tbl(['מתי', 'סוג', 'לקוח', 'שלב', 'שגיאה', 'מעקב'], (d.stuck || []).map(row), 'אין עבודות תקועות.')) +
+          cardH('alert', 'כישלונות אחרונים', tbl(['מתי', 'סוג', 'לקוח', 'שלב', 'שגיאה', 'מעקב'], (d.errors || []).map(row), 'אין כישלונות בשבוע האחרון.'));
       },
       wa(d) {
         const c = d.check;
@@ -7219,18 +7219,216 @@ video.sp-real{object-fit:contain;background:#0A2C51}
       },
     };
 
+    /* ---- live tab: the event log as it happens (admin.events.stream), older pages on demand, one production's timeline in the drawer.
+       New rows are added to the list node, never through render(): a full redraw would move the page and close open rows. ---- */
+    const SRC_HE = { job: 'הפקות', wa: 'WhatsApp', ai: 'מנועי AI', render: 'רינדור', api: 'שרת', cron: 'משימות מתוזמנות', monitor: 'מוניטור', admin: 'פעולות מנהל', client: 'דפדפן' };
+    const SRC_IC = { job: 'list', wa: 'wa', ai: 'spark', render: 'vid', api: 'gear', cron: 'clock', monitor: 'pulse', admin: 'shield', client: 'eye' };
+    const LVL = { info: 'ok', warn: 'warn', error: 'bad' };
+    const JSTATE = { run: 'רצה', done: 'הושלמה', error: 'נכשלה' };
+    // admin actions by name (the log stores the action code)
+    const ADM_HE = { 'admin.org.create': 'לקוח חדש הוקם', 'admin.org.update': 'פרטי לקוח עודכנו', 'admin.org.delete': 'לקוח נמחק', 'admin.quota.set': 'מכסה עודכנה', 'admin.plan.save': 'מסלול עודכן', 'admin.profile.save': 'פרופיל מנהל עודכן',
+      'admin.invite.send': 'הזמנה נשלחה', 'admin.invite.link': 'קישור כניסה הועתק', 'admin.enter': 'כניסה למערכת של לקוח', 'admin.incident.create': 'תקלה נפתחה ידנית', 'admin.incident.set': 'תקלה עודכנה', 'admin.incident.fix': 'הופעל תיקון לתקלה', 'admin.monitor.run': 'הופעלה בדיקת מוניטור' };
+    // production steps and AI engines by name; a code with no name here shows as it is
+    const STEP_HE = { start: 'התחלה', brief: 'הבנת הבקשה', texts: 'כתיבת הטקסטים', design: 'עיצוב', fit: 'התאמת העיצוב', media: 'הכנת המדיה', clips: 'קטעי הווידאו', render: 'רינדור', status: 'בדיקת מצב', fix: 'תיקון', done: 'סיום' };
+    const PROV_HE = { anthropic: 'מנוע הטקסט (Claude)', gemini: 'Gemini', 'google-tts': 'מנוע הקריינות (Google)', openai: 'OpenAI', fal: 'מנוע התמונות (fal)', higgsfield: 'מנוע הווידאו (Higgsfield)', elevenlabs: 'מנוע הקריינות (ElevenLabs)' };
+    const stepHe = (c) => STEP_HE[c] || c || '-';
+    // the plain line for the owner; the technical view keeps the line as the server wrote it
+    const msgOf = (e) => {
+      const d = e.detail || {}, m = String(e.msg || '');
+      if (LIVE.tech) return m;
+      if (e.kind === 'admin.action' && ADM_HE[d.action]) return 'פעולת מנהל: ' + ADM_HE[d.action];
+      if (e.kind === 'job.step' && d.step_to) return (m.includes(': ') ? m.slice(0, m.indexOf(': ')) : 'הפקה') + ': ' + (d.step_to === 'done' ? 'כל השלבים הסתיימו' : 'השלב ' + stepHe(d.step_from) + ' הסתיים, עכשיו ' + stepHe(d.step_to));
+      if (e.kind === 'ai.call' && d.provider) return (PROV_HE[d.provider] || d.provider) + (e.level === 'error' ? ' נכשל' + (d.status ? ' (שגיאה ' + d.status + ')' : '') : ' ענה') + (d.tries > 1 ? ' אחרי ' + d.tries + ' ניסיונות' : '');
+      if (e.kind === 'job.error' || e.kind === 'fn.error') return m.replace(/(שלב |בשלב )([a-z_]+)/, (x, a, c) => a + stepHe(c));
+      return m;
+    };
+    const MAXROWS = 500;
+    const LIVE = { rows: [], last: 0, state: 'off', ctl: null, run: 0, wait: [], open: new Set(), f: { src: '', level: '', org: '' }, paused: false, loop: false, more: true, older: false, tech: ls.get('pos_sys_tech') === '1' };
+    const p2 = (n) => String(n).padStart(2, '0');
+    // hour:minute:second; an event of another day carries day/month first
+    const hms = (iso) => { const t = new Date(iso), n = new Date(); const h = p2(t.getHours()) + ':' + p2(t.getMinutes()) + ':' + p2(t.getSeconds()); return t.toDateString() === n.toDateString() ? h : dm(iso) + ' ' + h; };
+    const dur = (ms) => (ms == null ? '' : ms < 1000 ? Math.round(ms) + ' מ״ש' : ms < 60000 ? (Math.round(ms / 100) / 10) + ' שנ׳' : Math.floor(ms / 60000) + ':' + p2(Math.floor((ms % 60000) / 1000)) + ' דק׳');
+    const val = (v) => esc(typeof v === 'object' ? JSON.stringify(v) : String(v));
+    const detRows = (e) => [['event', e.kind], ['id', e.id]].concat(Object.entries(e.detail || {}).filter(([, v]) => v != null && v !== '')).map(([k, v]) => '<div><b>' + esc(k) + '</b><span>' + val(v) + '</span></div>').join('');
+    // the short technical tail of a row: provider, model, status, step
+    const techBits = (e) => { const d = e.detail || {}; return ['provider', 'model', 'status', 'fn', 'step_to', 'tries'].filter((k) => d[k] != null && d[k] !== '').map((k) => ' ' + k + '=' + val(d[k])).join(''); };
+    const rowHtml = (e) => {
+      const open = LIVE.open.has(e.id);
+      return '<div class="lv-row lv-' + (LVL[e.level] || 'ok') + (open ? ' open' : '') + '" data-ev="' + (+e.id) + '" data-kind="' + esc(e.kind) + '">' +
+        '<button class="lv-main" data-act="sysEv:' + (+e.id) + '" aria-expanded="' + open + '">' +
+        '<time dir="ltr">' + hms(e.at) + '</time><span class="lv-ic" title="' + esc(SRC_HE[e.src] || e.src) + '">' + ic(SRC_IC[e.src] || 'pulse', 15) + '</span>' +
+        '<span class="lv-msg">' + esc(msgOf(e)) + (LIVE.tech ? ' <code dir="ltr">' + esc(e.kind) + techBits(e) + '</code>' : '') + '</span>' +
+        (e.org ? '<span class="chip">' + esc(e.org) + '</span>' : '') + (e.ms != null ? '<span class="lv-ms">' + dur(e.ms) + '</span>' : '') + '</button>' +
+        (open ? '<div class="lv-open"><div class="lv-det" dir="ltr">' + detRows(e) + '</div>' + (e.job_id ? '<button class="btn btn-sm" data-act="sysJob:' + esc(e.job_id) + '">' + ic('hist', 14) + ' ציר הזמן של ההפקה</button>' : '') + '</div>' : '') + '</div>';
+    };
+    const STATE_HE = { live: 'חי', connecting: 'מתחבר...', retry: 'החיבור נפל, מנסה שוב', paused: 'מושהה', off: 'מנותק' };
+    const stateHtml = () => '<span id="lvState" class="lv-state lv-s-' + LIVE.state + '" role="status"><i></i>' + STATE_HE[LIVE.state] + '</span>';
+    const footHtml = () => '<div id="lvFoot" class="lv-foot">' + (LIVE.rows.length && LIVE.more ? '<button class="btn" data-act="sysOlder"' + (LIVE.older ? ' disabled' : '') + '>' + (LIVE.older ? 'טוען...' : 'אירועים קודמים') + '</button>' : LIVE.rows.length ? '<span class="t-sub">אין אירועים קודמים. היומן נשמר 30 יום.</span>' : '') + '</div>';
+    const newHtml = () => '<button id="lvNew" class="lv-new" data-act="sysNew"' + (LIVE.wait.length ? '' : ' hidden') + '>' + ic('refresh', 14) + ' ' + n0(LIVE.wait.length) + ' אירועים חדשים</button>';
+    const filt = () => { const o = {}; ['src', 'level', 'org'].forEach((k) => { if (LIVE.f[k]) o[k] = LIVE.f[k]; }); return o; };
+    function liveView() {
+      const f = LIVE.f, orgs = ORGS.filter((o) => o.live);
+      const sel = (id, cur, label, opts) => '<select id="' + id + '" aria-label="' + label + '">' + opts.map(([v, t]) => '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select>';
+      return cardH('pulse', 'יומן חי', '<div class="lv-bar">' +
+        sel('lvSrc', f.src, 'מקור', [['', 'כל המקורות']].concat(Object.entries(SRC_HE))) +
+        sel('lvLevel', f.level, 'חומרה', [['', 'כל האירועים'], ['warn', 'אזהרות ושגיאות'], ['error', 'שגיאות בלבד']]) +
+        (orgs.length ? sel('lvOrg', f.org, 'לקוח', [['', 'כל הלקוחות']].concat(orgs.map((o) => [o.live.id, o.n]))) : '') +
+        '<span class="lv-grow"></span>' +
+        '<button class="btn btn-sm" data-act="sysTech" aria-pressed="' + LIVE.tech + '">' + ic('gear', 14) + ' ' + (LIVE.tech ? 'תצוגה רגילה' : 'תצוגה טכנית') + '</button>' +
+        '<button class="btn btn-sm" data-act="sysPause">' + ic(LIVE.paused ? 'play' : 'pause', 14) + ' ' + (LIVE.paused ? 'המשך' : 'השהיה') + '</button></div>' +
+        newHtml() +
+        '<div id="lvFeed" class="lv-feed" aria-live="off">' + (LIVE.rows.length ? LIVE.rows.map(rowHtml).join('') : '<div id="lvEmpty" class="t-sub sys-empty">' + (LIVE.state === 'live' ? 'אין אירועים שמתאימים לסינון. אירוע חדש יופיע כאן מיד.' : 'מתחבר ליומן...') + '</div>') + '</div>' +
+        footHtml(), stateHtml());
+    }
+    const liveOn = () => S.mode === 'admin' && S.route === 'a_system' && SYS.tab === 'live' && !document.hidden && !L.dead && !LIVE.paused;
+    function setState(s) { LIVE.state = s; const el = $('#lvState'); if (el) el.outerHTML = stateHtml(); const em = $('#lvEmpty'); if (em && s === 'live') em.textContent = 'אין אירועים שמתאימים לסינון. אירוע חדש יופיע כאן מיד.'; }
+    // the top of the list is on screen: new rows may go in without moving what the admin is reading
+    const atTop = () => { const el = $('#lvFeed'); return !el || el.getBoundingClientRect().top > -40; };
+    function put(evs) {
+      if (!evs.length) return;
+      const desc = evs.slice().reverse();
+      LIVE.rows = desc.concat(LIVE.rows);
+      if (LIVE.rows.length > MAXROWS) { LIVE.rows.length = MAXROWS; LIVE.more = true; }
+      const el = $('#lvFeed'); if (!el) return;
+      const em = $('#lvEmpty'); if (em) em.remove();
+      el.insertAdjacentHTML('afterbegin', desc.map(rowHtml).join(''));
+      while (el.children.length > MAXROWS) el.lastElementChild.remove();
+      const ft = $('#lvFoot'); if (ft) ft.outerHTML = footHtml();
+    }
+    function take(evs) {
+      evs = evs.filter((e) => e && +e.id > LIVE.last);
+      if (!evs.length) return;
+      LIVE.last = +evs[evs.length - 1].id;
+      if (atTop() && !LIVE.wait.length) return put(evs);
+      LIVE.wait = LIVE.wait.concat(evs).slice(-MAXROWS);
+      const b = $('#lvNew'); if (b) b.outerHTML = newHtml();
+    }
+    function flush() { const w = LIVE.wait; LIVE.wait = []; put(w); const b = $('#lvNew'); if (b) b.outerHTML = newHtml(); }
+    // one block of the stream: "id:", "event:", "data:" lines; a line that starts with ":" is the keep-alive
+    function block(txt) {
+      let type = 'message', data = '';
+      txt.split('\n').forEach((ln) => { if (ln.startsWith('event:')) type = ln.slice(6).trim(); else if (ln.startsWith('data:')) data += ln.slice(5).trim(); });
+      if (!data) return null;
+      try { return { type, data: JSON.parse(data) }; } catch (e) { return null; }
+    }
+    const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function liveRun() {
+      if (LIVE.loop || !liveOn()) return;
+      const my = ++LIVE.run;
+      let back = 0;
+      LIVE.loop = true;
+      while (my === LIVE.run && liveOn()) {
+        const ctl = (LIVE.ctl = new AbortController());
+        // the screen was left, the tab hidden or the session ended: the open stream is dropped at once
+        // ...and so is a connection that went silent (the server sends a keep-alive every 15 seconds)
+        let seen = performance.now();
+        const wd = setInterval(() => { if (my !== LIVE.run || !liveOn() || performance.now() - seen > 40000) ctl.abort(); }, 1500);
+        try {
+          if (LIVE.state !== 'live') setState('connecting');
+          const r = await fetch(API, { method: 'POST', signal: ctl.signal,
+            headers: Object.assign({ 'content-type': 'application/json', 'x-primeos-token': L.token || '' }, STAGING && /^\/api\//.test(API) ? { 'x-primeos-backend': 'staging' } : {}),
+            body: JSON.stringify({ action: 'admin.events.stream', payload: Object.assign({ after: LIVE.last }, filt()) }) });
+          if (!r.ok || !r.body) {
+            const j = await r.json().catch(() => ({}));
+            if (r.status === 401 && (j.error === 'invalid_token' || j.error === 'session_required')) { sessionLost(); break; }
+            throw new Error('http_' + r.status);
+          }
+          setState('live'); back = 0;
+          const rd = r.body.getReader(), dec = new TextDecoder();
+          let buf = '', bad = false, ended = false;
+          for (;;) {
+            const { value, done } = await rd.read();
+            if (done) break;
+            seen = performance.now();
+            buf += dec.decode(value, { stream: true });
+            const got = [];
+            let k;
+            while ((k = buf.indexOf('\n\n')) >= 0) {
+              const b = block(buf.slice(0, k)); buf = buf.slice(k + 2);
+              if (!b) continue;
+              if (b.type === 'message') got.push(b.data); else if (b.type === 'error') bad = true; else if (b.type === 'end') ended = true;
+            }
+            if (my === LIVE.run) take(got);
+          }
+          // only a stream the server ended itself reconnects at once; a cut one waits like any failure
+          if (bad || !ended) throw new Error('stream_cut');
+        } catch (e) {
+          if (my !== LIVE.run || !liveOn()) break;
+          back = Math.min(30000, back ? back * 2 : 1000);
+          setState('retry');
+          await nap(back);
+        } finally { clearInterval(wd); if (LIVE.ctl === ctl) LIVE.ctl = null; }
+      }
+      if (my === LIVE.run) { LIVE.loop = false; setState(LIVE.paused ? 'paused' : 'off'); }
+    }
+    function liveStop() { LIVE.run++; LIVE.loop = false; if (LIVE.ctl) { try { LIVE.ctl.abort(); } catch (e) { /* already closed */ } LIVE.ctl = null; } LIVE.state = LIVE.paused ? 'paused' : 'off'; }
+    function liveMount() {
+      [['lvSrc', 'src'], ['lvLevel', 'level'], ['lvOrg', 'org']].forEach(([id, k]) => {
+        const el = $('#' + id);
+        if (el) el.onchange = () => { LIVE.f[k] = el.value; liveStop(); LIVE.rows = []; LIVE.wait = []; LIVE.last = 0; LIVE.more = true; LIVE.open.clear(); render(); };
+      });
+      liveRun();
+    }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && liveOn()) liveRun(); });
+    document.addEventListener('scroll', () => { if (LIVE.wait.length && S.route === 'a_system' && SYS.tab === 'live' && atTop()) flush(); }, { capture: true, passive: true });
+    ACT.sysEv = (id) => {
+      id = +id; if (LIVE.open.has(id)) LIVE.open.delete(id); else LIVE.open.add(id);
+      const e = LIVE.rows.find((x) => +x.id === id), el = $('#lvFeed [data-ev="' + id + '"]');
+      if (e && el) el.outerHTML = rowHtml(e);
+    };
+    ACT.sysNew = () => { flush(); const el = $('#lvFeed'); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); };
+    ACT.sysPause = () => { LIVE.paused = !LIVE.paused; if (LIVE.paused) liveStop(); render(); };
+    ACT.sysTech = () => { LIVE.tech = !LIVE.tech; ls.set('pos_sys_tech', LIVE.tech ? '1' : '0'); render(); };
+    ACT.sysOlder = async () => {
+      const last = LIVE.rows[LIVE.rows.length - 1];
+      if (LIVE.older || !last) return;
+      LIVE.older = true; let ft = $('#lvFoot'); if (ft) ft.outerHTML = footHtml();
+      try {
+        const r = await call('admin.events.load', Object.assign({ before: +last.id, limit: 100 }, filt()));
+        const evs = (r.events || []).filter((e) => +e.id < +last.id);
+        LIVE.rows = LIVE.rows.concat(evs); LIVE.more = !!r.next;
+        const el = $('#lvFeed'); if (el) el.insertAdjacentHTML('beforeend', evs.map(rowHtml).join(''));
+      } catch (e) { toast('לא הצלחתי לטעון אירועים קודמים', 'נסו שוב בעוד רגע.', 'err'); }
+      LIVE.older = false; ft = $('#lvFoot'); if (ft) ft.outerHTML = footHtml();
+    };
+    // one production from start to end: every step, AI call, render and error, with the time between them
+    const drawerHead = (t, sub) => '<div class="drawer-head"><div><h3>' + t + '</h3><p>' + sub + '</p></div><button class="icon-btn" style="margin-inline-start:auto" data-act="closeDrawer" aria-label="סגירה">' + ic('x', 17) + '</button></div>';
+    function jobDrawer(r) {
+      const j = r.job, evs = r.events || [];
+      const t0 = j ? j.created_at : evs[0] && evs[0].at, t1 = j && j.state !== 'run' ? j.updated_at : null;
+      const kv = [['מצב', j ? '<span class="chip lv-st-' + esc(j.state) + '">' + esc(JSTATE[j.state] || j.state) + '</span>' : 'ההפקה נמחקה'], ['שלב', j ? esc(j.step || '-') : '-'], ['ניסיונות', j ? n0(j.tries) : '-'],
+        ['התחילה', dmt(t0)], ['משך כולל', t0 && t1 ? dur(new Date(t1) - new Date(t0)) : j && j.state === 'run' ? 'עדיין רצה' : '-'], ['מקור', j ? (j.src === 'wa' ? 'WhatsApp' : 'האתר') : '-']];
+      let prev = t0 ? new Date(t0).getTime() : 0;
+      const items = evs.map((e) => {
+        const at = new Date(e.at).getTime(), gap = prev ? at - prev : 0; prev = at;
+        return '<div class="tl-i" data-kind="' + esc(e.kind) + '"><span class="tl-dot ' + (LVL[e.level] || 'ok') + '">' + ic(SRC_IC[e.src] || 'pulse', 14) + '</span><div class="tl-tx"><b>' + esc(msgOf(e)) + '</b>' +
+          '<div class="t-sub"><span dir="ltr">' + hms(e.at) + '</span>' + (gap >= 1000 ? ' · אחרי ' + dur(gap) : '') + (e.ms != null ? ' · נמשך ' + dur(e.ms) : '') + '</div>' +
+          '<details class="lv-more"><summary>פרטים טכניים</summary><div class="lv-det" dir="ltr">' + detRows(e) + '</div></details></div></div>';
+      }).join('');
+      const kind = j ? j.kind : evs[0] && evs[0].kind === 'job.start' && evs[0].detail ? evs[0].detail.kind : '';
+      return drawerHead('ציר זמן: ' + esc(KIND[kind] || kind || 'הפקה'), esc(r.org || 'ללא לקוח') + ' · ' + n0(evs.length) + ' אירועים') +
+        '<div class="drawer-body" id="lvJob"><div class="lv-kv">' + kv.map(([k, v]) => '<div><span class="t-sub">' + k + '</span><b>' + v + '</b></div>').join('') + '</div>' +
+        (j && j.error ? '<div class="note" style="border-color:var(--bad-100)">' + ic('alert', 15) + '<span dir="auto">' + esc(String(j.error).slice(0, 300)) + '</span></div>' : '') +
+        (items ? '<div class="lv-tl">' + items + '</div>' : '<div class="t-sub">אין אירועים שמורים להפקה הזו. היומן נשמר 30 יום.</div>') + '</div>';
+    }
+    ACT.sysJob = async (id) => {
+      openDrawer(drawerHead('ציר זמן', 'טוען...') + '<div class="drawer-body"><div style="display:flex;gap:10px;align-items:center" class="t-sub"><span class="gm-spin"></span>טוען...</div></div>');
+      try { openDrawer(jobDrawer(await call('admin.job.timeline', { job_id: id }))); }
+      catch (e) { openDrawer(drawerHead('ציר זמן', 'לא נמצא') + '<div class="drawer-body"><div class="note">' + ic('alert', 15) + '<span>לא מצאתי את ההפקה הזו ביומן. אירועים נשמרים 30 יום.</span></div></div>'); }
+    };
+
     SCREENS.a_system = {
       nav: { t: 'מערכת', i: 'pulse' },
       render() {
-        const d = SYS.data[SYS.tab];
-        return pageHead({ title: 'מערכת', actions: '<button class="btn" data-act="sysReload"' + (SYS.loading ? ' disabled' : '') + '>' + ic('refresh', 16) + ' רענון</button>' }) +
+        const live = SYS.tab === 'live', d = live ? null : SYS.data[SYS.tab];
+        return pageHead({ title: 'מערכת', actions: live ? '' : '<button class="btn" data-act="sysReload"' + (SYS.loading ? ' disabled' : '') + '>' + ic('refresh', 16) + ' רענון</button>' }) +
           '<p class="t-sub" style="margin:-8px 0 16px">מצב המערכת במקום אחד: בדיקות, עבודות הפקה, WhatsApp, עלויות AI ועדכוני גרסה.</p>' +
           '<div class="filters"><div class="seg sys-seg" role="tablist">' + TABS.map((t) => '<button role="tab" aria-selected="' + (SYS.tab === t[0]) + '" class="' + (SYS.tab === t[0] ? 'on' : '') + '" data-act="sysTab:' + t[0] + '">' + t[1] + '</button>').join('') + '</div></div>' +
-          '<div id="sysBody" data-tab="' + SYS.tab + '">' + (d ? VIEW[SYS.tab](d) : '<div class="card"><div style="display:flex;gap:10px;align-items:center" class="t-sub"><span class="gm-spin"></span>טוען...</div></div>') + '</div>';
+          '<div id="sysBody" data-tab="' + SYS.tab + '">' + (live ? liveView() : d ? VIEW[SYS.tab](d) : '<div class="card"><div style="display:flex;gap:10px;align-items:center" class="t-sub"><span class="gm-spin"></span>טוען...</div></div>') + '</div>';
       },
-      mount() { if (!SYS.data[SYS.tab] || Date.now() - (SYS.at[SYS.tab] || 0) > 60000) load(SYS.tab, true); },
+      mount() { if (SYS.tab === 'live') return liveMount(); if (!SYS.data[SYS.tab] || Date.now() - (SYS.at[SYS.tab] || 0) > 60000) load(SYS.tab, true); },
     };
-    ACT.sysTab = (t) => { SYS.tab = t; render(); if (!SYS.data[t] || Date.now() - (SYS.at[t] || 0) > 60000) load(t, true); };
+    ACT.sysTab = (t) => { SYS.tab = t; if (t !== 'live') liveStop(); render(); if (t !== 'live' && (!SYS.data[t] || Date.now() - (SYS.at[t] || 0) > 60000)) load(t, true); };
     ACT.sysReload = () => load(SYS.tab);
     css.textContent += `
 .sys-seg{flex-wrap:wrap;max-width:100%}.sys-empty{padding:14px 18px}.sys-seg button{white-space:nowrap}
@@ -7239,7 +7437,25 @@ video.sp-real{object-fit:contain;background:#0A2C51}
 .sys-stack{flex:1;width:100%;max-width:34px;display:flex;flex-direction:column-reverse;border-radius:6px;overflow:hidden;background:var(--surface-2,#F3F5F9)}
 .sys-stack i{display:block;width:100%}
 .sys-col small{font-size:11px;color:var(--ink-3,#5A6386)}
-.sys-legend{display:flex;gap:14px;font-size:12.5px;color:var(--ink-3,#5A6386)}.sys-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-inline-end:6px}`;
+.sys-legend{display:flex;gap:14px;font-size:12.5px;color:var(--ink-3,#5A6386)}.sys-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-inline-end:6px}
+.lv-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 18px}.lv-bar select{height:34px;width:auto;max-width:100%;flex:0 1 190px}.lv-grow{flex:1}
+.lv-state{display:inline-flex;align-items:center;gap:7px;margin-inline-start:auto;font-size:12.5px;color:var(--ink-3,#5A6386)}
+.lv-state i{width:9px;height:9px;border-radius:50%;background:#B8BFD6}.lv-s-live i{background:#2F8A00;animation:lvPulse 1.6s ease-in-out infinite}.lv-s-retry i{background:var(--bad,#C7012B)}.lv-s-connecting i{background:var(--pending,#0B7FC2)}
+@keyframes lvPulse{50%{opacity:.35}}@media (prefers-reduced-motion:reduce){.lv-s-live i{animation:none}}
+.lv-new{display:flex;align-items:center;gap:6px;margin:0 18px 10px;padding:7px 14px;border-radius:999px;border:1px solid var(--line,#E3E7F2);background:var(--brand-100,#EAF0FF);color:var(--brand,#0124C7);font:inherit;font-size:13px;cursor:pointer}.lv-new[hidden]{display:none}
+.lv-feed{border-top:1px solid var(--line-2,#EEF1F8)}
+.lv-row{border-bottom:1px solid var(--line-2,#EEF1F8);border-inline-start:3px solid transparent}.lv-row.lv-warn{border-inline-start-color:var(--pending,#0B7FC2)}.lv-row.lv-bad{border-inline-start-color:var(--bad,#C7012B);background:rgba(199,1,43,.035)}
+.lv-main{display:flex;align-items:center;gap:10px;width:100%;padding:9px 15px;border:none;background:none;font:inherit;font-size:13.6px;text-align:start;color:inherit;cursor:pointer}.lv-main:hover{background:rgba(1,36,199,.035)}
+.lv-main time{flex:none;font-variant-numeric:tabular-nums;font-size:12.3px;color:var(--ink-3,#5A6386)}.lv-ic{flex:none;display:grid;place-items:center;color:var(--ink-3,#5A6386)}.lv-bad .lv-ic{color:var(--bad,#C7012B)}
+.lv-msg{flex:1;min-width:0;overflow-wrap:anywhere}.lv-msg code,.lv-det{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.8px}.lv-msg code{display:block;color:var(--ink-3,#5A6386);overflow-wrap:anywhere}
+.lv-main .chip{flex:none;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lv-ms{flex:none;font-size:12.3px;color:var(--ink-3,#5A6386);font-variant-numeric:tabular-nums}
+.lv-open{padding:2px 15px 12px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.lv-det{width:100%;background:var(--surface-2,#F3F5F9);border-radius:10px;padding:9px 12px;display:flex;flex-direction:column;gap:3px;text-align:left}.lv-det div{display:flex;gap:10px}.lv-det b{flex:none;min-width:74px;font-weight:600;color:var(--ink-3,#5A6386)}.lv-det span{min-width:0;overflow-wrap:anywhere}
+.lv-foot{display:flex;justify-content:center;padding:12px 18px}.lv-foot:empty{display:none}
+.lv-kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.lv-kv div{display:flex;flex-direction:column;gap:3px;border:1px solid var(--line-2,#EEF1F8);border-radius:12px;padding:9px 11px;font-size:13.4px;min-width:0}.lv-kv b{overflow-wrap:anywhere}
+.lv-tl{display:flex;flex-direction:column;flex:none}.lv-kv{flex:none}.lv-st-error{color:var(--bad,#C7012B)}.lv-st-done{color:#2F8A00}.tl-dot.bad{background:var(--bad-100,#FDE7EC);border-color:#F6BFCB;color:var(--bad,#C7012B)}
+.lv-more summary{cursor:pointer;font-size:12.3px;color:var(--ink-3,#5A6386);margin-top:4px}.lv-more .lv-det{margin-top:6px}
+@media (max-width:640px){.lv-main{flex-wrap:wrap;gap:6px 8px;padding:9px 12px}.lv-msg{flex-basis:100%;order:5}.lv-kv{grid-template-columns:repeat(2,minmax(0,1fr))}.lv-bar{padding:10px 12px}.lv-bar select{flex:1 1 140px}}`;
     if (!ADMIN_NAV.includes('a_system')) { const k = ADMIN_NAV.indexOf('a_incidents'); ADMIN_NAV.splice(k >= 0 ? k + 1 : ADMIN_NAV.length, 0, 'a_system'); }
   })();
 

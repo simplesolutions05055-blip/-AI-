@@ -170,3 +170,11 @@ test('event.render: 30 an hour per browser session, 600 per org for server token
     assert.equal((await select('v2_events', `org_id=eq.${B.org}&src=eq.render`)).length, 32);
   } finally { await del('v2_events', `org_id=eq.${B.org}`); await dropOrg(B); }
 });
+
+test('an admin action lands in the log, the console\'s own reads do not', async () => {
+  const mk = (action) => insert('v2_audit', [{ actor_kind: 'admin', action, target: `t-${tag}` }]);
+  await mk('admin.sys.load'); await mk('admin.incidents.load'); await mk('admin.org.update');
+  const ev = await select('v2_events', `kind=eq.admin.action&detail->>target=eq.t-${tag}&order=id.asc`);
+  assert.deepEqual(ev.map((e) => e.detail.action), ['admin.org.update']);
+  await del('v2_audit', `target=eq.t-${tag}`);
+});
