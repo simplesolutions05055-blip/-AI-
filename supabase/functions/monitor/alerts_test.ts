@@ -63,9 +63,11 @@ Deno.test('deliver: staging never sends; one bad phone does not stop the rest; a
   const st = deps({ staging: true });
   assertEquals((await deliver('t', [{ ph: '972501234567' }], st)).dry, true); assertEquals(st.sent, []);
   const one = deps(); one.send = async (ph: string) => { if (ph === '1') throw new Error('x'); one.sent.push(ph); };
-  assertEquals(await deliver('t', [{ ph: '1' }, { ph: '2' }], one), { ok: 1, fail: 1, dry: false, mailed: false });
+  assertEquals(await deliver('t', [{ ph: '1' }, { ph: '2' }], one), { ok: 1, fail: 1, dry: false, mailed: false, why: 'x' });
   const all = deps({ send: async () => { throw new Error('down'); } });
   assertEquals((await deliver('t', [{ ph: '1' }], all)).mailed, true); assertEquals(all.mails.length, 1);
+  // the first refusal is kept in the provider's own words
+  assertEquals((await deliver('t', [{ ph: '1' }, { ph: '2' }], all)).why, 'down');
 });
 
 Deno.test('message: a production line carries the link to its timeline', () => {

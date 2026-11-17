@@ -183,7 +183,14 @@ async function waSend(phone: string, text: string) {
 }
 const alertDeps = (d: DB): AlertDeps => ({
   staging: IS_STAGING, app: APP, send: waSend,
-  mail: async (subject, html) => mail(await recipients(d), subject, html),
+  // a mail that did not go out says why in the log: no key, nobody to send to, or the mail service refused
+  mail: async (subject, html) => {
+    const to = await recipients(d);
+    const why = !env('RESEND_API_KEY') || !env('RESEND_FROM_EMAIL') ? 'mail_not_configured' : !to.length ? 'no_recipients' : '';
+    const sent = why ? false : await mail(to, subject, html).catch(() => false);
+    if (!sent) log({ src: 'monitor', kind: 'alert.mail_fail', level: 'error', msg: 'דוא״ל ההתראה לא נשלח', detail: { why: why || 'mail_refused', to: to.length } });
+    return sent;
+  },
   log: (e) => log({ src: 'monitor', ...e }),
 });
 // the "send a test" button of the console: one message to every saved phone, outside the quiet times and the hourly cap
@@ -192,8 +199,8 @@ async function alertTest(d: DB) {
   const phones = (((row?.data ?? {}) as AlertSettings).phones ?? []).filter((p) => phoneOf(p.ph));
   if (!phones.length) return { ok: false, error: 'no_phones' };
   const out = await deliver(message([{ line: 'הודעת בדיקה: כך נראית התראה מהמערכת' }], 0, APP), phones, alertDeps(d));
-  log({ src: 'monitor', kind: out.dry || out.ok ? 'alert.sent' : 'alert.fail', level: out.dry || out.ok ? 'info' : 'error', msg: out.dry ? 'התראת בדיקה (סביבת בדיקות, לא נשלחה)' : out.ok ? 'התראת בדיקה נשלחה' : 'התראת בדיקה לא נשלחה', detail: { test: true, phones: phones.length, ok: out.ok, fail: out.fail, dry: out.dry, mailed: out.mailed } });
-  return { ok: out.dry || out.ok > 0, delivered: out.ok, failed: out.fail, dry: out.dry, mailed: out.mailed };
+  log({ src: 'monitor', kind: out.dry || out.ok ? 'alert.sent' : 'alert.fail', level: out.dry || out.ok ? 'info' : 'error', msg: out.dry ? 'התראת בדיקה (סביבת בדיקות, לא נשלחה)' : out.ok ? 'התראת בדיקה נשלחה' : 'התראת בדיקה לא נשלחה', detail: { test: true, phones: phones.length, ok: out.ok, fail: out.fail, dry: out.dry, mailed: out.mailed, ...(out.why ? { why: out.why } : {}) } });
+  return { ok: out.dry || out.ok > 0, delivered: out.ok, failed: out.fail, dry: out.dry, mailed: out.mailed, why: out.why ?? null };
 }
 
 // alerts go out on a change only: two bad rounds in a row -> "down", a good round after a down -> "back"

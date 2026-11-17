@@ -75,13 +75,14 @@ export interface AlertDeps {
 }
 
 // to every phone; a phone that fails does not stop the others. WhatsApp down for all of them -> the same text by mail.
-export async function deliver(text: string, phones: { ph: string }[], deps: AlertDeps): Promise<{ ok: number; fail: number; dry: boolean; mailed: boolean }> {
+// `why` is the provider's own words for the first refusal, kept for the log: without it a failed alert cannot be explained
+export async function deliver(text: string, phones: { ph: string }[], deps: AlertDeps): Promise<{ ok: number; fail: number; dry: boolean; mailed: boolean; why?: string }> {
   if (deps.staging) return { ok: 0, fail: 0, dry: true, mailed: false };
-  let ok = 0, fail = 0;
-  for (const p of phones) { try { await deps.send(p.ph, text); ok++; } catch { fail++; } }
+  let ok = 0, fail = 0, why = '';
+  for (const p of phones) { try { await deps.send(p.ph, text); ok++; } catch (e) { fail++; why ||= (e instanceof Error ? e.message : String(e)).slice(0, 240); } }
   let mailed = false;
   if (!ok) mailed = await deps.mail('PrimeOS: התראה (WhatsApp לא זמין)', '<div dir="rtl" style="white-space:pre-line">' + text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string)) + '</div>').catch(() => false);
-  return { ok, fail, dry: false, mailed };
+  return why ? { ok, fail, dry: false, mailed, why } : { ok, fail, dry: false, mailed };
 }
 
 // one monitor round. Never throws: the checks of the monitor do not depend on it.
@@ -119,7 +120,7 @@ export async function alertRound(d: any, deps: AlertDeps, now = Date.now()): Pro
     await save({ ...r.state, last: max });
     if (!r.items.length) return { ok: true, sent: 0 };
     const out = await deliver(message(r.items, r.more, deps.app), phones, deps);
-    deps.log({ kind: out.dry || out.ok ? 'alert.sent' : 'alert.fail', level: out.dry || out.ok ? 'info' : 'error', msg: out.dry ? 'התראת WhatsApp (סביבת בדיקות, לא נשלחה)' : out.ok ? 'התראת WhatsApp נשלחה למנהלים' : 'התראת WhatsApp לא נשלחה', detail: { lines: r.items.length + r.more, phones: phones.length, ok: out.ok, fail: out.fail, dry: out.dry, mailed: out.mailed } });
+    deps.log({ kind: out.dry || out.ok ? 'alert.sent' : 'alert.fail', level: out.dry || out.ok ? 'info' : 'error', msg: out.dry ? 'התראת WhatsApp (סביבת בדיקות, לא נשלחה)' : out.ok ? 'התראת WhatsApp נשלחה למנהלים' : 'התראת WhatsApp לא נשלחה', detail: { lines: r.items.length + r.more, phones: phones.length, ok: out.ok, fail: out.fail, dry: out.dry, mailed: out.mailed, ...(out.why ? { why: out.why } : {}) } });
     return { ok: true, sent: r.items.length + r.more, delivered: out.ok, failed: out.fail, dry: out.dry, mailed: out.mailed };
   } catch (e) {
     console.error('alerts', e instanceof Error ? e.message : e);

@@ -7462,7 +7462,12 @@ video.sp-real{object-fit:contain;background:#0A2C51}
         const r = (await call('admin.alerts.test', {})).result || {};
         if (r.dry) toast('סביבת בדיקות', 'ההודעה נרשמה ביומן ולא נשלחה.');
         else if (r.ok) toast('הודעת הבדיקה נשלחה', r.failed ? r.delivered + ' קיבלו, ' + r.failed + ' נכשלו.' : 'בדקו את ה-WhatsApp.');
-        else toast('ההודעה לא נשלחה', r.mailed ? 'WhatsApp לא זמין. נשלח דוא״ל במקום.' : 'WhatsApp לא זמין כרגע.', 'err');
+        else {
+          // the provider's reason decides the text: "not available" was shown for every refusal and explained none
+          const w = String(r.why || ''), win = /24|window|template|re-?engage/i.test(w);
+          const why = win ? 'WhatsApp מאפשר הודעה יזומה רק למי שכתב למספר של PrimeOS ב-24 השעות האחרונות.' : w ? 'WhatsApp סירב לשלוח. הסיבה נרשמה ביומן החי.' : 'WhatsApp לא זמין כרגע.';
+          toast('ההודעה לא נשלחה', why + (r.mailed ? ' נשלח דוא״ל במקום.' : ''), 'err');
+        }
       } catch (e) { toast('ההודעה לא נשלחה', 'נסו שוב בעוד רגע.', 'err'); }
       ALR.busy = false; render();
     };
