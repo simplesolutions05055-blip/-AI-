@@ -123,9 +123,10 @@ async function checks(d: DB): Promise<Record<string, Check>> {
     // Higgsfield has no free account endpoint: the status of a request that does not exist answers 404 with a good key, 401/403 with a bad one
     if (env('HIGGSFIELD_API_KEY')) P.push(['Higgsfield', 'https://api.higgsfield.ai/requests/00000000-0000-4000-8000-000000000000/status', { authorization: 'Key ' + env('HIGGSFIELD_API_KEY') }]);
     if (env('GEMINI_API_KEY')) P.push(['Gemini', 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', { 'x-goog-api-key': env('GEMINI_API_KEY') }]);
-    const rs = await Promise.all(P.map(([n, u, h]) => probe(u, h).then((x) => ({ n, ...x }), (e) => ({ n, ok: false, ms: 0, st: 0, e: e instanceof Error ? e.message : String(e) }))));
+    const rs: { n: string; ok: boolean; ms: number; st: number; e?: string }[] = await Promise.all(P.map(([n, u, h]) => { const t0 = Date.now(); return probe(u, h).then((x) => ({ n, ...x }), (e) => ({ n, ok: false, ms: Date.now() - t0, st: 0, e: errText(e) })); }));
     const bad = rs.filter((x) => !x.ok);
-    out.ai = { ok: !bad.length, ms: Math.max(0, ...rs.map((x) => x.ms)), note: rs.map((x) => `${x.n} ${x.ok ? 'תקין' : 'לא עונה ' + (x.st || '')}`).join(' · ') };
+    out.ai = { ok: !bad.length, ms: Math.max(0, ...rs.map((x) => x.ms)), // a probe that threw has no status: its own error and how long it took are what tell a timeout from a refused connection
+    note: rs.map((x) => `${x.n} ${x.ok ? 'תקין' : 'לא עונה ' + (x.st || `(${String(x.e ?? '').slice(0, 80)}, ${x.ms}ms)`)}`).join(' · ') };
   } catch (e) { out.ai = { ok: false, note: e instanceof Error ? e.message : String(e) }; }
   // 11. failure rate of graphics and videos over 3 hours
   try {
