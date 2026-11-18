@@ -5,12 +5,14 @@
 
 // two rows of admin_state, one writer each: 'alerts' is what the admin sets (the console writes it), 'alerts_state' is the monitor's own place
 export interface AlertSettings { on?: boolean; phones?: { n: string; ph: string }[] }
-export interface AlertState { last?: number; sent?: Record<string, string>; hour?: string[] }
-export interface AlertItem { key: string; line: string; quiet: number; job?: string }
+// held: what reached nobody (WhatsApp and mail both refused), kept for the next rounds
+export interface AlertState { last?: number; sent?: Record<string, string>; hour?: string[]; held?: AlertItem[] }
+export interface AlertItem { key: string; line: string; quiet: number; job?: string; tries?: number }
 
 const MIN = 60000;
 export const MAX_PER_HOUR = 6;   // messages, not lines
 export const MAX_LINES = 8;      // lines in one message; the rest is counted
+export const MAX_TRIES = 12;     // rounds an alert that reached nobody is tried again (an hour of 5-minute rounds), then it is dropped
 // the same names the console shows for production steps
 const STEP_HE: Record<string, string> = { start: 'התחלה', brief: 'הבנת הבקשה', texts: 'כתיבת הטקסטים', design: 'עיצוב', fit: 'התאמת העיצוב', media: 'הכנת המדיה', clips: 'קטעי הווידאו', render: 'רינדור', status: 'המתנה לרינדור', fix: 'תיקון', done: 'סיום' };
 const stepHe = (c: unknown) => STEP_HE[String(c ?? '')] ?? String(c ?? '-');
@@ -93,7 +95,7 @@ export async function alertRound(d: any, deps: AlertDeps, now = Date.now()): Pro
       d.from('admin_state').select('data').eq('id', 'alerts_state').maybeSingle(),
     ]);
     const set = (row?.data ?? {}) as AlertSettings, st = (own?.data ?? {}) as AlertState;
-    const save = (s: AlertState) => d.from('admin_state').upsert({ id: 'alerts_state', data: { last: s.last, sent: s.sent ?? {}, hour: s.hour ?? [] }, updated_at: new Date(now).toISOString() });
+    const save = (s: AlertState) => d.from('admin_state').upsert({ id: 'alerts_state', data: { last: s.last, sent: s.sent ?? {}, hour: s.hour ?? [], ...(s.held?.length ? { held: s.held } : {}) }, updated_at: new Date(now).toISOString() });
     const { data: top } = await d.from('v2_events').select('id').order('id', { ascending: false }).limit(1);
     const max = +(top?.[0]?.id ?? 0);
     // the first round only marks the place: an old log is not sent as news
@@ -109,7 +111,8 @@ export async function alertRound(d: any, deps: AlertDeps, now = Date.now()): Pro
     const ids = [...new Set((jobs ?? []).map((j: any) => j.org_id).filter(Boolean))];
     const { data: orgs } = ids.length ? await d.from('organizations').select('id,name').in('id', ids) : { data: [] };
     const names = Object.fromEntries((orgs ?? []).map((o: any) => [o.id, o.name]));
-    const items = collect(evs ?? [], (jobs ?? []).map((j: any) => ({ ...j, org: names[j.org_id] ?? null })));
+    // what was held comes first: the same thing found again this round is the held one, with its count of tries
+    const items = [...(st.held ?? []), ...collect(evs ?? [], (jobs ?? []).map((j: any) => ({ ...j, org: names[j.org_id] ?? null })))];
     const r = decide(items, st, now);
     if (r.capped) {
       // the place in the log stays: what was held back is read again on the next round
@@ -117,9 +120,15 @@ export async function alertRound(d: any, deps: AlertDeps, now = Date.now()): Pro
       deps.log({ kind: 'alert.held', level: 'warn', msg: 'התראות WhatsApp הושהו: יותר מ-' + MAX_PER_HOUR + ' בשעה', detail: { waiting: r.more } });
       return { ok: true, capped: true, waiting: r.more };
     }
-    await save({ ...r.state, last: max });
-    if (!r.items.length) return { ok: true, sent: 0 };
+    if (!r.items.length) { await save({ ...r.state, last: max, held: [] }); return { ok: true, sent: 0 }; }
     const out = await deliver(message(r.items, r.more, deps.app), phones, deps);
+    if (out.dry || out.ok || out.mailed) await save({ ...r.state, last: max, held: [] });
+    else {
+      // it reached nobody: not marked as sent and not counted in the hour, so the next round tries again
+      const sent = { ...(r.state.sent ?? {}) }; for (const it of r.items) { if (st.sent?.[it.key]) sent[it.key] = st.sent[it.key]; else delete sent[it.key]; }
+      const held = r.items.map((it) => ({ ...it, tries: (it.tries ?? 0) + 1 })).filter((it) => it.tries < MAX_TRIES);
+      await save({ ...r.state, sent, hour: (r.state.hour ?? []).slice(0, -1), last: max, held });
+    }
     deps.log({ kind: out.dry || out.ok ? 'alert.sent' : 'alert.fail', level: out.dry || out.ok ? 'info' : 'error', msg: out.dry ? 'התראת WhatsApp (סביבת בדיקות, לא נשלחה)' : out.ok ? 'התראת WhatsApp נשלחה למנהלים' : 'התראת WhatsApp לא נשלחה', detail: { lines: r.items.length + r.more, phones: phones.length, ok: out.ok, fail: out.fail, dry: out.dry, mailed: out.mailed, ...(out.why ? { why: out.why } : {}) } });
     return { ok: true, sent: r.items.length + r.more, delivered: out.ok, failed: out.fail, dry: out.dry, mailed: out.mailed };
   } catch (e) {

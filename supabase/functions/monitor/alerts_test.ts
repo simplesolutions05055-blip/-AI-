@@ -1,5 +1,5 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { alertRound, collect, decide, deliver, MAX_PER_HOUR, message, phoneOf, type AlertDeps } from './alerts.ts';
+import { alertRound, collect, decide, deliver, MAX_PER_HOUR, MAX_TRIES, message, phoneOf, type AlertDeps } from './alerts.ts';
 
 const T = Date.parse('2026-11-16T10:00:00Z');
 const ev = (kind: string, o: Record<string, unknown> = {}) => ({ kind, msg: 'm', detail: {}, job_id: null, ...o });
@@ -104,4 +104,24 @@ Deno.test('alertRound: switched off or no phones -> nothing sent, the place stil
   assertEquals((await alertRound(d, x, T)).off, true); assertEquals(x.sent, []); assertEquals(d.saved[0].data.last, 9);
   const none = fakeDb(null, { last: 1 }, [{ id: 9, kind: 'wa.send_fail', detail: {} }]); const y = deps();
   assertEquals((await alertRound(none, y, T)).off, true); assertEquals(y.sent, []);
+});
+
+Deno.test('alertRound: an alert that reached nobody is held and tried again, then goes out once and is not repeated', async () => {
+  const events = [{ id: 5, kind: 'incident.open', msg: 'תקלה נפתחה: ספקי ה-AI', detail: { severity: 'crit', kind: 'ai' } }];
+  const set = { on: true, phones: [{ n: 'a', ph: '972501234567' }] };
+  const down = () => deps({ send: async () => { throw new Error('outside the 24-hour window'); }, mail: async () => false });
+  const d1 = fakeDb(set, { last: 4 }, events); const x1 = down();
+  await alertRound(d1, x1, T);
+  const s1 = d1.saved.at(-1).data;
+  assertEquals(x1.logs, ['alert.fail']); assertEquals(s1.last, 5); assertEquals(s1.sent, {}); assertEquals(s1.hour, []); assertEquals(s1.held.map((h: any) => [h.key, h.tries]), [['inc:ai', 1]]);
+  // next round: no new event, the held one is tried again and this time the mail goes out
+  const d2 = fakeDb(set, s1, events); const x2 = deps({ send: async () => { throw new Error('x'); } });
+  await alertRound(d2, x2, T + 300000);
+  const s2 = d2.saved.at(-1).data;
+  assertEquals(x2.mails.length, 1); assertEquals(s2.held, undefined); assert(s2.sent['inc:ai']); assertEquals(s2.hour.length, 1);
+  const d3 = fakeDb(set, s2, events); const x3 = deps();
+  await alertRound(d3, x3, T + 600000); assertEquals(x3.sent, []);
+  // after the last try it is dropped, not kept for ever
+  const d4 = fakeDb(set, { last: 5, held: [{ key: 'inc:ai', line: 'l', quiet: 60, tries: MAX_TRIES - 1 }] }, events); const x4 = down();
+  await alertRound(d4, x4, T); assertEquals(d4.saved.at(-1).data.held, undefined);
 });
