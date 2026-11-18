@@ -35,7 +35,8 @@ const ver = (id: string) => { const m = id.match(/^gpt-image-(\d+(?:\.\d+)?)/); 
 async function liveModels(okey: string) {
   if (LIVE) return LIVE;
   try {
-    const r = await fetch('https://api.openai.com/v1/models', { headers: { authorization: `Bearer ${okey}` } });
+    // OpenAI's model list can hang for 10 seconds and more: a picture does not wait for it, the static list below is used instead
+    const r = await fetch('https://api.openai.com/v1/models', { headers: { authorization: `Bearer ${okey}` }, signal: AbortSignal.timeout(4000) });
     const ids: string[] = r.ok ? ((await r.json()).data ?? []).map((x: any) => String(x.id)) : [];
     // full models only (no mini), newest version first; within a version: plain aliases (always the latest snapshot) before dated ones,
     // and the precision variant (sunburst: best typography and edits) before the fast one (flare)
