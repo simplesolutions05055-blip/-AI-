@@ -16,6 +16,6 @@ jobs:
           while read n u; do curl -sSfL -o "/tmp/$n.wav" "$u" && flac -s -f -8 -o "tools/tut-audio/out/$n.flac" "/tmp/$n.wav"; done < tools/tut-audio/urls.txt
           ls -la tools/tut-audio/out
           git config user.name "tut-bot"; git config user.email "tut-bot@users.noreply.github.com"
-          git add tools/tut-audio/out
+          git add -f tools/tut-audio/out
           git commit -qm "chore: tutorial narration files [skip ci]"
           git push
