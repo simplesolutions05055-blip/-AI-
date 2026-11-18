@@ -44,7 +44,7 @@
     "@fontsource/secular-one": "^5.3.0",
     "@fontsource/suez-one": "^5.3.0",
     "@fontsource/varela-round": "^5.3.0",
-    "@sparticuz/chromium": "^149.0.0",
+    "@sparticuz/chromium": "^153.0.0",
     "@types/node": "^22.7.4",
     "@types/react": "^18.3.31",
     "puppeteer-core": "^25.16.0",
