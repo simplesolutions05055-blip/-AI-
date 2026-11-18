@@ -160,12 +160,15 @@ async function recipients(d: DB) {
   const { data } = await d.from('admin_users').select('email').not('email', 'is', null).limit(5);
   return (data ?? []).map((r: any) => String(r.email)).filter(Boolean);
 }
-async function mail(to: string[], subject: string, html: string) {
+// '' when the mail went out, otherwise why it did not (the mail service's own answer when it refused)
+async function mailTry(to: string[], subject: string, html: string): Promise<string> {
   const key = env('RESEND_API_KEY'), from = env('RESEND_FROM_EMAIL');
-  if (!key || !from || !to.length) return false;
+  if (!key || !from) return 'mail_not_configured';
+  if (!to.length) return 'no_recipients';
   const r = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ from: `PrimeOS ניטור <${from}>`, to, subject, html }) });
-  return r.ok;
+  return r.ok ? '' : `resend_${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}`;
 }
+const mail = async (to: string[], subject: string, html: string) => !(await mailTry(to, subject, html));
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 function report(res: Record<string, Check>, when: string) {
   const rows = Object.entries(res).map(([k, c]) => `<tr><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${esc(HE[k] ?? k)}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;color:${c.ok ? '#1d7a3e' : '#b3261e'};font-weight:700">${c.ok ? 'תקין' : 'תקלה'}</td><td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;color:#5d6a62">${esc([c.ms != null ? c.ms + 'ms' : '', c.note ?? ''].filter(Boolean).join(' · '))}</td></tr>`).join('');
@@ -187,10 +190,9 @@ const alertDeps = (d: DB): AlertDeps => ({
   // a mail that did not go out says why in the log: no key, nobody to send to, or the mail service refused
   mail: async (subject, html) => {
     const to = await recipients(d);
-    const why = !env('RESEND_API_KEY') || !env('RESEND_FROM_EMAIL') ? 'mail_not_configured' : !to.length ? 'no_recipients' : '';
-    const sent = why ? false : await mail(to, subject, html).catch(() => false);
-    if (!sent) log({ src: 'monitor', kind: 'alert.mail_fail', level: 'error', msg: 'דוא״ל ההתראה לא נשלח', detail: { why: why || 'mail_refused', to: to.length } });
-    return sent;
+    const why = await mailTry(to, subject, html).catch((e) => 'mail_error: ' + errText(e));
+    if (why) log({ src: 'monitor', kind: 'alert.mail_fail', level: 'error', msg: 'דוא״ל ההתראה לא נשלח', detail: { why: errText(why), to: to.length } });
+    return !why;
   },
   log: (e) => log({ src: 'monitor', ...e }),
 });
