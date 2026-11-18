@@ -154,11 +154,13 @@ async function checks(d: DB): Promise<Record<string, Check>> {
   return out;
 }
 
+// one address that is not a mail address makes the mail service refuse the whole message, so only real addresses are kept
+const isMail = (s: string) => /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(s);
 async function recipients(d: DB) {
-  const fixed = env('ALERT_TO').split(',').map((s) => s.trim()).filter(Boolean);
+  const fixed = env('ALERT_TO').split(',').map((s) => s.trim()).filter(isMail);
   if (fixed.length) return fixed;
-  const { data } = await d.from('admin_users').select('email').not('email', 'is', null).limit(5);
-  return (data ?? []).map((r: any) => String(r.email)).filter(Boolean);
+  const { data } = await d.from('admin_users').select('email').not('email', 'is', null).limit(20);
+  return [...new Set<string>((data ?? []).map((r: any) => String(r.email).trim().toLowerCase()).filter(isMail))].slice(0, 5);
 }
 // '' when the mail went out, otherwise why it did not (the mail service's own answer when it refused)
 async function mailTry(to: string[], subject: string, html: string): Promise<string> {
